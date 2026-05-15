@@ -1,8 +1,0 @@
-rootProject.name = "data-orchestration-platform"
-
-include(
-    "libs:common-dto",
-    "services:core-service",
-    "services:orchestrator-service",
-    "services:ai-service"
-)

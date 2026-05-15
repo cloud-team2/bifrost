@@ -1,0 +1,24 @@
+plugins {
+    id 'org.springframework.boot'
+    id 'io.spring.dependency-management'
+}
+
+dependencies {
+    implementation project(':libs:common-dto')
+
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-webflux'    // SSE 스트리밍
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+
+    // LangChain4j for LLM integration
+    implementation 'dev.langchain4j:langchain4j:0.35.0'
+    implementation 'dev.langchain4j:langchain4j-open-ai:0.35.0'
+    implementation 'dev.langchain4j:langchain4j-spring-boot-starter:0.35.0'
+
+    // OpenAPI
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.6.0'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'io.projectreactor:reactor-test'
+}

@@ -1,0 +1,45 @@
+plugins {
+    id 'org.springframework.boot'
+    id 'io.spring.dependency-management'
+}
+
+dependencies {
+    // 같은 모노레포 안의 공유 DTO
+    implementation project(':libs:common-dto')
+
+    // Spring Boot
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.boot:spring-boot-starter-websocket'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+
+    // Kafka
+    implementation 'org.springframework.kafka:spring-kafka'
+
+    // DB
+    implementation 'org.postgresql:postgresql'
+    implementation 'org.mariadb.jdbc:mariadb-java-client:3.4.1'
+    implementation 'org.flywaydb:flyway-core'
+    implementation 'org.flywaydb:flyway-database-postgresql'
+
+    // JWT
+    implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
+    runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.6'
+    runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.6'
+
+    // K8s (Secret 생성)
+    implementation 'io.fabric8:kubernetes-client:6.13.4'
+
+    // OpenAPI
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.6.0'
+
+    // Test
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.security:spring-security-test'
+    testImplementation 'org.testcontainers:junit-jupiter:1.20.2'
+    testImplementation 'org.testcontainers:postgresql:1.20.2'
+    testImplementation 'org.testcontainers:mariadb:1.20.2'
+    testImplementation 'org.testcontainers:kafka:1.20.2'
+}
