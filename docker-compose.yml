@@ -1,0 +1,117 @@
+version: '3.8'
+
+services:
+  # ─────────────── MetaDB ───────────────
+  meta-db:
+    image: postgres:15
+    container_name: meta-db
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: platform
+      POSTGRES_DB: metadb
+    volumes:
+      - meta-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────── 사용자 DB (시뮬레이션) ───────────────
+  user-postgres:
+    image: postgres:15
+    container_name: user-postgres
+    command: ["postgres", "-c", "wal_level=logical", "-c", "max_wal_senders=10", "-c", "max_replication_slots=10"]
+    ports:
+      - "5434:5432"
+    environment:
+      POSTGRES_USER: debezium
+      POSTGRES_PASSWORD: debezium
+      POSTGRES_DB: testdb
+    volumes:
+      - user-postgres-data:/var/lib/postgresql/data
+
+  user-mariadb:
+    image: mariadb:10.11
+    container_name: user-mariadb
+    command:
+      - "--log-bin=binlog"
+      - "--binlog-format=ROW"
+      - "--binlog-row-image=FULL"
+      - "--server-id=1"
+      - "--binlog-expire-logs-seconds=86400"
+    ports:
+      - "3307:3306"
+    environment:
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_USER: debezium
+      MARIADB_PASSWORD: debezium
+      MARIADB_DATABASE: testdb
+    volumes:
+      - user-mariadb-data:/var/lib/mysql
+
+  # ─────────────── Kafka ───────────────
+  kafka:
+    image: bitnami/kafka:3.7
+    container_name: kafka
+    ports:
+      - "9092:9092"
+      - "9094:9094"
+    environment:
+      KAFKA_CFG_NODE_ID: 0
+      KAFKA_CFG_PROCESS_ROLES: controller,broker
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - kafka-data:/bitnami/kafka
+
+  # ─────────────── Kafka Connect ───────────────
+  kafka-connect:
+    build:
+      context: ./infra/docker/kafka-connect
+    container_name: kafka-connect
+    depends_on:
+      - kafka
+    ports:
+      - "8083:8083"
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: kafka:9092
+      CONNECT_GROUP_ID: platform-connect
+      CONNECT_CONFIG_STORAGE_TOPIC: platform-connect-config
+      CONNECT_OFFSET_STORAGE_TOPIC: platform-connect-offsets
+      CONNECT_STATUS_STORAGE_TOPIC: platform-connect-status
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
+      CONNECT_PLUGIN_PATH: /usr/share/java,/opt/kafka/plugins
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+
+  # ─────────────── (Optional) Kafka UI ───────────────
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8090:8080"
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME: connect
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS: http://kafka-connect:8083
+
+volumes:
+  meta-db-data:
+  user-postgres-data:
+  user-mariadb-data:
+  kafka-data:

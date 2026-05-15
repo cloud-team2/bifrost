@@ -1,0 +1,84 @@
+name: core-service
+
+on:
+  pull_request:
+    paths:
+      - 'services/core-service/**'
+      - 'libs/common-dto/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - '.github/workflows/core-service.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'services/core-service/**'
+      - 'libs/common-dto/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - '.github/workflows/core-service.yml'
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Build & Test
+        run: ./gradlew :services:core-service:build
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-service-test-results
+          path: services/core-service/build/test-results/
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: build-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+
+      - name: Build JAR
+        run: ./gradlew :services:core-service:bootJar
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ap-northeast-2
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & Push Docker
+        working-directory: services/core-service
+        run: |
+          IMAGE_URI=${{ steps.ecr.outputs.registry }}/core-service:${{ github.sha }}
+          docker build -t $IMAGE_URI .
+          docker push $IMAGE_URI
+
+      - name: Deploy via Helm
+        run: |
+          aws eks update-kubeconfig --name platform-cluster
+          helm upgrade --install core-service services/core-service/helm \
+            --namespace platform \
+            --set image.tag=${{ github.sha }}

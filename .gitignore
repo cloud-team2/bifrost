@@ -1,0 +1,71 @@
+# ─── Gradle / Java ───
+.gradle/
+build/
+out/
+**/build/
+**/.gradle/
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+*.class
+
+# ─── IDE ───
+.idea/
+*.iml
+.vscode/
+.project
+.classpath
+.settings/
+*.iws
+*.ipr
+
+# ─── Node / Frontend ───
+node_modules/
+dist/
+.vite/
+.cache/
+.next/
+*.tsbuildinfo
+
+# ─── Spring Boot ───
+HELP.md
+application-local.yml
+application-local.properties
+
+# ─── OS ───
+.DS_Store
+Thumbs.db
+
+# ─── Logs ───
+*.log
+logs/
+
+# ─── Terraform ───
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl
+crash.log
+
+# ─── Docker ───
+*.pid
+
+# ─── Secrets / 환경 ───
+*.pem
+*.key
+*.p12
+.env
+.env.local
+.env.*.local
+*.kubeconfig
+kubeconfig
+
+# ─── Test / Coverage ───
+*.hprof
+coverage/
+.nyc_output/
+
+# ─── Helm ───
+**/charts/
+**/Chart.lock

@@ -1,0 +1,45 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaConnect
+metadata:
+  name: platform-connect
+  namespace: platform-kafka
+  annotations:
+    # CRD 기반 connector 관리 활성화
+    strimzi.io/use-connector-resources: "true"
+spec:
+  version: 3.7.1
+  replicas: 2
+  bootstrapServers: platform-kafka-kafka-bootstrap:9092
+  
+  # 커스텀 이미지 (Debezium plugins 포함)
+  image: your-account.dkr.ecr.ap-northeast-2.amazonaws.com/platform-kafka-connect:latest
+  
+  config:
+    group.id: platform-connect
+    offset.storage.topic: platform-connect-offsets
+    config.storage.topic: platform-connect-configs
+    status.storage.topic: platform-connect-status
+    
+    offset.storage.replication.factor: 3
+    config.storage.replication.factor: 3
+    status.storage.replication.factor: 3
+    
+    key.converter: org.apache.kafka.connect.json.JsonConverter
+    value.converter: org.apache.kafka.connect.json.JsonConverter
+    key.converter.schemas.enable: false
+    value.converter.schemas.enable: false
+  
+  # External Secret을 connector config에서 ${secrets:...} 식으로 참조 가능
+  externalConfiguration:
+    volumes:
+      - name: connector-config
+        secret:
+          secretName: connect-secrets
+  
+  resources:
+    requests:
+      memory: 1Gi
+      cpu: 500m
+    limits:
+      memory: 2Gi
+      cpu: 2

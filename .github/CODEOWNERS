@@ -1,0 +1,22 @@
+# 폴더별 reviewer 자동 지정
+# 사용자명은 실제 GitHub username으로 교체
+
+# Default (전원이 봐야 할 것)
+*                                        @member-a @member-b @member-c @member-d @member-e
+
+# 서비스별
+/services/core-service/                  @member-b
+/services/orchestrator-service/          @member-c
+/services/ai-service/                    @member-d
+/services/frontend/                      @member-e
+
+# Infra
+/infra/                                  @member-a
+/docker-compose.yml                      @member-a
+/.github/workflows/                      @member-a
+
+# 공유 DTO (변경 시 영향 큼 - B, C 둘 다 리뷰)
+/libs/common-dto/                        @member-b @member-c
+
+# Docs
+/docs/                                   @member-a @member-b @member-c @member-d @member-e

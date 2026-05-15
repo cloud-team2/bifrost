@@ -1,0 +1,29 @@
+plugins {
+    id("org.springframework.boot")
+    id("io.spring.dependency-management")
+}
+
+dependencies {
+    implementation(project(":libs:common-dto"))
+
+    implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
+    implementation("org.springframework.boot:spring-boot-starter-validation")
+    implementation("org.springframework.kafka:spring-kafka")
+
+    // K8s 클라이언트
+    implementation("io.fabric8:kubernetes-client:6.13.4")
+    
+    // Strimzi CRD model
+    implementation("io.strimzi:api:0.45.0")
+
+    // Kafka Admin
+    implementation("org.apache.kafka:kafka-clients:3.7.1")
+
+    // OpenAPI
+    implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.6.0")
+
+    testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testImplementation("org.springframework.kafka:spring-kafka-test")
+    testImplementation("io.fabric8:kubernetes-server-mock:6.13.4")
+}

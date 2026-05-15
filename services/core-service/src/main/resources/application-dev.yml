@@ -1,0 +1,60 @@
+spring:
+  datasource:
+    url: ${META_DB_URL:jdbc:postgresql://localhost:5433/metadb}
+    username: ${META_DB_USER:platform}
+    password: ${META_DB_PASSWORD:platform}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    consumer:
+      group-id: core-service
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "com.platform.common.events"
+    listener:
+      ack-mode: manual_immediate
+
+# JWT
+jwt:
+  secret: ${JWT_SECRET:local-dev-secret-please-change-in-production-must-be-long-enough-for-hs256}
+  expiration-hours: 24
+  issuer: platform-core
+
+# 외부 서비스
+orchestrator:
+  url: ${ORCHESTRATOR_URL:http://localhost:8081}
+  
+ai-service:
+  url: ${AI_SERVICE_URL:http://localhost:8082}
+  enabled: false   # Sprint 4부터 true
+
+# Kafka 토픽
+platform:
+  internal-topics:
+    connector-status: platform.internal.connector-status
+    service-discovered: platform.internal.service-discovered
+
+logging:
+  level:
+    root: INFO
+    com.platform: DEBUG
+    org.springframework.web: INFO
+    org.hibernate.SQL: DEBUG
