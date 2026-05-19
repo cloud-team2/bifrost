@@ -1,0 +1,29 @@
+# KRaft 모드: Controller + Broker를 합친 단일 풀 (캡스톤 비용 절감)
+# 프로덕션이라면 controller / broker를 별도 풀로 분리 권장
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaNodePool
+metadata:
+  name: kafka
+  namespace: platform-kafka
+  labels:
+    strimzi.io/cluster: platform-kafka
+spec:
+  replicas: 3
+  roles:
+    - controller
+    - broker
+  storage:
+    type: jbod
+    volumes:
+      - id: 0
+        type: persistent-claim
+        size: 50Gi
+        class: gp3
+        deleteClaim: false
+  resources:
+    requests:
+      memory: 2Gi
+      cpu: 500m
+    limits:
+      memory: 4Gi
+      cpu: 2000m
