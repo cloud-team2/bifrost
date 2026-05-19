@@ -1,4 +1,4 @@
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaConnect
 metadata:
   name: platform-connect
@@ -7,34 +7,33 @@ metadata:
     # CRD 기반 connector 관리 활성화
     strimzi.io/use-connector-resources: "true"
 spec:
-  version: 3.7.1
+  version: 4.2.0
   replicas: 2
   bootstrapServers: platform-kafka-kafka-bootstrap:9092
-  
-  # 커스텀 이미지 (Debezium plugins 포함)
-  image: your-account.dkr.ecr.ap-northeast-2.amazonaws.com/platform-kafka-connect:latest
-  
+
+  # 커스텀 이미지 (Debezium plugins 포함) — Docker Hub
+  image: hwnnn/bifrost-kafka-connect:latest
+
+  # Strimzi 1.0.0: 필수 필드가 spec 최상위로 이동
+  groupId: platform-connect
+  offsetStorageTopic: platform-connect-offsets
+  configStorageTopic: platform-connect-configs
+  statusStorageTopic: platform-connect-status
+
   config:
-    group.id: platform-connect
-    offset.storage.topic: platform-connect-offsets
-    config.storage.topic: platform-connect-configs
-    status.storage.topic: platform-connect-status
-    
     offset.storage.replication.factor: 3
     config.storage.replication.factor: 3
     status.storage.replication.factor: 3
-    
     key.converter: org.apache.kafka.connect.json.JsonConverter
     value.converter: org.apache.kafka.connect.json.JsonConverter
     key.converter.schemas.enable: false
     value.converter.schemas.enable: false
-  
-  # External Secret을 connector config에서 ${secrets:...} 식으로 참조 가능
-  externalConfiguration:
-    volumes:
-      - name: connector-config
-        secret:
-          secretName: connect-secrets
+    # CDC 출력 토픽 자동 생성 (auto.create.topics.enable=false 환경 대응)
+    topic.creation.enable: "true"
+    topic.creation.default.replication.factor: "3"
+    topic.creation.default.partitions: "3"
+    topic.creation.default.cleanup.policy: delete
+    topic.creation.default.retention.ms: "604800000"
   
   resources:
     requests:

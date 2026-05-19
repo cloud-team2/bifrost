@@ -1,0 +1,14 @@
+# Debezium PostgreSQL CDC 필수 설정
+# wal_level=logical: 논리적 복제 활성화 (CDC 필수)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: user-postgres-config
+  namespace: userdb
+data:
+  postgresql.conf: |
+    listen_addresses = '*'
+    wal_level = logical
+    max_wal_senders = 10
+    max_replication_slots = 10
+    wal_keep_size = 1024

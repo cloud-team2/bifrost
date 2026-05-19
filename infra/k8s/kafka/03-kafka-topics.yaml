@@ -1,0 +1,44 @@
+# platform.internal.* 토픽 — orchestrator가 발행, core가 구독
+# Strimzi Topic Operator가 자동으로 Kafka에 토픽 생성
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: platform-internal-connector-status
+  namespace: platform-kafka
+  labels:
+    strimzi.io/cluster: platform-kafka
+spec:
+  partitions: 3
+  replicas: 3
+  config:
+    min.insync.replicas: "2"
+    retention.ms: "604800000"   # 7일
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: platform-internal-service-discovered
+  namespace: platform-kafka
+  labels:
+    strimzi.io/cluster: platform-kafka
+spec:
+  partitions: 3
+  replicas: 3
+  config:
+    min.insync.replicas: "2"
+    retention.ms: "604800000"
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: platform-internal-service-lag-updated
+  namespace: platform-kafka
+  labels:
+    strimzi.io/cluster: platform-kafka
+spec:
+  partitions: 3
+  replicas: 3
+  config:
+    min.insync.replicas: "2"
+    retention.ms: "3600000"     # 1시간 (lag 이벤트는 빠르게 만료)

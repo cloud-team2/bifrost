@@ -1,0 +1,56 @@
+---
+# Debezium PostgreSQL CDC Connector
+# 전제: userdb 네임스페이스에 user-postgres-service 실행 중
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaConnector
+metadata:
+  name: debezium-postgres
+  namespace: platform-kafka
+  labels:
+    strimzi.io/cluster: platform-connect
+spec:
+  class: io.debezium.connector.postgresql.PostgresConnector
+  tasksMax: 1
+  config:
+    topic.prefix: cdc.postgres
+    database.hostname: user-postgres-service.userdb.svc.cluster.local
+    database.port: "5432"
+    database.user: debezium
+    database.password: debezium
+    database.dbname: testdb
+    plugin.name: pgoutput
+    slot.name: debezium_slot
+    publication.autocreate.mode: all_tables
+    # 스키마 변경 이벤트 토픽
+    schema.history.internal.kafka.bootstrap.servers: platform-kafka-kafka-bootstrap:9092
+    schema.history.internal.kafka.topic: schema-changes.postgres
+    # 테이블 필터 (필요 시 수정)
+    table.include.list: public.*
+    # 처음 기동 시 전체 스냅샷
+    snapshot.mode: initial
+---
+# Debezium MariaDB CDC Connector
+# 전제: userdb 네임스페이스에 user-mariadb-service 실행 중
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaConnector
+metadata:
+  name: debezium-mariadb
+  namespace: platform-kafka
+  labels:
+    strimzi.io/cluster: platform-connect
+spec:
+  class: io.debezium.connector.mariadb.MariaDbConnector
+  tasksMax: 1
+  config:
+    topic.prefix: cdc.mariadb
+    database.hostname: user-mariadb-service.userdb.svc.cluster.local
+    database.port: "3306"
+    database.user: debezium
+    database.password: debezium
+    database.server.id: "1"
+    # 스키마 변경 이벤트 토픽
+    schema.history.internal.kafka.bootstrap.servers: platform-kafka-kafka-bootstrap:9092
+    schema.history.internal.kafka.topic: schema-changes.mariadb
+    # DB 필터
+    database.include.list: testdb
+    snapshot.mode: initial

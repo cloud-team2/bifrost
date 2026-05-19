@@ -1,0 +1,8 @@
+# CDC 소스/싱크 DB 시뮬레이션용 네임스페이스
+# 프로덕션에서는 실제 사용자 DB(외부)가 대체하므로 이 네임스페이스는 개발/시연용
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: userdb
+  labels:
+    app.kubernetes.io/managed-by: kubectl
