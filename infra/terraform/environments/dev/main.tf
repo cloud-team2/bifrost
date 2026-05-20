@@ -60,6 +60,7 @@ module "eks" {
 
   cluster_admin_arns = [
     "arn:aws:iam::881490135253:user/skala-student",
+    "arn:aws:iam::881490135253:user/skala_dev",
   ]
 
   tags = local.common_tags

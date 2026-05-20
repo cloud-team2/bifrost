@@ -33,7 +33,7 @@ aws configure --profile skala_student
 # kubeconfig 업데이트
 aws eks update-kubeconfig \
   --region ap-northeast-2 \
-  --name skala3-cloud-team-Curly \
+  --name skala3-cloud1-finalproj-team2 \
   --profile skala_student
 
 # 접근 확인
@@ -45,7 +45,7 @@ kubectl get pod -A
 
 | 항목 | 값 |
 |------|-----|
-| 클러스터 이름 | `skala3-cloud-team-Curly` |
+| 클러스터 이름 | `skala3-cloud1-finalproj-team2` |
 | 리전 | `ap-northeast-2` (서울) |
 | K8s 버전 | 1.35 |
 | 노드 | t3.large × 3 |

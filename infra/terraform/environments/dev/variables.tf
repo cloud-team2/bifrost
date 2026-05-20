@@ -5,7 +5,7 @@ variable "aws_region" {
 
 variable "cluster_name" {
   type    = string
-  default = "skala3-cloud-team-Curly"
+  default = "skala3-cloud1-finalproj-team2"
 }
 
 variable "kubernetes_version" {
