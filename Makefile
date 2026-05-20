@@ -7,7 +7,7 @@
 
 AWS_PROFILE  := skala_student
 AWS_REGION   := ap-northeast-2
-CLUSTER_NAME := skala3-cloud-team-Curly
+CLUSTER_NAME := skala3-cloud1-finalproj-team2
 TF_DIR       := infra/terraform/environments/dev
 
 help: ## 이 도움말 출력

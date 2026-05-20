@@ -4,7 +4,7 @@ set -euo pipefail
 # EKS 클러스터 kubeconfig 업데이트
 # 실행: ./scripts/setup-kubeconfig.sh
 
-CLUSTER_NAME="skala3-cloud-team-Curly"
+CLUSTER_NAME="skala3-cloud1-finalproj-team2"
 AWS_REGION="ap-northeast-2"
 AWS_PROFILE="skala_student"
 

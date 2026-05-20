@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CLUSTER="skala3-cloud-team-Curly"
+CLUSTER="skala3-cloud1-finalproj-team2"
 NODEGROUP="${CLUSTER}-ng-main"
 PROFILE="skala_student"
 VERSIONS=("1.31" "1.32" "1.33" "1.34" "1.35")
