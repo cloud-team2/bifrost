@@ -52,7 +52,7 @@ flowchart TB
 
 ## 점검 필요 (운영 전)
 
-`auto.create.topics.enable=true` 끄기 · plain listener 제한(scram 표준화) · userdb LoadBalancer 노출 재검토 · PDB/anti-affinity · gp3 Retain(orphan PV) 정책.
+`auto.create.topics.enable=true` 끄기 · plain listener 제한(scram 표준화) · userdb LoadBalancer 노출 재검토 · PDB/anti-affinity · gp3 Retain(orphan PV) 정책 · **클러스터 용량: 3×t3.large CPU 요청 ~81%로 포화 임박, 남은 스택(monitoring·앱) 수용 불가 → 노드 확장/인스턴스 상향 필요([§2 §11 용량 분석](#11-클러스터-용량-분석-및-대응안-2026-06-02))**.
 
 ## 더 읽기 → [DETAILS.md](#)
 
@@ -761,3 +761,48 @@ KafkaNodePool brokers
 - application 배포
 - LoadBalancer/Ingress 노출 변경
 - 운영 정책상 금지/허용 리소스 변경
+
+### 11. 클러스터 용량 분석 및 대응안 (2026-06-02)
+
+> 기준: metrics-server가 없어 실시간 usage는 측정 불가하다. 아래는 **`kubectl describe node`의 requests/limits(스케줄링 기준)** 분석이다. 실제 right-sizing은 metrics-server 설치 후 usage로 보정한다.
+
+#### 11.1 노드 스펙
+
+| 항목 | 값 |
+| --- | --- |
+| 노드 | **3 × t3.large** (각 2 vCPU / 8GiB, **burstable**) |
+| 노드당 allocatable | CPU **1930m**, MEM **~7.08GiB**, pods 35 |
+| 클러스터 allocatable 합 | CPU **~5.79 vCPU**, MEM **~20.7GiB** |
+
+#### 11.2 현재 할당 (requests / limits)
+
+| 노드 | CPU req | MEM req | CPU limit | MEM limit | pods |
+| --- | --- | --- | --- | --- | --- |
+| 128-71 | 1381m (71%) | 3561Mi (50%) | 5010m (259%) | 6864Mi (96%) | 11 |
+| 131-173 | 1491m (77%) | 3921Mi (55%) | 5510m (285%) | 9328Mi (131%) | 14 |
+| 159-30 | 1791m (**92%**) | 4317Mi (60%) | 5510m (285%) | 9668Mi (**136%**) | 18 |
+| **합계** | **~4663m (≈81%)** | **~11.5GiB (≈56%)** | 과다 오버커밋 | **~25.3GiB (≈122%)** | 43 |
+
+#### 11.3 진단
+
+- **CPU가 병목이다.** 요청이 이미 클러스터 ≈81%, 노드3은 92%로 **여유 CPU가 클러스터 전체 ~1.1 vCPU(노드3은 ~0.14 vCPU)뿐**이다. 추가 워크로드는 곧 `Pending`(unschedulable)으로 떨어진다.
+- **메모리 limit 오버커밋.** 노드2·3의 메모리 limit이 allocatable을 초과(131%·136%, 클러스터 122%). 메모리는 압축 불가 자원이라 동시 burst 시 **OOMKill/eviction 위험**이 있다(요청 기준 여유는 ~9GiB로 아직 있음).
+- **t3는 burstable.** baseline은 vCPU당 30%(노드당 지속 ~0.6 vCPU). Kafka broker·Kafka Connect·JVM·DB 같은 **지속 부하**가 CPU 크레딧을 소진하면 throttling이 발생한다 — 데이터/상태 플레인에 t3는 부적합.
+- **아직 안 뜬 스택이 더 크다.** 남은 필수 구성(`monitoring`: Prometheus+Loki+Tempo+Grafana+Promtail DS+exporter, `bifrost-system`: Spring JVM+FastAPI+Frontend, Kafka Connect replica 2, Evidence/Audit Store, metrics-server)의 요청 합은 대략 **+3~6 vCPU / +6~12GiB**로 추정된다. 현재 가용(CPU ~1.1 vCPU)으로는 **수용 불가**.
+
+**결론: 현재 3×t3.large로는 설계상 남은 컴포넌트를 올릴 수 없다. 노드 증설 또는 인스턴스 상향이 선행돼야 한다.**
+
+#### 11.4 대응안 (우선순위)
+
+> 단일 EKS·VPC 제약(§1.2)은 **새 클러스터/VPC 생성** 금지일 뿐, 기존 노드그룹의 수량·인스턴스 타입 조정은 허용된다.
+
+| # | 대응 | 내용 | 효과/비고 |
+| --- | --- | --- | --- |
+| 1 | **인스턴스 상향(권장)** | 데이터/상태·관측 플레인용으로 **m5/m6i.xlarge(4 vCPU/16GiB)** 3~4대로 전환 또는 혼합 | burstable 탈피(지속 부하 안정) + 용량 확보. Kafka/JVM에 적합 |
+| 2 | 노드 증설 | nodegroup desired 3 → 5~6(t3.large) | 가장 빠르지만 t3 크레딧 문제는 잔존 → 임시방편 |
+| 3 | 옵셔널 축소 | Harbor `trivy` off, monitoring 리텐션·리소스 축소, Cruise Control 보류, 비핵심 단일 replica 유지 | 즉시 수 백 m~1 vCPU 절감 |
+| 4 | requests/limits 정합 | 메모리 limit ≤ allocatable로 캡, 핵심 stateful(Kafka·DB)은 requests=limits(Guaranteed) | eviction/OOM 위험 제거 |
+| 5 | 전용 노드그룹/taint | Kafka(stateful·지속) 전용 노드 분리, 관측/CI는 별도 노드그룹 | 자원 경합·장애 격리 |
+| 6 | metrics-server 설치 | 실제 usage 기반 right-sizing·HPA 가능 | 현재는 requests 추정만 가능 |
+
+**권장 경로**: (4)(3)로 당장의 위험을 낮추고 metrics-server(6)로 실측한 뒤, 남은 스택 배포 전에 (1) 인스턴스 상향(예: 3×m5.xlarge = 12 vCPU/48GiB)을 적용한다.
