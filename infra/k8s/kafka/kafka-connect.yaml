@@ -4,37 +4,48 @@ metadata:
   name: platform-connect
   namespace: platform-kafka
   annotations:
-    # CRD 기반 connector 관리 활성화
+    # KafkaConnector CR로 connector lifecycle 관리
     strimzi.io/use-connector-resources: "true"
 spec:
   version: 4.2.0
-  replicas: 2
+  replicas: 1
   bootstrapServers: platform-kafka-kafka-bootstrap:9092
 
-  # 커스텀 이미지 (Debezium plugins 포함) — Docker Hub
-  image: hwnnn/bifrost-kafka-connect:latest
+  # Strimzi spec.build: 클러스터 내부에서 Kaniko로 이미지 빌드 후 Harbor push
+  build:
+    output:
+      type: docker
+      image: harbor.harbor.svc.cluster.local/library/bifrost-kafka-connect:latest
+      pushSecret: harbor-push-secret
+    plugins:
+      - name: debezium-postgres
+        artifacts:
+          - type: tgz
+            url: https://repo1.maven.org/maven2/io/debezium/debezium-connector-postgres/3.5.1.Final/debezium-connector-postgres-3.5.1.Final-plugin.tar.gz
+      - name: debezium-mariadb
+        artifacts:
+          - type: tgz
+            url: https://repo1.maven.org/maven2/io/debezium/debezium-connector-mariadb/3.5.1.Final/debezium-connector-mariadb-3.5.1.Final-plugin.tar.gz
 
-  # Strimzi 1.0.0: 필수 필드가 spec 최상위로 이동
   groupId: platform-connect
   offsetStorageTopic: platform-connect-offsets
   configStorageTopic: platform-connect-configs
   statusStorageTopic: platform-connect-status
 
   config:
-    offset.storage.replication.factor: 3
-    config.storage.replication.factor: 3
-    status.storage.replication.factor: 3
+    offset.storage.replication.factor: 1
+    config.storage.replication.factor: 1
+    status.storage.replication.factor: 1
     key.converter: org.apache.kafka.connect.json.JsonConverter
     value.converter: org.apache.kafka.connect.json.JsonConverter
-    key.converter.schemas.enable: false
-    value.converter.schemas.enable: false
-    # CDC 출력 토픽 자동 생성 (auto.create.topics.enable=false 환경 대응)
+    key.converter.schemas.enable: "false"
+    value.converter.schemas.enable: "false"
     topic.creation.enable: "true"
-    topic.creation.default.replication.factor: "3"
+    topic.creation.default.replication.factor: "1"
     topic.creation.default.partitions: "3"
     topic.creation.default.cleanup.policy: delete
     topic.creation.default.retention.ms: "604800000"
-  
+
   resources:
     requests:
       memory: 1Gi
@@ -42,3 +53,20 @@ spec:
     limits:
       memory: 2Gi
       cpu: 2
+
+  # buildah가 HTTP Harbor를 insecure registry로 인식하도록 registries.conf 주입
+  # Strimzi는 /mnt 하위 경로만 허용 → REGISTRIES_CONFIG_PATH로 경로 override
+  template:
+    buildPod:
+      volumes:
+        - name: registries-conf
+          configMap:
+            name: buildah-registries
+    buildContainer:
+      volumeMounts:
+        - name: registries-conf
+          mountPath: /mnt/registries/registries.conf
+          subPath: registries.conf
+      env:
+        - name: REGISTRIES_CONFIG_PATH
+          value: /mnt/registries/registries.conf
