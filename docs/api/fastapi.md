@@ -279,7 +279,7 @@ Evidence API는 기본적으로 raw content를 반환하지 않는다. `hydrate`
 | `GET` | `/api/v1/agent/runs/{run_id}/approvals` | 특정 run의 approval 요청 목록을 조회한다. |
 | `POST` | `/api/v1/agent/runs/{run_id}/approvals/{approval_id}/decision` | run context에서 approval 결정을 기록한다. |
 
-> **Approval source of truth는 Spring Boot다.** 이 API는 프론트용 facade로, [Spring Boot Approval API](../design/backend-springboot.md#19-approval-api)를 호출하고 run 연계 메타데이터(run_id↔approval_id, UI 표시)만 보관한다. approval record(params hash·승인자·만료·single-use)의 원본·검증·감사는 Spring Boot가 집행한다. 동일 approval을 양쪽에 중복 생성하지 않는다.
+> **Approval source of truth는 Spring Boot다.** 이 API는 프론트용 facade로, [Spring Boot Approval API](./springboot.md#19-approval-api)를 호출하고 run 연계 메타데이터(run_id↔approval_id, UI 표시)만 보관한다. approval record(params hash·승인자·만료·single-use)의 원본·검증·감사는 Spring Boot가 집행한다. 동일 approval을 양쪽에 중복 생성하지 않는다.
 
 요청:
 

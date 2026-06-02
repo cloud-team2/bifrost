@@ -87,7 +87,7 @@ flowchart LR
 | 종료 보장(무한루프 방지) | 전역 step/토큰/시간 예산(`MAX_STEPS`=24, 경보 겸용) + revision·fail·evidence_gap·scope·revise_action 상한 + stage별 timeout + 진행성(새 evidence 없으면 루프 금지). 가드 카운터는 `run` namespace에서 Supervisor가 **중앙 집행** → 항상 유한 단계 내 Report 수렴([DETAILS §15.5.1](#51-루프-방지와-종료-보장)) |
 | severity | 플랫폼과 동일 **WARNING/CRITICAL 2단계**(부록 B.7). 4단계 축 없음 |
 | Approval SoT | **Spring Boot가 원본**, FastAPI는 facade |
-| RCA→incident | Verifier 통과분만 [Spring `PATCH .../incidents/{id}/rca`](./backend-springboot.md#24-report-support-api)로 기록 |
+| RCA→incident | Verifier 통과분만 [Spring `PATCH .../incidents/{id}/rca`](../api/springboot.md#24-report-support-api)로 기록 |
 | MCP | v1 미사용. Spring 내부 API + Tool Client Registry로만 |
 
 ## Spring Boot 연계
@@ -2290,7 +2290,7 @@ Spring Boot Operations Backend는 같은 기준을 다시 검증한다.
 | `CRITICAL` | approval 요청 우선순위를 높이고, customer-visible action은 change management 검토 |
 | `WARNING` | runtime mutation은 최소 approval 유지, 기본 decision 유지 (자동 허용으로 낮추지 않음) |
 
-> 에이전트와 플랫폼은 같은 2단계 severity를 쓴다. 별도의 4단계(critical/high/medium/low) 축은 두지 않는다 — 과거 문서의 4단계 표기는 폐기한다. RCA가 결정한 severity는 [Spring Report Support API](./backend-springboot.md#24-report-support-api)의 `PATCH .../incidents/{id}/rca`로 incident에 기록한다.
+> 에이전트와 플랫폼은 같은 2단계 severity를 쓴다. 별도의 4단계(critical/high/medium/low) 축은 두지 않는다 — 과거 문서의 4단계 표기는 폐기한다. RCA가 결정한 severity는 [Spring Report Support API](../api/springboot.md#24-report-support-api)의 `PATCH .../incidents/{id}/rca`로 incident에 기록한다.
 
 ### 7. Deny 대상
 
