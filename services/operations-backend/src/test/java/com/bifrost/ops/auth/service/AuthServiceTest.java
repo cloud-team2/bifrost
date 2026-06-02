@@ -11,7 +11,7 @@ import com.bifrost.ops.auth.jwt.JwtService;
 import com.bifrost.ops.auth.persistence.entity.UserEntity;
 import com.bifrost.ops.auth.persistence.repository.UserRepository;
 import com.bifrost.ops.provisioning.dto.TenantProvisionRequest;
-import com.bifrost.ops.provisioning.impl.strimzi.TenantProvisioner;
+import com.bifrost.ops.provisioning.port.TenantProvisionerPort;
 import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -50,7 +50,7 @@ class AuthServiceTest {
     private JwtService jwtService;
 
     @Mock
-    private TenantProvisioner tenantProvisioner;
+    private TenantProvisionerPort tenantProvisioner;
 
     private AuthService authService;
 

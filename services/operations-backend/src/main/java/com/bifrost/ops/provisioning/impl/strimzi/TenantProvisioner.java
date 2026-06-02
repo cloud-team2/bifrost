@@ -2,6 +2,7 @@ package com.bifrost.ops.provisioning.impl.strimzi;
 
 import com.bifrost.ops.provisioning.dto.TenantProvisionRequest;
 import com.bifrost.ops.provisioning.dto.TenantProvisionResponse;
+import com.bifrost.ops.provisioning.port.TenantProvisionerPort;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -17,7 +18,7 @@ import org.springframework.stereotype.Component;
  * Idempotent: 이미 있으면 200 OK 반환.
  */
 @Component
-public class TenantProvisioner {
+public class TenantProvisioner implements TenantProvisionerPort {
 
     private final KubernetesClient k8s;
     private final String kafkaClusterName;
@@ -28,6 +29,7 @@ public class TenantProvisioner {
         this.kafkaClusterName = kafkaClusterName;
     }
 
+    @Override
     public TenantProvisionResponse provision(TenantProvisionRequest req) {
         // TODO: 순서대로 생성
         // 1. createNamespace

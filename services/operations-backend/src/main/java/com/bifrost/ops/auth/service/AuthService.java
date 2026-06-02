@@ -11,7 +11,7 @@ import com.bifrost.ops.auth.jwt.JwtService;
 import com.bifrost.ops.auth.persistence.entity.UserEntity;
 import com.bifrost.ops.auth.persistence.repository.UserRepository;
 import com.bifrost.ops.provisioning.dto.TenantProvisionRequest;
-import com.bifrost.ops.provisioning.impl.strimzi.TenantProvisioner;
+import com.bifrost.ops.provisioning.port.TenantProvisionerPort;
 import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
 import org.slf4j.Logger;
@@ -29,13 +29,13 @@ public class AuthService {
     private final WorkspaceRepository workspaceRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
-    private final TenantProvisioner tenantProvisioner;
+    private final TenantProvisionerPort tenantProvisioner;
 
     public AuthService(UserRepository userRepository,
                        WorkspaceRepository workspaceRepository,
                        PasswordEncoder passwordEncoder,
                        JwtService jwtService,
-                       TenantProvisioner tenantProvisioner) {
+                       TenantProvisionerPort tenantProvisioner) {
         this.userRepository = userRepository;
         this.workspaceRepository = workspaceRepository;
         this.passwordEncoder = passwordEncoder;
