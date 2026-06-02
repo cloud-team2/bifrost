@@ -18,7 +18,7 @@
 | API | [api/fastapi.md](./api/fastapi.md) | Agent `/api/v1/agent…` |
 | 결정 | [adr/](./adr/) | 아키텍처 결정 기록(ADR) |
 | 가이드 | [guides/getting-started-infra.md](./guides/getting-started-infra.md) | 인프라 환경 셋업 |
-| 팀 | [team/rnr.md](./team/rnr.md) · [team/git-convention.md](./team/git-convention.md) · [team/roadmap.md](./team/roadmap.md) · [team/todo.md](./team/todo.md) | 역할 분담 · git 컨벤션 · 발표(6/24)까지 로드맵 · 이번주 작업 |
+| 팀 | [team/git-convention.md](./team/git-convention.md) · [team/roadmap.md](./team/roadmap.md) · [team/todo.md](./team/todo.md) | git 컨벤션 · 발표(6/24)까지 로드맵(역할 분담 포함) · 이번주 작업 |
 
 ## 전체 구조
 

@@ -1,8 +1,18 @@
 # 로드맵 — 발표(2026-06-24)까지 주차별 마일스톤
 
-> 기준일 **2026-06-02(화)**, 발표일 **2026-06-24(수)**. 이번주 상세 작업은 [todo.md](./todo.md), 역할 분담은 [rnr.md](./rnr.md), 데모 시나리오는 [../scenario.md](../scenario.md), 기능 SoT는 [../spec.md](../spec.md).
->
-> 담당: 정재환(DB·Agent read 계약·인프라), 백강민(Fabric8/Strimzi/Watcher), 권세빈(auth·workspace·pipeline·SSE·event·internalops·공통), 김연수(AI Agent), 이성민(검토·연동·E2E·시연).
+> 기준일 **2026-06-02(화)**, 발표일 **2026-06-24(수)**. 이번주 상세 작업은 [todo.md](./todo.md), 역할 분담은 아래 [역할 개요](#역할-개요), 데모 시나리오는 [../scenario.md](../scenario.md), 기능 SoT는 [../spec.md](../spec.md).
+
+## 역할 개요
+
+> (주)/(부)·주차별 투입 인원은 가용 인원과 MVP 우선순위에 맞춰 매주 배정한다. 트랙 간 계약(인터페이스·스키마)을 먼저 고정하면 Spring Boot 두 트랙, FastAPI 두 트랙이 각각 mock/stub으로 병렬 진행된다. (MCP는 [v1 스코프 제외](../design/backend-fastapi.md#5-mcp-decision).)
+
+| 담당 영역 | 담당(주) | 담당(부) |
+| --- | --- | --- |
+| 인프라 & Frontend | 정재환| 김연수|
+| Spring Boot — 파이프라인 생성 · Kafka CR · Watcher | 이성민| 백강민|
+| Spring Boot — 인증 · 프로젝트 · DB · 운영자 API | 권세빈| 이성민|
+| FastAPI Agent — 판단(추론 · 카탈로그) | 김연수| 정재환|
+| FastAPI Agent — 런타임 · 연동(오케스트레이션) | 백강민| 권세빈|
 
 ## 주차 개요
 
@@ -33,12 +43,11 @@
 
 **목표**: 생성에서 끝나지 않고 **운영 가시성**까지. real 파이프라인 안정화 + 모니터링 탭 + 프론트 실연동.
 
-- 백강민/정재환: real provisioner 안정화(EDA 토픽 적재, CDC sink 반영), 부분 실패 코드, Connect 재구독.
-- 권세빈: 모니터링·이벤트·인시던트 조회 API(FR-006~009·019~021) — metrics/consumer-groups/connectors/sync/messages/connection-guide(stub→실데이터), 이벤트 로그, 인시던트 자동 생성(부록 B.6/B.7).
-- 정재환: DB metrics·schema·pipelines 탭 실데이터, `/internal/ops` DB·pipeline read tool 구현(계약 #31 기반).
-- 김연수: FastAPI Agent 골격 — run/SSE/State/Tool Client Registry, `/internal/ops` 클라이언트, diagnose-only 흐름 착수.
-- 이성민(프론트 연동 포함 검토): FE가 SSE로 상태 갱신, 파이프라인 상세 탭·DB 상세 탭·AlertsView 실연동.
-- **인프라**: monitoring 스택(Prometheus/Grafana, Loki/Tempo) + Kafka Connect replicas 2 + KafkaConnector/KafkaUser real. ⚠️ 노드 용량(현재 CPU 요청 ~81%) 부족 → monitoring 올리기 전 노드 확장/인스턴스 상향 선행([../design/infra.md](../design/infra.md#11-클러스터-용량-분석-및-대응안-2026-06-02)).
+- 이성민/백강민(SB-Fabric8): real provisioner 안정화(EDA 토픽 적재, CDC sink 반영), 부분 실패 코드, Connect 재구독.
+- 권세빈/이성민(SB-코어): 모니터링·이벤트·인시던트 조회 API(FR-006~009·019~021) — metrics/consumer-groups/connectors/sync/messages/connection-guide(stub→실데이터), 이벤트 로그, 인시던트 자동 생성(부록 B.6/B.7), DB metrics·schema·pipelines 실데이터, `/internal/ops` DB·pipeline read tool(계약 #31 기반).
+- 백강민/권세빈(FastAPI-런타임): FastAPI Agent 골격 착수 — run/SSE/State/Tool Client Registry, `/internal/ops` 클라이언트, diagnose-only 흐름 배선.
+- 김연수/정재환(FastAPI-판단): catalog(failure type·root cause·evidence matrix) 초안, 프롬프트·output schema, RCA/Verifier 골격.
+- 정재환/김연수(인프라·FE): monitoring 스택(Prometheus/Grafana, Loki/Tempo) + Kafka Connect replicas 2 + KafkaConnector/KafkaUser real + FE 실연동(SSE 상태 갱신, 파이프라인/DB 상세 탭, AlertsView). ⚠️ 노드 용량(현재 CPU 요청 ~81%) 부족 → monitoring 올리기 전 노드 확장/인스턴스 상향 선행([../design/infra.md](../design/infra.md#11-클러스터-용량-분석-및-대응안-2026-06-02)).
 
 **Exit**: real EDA/CDC 데이터 흐름 + 파이프라인 상세 모니터링·메시지·구독 가이드 동작. 임계 초과 시 인시던트 자동 생성.
 
@@ -46,11 +55,12 @@
 
 **목표**: 차별화 기능(AI 장애대응) 완성 + 멀티테넌시 격리 검증 + 클러스터 배포. 주말 전 **기능 freeze**.
 
-- 김연수: AI 장애대응 핵심 — BifrostAgentPanel(FR-022/025/026), diagnose-only RCA(evidence 기반), 추천 조치 + **HITL 승인→실행**, Verifier 통과분만 Report, 자동 인시던트 리포트.
-- 권세빈/정재환: `/internal/ops` mutation 경로(approval·idempotency 재검증), incident RCA 기록(PATCH .../rca), approval facade 연계.
-- 백강민/정재환: 멀티테넌시 격리 검증(2개 워크스페이스 토픽/ACL 격리), 파이프라인 삭제 시 리소스 정리.
-- 이성민: 앱 배포(`bifrost-system`: FE·operations-backend·FastAPI) + Argo CD Application 연동(현재 0개), E2E 통합 시나리오 1차.
-- **인프라**: 앱 이미지 Harbor push, GitOps 매니페스트 정리, (가능 시) manifest 역추출.
+- 김연수/정재환(FastAPI-판단): AI 장애대응 판단 — diagnose-only RCA(evidence 기반), 추천 조치 후보, Verifier 통과분만 Report, 자동 인시던트 리포트, catalog/프롬프트 확정(FR-022/025/026, BifrostAgentPanel 연계).
+- 백강민/권세빈(FastAPI-런타임): 조치 실행 경로 — **HITL 승인→실행**(Executor·Policy Guard·Approval gate), 진행 SSE, `/internal/ops` mutation client 연동.
+- 권세빈/이성민(SB-코어): `/internal/ops` mutation 경로(approval·idempotency 재검증), incident RCA 기록(PATCH .../rca), approval facade(Spring=SoT) 연계.
+- 이성민/백강민(SB-Fabric8): 멀티테넌시 격리 검증(2개 워크스페이스 토픽/ACL 격리), 파이프라인 삭제 시 리소스 정리.
+- 정재환/김연수(인프라·FE): 앱 배포(`bifrost-system`: FE·operations-backend·FastAPI) + Argo CD Application 연동(현재 0개) + 앱 이미지 Harbor push·GitOps 매니페스트 정리/역추출.
+- 이성민: E2E 통합 시나리오 1차.
 
 **Exit**: scenario.md "데모 합격선(DoD)" 항목 대부분 충족. **금요일(6/19) 기능 freeze** — 이후 버그 수정만.
 
