@@ -1,6 +1,6 @@
 rootProject.name = 'data-orchestration-platform'
 
 include(
-    'services:operations-backend',
-    'services:ai-service'
+    'services:operations-backend'
 )
+// ai-service는 FastAPI(Python)로 전환되어 Gradle 빌드 대상이 아니다 (ADR 0004, services/ai-service)

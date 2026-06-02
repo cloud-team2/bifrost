@@ -1,0 +1,16 @@
+# 셸 스크립트는 항상 LF — CRLF면 Unix에서 `bad interpreter` 로 실행 불가
+gradlew text eol=lf
+*.sh text eol=lf
+
+# Windows 스크립트는 CRLF
+gradlew.bat text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 바이너리 (줄바꿈 변환 금지)
+*.jar binary
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary

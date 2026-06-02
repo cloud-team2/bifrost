@@ -1,38 +1,31 @@
 replicaCount: 1
 
 image:
-  repository: your-account.dkr.ecr.ap-northeast-2.amazonaws.com/ai-service
+  repository: hwnnn/ai-service
   pullPolicy: IfNotPresent
   tag: latest
 
 service:
   type: ClusterIP
-  port: 8080
+  port: 8082
 
 resources:
   requests:
     cpu: 200m
-    memory: 512Mi
+    memory: 256Mi
   limits:
     cpu: 1000m
-    memory: 1Gi
+    memory: 512Mi
 
 env:
-  SPRING_PROFILES_ACTIVE: prod
-  META_DB_URL: jdbc:postgresql://meta-db.platform.svc.cluster.local:5432/metadb
-  KAFKA_BOOTSTRAP: kafka-bootstrap.platform-kafka.svc.cluster.local:9092
-  ORCHESTRATOR_URL: http://orchestrator-service.platform.svc.cluster.local:8081
-  AI_SERVICE_URL: http://ai-service.platform.svc.cluster.local:8082
+  # Agent의 모든 운영 조회/조치 위임 대상 (Spring 모놀리스 /internal/ops)
+  AI_SPRING_OPS_BASE_URL: http://operations-backend.platform.svc.cluster.local:8080
+  AI_LLM_PROVIDER: openai
+  AI_LLM_DEFAULT_MODEL: gpt-4o-mini
 
 secrets:
-  jwtSecret: ""        # K8s Secret 'jwt-secret' 참조
-  dbPassword: ""       # K8s Secret 'core-db-secret' 참조
+  llmApiKey: ""   # K8s Secret 'ai-llm-secret'의 api-key 참조 (선택)
 
+# Agent는 내부 서비스 — 외부 노출은 별도 게이트웨이/operations-backend 경유로 결정
 ingress:
-  enabled: true
-  className: alb
-  hosts:
-    - host: api.platform.example.com
-      paths:
-        - path: /
-          pathType: Prefix
+  enabled: false
