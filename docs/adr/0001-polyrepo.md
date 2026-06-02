@@ -1,7 +1,9 @@
 # ADR 0001: 폴리레포 채택
 
-**Status**: Accepted
+**Status**: Superseded by [ADR 0002](./0002-monorepo-monolith.md) (2026-06-02)
 **Date**: 2026-05-15
+
+> ⚠️ 이 결정은 [ADR 0002](./0002-monorepo-monolith.md)로 대체되었다. 모노레포 + Spring Boot 모놀리스로 전환했다. 아래 내용은 이력으로 보존한다.
 
 ## Context
 

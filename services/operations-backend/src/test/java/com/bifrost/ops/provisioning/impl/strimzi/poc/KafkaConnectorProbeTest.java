@@ -1,4 +1,4 @@
-package com.platform.orchestrator.kafka.connector.poc;
+package com.bifrost.ops.provisioning.impl.strimzi.poc;
 
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.server.mock.EnableKubernetesMockClient;

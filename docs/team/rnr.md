@@ -10,10 +10,10 @@
 
 | 사람 | 역할 | 주 담당 |
 | --- | --- | --- |
-| **A** | DevOps / Infra Lead | EKS, Strimzi, Kafka, CI/CD, 모니터링, 3개 서비스 배포 |
-| **B** | Backend Domain Lead | core-service (인증, 도메인, Inspector, MetaDB, WebSocket) |
-| **C** | K8s/Kafka Automation Lead | orchestrator-service (테넌트 프로비저닝, Connector 자동화) |
-| **D** | AI/LLM Engineer | ai-service (Sprint 4부터), Sprint 1~3엔 core 보조 |
+| **A** | DevOps / Infra Lead | EKS, Strimzi, Kafka, CI/CD, 모니터링, 서비스 배포 |
+| **B** | Backend Domain Lead | operations-backend — 도메인/DB/Inspector/MetaDB/API ([ADR 0002](../adr/0002-monorepo-monolith.md)로 core+orchestrator 병합) |
+| **C** | K8s/Kafka Automation Lead | operations-backend — provisioning/watcher (테넌트 프로비저닝, Connector 자동화) |
+| **D** | AI/LLM Engineer | ai-service (FastAPI, Sprint 4부터), Sprint 1~3엔 ops 보조 |
 | **E** | Frontend Lead | React, React Flow 캔버스, 위저드, 채팅 UI |
 
 ---

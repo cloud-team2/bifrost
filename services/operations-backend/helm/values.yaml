@@ -1,7 +1,7 @@
 replicaCount: 1
 
 image:
-  repository: your-account.dkr.ecr.ap-northeast-2.amazonaws.com/core-service
+  repository: hwnnn/operations-backend
   pullPolicy: IfNotPresent
   tag: latest
 
@@ -21,7 +21,7 @@ env:
   SPRING_PROFILES_ACTIVE: prod
   META_DB_URL: jdbc:postgresql://meta-db.platform.svc.cluster.local:5432/metadb
   KAFKA_BOOTSTRAP: kafka-bootstrap.platform-kafka.svc.cluster.local:9092
-  ORCHESTRATOR_URL: http://orchestrator-service.platform.svc.cluster.local:8081
+  # orchestrator는 모놀리스로 흡수되어 in-process — 별도 URL 불필요
   AI_SERVICE_URL: http://ai-service.platform.svc.cluster.local:8082
 
 secrets:
