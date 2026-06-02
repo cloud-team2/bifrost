@@ -97,7 +97,7 @@ kubectl exec -n platform-kafka platform-kafka-kafka-0 -- \
 | PostgreSQL | `cdc.postgres.<schema>.<table>` | `cdc.postgres.public.users` |
 | MariaDB | `cdc.mariadb.<database>.<table>` | `cdc.mariadb.testdb.orders` |
 
-> **플랫폼(operations-backend)이 프로비저닝하는 토픽**은 워크스페이스 격리를 위해 `cdc.table.{projectKey}.{dbName}.{schema}.{table}` 규칙을 따른다([ADR 0002](../adr/0002-multi-tenancy-model.md), [design provisioning](../design/backend-springboot.md)). 위 단순 prefix는 로컬 검증용이다.
+> **플랫폼(operations-backend)이 프로비저닝하는 토픽**은 워크스페이스 격리를 위해 `cdc.table.{projectKey}.{dbName}.{schema}.{table}` 규칙을 따른다([ADR 0002](../adr/0002-multi-tenancy-model.md), [design provisioning](../design/backend-springboot/provisioning.md#2-provisioning)). 위 단순 prefix는 로컬 검증용이다.
 
 ### Debezium 커넥터 관리
 
@@ -225,7 +225,7 @@ EKS (ap-northeast-2)
     ├── platform-kafka-entity-operator
     │   ├── topic-operator           # KafkaTopic CRD 처리
     │   └── user-operator            # KafkaUser CRD 처리
-    ├── platform-connect-connect-0/1 # Kafka Connect (Debezium 3.5.1)
+    ├── platform-connect-connect-0   # Kafka Connect (현재 replicas 1, 목표 2; Debezium)
     │   ├── debezium-postgres        # PostgreSQL CDC 커넥터
     │   └── debezium-mariadb         # MariaDB CDC 커넥터
 

@@ -4,7 +4,7 @@
 
 ## 역할 개요
 
-> (주)/(부)·주차별 투입 인원은 가용 인원과 MVP 우선순위에 맞춰 매주 배정한다. 트랙 간 계약(인터페이스·스키마)을 먼저 고정하면 Spring Boot 두 트랙, FastAPI 두 트랙이 각각 mock/stub으로 병렬 진행된다. (MCP는 [v1 스코프 제외](../design/backend-fastapi.md#5-mcp-decision).)
+> (주)/(부)·주차별 투입 인원은 가용 인원과 MVP 우선순위에 맞춰 매주 배정한다. 트랙 간 계약(인터페이스·스키마)을 먼저 고정하면 Spring Boot 두 트랙, FastAPI 두 트랙이 각각 mock/stub으로 병렬 진행된다. (MCP는 [v1 스코프 제외](../design/backend-fastapi/tool-catalog.md#5-mcp-decision).)
 
 | 담당 영역 | 담당(주) | 담당(부) |
 | --- | --- | --- |

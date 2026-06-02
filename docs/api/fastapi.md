@@ -1,8 +1,8 @@
 # FastAPI Agent Server — API 명세
 
-> [DETAILS.md](../design/backend-fastapi.md)에서 분리한, Frontend가 AI 장애대응 화면에서 호출하는 FastAPI API 레퍼런스다. 요약은 [README.md](../design/backend-fastapi.md). 워크스페이스·DB·파이프라인 CRUD·모니터링 등 플랫폼 조회/관리 API는 [Spring Boot api.md](./springboot.md)가 제공한다.
+> [DETAILS.md](../design/backend-fastapi/overview.md)에서 분리한, Frontend가 AI 장애대응 화면에서 호출하는 FastAPI API 레퍼런스다. 요약은 [README.md](../design/backend-fastapi/overview.md). 워크스페이스·DB·파이프라인 CRUD·모니터링 등 플랫폼 조회/관리 API는 [Spring Boot api.md](./springboot.md)가 제공한다.
 >
-> **섹션 참조 규칙**: 본문의 `§N(...)`은 별도 명시(이 문서의 §N)가 없으면 [DETAILS.md](../design/backend-fastapi.md)의 섹션(Tool Catalog·Workflow Control·Streaming Events 등)을 가리킨다.
+> **섹션 참조 규칙**: 본문의 `§N(...)`은 별도 명시(이 문서의 §N)가 없으면 [DETAILS.md](../design/backend-fastapi/overview.md)의 섹션(Tool Catalog·Workflow Control·Streaming Events 등)을 가리킨다.
 
 ---
 
@@ -12,7 +12,7 @@
 
 FastAPI API는 Agent run을 시작하고, 진행 상태를 streaming하며, 승인/거절 입력과 최종 report 조회를 제공한다. Kubernetes, Kafka, Prometheus 같은 runtime resource는 직접 제어하지 않는다.
 
-Spring Boot 내부 운영 API는 [Spring Boot DETAILS](../design/backend-springboot.md)를 기준으로 한다.
+Spring Boot 내부 운영 API는 [Spring Boot DETAILS](../design/backend-springboot/overview.md)를 기준으로 한다.
 
 ### 2. 공통 규칙
 
@@ -229,7 +229,7 @@ event: report_preview_available
 data: {"run_id":"run_001","root_cause_id":"SOURCE_DB_CONNECTION_TIMEOUT","confidence":0.82,"verified":false}
 ```
 
-전체 event 종류는 [DETAILS §16](../design/backend-fastapi.md#16-contract-streaming-events)를 따른다.
+전체 event 종류는 [DETAILS §16](../design/backend-fastapi/contracts.md#16-contract-streaming-events)를 따른다.
 
 ### 8. State / Timeline API
 
@@ -349,7 +349,7 @@ Report는 Verifier가 `approved_for_final_response=true`로 승인한 내용만 
 
 ### 14. Incident / Alert (소유권)
 
-incident·alert의 **저장과 목록/상세 조회는 Spring Boot 플랫폼 API**가 담당한다(메타데이터 DB의 `incident`/`event` 테이블 — [Spring Boot DETAILS §4 Data Model](../design/backend-springboot.md#4-data-model), [Spring Boot api.md Part A](./springboot.md)). Frontend의 AlertsView 목록도 Spring Boot를 호출한다.
+incident·alert의 **저장과 목록/상세 조회는 Spring Boot 플랫폼 API**가 담당한다(메타데이터 DB의 `incident`/`event` 테이블 — [Spring Boot DETAILS §4 Data Model](../design/backend-springboot/data-model.md#4-data-model), [Spring Boot api.md Part A](./springboot.md)). Frontend의 AlertsView 목록도 Spring Boot를 호출한다.
 
 FastAPI는 그 incident를 **분석/대응**하는 역할만 하며, 진입점은 §6의 `POST /api/v1/agent/incidents/{incident_id}/analyze` 하나다(여기서 중복 정의하지 않는다).
 

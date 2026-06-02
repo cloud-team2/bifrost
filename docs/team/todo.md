@@ -13,9 +13,9 @@
 | --- | --- |
 | [기능명세서](../spec.md) | FR-001~005, FR-013~018, FR-019, FR-022/025/026, 부록 B 상태값 |
 | [springboot/api.md](../api/springboot.md) | A.0 공통 응답, A.1 auth, A.2 workspace, A.3 database, A.4 pipeline, A.8 SSE, Part B `/internal/ops` |
-| [springboot/DETAILS.md](../design/backend-springboot.md) | §2 Provisioning, §3 Database Registry, §4 Data Model, Evidence/Audit |
+| [springboot/](../design/backend-springboot/overview.md) | §2 Provisioning, §3 Database Registry, §4 Data Model, Evidence/Audit |
 | [infra/DETAILS.md](../design/infra.md) | Kafka Connect 목표 구조, KafkaConnector, KafkaUser, 배포 순서 |
-| [fastapi/DETAILS.md](../design/backend-fastapi.md) | Spring `/internal/ops` read tool 계약을 잡을 때만 참조 |
+| [fastapi/](../design/backend-fastapi/overview.md) | Spring `/internal/ops` read tool 계약을 잡을 때만 참조 |
 
 ## 배정 원칙
 
@@ -62,9 +62,9 @@
 - 정재환: DB API 누락 정리, source/sink seed data와 smoke command 준비, Agent read tool용 Spring 내부 API 계약 정리.
 - 백강민: mock/real provisioner 스왑, KafkaConnector 생성, Watcher -> `PipelineStatusService` 연결, 금요일 부재 전 잔여 이슈/운영 방법을 정재환에게 인계.
 - 김연수: Agent 쪽 로직에 문제 있는지 확인. Tool Client Registry, State, diagnose-only workflow, SSE progress event, Spring `/internal/ops` client 경계가 설계와 맞는지 검토하고 이슈를 정리.
-- 김연수: **루프 가드 중앙 집행 검증** — 전역 step(`MAX_STEPS`=24)·revision·fail·gap·scope·revise_action 상한이 `run` namespace 카운터로 Supervisor 한 곳에서 집행되는지, 어떤 분기도 가드 검사를 우회하지 않는지 확인([fastapi DETAILS §15.5.1](../design/backend-fastapi.md#51-루프-방지와-종료-보장)).
+- 김연수: **루프 가드 중앙 집행 검증** — 전역 step(`MAX_STEPS`=24)·revision·fail·gap·scope·revise_action 상한이 `run` namespace 카운터로 Supervisor 한 곳에서 집행되는지, 어떤 분기도 가드 검사를 우회하지 않는지 확인([fastapi DETAILS §15.5.1](../design/backend-fastapi/contracts.md#51-루프-방지와-종료-보장)).
 - 김연수: **fail 경로 캡 확인** — `Verifier fail → Planner`가 `MAX_FAIL_LOOPS`로 막히는지(과거 무제한 되돌림 여부) 점검.
-- 김연수: **latency 보강 검토** — Retrieval 독립 read tool 병렬 실행, 부분 결과 스트리밍(`report_preview_available`/`partial_result`), stage별 timeout이 설계대로 들어가는지 확인([fastapi DETAILS §15.4.2](../design/backend-fastapi.md#42-지연-최소화latency-원칙)).
+- 김연수: **latency 보강 검토** — Retrieval 독립 read tool 병렬 실행, 부분 결과 스트리밍(`report_preview_available`/`partial_result`), stage별 timeout이 설계대로 들어가는지 확인([fastapi DETAILS §15.4.2](../design/backend-fastapi/contracts.md#42-지연-최소화latency-원칙)).
 
 완료 기준:
 - mock 기준 EDA/CDC 생성 E2E 성공.
@@ -83,7 +83,7 @@
 참조:
 - [기능명세서](../spec.md): FR-013~018, 부록 B.3
 - [springboot/api.md](../api/springboot.md): A.3 Database, Part B 공통 response/error
-- [springboot/DETAILS.md](../design/backend-springboot.md): §3 Database Registry, §4 Data Model의 `database`
+- [springboot/](../design/backend-springboot/overview.md): §3 Database Registry, §4 Data Model의 `database`
 
 작업:
 - [ ] `V2__database.sql` 작성 (교차 FK 미선언 — `database` 테이블만 생성, `pipeline`→`database` FK는 권세빈 `V4__fk_constraints.sql`로 위임)
@@ -123,7 +123,7 @@
 참조:
 - [기능명세서](../spec.md): FR-004, FR-005, FR-008, 부록 B.2
 - [springboot/api.md](../api/springboot.md): A.4 Pipeline, Part B §14 Kafka Connect, §17 Strimzi
-- [springboot/DETAILS.md](../design/backend-springboot.md): §2 Provisioning
+- [springboot/](../design/backend-springboot/overview.md): §2 Provisioning
 - [infra/DETAILS.md](../design/infra.md): Kafka Connect 목표 구조
 
 작업:
@@ -160,7 +160,7 @@
 참조:
 - [기능명세서](../spec.md): FR-001~005, FR-019~021, 부록 B.1/B.5/B.6
 - [springboot/api.md](../api/springboot.md): A.0, A.1, A.2, A.4, A.6, A.7, A.8, Part B 공통 규칙
-- [springboot/DETAILS.md](../design/backend-springboot.md): §1 Server Design, §2 Provisioning interface, §4 Data Model
+- [springboot/](../design/backend-springboot/overview.md): §1 Server Design, §2 Provisioning interface, §4 Data Model
 
 작업:
 - [ ] Spring package skeleton 정리

@@ -5,7 +5,7 @@
 > 버전: v1.0
 > 액터: **사용자** (v1은 단일 콘솔. 구체 액터 구분·시나리오는 추후 결정하며, 본 문서는 일단 "사용자"로 통일한다)
 >
-> **이 문서는 FR 카탈로그와 부록 B(상태값·임계값·이벤트→인시던트 규칙)의 단일 출처다.** 설계 문서(`overview.md`, `backend/**`, `frontend/**`)가 인용하는 "기능명세서 부록 B"·"FR-xxx"는 이 파일을 가리킨다. 상태값·임계값을 다른 문서에서 중복 정의하지 않는다.
+> **이 문서는 FR 카탈로그와 부록 B(상태값·임계값·이벤트→인시던트 규칙)의 단일 출처다.** 설계 문서([README](./README.md), [design/backend-springboot/](./design/backend-springboot/overview.md), [design/backend-fastapi/](./design/backend-fastapi/overview.md), [design/frontend.md](./design/frontend.md))가 인용하는 "기능명세서 부록 B"·"FR-xxx"는 이 파일을 가리킨다. 상태값·임계값을 다른 문서에서 중복 정의하지 않는다.
 
 ---
 
@@ -90,7 +90,7 @@
 - **사전 조건**: Pipeline `active` 또는 `lag`.
 - **기본 흐름**: 1) Overview 탭 → 2) 4개 지표 카드 → 3) Produce/Consume Rate 차트 → 4) Consumer Lag ≥ 5,000 → amber 강조.
 - **예외 흐름**: ① `paused` → 지표 0 ② 데이터 없음 → 빈 차트.
-- **비고**: Consumer Lag 임계값 5,000 msg (부록 B.1).
+- **비고**: Consumer Lag 임계값 5,000 msg (부록 B.1). EDA는 외부 구독자만 소비하므로 lag 상태/인시던트는 **CDC sink consumer group에만** 적용한다(B.1).
 
 ### FR-007 — Consumer 랙 모니터링
 - **기능 설명**: Consumer 그룹별 총 랙과 파티션별 Current/Log End Offset·Lag 드릴다운.
@@ -259,9 +259,9 @@
 | Error Rate > 2% | CRITICAL | ERROR | Pipeline `error` 전이 |
 | Pipeline `creating` 30초 초과 | WARNING | WARN | Connector 배포 지연 |
 
-**구현**: Consumer lag = `ListOffsets endOffset − OffsetFetch committedOffset` · Connector 상태 = Connect REST `GET /connectors/{name}/status` `tasks[].state` · Error Rate = JMX `source-record-poll-rate`/`source-record-write-rate`.
+**구현**: Consumer lag = `ListOffsets endOffset − OffsetFetch committedOffset` · Connector 상태 = Connect REST `GET /connectors/{name}/status` `tasks[].state` · Error Rate = 처리량 대비 실패/누락 비율(예: Source `(poll-write)/poll`). 정확한 JMX 지표·산식은 구현 시 확정한다(현 `poll/write` 단순 비율 표기는 정의가 모호해 보정 대상).
 
-> **EDA(fan_out) vs CDC(direct)의 lag 적용 범위**: lag 기반 상태(`lag`)와 lag 인시던트는 Bifrost가 컨슈머를 소유하는 **CDC(JDBC Sink consumer group)** 에만 적용한다. EDA는 Sink가 없어 토픽을 외부 구독자만 소비하므로, EDA 파이프라인 상태는 **Source Connector state로만** 산정하고(`creating`/`active`/`error`/`paused`), 외부 consumer group lag으로 `lag` 전이나 인시던트를 만들지 않는다(외부 컨슈머는 Bifrost 직접 복구 대상이 아님 — [overview](./README.md) §6). EDA 토픽의 외부 구독자 lag은 참고 지표로만 노출한다.
+> **EDA(fan_out) vs CDC(direct)의 lag 적용 범위**: lag 기반 상태(`lag`)와 lag 인시던트는 Bifrost가 컨슈머를 소유하는 **CDC(JDBC Sink consumer group)** 에만 적용한다. EDA는 Sink가 없어 토픽을 외부 구독자만 소비하므로, EDA 파이프라인 상태는 **Source Connector state로만** 산정하고(`creating`/`active`/`error`/`paused`), 외부 consumer group lag으로 `lag` 전이나 인시던트를 만들지 않는다(외부 컨슈머는 Bifrost 직접 복구 대상이 아님). EDA 토픽의 외부 구독자 lag은 참고 지표로만 노출한다.
 
 ### B.2 Connector 인스턴스 상태값
 **데이터 소스**: Kafka Connect REST `GET /connectors/{name}/status`
@@ -279,7 +279,7 @@
 | Poll Batch 최대 처리 시간 | JMX `connector-task-metrics` `batch-size-max` | > 500ms | WARNING |
 | Retry 누적 횟수 | Connect REST 오류 이력 | > 50회/시간 | WARNING |
 | 자동 재시작 횟수 | Bifrost 내부 이벤트 로그 | 1시간 내 3회 | CRITICAL |
-| Error Rate | JMX poll/write rate | > 0.5% WARNING, > 2% CRITICAL | |
+| Error Rate | JMX 실패/누락율((poll-write)/poll 등, 구현 시 확정) | > 0.5% WARNING, > 2% CRITICAL | |
 
 ### B.3 Database(Node) 상태값
 **데이터 소스**: DB 직접 연결 테스트, `pg_replication_slots` / `SHOW SLAVE STATUS`
@@ -343,6 +343,8 @@
 | Error Rate > 0.5% / > 2% | WARN / ERROR | – / → `error` | WARNING / CRITICAL |
 | Connector 자동 재시작 1회 / 1시간 3회 | WARN / ERROR | – / → `error` | 없음 / CRITICAL |
 
+> Consumer lag 행(`≥ 5,000`/`≥ 50,000`)과 `PARTIALLY_FAILED`의 `lag` 전이는 Bifrost가 컨슈머를 소유하는 **CDC(JDBC Sink) consumer group**에만 적용한다. EDA(fan_out)는 Source Connector state로만 상태를 산정하고 외부 구독자 lag으로 인시던트를 만들지 않는다(B.1).
+
 #### B.6.2 Database 이벤트 (ping 5초, lag 30초)
 | 트리거 | 레벨 | DB 상태 | 인시던트 |
 |---|---|---|---|
@@ -381,7 +383,7 @@
 | `triggerEventId` | Incident | string | 인시던트를 최초 생성한 이벤트 ID(최초 감지) |
 | `incidentId` | Event | string? | 이벤트가 연결된 인시던트 ID(없으면 null). **그룹 멤버십의 단일 출처** |
 
-그룹에 묶인 이벤트는 별도 배열(`relatedEventIds`)로 중복 저장하지 않고 **`event.incidentId`로 역참조**해 구하며, 관련 이벤트 타임라인은 `occurredAt` 순으로 정렬하고 `triggerEventId`를 "최초 감지"로 강조한다. (배열은 `incidentId`와 같은 정보를 이중 저장해 불일치·무결성 문제가 있어 두지 않는다 — 데이터 모델 정합: [Spring Boot DETAILS §3.7](./design/backend-springboot.md#37-incident-fr-021-fr-026).)
+그룹에 묶인 이벤트는 별도 배열(`relatedEventIds`)로 중복 저장하지 않고 **`event.incidentId`로 역참조**해 구하며, 관련 이벤트 타임라인은 `occurredAt` 순으로 정렬하고 `triggerEventId`를 "최초 감지"로 강조한다. (배열은 `incidentId`와 같은 정보를 이중 저장해 불일치·무결성 문제가 있어 두지 않는다 — 데이터 모델 정합: [Spring Boot DETAILS §3.7](./design/backend-springboot/data-model.md#37-incident-fr-021-fr-026).)
 
 **생성 조건**
 | 이벤트 레벨 | 조건 | 결과 | 심각도 |
@@ -404,4 +406,4 @@
 | `investigating` | 사용자 확인·조치 중 |
 | `resolved` | 원인 해소 확인됨(사용자 수동 전이) |
 
-**인시던트 심각도**: `WARNING` / `CRITICAL` 2단계. (에이전트 내부 분석은 동일 2단계를 사용하며, 정책 에스컬레이션 시에만 가산한다 — `backend/fastapi/DETAILS.md` §12.6 참조.)
+**인시던트 심각도**: `WARNING` / `CRITICAL` 2단계. (에이전트 내부 분석은 동일 2단계를 사용하며, 정책 에스컬레이션 시에만 가산한다 — [design/backend-fastapi/catalogs.md §12.6 Severity 보정](./design/backend-fastapi/catalogs.md#6-severity-보정) 참조.)

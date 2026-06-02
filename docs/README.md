@@ -12,8 +12,8 @@
 | 시나리오 | [scenario.md](./scenario.md) | 시연 Critical Path, 통합 시나리오, 완료 정의(DoD), Sprint 로드맵 |
 | 설계 | [design/infra.md](./design/infra.md) | 인프라(단일 EKS·Strimzi·Harbor·CI/CD·Observability) |
 | 설계 | [design/frontend.md](./design/frontend.md) | 프론트엔드 화면(FR)별 백엔드 연동 |
-| 설계 | [design/backend-springboot.md](./design/backend-springboot.md) | Spring Boot Operations Backend(플랫폼 본체·운영 집행) |
-| 설계 | [design/backend-fastapi.md](./design/backend-fastapi.md) | FastAPI Agent Server(AI 장애대응 workflow) |
+| 설계 | [design/backend-springboot/](./design/backend-springboot/overview.md) | Spring Boot Operations Backend(플랫폼 본체·운영 집행) |
+| 설계 | [design/backend-fastapi/](./design/backend-fastapi/overview.md) | FastAPI Agent Server(AI 장애대응 workflow) |
 | API | [api/springboot.md](./api/springboot.md) | 플랫폼 `/api/v1` + 내부 운영 `/internal/ops` |
 | API | [api/fastapi.md](./api/fastapi.md) | Agent `/api/v1/agent…` |
 | 결정 | [adr/](./adr/) | 아키텍처 결정 기록(ADR) |

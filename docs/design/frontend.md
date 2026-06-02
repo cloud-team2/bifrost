@@ -64,8 +64,8 @@ incident·alert·모니터링 데이터의 source of truth는 Spring Boot이고,
 
 이 문서는 각 화면(FR)이 어떤 백엔드 API와 SSE 이벤트에 연결되는지 정의한다. 화면 컴포넌트/스타일은 mock 스케치를 따르고, 여기서는 호출 계약만 다룬다.
 
-- 플랫폼/모니터링 API: Spring Boot Operations Backend ([Spring Boot DETAILS](./backend-springboot.md))
-- AI Agent API: FastAPI Agent Server ([FastAPI DETAILS](./backend-fastapi.md))
+- 플랫폼/모니터링 API: Spring Boot Operations Backend ([Spring Boot DETAILS](./backend-springboot/overview.md))
+- AI Agent API: FastAPI Agent Server ([FastAPI DETAILS](./backend-fastapi/overview.md))
 
 두 서비스는 별도 호스트다. 게이트웨이/BFF는 **경로 그룹 소유권**으로 라우팅한다(단순 "agent vs 나머지" 분기가 아님).
 
@@ -97,7 +97,7 @@ WorkspaceListView
   선택 시 currentWorkspace 저장 -> PipelinesView
 ```
 
-워크스페이스 생성은 Kafka 리소스(KafkaUser/ACL) 프로비저닝을 유발한다 — [Spring Boot DETAILS §2](./backend-springboot.md).
+워크스페이스 생성은 Kafka 리소스(KafkaUser/ACL) 프로비저닝을 유발한다 — [Spring Boot DETAILS §2](./backend-springboot/provisioning.md#2-provisioning).
 
 ### 4. Database 등록·점검 (FR-013, FR-014, FR-015)
 
@@ -120,7 +120,7 @@ DatabaseDetail > 연결 준비도 (FR-015)
   화면: 요약 카드(준비 완료 / N개 주의) + 항목 토글(OK/WARNING/BLOCKED + hint)
 ```
 
-연결 테스트·암호화·CDC 점검 로직은 [Spring Boot DETAILS §3](./backend-springboot.md).
+연결 테스트·암호화·CDC 점검 로직은 [Spring Boot DETAILS §3](./backend-springboot/database-registry.md#3-database-registry).
 
 ### 5. Pipeline 생성·생명주기 (FR-004, FR-005)
 
@@ -140,7 +140,7 @@ PipelineDetail 헤더 (FR-005)
   DELETE .../pipelines/{id}       (확인 다이얼로그)
 ```
 
-화면은 Kafka Topic/파티션/오프셋을 노출하지 않는다(자동 처리). Connector CR 생성·watch는 [Spring Boot DETAILS §2](./backend-springboot.md).
+화면은 Kafka Topic/파티션/오프셋을 노출하지 않는다(자동 처리). Connector CR 생성·watch는 [Spring Boot DETAILS §2](./backend-springboot/provisioning.md#2-provisioning).
 
 ### 6. Pipeline 상세 탭 (FR-006 ~ FR-012)
 
@@ -190,7 +190,7 @@ BifrostAgentPanel (FR-022/025/026) — AI는 FastAPI
 | Spring Boot | `pipeline_status_changed` | 파이프라인 상태(creating/active/lag/error/paused) 갱신 |
 | Spring Boot | `connector_state_changed` | connector state watch 결과 (상세 토글용) |
 | Spring Boot | `incident_opened` / `incident_updated` | 사이드바 배지·알럿 |
-| FastAPI | `agent_started`/`agent_completed`/`tool_call_*`/`evidence_collected`/`report_preview_available`/`partial_result`/`approval_required`/`verification_completed`/`run_completed` | AI 진행 상태 + 부분 결과(검증 전 preview) ([FastAPI DETAILS §16](./backend-fastapi.md)) |
+| FastAPI | `agent_started`/`agent_completed`/`tool_call_*`/`evidence_collected`/`report_preview_available`/`partial_result`/`approval_required`/`verification_completed`/`run_completed` | AI 진행 상태 + 부분 결과(검증 전 preview) ([FastAPI DETAILS §16](./backend-fastapi/contracts.md#16-contract-streaming-events)) |
 
 플랫폼 SSE 구독 엔드포인트(예): `GET /api/v1/workspaces/{wsId}/events/stream`.
 
