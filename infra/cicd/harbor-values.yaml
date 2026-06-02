@@ -1,0 +1,44 @@
+expose:
+  type: clusterIP
+
+  tls:
+    enabled: false
+
+  clusterIP:
+    name: harbor
+    ports:
+      httpPort: 80
+
+externalURL: http://harbor.local
+
+harborAdminPassword: "admin!"
+
+persistence:
+  enabled: true
+  persistentVolumeClaim:
+    registry:
+      size: 50Gi
+    jobservice:
+      jobLog:
+        size: 5Gi
+    database:
+      size: 10Gi
+    redis:
+      size: 5Gi
+    trivy:
+      size: 10Gi
+
+portal:
+  replicas: 1
+
+core:
+  replicas: 1
+
+jobservice:
+  replicas: 1
+
+registry:
+  replicas: 1
+
+trivy:
+  enabled: true
