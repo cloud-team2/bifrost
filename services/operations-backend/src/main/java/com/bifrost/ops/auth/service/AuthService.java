@@ -66,9 +66,9 @@ public class AuthService {
         user.setPasswordHash(passwordEncoder.encode(req.password()));
 
         try {
-            workspace = workspaceRepository.save(workspace);
+            workspace = workspaceRepository.saveAndFlush(workspace);
             user.setTenantId(workspace.getId());
-            user = userRepository.save(user);
+            user = userRepository.saveAndFlush(user);
         } catch (DataIntegrityViolationException e) {
             throw mapRegistrationConflict(req, e);
         }
@@ -82,13 +82,14 @@ public class AuthService {
 
     private ApiException mapRegistrationConflict(RegisterRequest req, DataIntegrityViolationException e) {
         String detail = e.getMostSpecificCause() != null ? e.getMostSpecificCause().getMessage() : "";
-        if (detail.contains("email")) {
+        String normalized = detail.toLowerCase();
+        if (normalized.contains("email")) {
             return new ApiException(ErrorCode.EMAIL_ALREADY_USED, "이미 가입된 이메일");
         }
-        if (detail.contains("namespace")) {
+        if (normalized.contains("namespace")) {
             return new ApiException(ErrorCode.WORKSPACE_NAMESPACE_CONFLICT, "이미 사용 중인 namespace");
         }
-        if (detail.contains("name")) {
+        if (normalized.contains("name")) {
             return new ApiException(ErrorCode.WORKSPACE_NAME_CONFLICT, "이미 사용 중인 워크스페이스 이름");
         }
         log.warn("회원가입 중 unique 제약 충돌 — 매핑 실패: {}", detail);

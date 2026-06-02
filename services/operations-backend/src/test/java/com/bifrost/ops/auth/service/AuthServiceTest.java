@@ -72,9 +72,9 @@ class AuthServiceTest {
         UUID userId = UUID.randomUUID();
         stubAvailableRegistration(request);
         when(passwordEncoder.encode("password123")).thenReturn("encoded-password");
-        when(workspaceRepository.save(any(WorkspaceEntity.class)))
+        when(workspaceRepository.saveAndFlush(any(WorkspaceEntity.class)))
             .thenAnswer(invocation -> withWorkspaceId(invocation.getArgument(0), workspaceId));
-        when(userRepository.save(any(UserEntity.class)))
+        when(userRepository.saveAndFlush(any(UserEntity.class)))
             .thenAnswer(invocation -> withUserId(invocation.getArgument(0), userId));
         when(jwtService.issue(userId, workspaceId, "user@example.com")).thenReturn("access-token");
         when(jwtService.ttl()).thenReturn(Duration.ofHours(2));
@@ -88,13 +88,13 @@ class AuthServiceTest {
         assertThat(response.workspaceId()).isEqualTo(workspaceId);
 
         ArgumentCaptor<WorkspaceEntity> workspaceCaptor = ArgumentCaptor.forClass(WorkspaceEntity.class);
-        verify(workspaceRepository).save(workspaceCaptor.capture());
+        verify(workspaceRepository).saveAndFlush(workspaceCaptor.capture());
         assertThat(workspaceCaptor.getValue().getName()).isEqualTo("Team A");
         assertThat(workspaceCaptor.getValue().getNamespace()).isEqualTo("team-a");
         assertThat(workspaceCaptor.getValue().getStatus()).isEqualTo(WorkspaceEntity.Status.PROVISIONING);
 
         ArgumentCaptor<UserEntity> userCaptor = ArgumentCaptor.forClass(UserEntity.class);
-        verify(userRepository).save(userCaptor.capture());
+        verify(userRepository).saveAndFlush(userCaptor.capture());
         assertThat(userCaptor.getValue().getTenantId()).isEqualTo(workspaceId);
         assertThat(userCaptor.getValue().getEmail()).isEqualTo("user@example.com");
         assertThat(userCaptor.getValue().getPasswordHash()).isEqualTo("encoded-password");
@@ -140,9 +140,9 @@ class AuthServiceTest {
         UUID userId = UUID.randomUUID();
         stubAvailableRegistration(request);
         when(passwordEncoder.encode("password123")).thenReturn("encoded-password");
-        when(workspaceRepository.save(any(WorkspaceEntity.class)))
+        when(workspaceRepository.saveAndFlush(any(WorkspaceEntity.class)))
             .thenAnswer(invocation -> withWorkspaceId(invocation.getArgument(0), workspaceId));
-        when(userRepository.save(any(UserEntity.class)))
+        when(userRepository.saveAndFlush(any(UserEntity.class)))
             .thenAnswer(invocation -> withUserId(invocation.getArgument(0), userId));
         doThrow(new UnsupportedOperationException("not implemented"))
             .when(tenantProvisioner).provision(any(TenantProvisionRequest.class));
@@ -153,8 +153,8 @@ class AuthServiceTest {
 
         assertThat(response.accessToken()).isEqualTo("access-token");
         assertThat(response.expiresInSeconds()).isEqualTo(1800);
-        verify(workspaceRepository).save(any(WorkspaceEntity.class));
-        verify(userRepository).save(any(UserEntity.class));
+        verify(workspaceRepository).saveAndFlush(any(WorkspaceEntity.class));
+        verify(userRepository).saveAndFlush(any(UserEntity.class));
         verify(tenantProvisioner).provision(any(TenantProvisionRequest.class));
     }
 
