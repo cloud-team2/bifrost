@@ -34,6 +34,7 @@ flowchart LR
 | DB 자격증명 | **secretRef만** 메타DB 저장(외부 Secret Store). 평문·암호문 저장·로그 금지. 생성 시점에만 `secretStore.resolve()` |
 | Connect↔Kafka | scram listener `...:9094`(SCRAM-SHA-512, TLS). 워크스페이스 격리는 connector `producer/consumer.override.sasl.*`에 KafkaUser 자격증명 주입 |
 | 상태 감지 | Fabric8 Watcher로 KafkaConnector CR state → pipeline 갱신 → SSE. 일부 task FAILED는 `PARTIALLY_FAILED`(pipeline `lag`) |
+| 관측 수집 | **상태**=Watcher(event) / **지표·로그·트레이스**=폴링(Kafka Admin·Connect REST·JMX)+Prometheus/Loki/Tempo 질의. Prometheus·Grafana·Kafka UI는 임베딩이 아니라 **별도 스택을 질의**([§1 §11.1](#1-server-design)) |
 | 신뢰 경계 | FastAPI가 Policy Guard 통과했어도 **실행 직전 재검증**. mutation은 approval/change ticket·idempotency 없이 금지. 모든 요청 audit |
 | Approval SoT | **Spring Boot가 원본**. FastAPI는 facade |
 | 상태값·임계값 | [기능명세서 부록 B](../spec.md#부록-b--리소스-상태값-정의-및-자동-기준-단일-출처)가 단일 출처(중복 정의 금지) |
@@ -335,6 +336,24 @@ Audit event는 성공, 실패, 차단을 모두 기록한다.
 | Schema Registry Client | schema subject/version/change |
 
 Adapter는 controller에서 직접 호출하지 않고 operation service를 통해 호출한다.
+
+### 11.1 관측·모니터링 데이터 수집 (상태 vs 지표)
+
+모니터링은 단일 메커니즘이 아니다. **상태(state)와 지표(metric)를 다른 경로로** 모은다 — Watcher만으로는 부족하고(상태 전이 전용), 지표·로그·트레이스는 폴링/질의로 가져온다. 데이터 소스·주기의 단일 출처는 [기능명세서 부록 B](../spec.md#부록-b--리소스-상태값-정의-및-자동-기준-단일-출처)다.
+
+| 경로 | 방식 | 수집 대상 | 소스 / 주기 |
+| --- | --- | --- | --- |
+| Watcher (Fabric8) | watch(event) | connector/pipeline **상태 전이** | KafkaConnector CR `.status` → `PipelineStatusService` → SSE ([§2 Provisioning §6](#2-provisioning)) |
+| 폴링 수집기 | 주기 polling | consumer lag·offset·그룹 상태, connector task, worker JVM, DB 상태 | Kafka AdminClient(30s)·Connect REST(10s)·Jolokia JMX(60s)·DB ping(5s) (부록 B.1/B.2/B.4/B.6) |
+| 쿼리 어댑터 | on-demand | metric·log·trace | Prometheus·Loki·Tempo HTTP client ([§11](#11-resource-adapter)) |
+
+수집 결과의 쓰임: (a) 임계 초과 시 `event`/`incident` **자동 생성**([부록 B.6/B.7](../spec.md#b6-이벤트-카탈로그)) + SSE, (b) 플랫폼 API(`/api/v1/.../metrics`·`/consumer-groups`·`/connectors`·`/cluster` 등)로 **프론트 시각화**(FR-006~009·017·023, [frontend §6/§7](./frontend.md)), (c) Agent의 `/internal/ops` read tool 근거.
+
+**임베딩하지 않는 것** (별도 스택을 두고 Spring이 질의/소비):
+
+- **Prometheus·Loki·Tempo**: `monitoring` 네임스페이스의 **별도 스택**([infra §6.7](./infra.md#2-리소스-계획현황-resource-plan)). Spring은 HTTP client로 **질의만** 하고, 자신의 지표는 `/actuator/prometheus`로 노출해 scrape 대상이 된다.
+- **Grafana**: 운영자용 대시보드이며 제품 화면이 아니다. 사용자 화면은 프론트가 위 플랫폼 API로 구성한다.
+- **Kafka UI**: 제품에 포함하지 않는다(로컬 `docker-compose` 개발 편의 도구 한정 — [guide](../guides/getting-started-infra.md)). "Connect REST를 사용자에게 직접 노출하지 않는다"는 원칙과 일치한다.
 
 ### 12. 보안 원칙
 
