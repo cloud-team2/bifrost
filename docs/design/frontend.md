@@ -128,8 +128,8 @@ DatabaseDetail > 연결 준비도 (FR-015)
 CreatePipelineModal (마법사)
   Step1 연결 방식: EDA(fan-out) | CDC(direct)
   Step2 Source DB 선택   GET .../databases   # role 필터 미사용 — CDC-ready DB 전체가 소스 후보(신규 등록 DB 포함)
-  Step3 (CDC) Sink DB 선택
-  Step4 테이블 선택      GET .../databases/{dbId}/cdc-readiness  (blocked면 선택 불가)
+  Step3 테이블 선택      GET .../databases/{dbId}/cdc-readiness  (blocked면 선택 불가)
+  Step4 (CDC) Sink DB 선택
   Step5 이름 입력 -> POST /api/v1/workspaces/{wsId}/pipelines
        {name, pattern, sourceDbId, sinkDbId?, schema, table}
     -> {pipeline_id, status:"creating"}
