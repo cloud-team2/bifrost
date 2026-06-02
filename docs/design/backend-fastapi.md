@@ -157,7 +157,7 @@ Agent는 장애 원인을 자유롭게 생성하지 않는다. 사전에 정의�
 | streaming event | [§16 Streaming Events](#16-contract-streaming-events) |
 | output schema | [§17 Output Schemas](#17-contract-output-schemas) |
 
-Frontend-facing Agent API는 §3(API Reference), Spring Boot 내부 운영 API·실행 backend는 [Spring Boot DETAILS](./backend-springboot.md), tool 목록과 매핑은 §4(Tool Catalog)를 기준으로 한다.
+Frontend-facing Agent API는 [§3 API Reference](../api/fastapi.md), Spring Boot 내부 운영 API·실행 backend는 [Spring Boot DETAILS](./backend-springboot.md), tool 목록과 매핑은 [§4 Tool Catalog](#4-tool-catalog)를 기준으로 한다.
 
 ### 2. 적용 범위
 
