@@ -45,9 +45,9 @@ class ErrorCodeTest {
     }
 
     @Test
-    void ErrorResponse_of는_숫자_코드를_그대로_전달한다() {
+    void ErrorResponse_of는_코드를_문자열로_전달한다() {
         ErrorResponse r = ErrorResponse.of(ErrorCode.EMAIL_ALREADY_USED, "이미 가입된 이메일");
-        assertThat(r.code()).isEqualTo(10001);
+        assertThat(r.code()).isEqualTo("10001");
         assertThat(r.message()).isEqualTo("이미 가입된 이메일");
         assertThat(r.details()).isEmpty();
     }

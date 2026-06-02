@@ -8,7 +8,7 @@ Bifrost API가 반환하는 에러 코드의 단일 출처. 코드 추가/변경
 
 ```json
 {
-  "code": 10001,
+  "code": "10001",
   "message": "이미 가입된 이메일",
   "details": [
     { "field": "email", "reason": "must be a well-formed email address" }
@@ -16,7 +16,7 @@ Bifrost API가 반환하는 에러 코드의 단일 출처. 코드 추가/변경
 }
 ```
 
-- `code` (number): 본 문서에 정의된 비즈니스 에러 코드 번호
+- `code` (string): 본 문서에 정의된 비즈니스 에러 코드 번호 (문자열로 직렬화)
 - `message` (string): 한국어 사용자 메시지 (그대로 노출 가능)
 - `details` (array, optional): 필드별 validation 오류
 
