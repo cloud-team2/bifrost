@@ -92,12 +92,12 @@ erDiagram
 
 Spring Boot Operations Backend는 Bifrost의 **플랫폼 본체이자 실제 운영 제어 계층**이다. 두 가지 책임을 가진다.
 
-1. **플랫폼 기능(frontend-facing)**: 워크스페이스·Database·Pipeline CRUD, Kafka 리소스 프로비저닝(§2(Provisioning)), DB 등록·CDC 점검(§3(Database Registry)), 모니터링·이벤트 조회, 메타데이터 저장(§4(Data Model)).
+1. **플랫폼 기능(frontend-facing)**: 워크스페이스·Database·Pipeline CRUD, Kafka 리소스 프로비저닝([§2 Provisioning](#2-provisioning)), DB 등록·CDC 점검([§3 Database Registry](#3-database-registry)), 모니터링·이벤트 조회, 메타데이터 저장([§4 Data Model](#4-data-model)).
 2. **운영 조치 실행(agent-facing)**: FastAPI Agent가 만든 판단과 action 후보를 받아 정책·권한·승인·감사·idempotency를 검증한 뒤 Kubernetes, Kafka, Kafka Connect, Prometheus, Strimzi 리소스에 접근한다.
 
 두 경로 모두 최종적으로 같은 정책·감사·프로비저닝 계층을 공유한다.
 
-전체 backend 구조는 ../README.md를 기준으로 하고, 이 문서는 Spring Boot 서버 자체만 다룬다. API 상세는 §5(API Reference), FastAPI 설계는 [FastAPI DETAILS](./backend-fastapi.md)를 따른다.
+전체 backend 구조는 ../README.md를 기준으로 하고, 이 문서는 Spring Boot 서버 자체만 다룬다. API 상세는 [§5 API Reference](../api/springboot.md), FastAPI 설계는 [FastAPI DETAILS](./backend-fastapi.md)를 따른다.
 
 ### 2. 책임
 
@@ -451,7 +451,7 @@ project A 생성
 
 KafkaUser 단위 = 프로젝트(워크스페이스). 파이프라인을 추가해도 재생성하지 않는다. 프로젝트 간 토픽 접근은 `cdc.table.{projectKey}.*` ACL로 격리된다.
 
-> **자격증명 구분**: KafkaUser Secret은 **Kafka 접속용(SASL/SCRAM)** 이다. source/sink **DB 자격증명**은 별개로 **secretRef(K8s Secret/Secrets Manager)** 로 보관하고, Connector 생성 시 Secret을 참조(주입)한다. DB에는 자격증명 평문/암호문을 저장하지 않는다(§3(Database Registry)).
+> **자격증명 구분**: KafkaUser Secret은 **Kafka 접속용(SASL/SCRAM)** 이다. source/sink **DB 자격증명**은 별개로 **secretRef(K8s Secret/Secrets Manager)** 로 보관하고, Connector 생성 시 Secret을 참조(주입)한다. DB에는 자격증명 평문/암호문을 저장하지 않는다([§3 Database Registry](#3-database-registry)).
 
 > **Connect↔Kafka 인증**: KafkaConnect 클러스터는 `scram` listener(`...:9094`, SCRAM-SHA-512, TLS)로 Kafka에 접속한다. plain 9092는 운영 기준 비표준이므로 사용하지 않는다([Infra DETAILS](./infra.md) §4.2). 워크스페이스별 토픽 격리는 KafkaConnect 클러스터 단일 ID로는 강제되지 않으므로, KafkaConnector CR의 `producer.override.sasl.*`/`consumer.override.sasl.*`에 해당 워크스페이스 KafkaUser(`proj-{project_key}-user`)의 SCRAM 자격증명을 주입해 ACL(`cdc.table.{project_key}.*`)이 실제로 적용되게 한다.
 
@@ -539,7 +539,7 @@ kubernetesClient.resources(KafkaConnector.class)
 - 모든 K8s/Connect 호출은 Spring Boot의 제한된 ServiceAccount로만 수행(Agent는 credential 없음).
 - 토픽 delete, 임의 manifest apply, pod exec는 제공하지 않는다.
 - connector config 변경은 변경관리(change management) 대상.
-- 프로비저닝 동작도 audit event로 남긴다(§1(Server Design) §10).
+- 프로비저닝 동작도 audit event로 남긴다([§1 Server Design](#1-server-design) §10).
 
 ---
 
@@ -686,7 +686,7 @@ CdcReadinessChecker checker = checkerRegistry.forEngine(db.getEngine());
 
 Spring Boot Operations Backend가 소유하는 **플랫폼 메타데이터 DB** 스키마를 정의한다. 워크스페이스·데이터베이스·파이프라인·커넥터·이벤트·인시던트·감사 기록을 저장한다.
 
-- 위치: `metadb` 네임스페이스의 PostgreSQL ([Infra DETAILS](./infra.md) §6.6).
+- 위치: `metadb` 네임스페이스의 PostgreSQL ([Infra DETAILS](./infra.md) [§6.6](./infra.md#66-bifrost-application)).
 - source/sink DB(고객 데이터)와 분리된 **운영 메타데이터** 저장소다. evidence 원문은 Evidence Store(별도)에 두고 여기에는 reference만 둔다.
 - DDL은 개념 스키마다. 실제 타입·인덱스·제약은 구현에서 확정한다.
 
