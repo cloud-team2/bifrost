@@ -20,7 +20,7 @@ data-orchestration-platform/
 └─ docker-compose.yml          로컬 개발 환경
 ```
 
-> Spring Boot는 단일 모놀리스(`operations-backend`)다. core/orchestrator 분리와 `common-dto`는 [ADR 0002](docs/adr/0002-monorepo-monolith.md)로 폐기·흡수되었다.
+> Spring Boot는 단일 모놀리스(`operations-backend`)다. core/orchestrator 분리와 `common-dto`는 [ADR 0004](docs/adr/0004-monorepo-monolith.md)로 폐기·흡수되었다.
 
 ## 서비스 목록
 

@@ -1,9 +1,9 @@
 # ADR 0003: 서비스 경계
 
-**Status**: Amended by [ADR 0002](./0002-monorepo-monolith.md) (2026-06-02)
+**Status**: Amended by [ADR 0004](./0004-monorepo-monolith.md) (2026-06-02)
 **Date**: 2026-05-15
 
-> ⚠️ [ADR 0002](./0002-monorepo-monolith.md)에 따라 `core-service` + `orchestrator-service`는 단일 모놀리스 `operations-backend`로 병합되었다. 아래 표/통신 항목을 그에 맞게 갱신했다.
+> ⚠️ [ADR 0004](./0004-monorepo-monolith.md)에 따라 `core-service` + `orchestrator-service`는 단일 모놀리스 `operations-backend`로 병합되었다. 아래 표/통신 항목을 그에 맞게 갱신했다.
 
 ## Decision
 

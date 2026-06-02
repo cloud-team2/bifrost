@@ -1,4 +1,4 @@
-# ADR 0002: 모노레포 + Spring Boot 모놀리스 채택
+# ADR 0004: 모노레포 + Spring Boot 모놀리스 채택
 
 **Status**: Accepted
 **Date**: 2026-06-02
