@@ -378,11 +378,10 @@
 **이벤트-인시던트 연결 모델**
 | 필드 | 위치 | 타입 | 설명 |
 |---|---|---|---|
-| `triggerEventId` | Incident | string | 인시던트를 최초 생성한 이벤트 ID |
-| `relatedEventIds` | Incident | string[] | 이후 그룹화된 이벤트 ID(시간순) |
-| `incidentId` | Event | string? | 이벤트가 연결된 인시던트 ID(없으면 null) |
+| `triggerEventId` | Incident | string | 인시던트를 최초 생성한 이벤트 ID(최초 감지) |
+| `incidentId` | Event | string? | 이벤트가 연결된 인시던트 ID(없으면 null). **그룹 멤버십의 단일 출처** |
 
-관련 이벤트 타임라인은 `[triggerEventId, ...relatedEventIds]` 순서로 표시하고 trigger를 "최초 감지"로 강조한다.
+그룹에 묶인 이벤트는 별도 배열(`relatedEventIds`)로 중복 저장하지 않고 **`event.incidentId`로 역참조**해 구하며, 관련 이벤트 타임라인은 `occurredAt` 순으로 정렬하고 `triggerEventId`를 "최초 감지"로 강조한다. (배열은 `incidentId`와 같은 정보를 이중 저장해 불일치·무결성 문제가 있어 두지 않는다 — 데이터 모델 정합: [Spring Boot DETAILS §3.7](./design/backend-springboot.md#37-incident-fr-021-fr-026).)
 
 **생성 조건**
 | 이벤트 레벨 | 조건 | 결과 | 심각도 |

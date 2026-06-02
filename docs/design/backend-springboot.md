@@ -40,6 +40,8 @@ flowchart LR
 
 ## 메타데이터 DB (metadb) — ERD
 
+**metadb란**: Bifrost 플랫폼의 **운영 메타데이터 DB**(`metadb` 네임스페이스의 PostgreSQL — [Infra](./infra.md)). 워크스페이스·Database·Pipeline·Connector·이벤트·인시던트·감사·evidence 참조를 저장한다. **고객 source/sink DB의 실제 데이터는 복제하지 않고**(메타데이터·지표·참조만), DB 자격증명은 `secret_ref`만 둔다(평문·암호문 금지), evidence 원문은 Evidence Store(별도)에 두고 reference만 둔다. 상세 스키마는 [§4 Data Model](#4-data-model).
+
 ```mermaid
 erDiagram
     app_user   ||--o{ project_member : "가입"
@@ -62,7 +64,11 @@ erDiagram
 
 ## 패키지 (com.bifrost.ops)
 
-`workspace · database(+cdc) · pipeline · provisioning · secret(secretRef 보관) · project(내부 ops scope/ownership) · policy · approval · changemanagement · idempotency · audit · evidence · operations(observability/kafka/k8s/strimzi/...) · adapters`
+**package-by-feature**: platform 도메인은 각자 `controller/service/repository/dto/entity`를 품고(응집), global은 `config`/`common`으로 분리, agent-facing은 표면이 근본적으로 달라 `internalops`로 별도 분리한다.
+
+`config(global) · common(envelope/error) · auth · workspace · database(+cdc/inspector) · pipeline · provisioning(port/dto/mock/impl·watcher) · secret · streaming · internalops(agent-facing 전용) · policy · approval · changemanagement · idempotency · audit · evidence · adapters(kubernetes/kafka/connect/prometheus/...)`
+
+> 각 platform 도메인(`workspace`/`database`/`pipeline`)은 내부에 `controller·service·repository·dto·entity`를 둔다. `internalops`는 여러 도메인을 가로지르고 인증·응답봉투·idempotency가 platform과 달라 한데 묶지 않는다. 상세는 [§5 패키지 구조](#5-패키지-구조).
 
 ## 더 읽기 → [DETAILS.md](#)
 
@@ -131,6 +137,8 @@ Spring Boot가 담당하지 않는다.
 
 Spring Boot는 FastAPI Agent의 판단을 신뢰하지 않는다. FastAPI가 이미 Policy Guard를 통과했다고 해도 Spring Boot는 실행 직전에 다시 검증한다.
 
+> **이 재검증은 중복 낭비가 아니라 신뢰 경계를 넘는 방어적 설계(defense-in-depth)다.** 두 검사는 목적·신뢰수준이 다르다 — FastAPI의 Policy Guard는 **UX/빠른 피드백**(승인 요청 전 미리 판단해 사용자에게 보여줌)이고 안전엔 필수가 아니다(없어도 Spring이 막는다). Spring의 검사는 **보안·무결성의 최종 집행(SoT)**이다. 부수효과 직전에 반드시 다시 봐야 하는 이유: (a) **TOCTOU** — 판단 시점과 실행 사이에 상태가 변할 수 있다(승인 만료, ownership 변경, params 변조), (b) **confused deputy** — FastAPI가 버그·탈취돼도 Spring이 차단해야 한다. approval·params hash·idempotency는 본질적으로 서버측에서만 보장된다(클라이언트 validation + 서버 validation과 같은 구조).
+
 검증 항목:
 
 | 항목 | 설명 |
@@ -173,62 +181,49 @@ Controller
 
 ### 5. 패키지 구조
 
+**구성 원칙 — package-by-feature**: platform 도메인은 각자 `controller/service/repository/dto/entity`를 품어 응집도를 높이고(한 기능을 한 패키지에서 본다), 전역 관심사는 `config`/`common`으로 분리한다. agent-facing(`/internal/ops`)은 인증·응답봉투·idempotency가 platform과 근본적으로 다르고 여러 도메인을 가로지르므로 `internalops` 한 곳에 모은다.
+
 ```text
 com.bifrost.ops
-  ├─ api
-  │   ├─ platform          # /api/v1, frontend-facing
-  │   │   ├─ controller
-  │   │   └─ dto
-  │   ├─ internalops       # /internal/ops, agent-facing
-  │   │   ├─ controller
-  │   │   ├─ dto
-  │   │   └─ error
-  │   ├─ common            # request_id, response envelope, validation helpers
-  │   └─ error             # platform 공통 error mapping
-  ├─ auth
-  ├─ workspace            # 워크스페이스 CRUD (FR-002)
-  ├─ database            # DB 등록·연결테스트·CDC 점검 (FR-013~015)
-  │   └─ cdc             # CdcReadinessChecker 인터페이스 + Postgres/Mariadb 구현
-  ├─ pipeline            # 파이프라인 CRUD·생명주기 (FR-003~005)
-  ├─ provisioning        # 파이프라인 리소스 생성 추상화 + 구현
-  │   ├─ port            # KafkaPipelineProvisioner 인터페이스
-  │   ├─ dto             # command/result/status/resource ref
-  │   ├─ mock            # mock-first E2E 구현
-  │   ├─ impl
-  │   │   └─ strimzi     # Fabric8/Strimzi real 구현
-  │   └─ watcher         # KafkaConnector watch → PipelineStatusService
-  ├─ secret              # 자격증명 secretRef 보관(K8s Secret/Secrets Manager)
-  ├─ streaming           # platform SSE: pipeline_status_changed 등
-  ├─ project             # 내부 ops project scope/ownership·resource registry (agent-facing). workspace(=동일 테넌트)의 frontend CRUD와 구분
-  ├─ policy
-  ├─ approval
-  ├─ changemanagement
-  ├─ idempotency
-  ├─ audit
-  ├─ evidence
-  ├─ operations
-  │   ├─ observability
-  │   ├─ pipeline
-  │   ├─ dependency
-  │   ├─ kafka
-  │   ├─ k8s
-  │   ├─ strimzi
-  │   ├─ schema
-  │   └─ workflow
-  └─ adapters
-      ├─ kubernetes
-      ├─ kafka
-      ├─ connect
-      ├─ prometheus
-      ├─ logstore
-      ├─ tempo
-      ├─ notification
-      └─ schemaregistry
+  ├─ config               # 전역: SecurityConfig, JacksonConfig, OpenApiConfig, WebConfig, KubernetesClientConfig ...
+  ├─ common               # request_id, response envelope, 공통 error mapping, validation helper
+  ├─ auth                 # 로그인/JWT (controller·service)
+  ├─ workspace            # 워크스페이스 (FR-002)
+  │   ├─ controller       #   /api/v1/workspaces ...
+  │   ├─ service
+  │   ├─ repository
+  │   ├─ dto
+  │   └─ entity
+  ├─ database             # DB 등록·연결테스트·CDC 점검 (FR-013~015)
+  │   ├─ controller · service · repository · dto · entity
+  │   ├─ cdc              #   CdcReadinessChecker 인터페이스 + Postgres/Mariadb 구현
+  │   └─ inspector        #   동적 DataSource 조회(연결테스트·schema)
+  ├─ pipeline             # 파이프라인 CRUD·생명주기 (FR-003~005)
+  │   └─ controller · service · repository · dto · entity
+  ├─ provisioning         # 파이프라인 리소스 생성 추상화 + 구현
+  │   ├─ port             #   KafkaPipelineProvisioner 인터페이스
+  │   ├─ dto              #   command/result/status/resource ref
+  │   ├─ mock             #   mock-first E2E 구현
+  │   ├─ impl.strimzi     #   Fabric8/Strimzi real 구현
+  │   └─ watcher          #   KafkaConnector watch → PipelineStatusService
+  ├─ secret               # 자격증명 secretRef 보관(K8s Secret/Secrets Manager)
+  ├─ streaming            # platform SSE: pipeline_status_changed 등
+  ├─ internalops          # ── agent-facing 전용(/internal/ops). 여러 도메인을 가로지름 ──
+  │   ├─ controller · dto · error      # platform과 다른 인증·봉투·idempotency
+  │   ├─ project          #   내부 ops project scope/ownership·resource registry
+  │   └─ operations       #   observability / kafka / k8s / strimzi / dependency / schema / workflow
+  ├─ policy · approval · changemanagement · idempotency   # 정책·승인·변경관리·멱등성 (platform·internalops 공용)
+  ├─ audit · evidence
+  └─ adapters             # 외부 client: kubernetes · kafka · connect · prometheus · logstore · tempo · notification · schemaregistry
 ```
 
-`api.platform`과 `api.internalops`는 같은 Spring 서버 안에 있지만 API 표면이 다르다. 인증 방식, response envelope, idempotency 요구사항, evidence/audit 필드가 다르므로 controller/dto/error를 분리한다.
+설계 의도:
+- **platform 도메인 = feature별 레이어드**: `workspace`/`database`/`pipeline`이 각각 `controller·service·repository·dto·entity`를 가져 한 기능 변경이 한 패키지 안에서 끝난다.
+- **`internalops` 분리**: agent-facing API는 인증 방식·response envelope·idempotency·evidence/audit 필드가 platform과 달라 섞지 않는다. project scope/ownership과 운영 조회(`operations.*`)도 여기 둔다.
+- **`config`/`common` 분리**: 전역 설정과 공통 응답/에러 유틸을 도메인에서 떼어낸다.
+- `provisioning.port/dto/mock`은 파이프라인 생성 흐름을 먼저 완성하기 위한 안정 계약, `provisioning.impl.strimzi`·`watcher`는 Fabric8/Strimzi 실제 구현. Platform SSE는 `streaming`, Agent run progress streaming은 FastAPI 담당.
 
-`provisioning.port/dto/mock`은 파이프라인 생성 흐름을 먼저 완성하기 위한 안정 계약이고, `provisioning.impl.strimzi`와 `provisioning.watcher`는 Fabric8/Strimzi 실제 구현 영역이다. Platform SSE는 `streaming`에서 담당하며, Agent run progress streaming은 FastAPI가 담당한다.
+> ⚠️ 이 구조는 **설계 목표**다. 패키지 skeleton은 권세빈 담당이고 현재 코드는 일부만 이 형태이므로, 코드 재배치는 별도 합의·chore로 진행한다(이 문서는 목표 구조만 정의).
 
 ### 6. Read와 Mutation 분리
 
@@ -872,7 +867,7 @@ PK는 (`workspace_id`, `app_user_id`). 워크스페이스 생성 시 `created_by
 | `category` | text | `pipeline`/`database`/`consumer_group`/`connect_worker`/`user_action`/`resource` |
 | `pipeline_id` | uuid FK null | |
 | `message` | text | |
-| `incident_id` | uuid FK null | 연결된 인시던트(없으면 null) |
+| `incident_id` | uuid FK null | 연결된 인시던트(없으면 null). **그룹 멤버십의 단일 출처** — 인시던트의 관련 이벤트는 이 컬럼으로 도출하고 `occurred_at`으로 정렬. 순환 FK 해소를 위해 nullable이며 인시던트 생성 후 set |
 | `occurred_at` | timestamptz | |
 
 #### 3.7 `incident` (FR-021, FR-026)
@@ -884,12 +879,13 @@ PK는 (`workspace_id`, `app_user_id`). 워크스페이스 생성 시 `created_by
 | `severity` | text | `WARNING`/`CRITICAL` ([부록 B.7](../spec.md#b7-인시던트-자동-생성-및-그룹화-규칙)) |
 | `status` | text | `open`/`investigating`/`resolved` ([부록 B.7](../spec.md#b7-인시던트-자동-생성-및-그룹화-규칙)) |
 | `trigger_event_id` | uuid FK | 최초 감지 이벤트 |
-| `related_event_ids` | uuid[] | 그룹화된 이벤트(시간순) |
 | `root_cause_summary` | text null | RCA 결과(에이전트가 채움) |
 | `grouping_key` | text | source_db/worker/consumer_group 등 |
 | `opened_at` `resolved_at` | timestamptz | |
 
-이벤트→인시던트 자동 생성·그룹화·심각도 규칙은 기능명세서 부록 B.7을 따른다.
+> **그룹 멤버는 정규화로 도출한다(중복 저장 금지).** 인시던트에 묶인 이벤트 목록은 `incident.related_event_ids uuid[]` 같은 배열을 두지 않고 **`event.incident_id`로 역참조**해 구하며, 타임라인 순서는 `event.occurred_at`으로 정렬한다(`trigger_event_id`만 "최초 감지"로 강조). 배열은 `event.incident_id`와 같은 정보를 이중 저장해 불일치 위험이 있고 `uuid[]`엔 FK 무결성도 걸 수 없으므로 폐기했다. 또한 `incident.trigger_event_id ↔ event.incident_id`는 순환 FK이므로 **`event.incident_id`를 nullable로 두고 인시던트 생성 후 set**해 닭-달걀 문제를 푼다.
+
+이벤트→인시던트 자동 생성·그룹화·심각도 규칙은 [기능명세서 부록 B.7](../spec.md#b7-인시던트-자동-생성-및-그룹화-규칙)을 따른다.
 
 #### 3.8 `audit_event`
 
@@ -930,6 +926,10 @@ State/audit가 참조하는 evidence 메타데이터만 둔다. 원문은 Eviden
 3. source/sink **고객 DB 데이터는 이 스키마에 복제하지 않는다** — 메타데이터/지표/참조만.
 4. 상태·임계값 정의는 에이전트 catalog와 단일 출처를 공유(중복 정의 금지).
 5. 스키마 변경은 Flyway/Liquibase 등 마이그레이션으로 관리.
+6. **Unique 제약**: `workspace(project_key)`, `database(workspace_id, alias)`, `pipeline(workspace_id, name)`은 유일(중복 이름 검증의 근거). `project_member`는 (`workspace_id`, `app_user_id`) 복합 PK.
+7. **인시던트↔이벤트는 단일 링크**(`event.incident_id`)로만 관리하고 별도 배열로 중복 저장하지 않는다(§3.7).
+
+> **설계 ERD ↔ 실제 스캐폴드 divergence(공존, [#14] 결정)**: 위 개념 스키마는 설계 용어 기준이다. 실제 코드/마이그레이션은 `workspace=tenant`, `app_user=user`, `database=datasource`로 쓰고, 멤버십은 현재 `users.tenant_id`(1:N)이며 `pipelines.tables`는 JSONB(복수)·`type` 컬럼을 쓴다. 신규 도메인(`project_member`/`event`/`incident`/`connector` 등)은 V4부터 add-only로 도입한다. 즉 이 ERD는 **목표 모델**이고, 코드 정합은 마이그레이션으로 점진 반영한다(이 문서는 코드와 1:1이 아님).
 
 ---
 
