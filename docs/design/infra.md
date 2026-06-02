@@ -1,0 +1,745 @@
+# Infra 설계
+
+> 사람이 읽는 요약본이다. 설계 원리·리소스 계획·현황 전체는 [DETAILS.md](#).
+
+단일 EKS 클러스터 안에 Bifrost를 역할별 namespace로 올린다. 별도 VPC·ECR은 쓰지 않고, 부족한 control plane(Harbor·Jenkins·Argo CD·Kafka Connect·Observability·앱)을 기존 리소스 위에 순차 추가한다.
+
+```mermaid
+flowchart TB
+    subgraph EKS[Single EKS Cluster]
+      direction LR
+      PK[platform-kafka<br/>Kafka·Connect·CR]
+      BF[bifrost-system<br/>FE·FastAPI·SpringBoot]
+      RG[registry<br/>Harbor]
+      CI[cicd<br/>Jenkins]
+      AR[argocd]
+      MON[monitoring<br/>Prom·Grafana·Loki·Tempo]
+      MDB[(metadb)]
+      UDB[(userdb)]
+    end
+    BF --> PK
+    BF --> MDB
+    BF --> MON
+```
+
+## 핵심 결정
+
+| 항목 | 결정 |
+| --- | --- |
+| 클러스터 | 단일 EKS + namespace·정책 분리(dev/stage/prod 물리 분리 없음) |
+| Registry | ECR 불가 → **Harbor**(in-cluster). PVC Retain |
+| CI/CD | **Jenkins**(build/push) + **Argo CD**(GitOps deploy) |
+| Kafka | Strimzi **KRaft 3노드**(`platform-kafka`, RF3/minISR2, combined controller+broker). ZooKeeper 없음 |
+| Listener | scram `9094`(SCRAM-SHA-512, TLS) 표준. plain `9092`는 운영 전 제거/제한 |
+| 권한 경계 | Agent는 K8s/Kafka credential 없음. Spring Boot Operations Backend만 제한 권한으로 런타임 접근 |
+| Evidence Store | `metadb`의 **PostgreSQL 기본**(대용량 blob 필요 시 MinIO 추가) |
+
+## Namespace
+
+`platform-kafka`(Kafka·Connect·CR) · `bifrost-system`(FE·FastAPI·SpringBoot) · `registry`(Harbor) · `cicd`(Jenkins) · `argocd` · `monitoring`(Prometheus·Alertmanager·Grafana·Loki·Tempo·exporters) · `metadb` · `userdb`
+
+## 현재 상태 (2026-06-01)
+
+| 완료 | 미구성 |
+| --- | --- |
+| EKS 3노드, Strimzi Operator, `platform-kafka` Ready(broker/controller 3, PVC 3 Bound), 내부 topic 3, gp3 default, metadb/userdb 일부 | Kafka Connect, Harbor, Jenkins, Argo CD, Prometheus/Grafana/Loki/Tempo, exporter, 앱(FastAPI/Spring/Frontend), Evidence/Audit Store, IngressClass |
+
+## 다음 우선순위
+
+Harbor → Jenkins → Argo CD → GitOps repo → Monitoring(+Loki/Tempo) → Evidence/Audit/Metadata Store → Kafka Connect → KafkaConnector → Spring Boot → FastAPI → Frontend.
+
+## 점검 필요 (운영 전)
+
+`auto.create.topics.enable=true` 끄기 · plain listener 제한(scram 표준화) · userdb LoadBalancer 노출 재검토 · PDB/anti-affinity · gp3 Retain(orphan PV) 정책.
+
+## 더 읽기 → [DETAILS.md](#)
+
+[1 설계 원리](#1-설계-원리-design-principles) · [2 리소스 계획·현황](#2-리소스-계획현황-resource-plan)
+
+
+---
+
+
+> 요약은 [README.md](#). 설계 원리(§1)와 리소스 계획·현황(§2)을 병합한 전체 상세다. 문서 내 옛 상호링크는 목차의 섹션으로 대체됐다.
+
+## 목차
+1. [설계 원리 (Design Principles)](#1-설계-원리-design-principles)
+2. [리소스 계획·현황 (Resource Plan)](#2-리소스-계획현황-resource-plan)
+
+---
+
+## 1. 설계 원리 (Design Principles)
+
+
+### 1. 목적
+
+이 문서는 Bifrost를 하나의 EKS 클러스터 위에 배치하기 위한 인프라 원칙을 정의한다. 기존 문서가 장애 대응을 위해 무엇을 관측할지에 집중했다면, 이 문서는 어떤 runtime boundary 안에서 Agent, Backend, Kafka, CI/CD, Registry, Observability를 구성할지를 다룬다.
+
+구체적인 Kubernetes 리소스 목록과 현재 진행 상태는 §2(Resource Plan)에 둔다. Spring Boot API와 Agent tool은 각각 [Spring Boot DETAILS](./backend-springboot.md), [FastAPI DETAILS](./backend-fastapi.md)를 기준으로 한다.
+
+### 2. 제약사항
+
+현재 인프라 설계는 다음 제약을 전제로 한다.
+
+| 제약 | 설계 영향 |
+| --- | --- |
+| 하나의 EKS 클러스터만 사용 | dev/stage/prod를 물리 클러스터로 분리하지 않고 namespace와 policy로 분리 |
+| 별도 VPC 생성 불가 | 기존 EKS/VPC/Subnet/LoadBalancer 범위 안에서만 구성 |
+| ECR 사용 불가 | 클러스터 내부 Harbor Registry를 별도 namespace에 배포 |
+| CI/CD는 Jenkins와 Argo CD 사용 | Jenkins는 build/push, Argo CD는 GitOps deploy 담당 |
+| 운영 리소스는 이미 일부 존재 | 현재 리소스를 보존하면서 Kafka Connect, Registry, CI/CD, Observability를 추가 |
+
+이 제약 때문에 “AWS managed service를 새로 붙이는 설계”보다 “기존 EKS 안에 필요한 control plane을 올리는 설계”가 우선이다.
+
+### 3. 전체 배치 구조
+
+```text
+Single EKS Cluster
+  ├─ platform-kafka
+  │   ├─ Strimzi Kafka
+  │   ├─ Kafka Connect
+  │   ├─ KafkaTopic / KafkaUser / KafkaConnector
+  │   └─ KafkaRebalance / Cruise Control
+  │
+  ├─ bifrost-system
+  │   ├─ Frontend
+  │   ├─ FastAPI Agent Server
+  │   ├─ Spring Boot Operations Backend
+  │   └─ application config / service account
+  │
+  ├─ registry
+  │   └─ Harbor
+  │
+  ├─ cicd
+  │   ├─ Jenkins
+  │   └─ Jenkins build agents
+  │
+  ├─ argocd
+  │   └─ Argo CD
+  │
+  ├─ monitoring
+  │   ├─ Prometheus / Alertmanager
+  │   ├─ Grafana
+  │   ├─ Loki / Promtail
+  │   ├─ Tempo
+  │   └─ Kafka exporter / JMX exporter
+  │
+  ├─ metadb
+  │   └─ metadata / audit / evidence DB
+  │
+  └─ userdb
+```
+
+Namespace 이름은 실제 배포 과정에서 조정할 수 있지만, 역할별 경계는 유지한다.
+
+### 4. 책임 경계
+
+| Plane | 구성 | 책임 |
+| --- | --- | --- |
+| Control Plane | Frontend, FastAPI Agent, Spring Boot Backend | 분석, 승인, 정책, 감사, 운영 API |
+| Data Plane | Kafka, Kafka Connect, connector, consumer, pipeline worker | 데이터 이동과 처리 |
+| Delivery Plane | Jenkins, Harbor, Argo CD | build, image registry, GitOps 배포 |
+| Observability Plane | Prometheus, Loki, Tempo, Grafana, Kubernetes event | metric/log/trace/event 수집 |
+| Storage Plane | EBS PVC, metadata DB, evidence store | 상태 저장 |
+
+Agent는 Data Plane을 직접 제어하지 않는다. Agent의 실행 요청은 Spring Boot Operations Backend를 통과해야 한다.
+
+Project scope는 Kubernetes label/annotation, Kafka topic/user naming, pipeline registry metadata로 표현한다. 같은 EKS 클러스터를 공유하더라도 모든 운영 API는 `project_id`와 resource ownership을 함께 검증해야 한다.
+
+### 5. Kafka 배치 원칙
+
+Kafka는 Bifrost의 핵심 data plane이다. v1은 Strimzi 기반 Kafka를 사용한다.
+
+#### 5.1 MVP 구조
+
+현재 클러스터 상태와 리소스 제약을 고려하면 MVP는 다음 구조가 현실적이다.
+
+```text
+Kafka cluster: platform-kafka
+  ├─ 3 replicas
+  ├─ KRaft mode
+  ├─ combined controller + broker node pool
+  ├─ internal listener only
+  ├─ replication factor 3
+  └─ min.insync.replicas 2
+```
+
+이 구조는 단일 EKS 클러스터와 3개 노드 환경에서 시작하기에 적합하다. 다만 broker와 controller role이 합쳐져 있으므로 production-grade 분리 구조는 아니다.
+
+#### 5.2 권장 확장 구조
+
+노드 여유가 생기면 KafkaNodePool을 분리한다.
+
+```text
+KafkaNodePool controllers
+  ├─ replicas: 3
+  └─ roles: controller
+
+KafkaNodePool brokers
+  ├─ replicas: 3
+  └─ roles: broker
+```
+
+단일 EKS 클러스터 안에서만 확장한다. 별도 Kafka 전용 VPC나 별도 managed Kafka cluster는 사용하지 않는다.
+
+#### 5.3 Kafka Connect
+
+Kafka Connect는 broker와 분리된 stateless workload로 둔다.
+
+권장 구조:
+
+- `KafkaConnect` replicas 2 이상
+- connector plugin이 포함된 custom image 사용
+- custom image는 Harbor에 저장
+- `KafkaConnector` CR로 connector lifecycle 관리
+- Connect REST는 cluster internal로만 노출
+- connector offset/config/status topic은 replication factor 3
+
+Agent는 Kafka Connect REST를 직접 호출하지 않는다. Spring Boot Operations Backend가 제한된 API로 호출한다.
+
+### 6. Image Registry
+
+ECR을 사용할 수 없으므로 Harbor를 클러스터 내부에 배포한다.
+
+Harbor의 역할:
+
+- Bifrost application image 저장
+- Kafka Connect plugin image 저장
+- Jenkins build 결과 push 대상
+- Argo CD 배포 image source
+
+초기 Harbor 자체 이미지는 public registry에서 가져올 수밖에 없다. Harbor 설치 후에는 Bifrost 애플리케이션 이미지를 Harbor로 모은다.
+
+주의:
+
+- Harbor PVC는 Retain 정책을 사용한다.
+- TLS 또는 내부 CA 정책을 정해야 한다.
+- 모든 application namespace에 imagePullSecret을 배포한다.
+- Harbor를 외부 공개해야 한다면 기존 EKS/VPC 안의 LoadBalancer 또는 Ingress만 사용한다.
+
+### 7. CI/CD
+
+CI/CD는 Jenkins와 Argo CD로 분리한다.
+
+```text
+Developer push
+  -> Git repository
+  -> Jenkins build/test
+  -> Harbor image push
+  -> GitOps manifest update
+  -> Argo CD sync
+  -> EKS deploy
+```
+
+Jenkins는 image build와 test만 담당한다. Kubernetes 배포는 Argo CD가 담당한다.
+
+Argo CD는 다음 애플리케이션을 관리한다.
+
+- FastAPI Agent
+- Spring Boot Operations Backend
+- Frontend
+- Kafka Connect connector manifest
+- Monitoring stack
+- Harbor 설정 일부
+
+Kafka cluster 자체와 Strimzi Operator는 bootstrap 단계에서는 수동 적용될 수 있지만, 안정화 후에는 GitOps 관리 대상으로 전환한다.
+
+### 8. Observability와 Evidence
+
+장애 대응 Agent가 의미 있게 동작하려면 다음 관측 계층이 필요하다.
+
+| 구성 | 목적 |
+| --- | --- |
+| Prometheus | Kubernetes/Kafka/application metric |
+| Alertmanager | alert routing |
+| Grafana | dashboard |
+| Loki / Promtail | pod/application log |
+| Tempo | distributed trace와 connector task trace summary |
+| Kafka exporter / JMX exporter | broker/topic/consumer 지표 |
+| Kubernetes event 수집 | scheduling, OOM, image pull, eviction 증거 |
+| Evidence Store | Agent가 참조할 raw evidence 저장 |
+
+Evidence Store는 Observability backend와 다르다. Observability는 운영 데이터 원천이고, Evidence Store는 특정 Agent run에서 사용한 증거 snapshot을 보존하는 저장소다.
+
+Metadata, audit, evidence 저장소는 `metadb` namespace에 모으는 것을 기본으로 한다. `bifrost-system`에는 FastAPI, Spring Boot, Frontend 같은 application workload만 둔다.
+
+### 9. Network와 노출 정책
+
+기본 원칙은 internal-first다.
+
+| 리소스 | 노출 원칙 |
+| --- | --- |
+| Kafka broker | ClusterIP internal listener |
+| Kafka Connect REST | ClusterIP |
+| Spring Boot Operations API | ClusterIP 또는 내부 Ingress |
+| FastAPI Agent | Frontend/backend 내부 통신 우선 |
+| Harbor | Jenkins/Argo CD 접근 가능, 필요 시 제한적 외부 노출 |
+| Argo CD | 운영자 접근 필요, 인증 필수 |
+| Jenkins | 운영자 접근 필요, 인증 필수 |
+| DB | 기본 ClusterIP 권장 |
+
+현재 일부 DB service가 LoadBalancer로 노출되어 있다. 데모 목적이 아니라면 ClusterIP 또는 접근 제한 방식으로 바꾸는 것을 검토한다.
+
+### 10. Storage
+
+기본 StorageClass는 gp3를 사용한다.
+
+권장 원칙:
+
+- Kafka broker PVC는 `deleteClaim: false`
+- Harbor registry storage는 Retain
+- metadata/evidence DB는 backup 전략 필요
+- Kafka topic 데이터와 Evidence Store 데이터의 retention을 분리
+- PVC 확장을 고려해 gp3 사용
+
+### 11. 보안 원칙
+
+1. FastAPI Agent는 Kubernetes credential을 갖지 않는다.
+2. Spring Boot Operations Backend만 제한된 runtime 권한을 갖는다.
+3. Kafka 외부 listener는 기본적으로 만들지 않는다.
+4. Secret 원문은 Agent와 Report에 노출하지 않는다.
+5. Jenkins credential은 namespace와 service account로 분리한다.
+6. Argo CD는 GitOps source of truth를 기준으로 배포한다.
+7. Harbor pull secret은 필요한 namespace에만 배포한다.
+
+### 12. 현재 상태 요약
+
+현재 상태(완료/미구성)와 진행 상황은 **§2 리소스 계획·현황**의 "현재 클러스터 스냅샷"·"진행 상태"가 단일 출처다(여기서 중복 기술하지 않는다).
+
+### 13. 결론
+
+Infra 설계의 핵심은 단일 EKS 클러스터라는 제약 안에서 Kafka data plane, Agent control plane, CI/CD, Registry, Observability를 역할별 namespace로 분리하는 것이다.
+
+Kafka는 현재 3-node KRaft 기반 MVP 구조까지 진행되어 있다. 다음 우선순위는 Harbor, Jenkins/Argo CD, Kafka Connect, Observability, Bifrost application 배포 순서로 control plane을 완성하는 것이다.
+
+---
+
+## 2. 리소스 계획·현황 (Resource Plan)
+
+
+### 1. 목적
+
+이 문서는 단일 EKS 클러스터 위에 Bifrost 운영 Agent 시스템을 띄우기 위해 필요한 Kubernetes 리소스와 현재 진행 상태를 정리한다.
+
+작성 기준:
+
+- 하나의 EKS 클러스터만 사용
+- 별도 VPC 생성 불가
+- ECR 사용 불가
+- Harbor를 in-cluster image registry로 사용
+- Jenkins와 Argo CD로 CI/CD 구성
+- 기존 Kubernetes 리소스는 최대한 보존
+
+### 2. 현재 클러스터 스냅샷
+
+`kubectl`로 확인한 context:
+
+```text
+arn:aws:eks:ap-northeast-2:881490135253:cluster/skala3-cloud1-finalproj-team2
+```
+
+노드:
+
+| 항목 | 현재 상태 |
+| --- | --- |
+| worker node | 3개 Ready |
+| Kubernetes version | v1.35.4-eks-7fcd7ec |
+| OS | Amazon Linux 2023 |
+| container runtime | containerd |
+
+Namespace:
+
+| Namespace | 상태 | 용도 추정 |
+| --- | --- | --- |
+| `default` | Active | 기본 |
+| `kube-system` | Active | EKS system |
+| `kube-public` | Active | Kubernetes 기본 |
+| `kube-node-lease` | Active | Kubernetes 기본 |
+| `strimzi-system` | Active | Strimzi operator |
+| `platform-kafka` | Active | Kafka cluster |
+| `metadb` | Active | metadata / audit / evidence DB |
+| `userdb` | Active | demo/source/sink DB |
+
+### 3. 현재 설치된 핵심 리소스
+
+#### 3.1 EKS 기본 구성
+
+| 리소스 | 현재 상태 |
+| --- | --- |
+| `aws-node` DaemonSet | 3/3 Running |
+| `kube-proxy` DaemonSet | 3/3 Running |
+| `coredns` Deployment | 2/2 Running |
+| `ebs-csi-controller` Deployment | 2/2 Running |
+| `ebs-csi-node` DaemonSet | 3/3 Running |
+
+#### 3.2 StorageClass
+
+| StorageClass | Provisioner | ReclaimPolicy | Expansion | 상태 |
+| --- | --- | --- | --- | --- |
+| `gp3` | `ebs.csi.aws.com` | Retain | true | default |
+| `gp2` | `kubernetes.io/aws-ebs` | Delete | false | legacy |
+
+권장: 새 PVC는 `gp3`를 사용한다.
+
+#### 3.3 Strimzi
+
+| 리소스 | 현재 상태 |
+| --- | --- |
+| Strimzi CRD | 설치됨 |
+| `strimzi-cluster-operator` | 1/1 Running |
+| Kafka CRD | 설치됨 |
+| KafkaConnect CRD | 설치됨 |
+| KafkaConnector CRD | 설치됨 |
+| KafkaRebalance CRD | 설치됨 |
+
+#### 3.4 Kafka Cluster
+
+현재 Kafka cluster:
+
+| 항목 | 값 |
+| --- | --- |
+| namespace | `platform-kafka` |
+| Kafka CR | `platform-kafka` |
+| Kafka version | `4.2.0` |
+| metadata version | `4.2-IV0` |
+| mode | KRaft |
+| status | Ready |
+| node pool | `kafka` |
+| replicas | 3 |
+| roles | `controller`, `broker` combined |
+| storage | 50Gi gp3 PVC per broker |
+| replication factor | 3 |
+| min ISR | 2 |
+
+Listener:
+
+| listener | port | tls | auth | exposure |
+| --- | --- | --- | --- | --- |
+| `plain` | 9092 | false | none | internal |
+| `scram` | 9094 | true | SCRAM-SHA-512 | internal |
+
+현재 Kafka pod:
+
+| Pod | 상태 |
+| --- | --- |
+| `platform-kafka-kafka-0` | Running |
+| `platform-kafka-kafka-1` | Running |
+| `platform-kafka-kafka-2` | Running |
+
+현재 Kafka PVC:
+
+| PVC | Capacity | StorageClass |
+| --- | --- | --- |
+| `data-0-platform-kafka-kafka-0` | 50Gi | gp3 |
+| `data-0-platform-kafka-kafka-1` | 50Gi | gp3 |
+| `data-0-platform-kafka-kafka-2` | 50Gi | gp3 |
+
+현재 KafkaTopic:
+
+| Topic CR | partitions | replication factor | ready |
+| --- | --- | --- | --- |
+| `platform-internal-connector-status` | 3 | 3 | True |
+| `platform-internal-service-discovered` | 3 | 3 | True |
+| `platform-internal-service-lag-updated` | 3 | 3 | True |
+
+### 4. 현재 수정 검토가 필요한 항목
+
+#### 4.1 Kafka `auto.create.topics.enable`
+
+현재 Kafka config에는 `auto.create.topics.enable: true`가 있다.
+
+MVP 초기에는 편하지만, 운영 기준으로는 topic이 의도치 않게 생성될 수 있다. GitOps로 `KafkaTopic`을 관리할 계획이라면 bootstrap 이후 `false`로 전환하는 것을 권장한다.
+
+#### 4.2 Plain listener
+
+현재 `plain` listener가 internal로 열려 있다.
+
+완전히 내부 통신만 한다면 유지 가능하지만, 운영 기준으로는 `scram` listener 사용을 표준으로 두고 plain listener는 제거 또는 제한하는 것이 좋다.
+
+#### 4.3 Combined controller/broker node pool
+
+현재 KafkaNodePool은 3개 replica가 controller와 broker role을 동시에 수행한다.
+
+MVP로는 적절하다. 다만 리소스 여유가 생기면 controller와 broker node pool을 분리한다.
+
+#### 4.4 DB LoadBalancer 노출
+
+현재 `userdb` namespace의 MariaDB/Postgres service가 LoadBalancer로 노출되어 있다.
+
+데모 또는 외부 접속 목적이면 유지할 수 있지만, 운영 기준으로는 ClusterIP 전환 또는 접근 제한을 검토한다.
+
+#### 4.5 Kafka Connect 미구성
+
+KafkaConnect CRD는 설치되어 있지만 실제 KafkaConnect 리소스는 확인되지 않았다.
+
+Bifrost pipeline 운영을 위해 Kafka Connect cluster와 connector plugin image 구성이 필요하다.
+
+#### 4.6 CI/CD와 Registry 미구성
+
+현재 Harbor, Jenkins, Argo CD namespace/workload는 확인되지 않았다.
+
+ECR을 사용할 수 없으므로 Harbor를 먼저 올리고, Jenkins build image push, Argo CD deploy 흐름을 구성해야 한다.
+
+#### 4.7 Observability 미구성
+
+Prometheus, Grafana, Loki, Tempo, Kafka exporter 계열 리소스는 확인되지 않았다.
+
+Agent RCA를 위해 metric/log/trace/event 수집 계층이 필요하다.
+
+### 5. Target Namespace Plan
+
+| Namespace | 목적 | 현재 상태 |
+| --- | --- | --- |
+| `strimzi-system` | Strimzi operator | 존재 |
+| `platform-kafka` | Kafka, Kafka Connect, Kafka topic/user/rebalance | 일부 존재 |
+| `bifrost-system` | Frontend, FastAPI Agent, Spring Boot Backend | 필요 |
+| `registry` | Harbor | 필요 |
+| `cicd` | Jenkins | 필요 |
+| `argocd` | Argo CD | 필요 |
+| `monitoring` | Prometheus, Grafana, Loki, exporters | 필요 |
+| `metadb` | metadata / audit / evidence DB | 존재 |
+| `userdb` | demo/source/sink DB | 존재 |
+
+### 6. Target Resource Plan
+
+#### 6.1 Kafka / Strimzi
+
+| 리소스 | 수량/구성 | 상태 |
+| --- | --- | --- |
+| Strimzi Cluster Operator | 1 replica | 완료 |
+| Kafka CR | `platform-kafka` | 완료 |
+| KafkaNodePool | 3 combined controller/broker | 완료 |
+| Kafka broker/controller pods | 3 | 완료 |
+| KafkaTopic CR | platform internal topics | 일부 완료 |
+| KafkaUser CR | service user별 생성 | 필요 |
+| KafkaConnect CR | 2 replicas 이상 | 필요 |
+| KafkaConnector CR | source/sink connector별 생성 | 필요 |
+| KafkaRebalance CR | 필요 시 생성 | 필요 |
+| Cruise Control | KafkaRebalance 사용 시 Kafka spec에 추가 | 필요 |
+
+#### 6.2 Kafka Connect 목표 구조
+
+```text
+platform-kafka namespace
+  ├─ Kafka: platform-kafka
+  ├─ KafkaNodePool: kafka
+  ├─ KafkaConnect: platform-connect
+  │   ├─ replicas: 2
+  │   ├─ image: harbor/.../kafka-connect:<tag>
+  │   ├─ config.storage.replication.factor: 3
+  │   ├─ offset.storage.replication.factor: 3
+  │   └─ status.storage.replication.factor: 3
+  └─ KafkaConnector
+      ├─ source connectors
+      └─ sink connectors
+```
+
+Kafka Connect image는 connector plugin을 포함해 빌드한다. 런타임에 pod 내부로 plugin을 주입하는 방식보다 Harbor에 plugin 포함 image를 올리는 방식이 재현성이 좋다.
+
+#### 6.3 Harbor
+
+| 리소스 | 구성 |
+| --- | --- |
+| Namespace | `registry` |
+| Deployment/Stateful workload | Harbor core, registry, portal, jobservice |
+| DB | embedded 또는 external PostgreSQL |
+| Redis | embedded 또는 external |
+| PVC | registry storage, DB storage |
+| Service | ClusterIP + 제한적 external access |
+| Secret | admin password, TLS, robot account |
+
+Harbor에 저장할 image:
+
+- `bifrost/frontend`
+- `bifrost/fastapi-agent`
+- `bifrost/springboot-ops`
+- `bifrost/kafka-connect`
+- Jenkins build agent image
+
+#### 6.4 Jenkins
+
+| 리소스 | 구성 |
+| --- | --- |
+| Namespace | `cicd` |
+| Controller | 1 replica |
+| Agent | Kubernetes dynamic agent 권장 |
+| PVC | Jenkins home |
+| Service | 내부 또는 제한적 외부 접근 |
+| Credential | Git, Harbor robot account, Argo CD token |
+
+Jenkins 책임:
+
+1. test
+2. image build
+3. Harbor push
+4. manifest repository tag update
+
+Jenkins가 직접 production workload를 apply하지 않는다.
+
+#### 6.5 Argo CD
+
+| 리소스 | 구성 |
+| --- | --- |
+| Namespace | `argocd` |
+| Application | app별 또는 namespace별 분리 |
+| Project | platform / application 구분 |
+| Repo | manifest repository |
+| Sync | manual 또는 automated 정책 선택 |
+
+Argo CD 관리 대상:
+
+- Bifrost application
+- Kafka Connect
+- KafkaConnector
+- Monitoring stack
+- Harbor 설정 일부
+- Spring/FastAPI config
+
+Strimzi Operator와 Kafka cluster 자체도 최종적으로 GitOps에 포함하는 것이 좋다.
+
+#### 6.6 Bifrost Application
+
+| 리소스 | Namespace | 구성 |
+| --- | --- | --- |
+| Frontend | `bifrost-system` | Deployment, Service |
+| FastAPI Agent | `bifrost-system` | Deployment, Service, HPA optional |
+| Spring Boot Operations Backend | `bifrost-system` | Deployment, Service |
+| Evidence Store | `metadb` | **PostgreSQL 기본**(redacted summary·snapshot·reference는 행 크기가 작음). 대용량 원문 blob이 필요해지면 MinIO를 추가하고 PostgreSQL에는 object key만 둔다 |
+| Audit Store | `metadb` | PostgreSQL 권장 |
+| Metadata Store | `metadb` | PostgreSQL 권장 |
+
+FastAPI Agent는 Kubernetes/Kafka credential을 갖지 않는다. Spring Boot Operations Backend가 필요한 read/mutation 권한을 제한적으로 가진다.
+
+#### 6.7 Observability
+
+| 리소스 | Namespace | 목적 |
+| --- | --- | --- |
+| Prometheus | `monitoring` | metric 수집 |
+| Alertmanager | `monitoring` | alert routing |
+| Grafana | `monitoring` | dashboard |
+| Loki | `monitoring` | log store |
+| Promtail 또는 agent | `monitoring` | pod log 수집 |
+| Tempo | `monitoring` | distributed trace와 connector task trace summary |
+| Kafka exporter | `monitoring` | consumer lag/topic metric |
+| JMX exporter | `platform-kafka` 또는 sidecar | broker/connect JVM metric |
+
+Agent RCA를 위해 최소한 Prometheus, pod log store, Tempo trace summary, Kafka lag metric은 필요하다.
+
+### 7. Kafka 운영 구조 권장안
+
+#### 7.1 현재 MVP 구조 유지
+
+현 단계에서는 다음을 유지한다.
+
+- Kafka cluster `platform-kafka`
+- KafkaNodePool `kafka`
+- replicas 3
+- combined controller/broker
+- gp3 50Gi PVC
+- internal listeners
+
+이 구조는 이미 정상 Running 상태이므로 폐기하지 않는다.
+
+#### 7.2 즉시 보강할 설정
+
+| 항목 | 권장 |
+| --- | --- |
+| topic 관리 | `KafkaTopic` CR로 관리 |
+| service user | `KafkaUser` CR로 SCRAM user 생성 |
+| auto topic create | bootstrap 후 false 검토 |
+| listener | `scram` 표준화, plain 제한 |
+| PDB | Kafka availability 보호 |
+| anti-affinity | broker가 가능한 서로 다른 node에 뜨도록 설정 |
+| Cruise Control | KafkaRebalance 사용 전 추가 |
+
+#### 7.3 확장 구조
+
+노드 여유가 생기면 다음으로 전환한다.
+
+```text
+KafkaNodePool controllers
+  replicas: 3
+  roles: [controller]
+  storage: ephemeral or small persistent
+
+KafkaNodePool brokers
+  replicas: 3
+  roles: [broker]
+  storage: gp3 persistent claim
+```
+
+단, 현재 EKS 노드가 3개뿐이므로 controller/broker 분리는 capacity 검토 후 진행한다.
+
+### 8. 진행 상태
+
+#### 완료
+
+- EKS 클러스터 사용 가능
+- worker node 3개 Ready
+- EBS CSI 설치
+- gp3 StorageClass default
+- Strimzi CRD 설치
+- Strimzi Cluster Operator Running
+- Kafka KRaft cluster Ready
+- Kafka broker/controller 3개 Running
+- Kafka broker PVC 3개 Bound
+- 내부 KafkaTopic 3개 Ready
+- metadb/userdb workload 일부 Running
+
+#### 수정 검토
+
+- `auto.create.topics.enable: true` 운영 전 전환 검토
+- `plain` listener 제거 또는 사용 범위 제한
+- `userdb` LoadBalancer 노출 필요성 재검토
+- Kafka PDB/anti-affinity 명시 여부 확인
+- Kafka Connect plugin image를 Harbor 기반으로 재정의
+- 기존 DB workload가 운영용인지 데모용인지 구분
+
+#### 남은 작업
+
+1. Harbor 설치
+2. Harbor imagePullSecret 배포
+3. Jenkins 설치
+4. Argo CD 설치
+5. GitOps repository와 Argo CD Application 구성
+6. Monitoring stack 설치
+7. Loki와 Tempo 설치
+8. Evidence Store / Audit Store / Metadata Store 구성
+9. Kafka Connect 배포
+10. KafkaUser / KafkaConnector / 추가 KafkaTopic 정의
+11. Cruise Control / KafkaRebalance 활성화
+12. Spring Boot Operations Backend 배포
+13. FastAPI Agent 배포
+14. Frontend 배포
+15. NetworkPolicy / RBAC 정리
+
+### 9. 배포 순서
+
+권장 순서:
+
+1. 현재 Kafka 상태 백업 및 manifest Git 반영
+2. Harbor 설치
+3. Jenkins 설치 및 Harbor push 검증
+4. Argo CD 설치
+5. GitOps repository 구성
+6. Monitoring stack 설치
+7. Evidence Store / Audit Store / Metadata Store 구성
+8. Kafka Connect custom image 빌드 및 배포
+9. KafkaConnector CR 배포
+10. Spring Boot Operations Backend 배포
+11. FastAPI Agent 배포
+12. Frontend 배포
+13. Agent RCA replay와 운영 tool read-only 검증
+14. approval 기반 mutation tool 제한 활성화
+
+### 10. 문서 갱신 기준
+
+다음 작업이 끝날 때마다 이 문서를 갱신한다.
+
+- namespace 추가
+- Kafka/Connect 구조 변경
+- Harbor/Jenkins/Argo CD 설치
+- Monitoring stack 설치
+- application 배포
+- LoadBalancer/Ingress 노출 변경
+- 운영 정책상 금지/허용 리소스 변경

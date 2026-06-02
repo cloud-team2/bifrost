@@ -3,7 +3,7 @@
 **Status**: Accepted (2026-06-02 design 정렬)
 **Date**: 2026-05-15
 
-> 용어·네이밍을 설계 문서([design/overview.md](../../../skala/design/overview.md), [springboot/DETAILS.md §2 Provisioning](../../../skala/design/backend/springboot/DETAILS.md))에 맞춰 갱신했다. 테넌트 단위는 **워크스페이스(workspace)** 이며, 내부 운영 API는 같은 테넌트를 `project_id`로 부른다(v1에서 `workspace_id` = `project_id`, uuid). 사람이 읽는 Kafka 리소스 이름은 워크스페이스 생성 시 발급하는 슬러그 **`projectKey`** 를 기준으로 한다.
+> 용어·네이밍을 설계 문서([design/overview.md](../README.md), [springboot/DETAILS.md §2 Provisioning](../design/backend-springboot.md))에 맞춰 갱신했다. 테넌트 단위는 **워크스페이스(workspace)** 이며, 내부 운영 API는 같은 테넌트를 `project_id`로 부른다(v1에서 `workspace_id` = `project_id`, uuid). 사람이 읽는 Kafka 리소스 이름은 워크스페이스 생성 시 발급하는 슬러그 **`projectKey`** 를 기준으로 한다.
 
 ## Context
 
