@@ -89,4 +89,7 @@ spec:
   ports:
     - port: 3306
       targetPort: 3306
-  type: ClusterIP
+  type: LoadBalancer
+  loadBalancerSourceRanges:
+    - 13.228.214.171/32
+    - 52.77.50.136/32
