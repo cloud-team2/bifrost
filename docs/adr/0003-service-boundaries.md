@@ -1,23 +1,26 @@
 # ADR 0003: 서비스 경계
 
-**Status**: Accepted
+**Status**: Amended by [ADR 0004](./0004-monorepo-monolith.md) (2026-06-02)
 **Date**: 2026-05-15
+
+> ⚠️ [ADR 0004](./0004-monorepo-monolith.md)에 따라 `core-service` + `orchestrator-service`는 단일 모놀리스 `operations-backend`로 병합되었다. 아래 표/통신 항목을 그에 맞게 갱신했다.
 
 ## Decision
 
-4개 서비스로 분리:
+3개 서비스로 분리:
 
 | 서비스 | 책임 | 외부 노출 |
 | --- | --- | --- |
-| core-service | 인증, 도메인, REST API, WebSocket | ✅ |
-| orchestrator-service | K8s/Kafka 자동화 | ❌ |
-| ai-service | LLM 통합 (Sprint 4) | ❌ |
+| operations-backend | 인증, 도메인, REST API, WebSocket, K8s/Kafka 자동화(provisioning·watcher) | ✅ (`/api/v1`) |
+| ai-service | LLM 통합 / AI 장애대응 (FastAPI, Sprint 4) | ❌ |
 | frontend | React UI | ✅ |
 
+> 기존 core/orchestrator 분리는 폐기. K8s/Kafka 자동화는 operations-backend의 `provisioning`·`adapters` 패키지로 in-process 흡수된다.
+
 ### 통신
-- core → orchestrator: 동기 REST (작업 트리거)
-- orchestrator → core: Kafka 이벤트 (상태 변화 알림)
-- core → ai-service: SSE 스트리밍 (채팅)
+- provisioning ↔ watcher: **in-process** (단일 `PipelineStatusService` writer, cross-service 호출 없음)
+- operations-backend → ai-service: SSE/HTTP (AI 장애대응)
+- ai-service → operations-backend: `/internal/ops` (운영 조회·조치 위임)
 
 ### 인증
 - 외부: Browser → core, JWT 검증

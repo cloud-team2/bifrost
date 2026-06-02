@@ -4,8 +4,6 @@ plugins {
 }
 
 dependencies {
-    implementation project(':libs:common-dto')
-
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-webflux'    // SSE 스트리밍
     implementation 'org.springframework.boot:spring-boot-starter-actuator'

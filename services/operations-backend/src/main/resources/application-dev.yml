@@ -1,0 +1,79 @@
+spring:
+  datasource:
+    url: ${META_DB_URL:jdbc:postgresql://localhost:5433/metadb}
+    username: ${META_DB_USER:platform}
+    password: ${META_DB_PASSWORD:platform}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    consumer:
+      group-id: operations-backend
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "com.bifrost.ops.common.events"
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+    listener:
+      ack-mode: manual_immediate
+
+# JWT
+jwt:
+  secret: ${JWT_SECRET:local-dev-secret-please-change-in-production-must-be-long-enough-for-hs256}
+  expiration-hours: 24
+  issuer: bifrost-ops
+
+# 외부 서비스 (Agent는 별도 FastAPI)
+ai-service:
+  url: ${AI_SERVICE_URL:http://localhost:8082}
+  enabled: false   # Sprint 4부터 true
+
+# K8s 설정 (provisioning/watcher in-process)
+k8s:
+  # 로컬에선 kubeconfig 사용. EKS에선 ServiceAccount 토큰 자동.
+  config-file: ${KUBECONFIG:}
+
+# Kafka 클러스터 정보 (생성한 KafkaUser/Connector가 어느 클러스터에 속하는지)
+kafka-cluster:
+  name: platform-kafka
+  namespace: platform-kafka
+
+# KafkaConnect 클러스터 (KafkaConnector CR의 strimzi.io/cluster 라벨 기준)
+kafka-connect:
+  cluster: platform-connect
+
+# Consumer Group Discovery polling
+discovery:
+  consumer-group-polling-interval-seconds: 30
+
+# Kafka 토픽
+platform:
+  internal-topics:
+    connector-status: platform.internal.connector-status
+    service-discovered: platform.internal.service-discovered
+
+logging:
+  level:
+    root: INFO
+    com.bifrost: DEBUG
+    org.springframework.web: INFO
+    org.hibernate.SQL: DEBUG
+    io.fabric8.kubernetes.client: INFO

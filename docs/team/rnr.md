@@ -10,11 +10,20 @@
 
 | 사람 | 역할 | 주 담당 |
 | --- | --- | --- |
-| **A** | DevOps / Infra Lead | EKS, Strimzi, Kafka, CI/CD, 모니터링, 3개 서비스 배포 |
-| **B** | Backend Domain Lead | core-service (인증, 도메인, Inspector, MetaDB, WebSocket) |
-| **C** | K8s/Kafka Automation Lead | orchestrator-service (테넌트 프로비저닝, Connector 자동화) |
-| **D** | AI/LLM Engineer | ai-service (Sprint 4부터), Sprint 1~3엔 core 보조 |
+| **A** | DevOps / Infra Lead | EKS, Strimzi, Kafka, CI/CD, 모니터링, 서비스 배포 |
+| **B** | Backend Domain Lead | operations-backend — 도메인/DB/Inspector/MetaDB/API ([ADR 0004](../adr/0004-monorepo-monolith.md)로 core+orchestrator 병합) |
+| **C** | K8s/Kafka Automation Lead | operations-backend — provisioning/watcher (워크스페이스 프로비저닝, Connector 자동화) |
+| **D** | AI/LLM Engineer | ai-service (FastAPI, Sprint 4부터), Sprint 1~3엔 ops 보조 |
 | **E** | Frontend Lead | React, React Flow 캔버스, 위저드, 채팅 UI |
+
+---
+
+> **📌 모놀리스 정렬 노트 ([ADR 0004](../adr/0004-monorepo-monolith.md))**
+> 이 문서의 일부 Sprint 서술은 core/orchestrator 분리 시절 기준이다. 현재는 **단일 모놀리스 `operations-backend`** 로 통합되었으므로 다음과 같이 읽는다:
+> - **B(core)** = `operations-backend`의 도메인 패키지(`auth`/`workspace`/`database`/`pipeline`/`api`)
+> - **C(orchestrator)** = 같은 모놀리스의 `provisioning`(impl.strimzi/watcher)·`adapters` 패키지
+> - 둘 사이의 "REST 호출 / Kafka 이벤트"(예: `POST /internal/pipelines`)는 더 이상 서비스 간 통신이 아니라 **in-process 메서드 호출**이며, 상태 변경은 단일 `PipelineStatusService` writer로 모인다.
+> - 용어는 design 기준(`workspace`/`database`/`projectKey`). `ai-service`는 FastAPI로 전환.
 
 ---
 
@@ -33,7 +42,7 @@
 | 인프라 코드 | `terraform/` (VPC, EKS, ECR, Route53, ACM, IAM) |
 | K8s 매니페스트 | `helm/` (Strimzi, Kafka, Connect, MetaDB Postgres) |
 | Kafka Connect 이미지 | Debezium PostgreSQL + MariaDB plugin 포함 커스텀 이미지 |
-| 서비스 배포 | 3개 서비스(core, orchestrator, ai)의 Helm chart |
+| 서비스 배포 | operations-backend(Spring) + ai-service(FastAPI) + frontend의 Helm chart |
 | CI/CD | `.github/workflows/` (각 서비스 build → push to ECR → deploy) |
 | 모니터링 | Prometheus, Grafana, Loki, Alertmanager 셋업 + 대시보드 |
 | 로컬 개발 | `docker-compose.yml` (개발자 PC에서 다 띄울 수 있게) |
@@ -43,7 +52,7 @@
 
 #### Sprint 1 (Week 1-2): 인프라 베이스라인
 - [ ] AWS 계정 셋업, Terraform로 VPC + EKS 생성
-- [ ] ECR 리포지토리 3개 (core, orchestrator, ai)
+- [ ] 컨테이너 레지스트리 리포지토리 (operations-backend, ai-service)
 - [ ] Helm + ArgoCD 또는 GitHub Actions deploy 파이프라인
 - [ ] Strimzi Operator 설치
 - [ ] Kafka 클러스터 (3 broker, replication factor 3) 띄우기
@@ -102,7 +111,7 @@
 
 ---
 
-## 2. B — Backend Domain Lead (core-service)
+## 2. B — Backend Domain Lead (operations-backend)
 
 ### 2.1 핵심 책임
 
@@ -114,9 +123,9 @@
 
 | 영역 | 산출물 |
 | --- | --- |
-| Spring Boot 프로젝트 | `core-service/` (Gradle 멀티 모듈) |
+| Spring Boot 프로젝트 | `operations-backend/` (Gradle 멀티 모듈) |
 | 인증/보안 | JWT 발급/검증, Spring Security 설정 |
-| 도메인 서비스 | TenantService, UserService, DatasourceService, PipelineService 등 |
+| 도메인 서비스 | WorkspaceService, UserService, DatabaseService, PipelineService 등 |
 | Inspector 모듈 | DatabaseInspector 인터페이스 + PostgresInspector + MariaDBInspector |
 | 영속성 | JPA Entity, Repository, Flyway 마이그레이션 |
 | REST API | 13개+ 엔드포인트 |
@@ -124,29 +133,32 @@
 | Kafka 통합 | orchestrator의 이벤트 소비 |
 | 클라이언트 | orchestrator/ai-service 호출 클라이언트 |
 
-### 2.3 모듈 구조 (제안)
+### 2.3 모듈 구조 (B 담당 패키지, design §5)
+
+`operations-backend`(`com.bifrost.ops`) 안에서 B가 맡는 도메인 패키지:
 
 ```
-core-service/
-├─ api/                  ← REST Controller, WebSocket Handler, DTO
-├─ core/                 ← 도메인 서비스 (TenantService, PipelineService, ...)
-├─ inspector/            ← DB 추상화
-│   ├─ DatabaseInspector.java (interface)
-│   ├─ PostgresInspector.java
-│   └─ MariaDBInspector.java
-├─ persistence/          ← JPA, Flyway
-├─ security/             ← JWT, Spring Security
-├─ events/               ← Kafka consumer (status 변경 이벤트 수신)
-└─ client/               ← OrchestratorClient, AiServiceClient
+com.bifrost.ops
+├─ api/{platform,internalops,common,error}  ← Controller/DTO (platform=frontend, internalops=agent)
+├─ auth/                  ← JWT, Spring Security
+├─ workspace/             ← 워크스페이스 CRUD (구 TenantService)
+├─ database/              ← DB 등록·연결테스트·CDC 점검
+│   ├─ cdc/               ← CdcReadinessChecker (Postgres/Mariadb)
+│   └─ inspector/         ← DatabaseInspector + Postgres/MariaDB 구현
+├─ pipeline/              ← 파이프라인 CRUD·생명주기
+├─ secret/               ← 자격증명 secretRef 보관
+└─ streaming/             ← 플랫폼 SSE (status 변경 push)
 ```
+
+> C 담당(`provisioning`·`adapters`·`operations`)은 §3. 둘은 같은 모놀리스의 다른 패키지다.
 
 ### 2.4 Sprint별 작업
 
 #### Sprint 1 (Week 1-2): 골격
 - [ ] Gradle 프로젝트 셋업 (멀티 모듈 또는 단일)
 - [ ] Spring Boot 3.3 + Java 21
-- [ ] Flyway 셋업, 초기 스키마 마이그레이션 (tenants, users)
-- [ ] JPA Entity 클래스 (Tenant, User)
+- [ ] Flyway 셋업, 초기 스키마 마이그레이션 (workspaces, users)
+- [ ] JPA Entity 클래스 (Workspace, User)
 - [ ] Spring Security + JWT 발급/검증
 - [ ] `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/me`
 - [ ] **회원가입 시 orchestrator에 프로비저닝 호출** (C와 인터페이스 합의 필요)
@@ -154,14 +166,14 @@ core-service/
 - [ ] 헬스체크 엔드포인트
 
 **완료 기준**:
-- 회원가입하면 MetaDB에 tenant/user 저장 + K8s에 namespace 등 생성됨
+- 회원가입하면 MetaDB에 workspace/user 저장 + K8s에 namespace 등 생성됨
 - JWT로 로그인 가능
 
-#### Sprint 2 (Week 3-4): Datasource + Inspector
-- [ ] datasources 테이블 Flyway
-- [ ] Datasource JPA Entity, Repository
-- [ ] DatasourceService (CRUD)
-- [ ] `POST/GET/DELETE /api/datasources`, `GET /api/datasources/{id}/tables`
+#### Sprint 2 (Week 3-4): Database + Inspector
+- [ ] databases 테이블 Flyway
+- [ ] Database JPA Entity, Repository
+- [ ] DatabaseService (CRUD)
+- [ ] `POST/GET/DELETE /api/databases`, `GET /api/databases/{id}/tables`
 - [ ] **K8s Secret 생성 코드** (사용자 DB credentials) — fabric8 client
   - 또는 orchestrator API로 위임할지 C와 결정
 - [ ] **PostgresInspector 완성**:
@@ -221,7 +233,7 @@ core-service/
 
 ---
 
-## 3. C — K8s/Kafka Automation Lead (orchestrator-service)
+## 3. C — K8s/Kafka Automation Lead (operations-backend)
 
 ### 3.1 핵심 책임
 
@@ -231,7 +243,7 @@ core-service/
 
 | 영역 | 산출물 |
 | --- | --- |
-| Spring Boot 프로젝트 | `orchestrator-service/` |
+| Spring Boot 프로젝트 | `operations-backend/` |
 | K8s 클라이언트 | fabric8 wrapper |
 | TenantProvisioner | 회원가입 시 자동 생성 (Namespace, KafkaUser, Quota, NetPol) |
 | ConnectorManager | KafkaConnector CRD 생성/조회/삭제 |
@@ -240,24 +252,23 @@ core-service/
 | ConsumerGroupDiscoverer | Kafka Admin API 폴링 → 이벤트 발행 |
 | 내부 API | 5개 엔드포인트 |
 
-### 3.3 모듈 구조
+### 3.3 모듈 구조 (C 담당 패키지, design §5)
+
+`operations-backend`(`com.bifrost.ops`) 안에서 C가 맡는 프로비저닝/어댑터 패키지:
 
 ```
-orchestrator-service/
-├─ api/                       ← 내부 REST Controller
-├─ kafka/
-│   ├─ tenant/
-│   │   └─ TenantProvisioner.java
-│   ├─ connector/
-│   │   └─ ConnectorManager.java
-│   ├─ topic/
-│   │   └─ TopicManager.java
-│   └─ admin/
-│       └─ ConsumerGroupDiscoverer.java
-├─ k8s/                       ← fabric8 wrapper
-├─ events/                    ← Kafka producer (status 변경 이벤트)
-└─ watch/                     ← K8s watch
+com.bifrost.ops
+├─ provisioning/
+│   ├─ port/              ← KafkaPipelineProvisioner 인터페이스
+│   ├─ dto/               ← command/result/status DTO
+│   ├─ mock/              ← mock-first 구현
+│   ├─ impl/strimzi/      ← Fabric8/Strimzi real 구현 (TenantProvisioner, ConnectorManager)
+│   └─ watcher/           ← KafkaConnector watch → PipelineStatusService(in-process)
+├─ adapters/{kubernetes,kafka,connect}  ← fabric8/AdminClient/Connect 클라이언트
+└─ operations/kafka       ← Kafka 운영 조회(consumer group 등)
 ```
+
+> 구 orchestrator의 "Kafka 이벤트 발행 → core 소비"는 모놀리스에서 **watcher가 `PipelineStatusService`를 직접 호출**(단일 writer)하는 in-process 흐름으로 대체된다.
 
 ### 3.4 Sprint별 작업
 
@@ -268,16 +279,16 @@ orchestrator-service/
 - [ ] **수동으로 KafkaConnector yaml 작성해서 PG/MariaDB 둘 다 CDC 검증** (A와 협업)
 - [ ] **TenantProvisioner 구현**:
   - Namespace 생성
-  - KafkaUser CRD 생성 (SCRAM + ACL: prefix tenant-{id}.)
+  - KafkaUser CRD 생성 (SCRAM + ACL: prefix cdc.table.{projectKey}.)
   - ResourceQuota
-  - NetworkPolicy (cross-tenant 차단)
+  - NetworkPolicy (cross-workspace 차단)
 - [ ] `POST /internal/tenants/provision`
 - [ ] `DELETE /internal/tenants/{tenantId}` (Namespace 삭제로 cascade)
 - [ ] Idempotency (이미 있으면 OK)
 
 **완료 기준**:
 - 회원가입 시 자동으로 위 5개 K8s 리소스가 생성됨
-- 두 번째 회원가입 시 다른 tenant의 리소스는 별도로 격리됨
+- 두 번째 회원가입 시 다른 워크스페이스의 리소스는 별도로 격리됨
 
 #### Sprint 2 (Week 3-4): Connector 자동화
 - [ ] **ConnectorManager 구현**:
@@ -286,9 +297,9 @@ orchestrator-service/
   - KafkaConnector CRD 삭제
 - [ ] **TopicManager 구현**:
   - KafkaTopic CRD 생성 (partition, replication factor 등)
-  - 토픽 prefix 검증 (`tenant-{id}.`로 시작하는지)
+  - 토픽 prefix 검증 (`cdc.table.{projectKey}.`로 시작하는지)
 - [ ] `POST /internal/pipelines`, `GET /internal/pipelines/{id}/status`, `DELETE /internal/pipelines/{id}`
-- [ ] core 호출 시 인증 (X-Tenant-Id 헤더 또는 그냥 body)
+- [ ] core 호출 시 인증 (X-Workspace-Id 헤더 또는 그냥 body)
 
 **완료 기준**:
 - core에서 POST /internal/pipelines 호출하면 → KafkaTopic + KafkaConnector 둘 다 생성 → 잠시 후 RUNNING 됨
@@ -299,7 +310,7 @@ orchestrator-service/
   - status 변경 감지 시 Kafka 이벤트 발행
 - [ ] **Consumer Group Discoverer**:
   - Kafka Admin API로 30초마다 폴링
-  - tenant prefix로 식별
+  - workspace prefix로 식별
   - 새 그룹 → SERVICE_DISCOVERED
   - lag 변화 → SERVICE_LAG_UPDATED
   - 5분 무활동 → SERVICE_DISCONNECTED
@@ -360,7 +371,7 @@ ai-service는 Sprint 4부터 본격이지만 D가 1~3주 동안 놀면 안 됨. 
 | --- | --- |
 | Spring Boot 프로젝트 | `ai-service/` |
 | LangChain4j 통합 | OpenAI 호출 wrapper |
-| 도구 정의 | 6개 도구 (datasource 조회, pipeline 생성 등) |
+| 도구 정의 | 6개 도구 (database 조회, pipeline 생성 등) |
 | 채팅 핸들러 | SSE 스트리밍 |
 | Prompt | 시스템 프롬프트, few-shot 예시 |
 
@@ -374,7 +385,7 @@ ai-service는 Sprint 4부터 본격이지만 D가 1~3주 동안 놀면 안 됨. 
 
 #### Sprint 2 (Week 3-4): 도구 정의 + 사전 설계
 - [ ] 6개 도구의 OpenAI function schema 정의:
-  - `list_datasources`, `get_datasource_tables`, `inspect_datasource_readiness`
+  - `list_databases`, `get_database_tables`, `inspect_database_readiness`
   - `create_cdc_pipeline`, `list_pipelines`, `get_pipeline_detail`
 - [ ] 도구가 호출할 core API 동작 검증 (B와 함께)
 - [ ] 시스템 프롬프트 초안 작성
@@ -421,8 +432,8 @@ ai-service는 Sprint 4부터 본격이지만 D가 1~3주 동안 놀면 안 됨. 
 | 라우팅 | React Router |
 | 상태 관리 | TanStack Query (서버 상태), Zustand (UI 상태) |
 | 캔버스 | React Flow 노드/엣지 컴포넌트 |
-| 위저드 | Datasource 등록, Pipeline 생성 |
-| 패널 | Datasource/Pipeline/Service 상세 |
+| 위저드 | Database 등록, Pipeline 생성 |
+| 패널 | Database/Pipeline/Service 상세 |
 | 채팅 UI | Sprint 4 |
 | WebSocket | 실시간 갱신 hook |
 | API 클라이언트 | OpenAPI 생성 또는 수동 |
@@ -440,15 +451,15 @@ frontend/src/
 │   ├─ canvas/
 │   │   ├─ Canvas.tsx
 │   │   ├─ nodes/
-│   │   │   ├─ DatasourceNode.tsx
+│   │   │   ├─ DatabaseNode.tsx
 │   │   │   ├─ PipelineNode.tsx
 │   │   │   └─ ServiceNode.tsx
 │   │   └─ edges/
 │   ├─ wizards/
-│   │   ├─ DatasourceWizard.tsx
+│   │   ├─ DatabaseWizard.tsx
 │   │   └─ PipelineWizard.tsx
 │   ├─ panels/
-│   │   ├─ DatasourceDetailPanel.tsx
+│   │   ├─ DatabaseDetailPanel.tsx
 │   │   ├─ PipelineDetailPanel.tsx
 │   │   └─ ServiceDetailPanel.tsx
 │   └─ chat/                  ← Sprint 4
@@ -457,7 +468,7 @@ frontend/src/
 ├─ api/
 │   ├─ client.ts              ← axios + 인터셉터 (JWT)
 │   ├─ auth.ts
-│   ├─ datasources.ts
+│   ├─ databases.ts
 │   ├─ pipelines.ts
 │   └─ services.ts
 ├─ hooks/
@@ -485,24 +496,24 @@ frontend/src/
 **완료 기준**:
 - 로그인 화면 보임, mock으로 메인 화면 진입 가능
 
-#### Sprint 2 (Week 3-4): Datasource
+#### Sprint 2 (Week 3-4): Database
 - [ ] 로그인/회원가입 실제 API 연동
-- [ ] **Datasource 위저드**:
+- [ ] **Database 위저드**:
   - Step 1: 이름 + dbType (PostgreSQL/MariaDB 토글)
   - Step 2: 연결 정보 (host, port, dbName, username, password)
   - Step 3: 등록 후 CDC readiness 결과 표시
   - RED인 경우 항목별 remediation 표시
-- [ ] 캔버스에 Datasource 노드 표시
-- [ ] Datasource 상세 패널
+- [ ] 캔버스에 Database 노드 표시
+- [ ] Database 상세 패널
 - [ ] **WebSocket 연결** (DATASOURCE_INSPECTED 이벤트로 캔버스 갱신)
 
 **완료 기준**:
-- PG 또는 MariaDB Datasource 등록 → 노드 등장 → readiness 결과 실시간 표시
+- PG 또는 MariaDB Database 등록 → 노드 등장 → readiness 결과 실시간 표시
 
 #### Sprint 3 (Week 5-6): Pipeline + 실시간 (가장 무거움)
 - [ ] **Pipeline 위저드**:
   - Step 1: 이름
-  - Step 2: Source Datasource 선택 (cdcReadiness=GREEN만)
+  - Step 2: Source Database 선택 (cdcReadiness=GREEN만)
   - Step 3: 테이블 선택 (스키마-테이블 트리 체크박스)
   - Step 4: 생성
 - [ ] 캔버스에 Pipeline 표시 (노드 또는 엣지)
@@ -513,7 +524,7 @@ frontend/src/
 - [ ] Service 노드 자동 등장 (WebSocket SERVICE_DISCOVERED)
 - [ ] Service 상세 패널 (라벨/설명 편집)
 - [ ] 캔버스 자동 레이아웃 (dagre 또는 자체 알고리즘)
-- [ ] 노드 간 연결선 그리기 (Datasource → Pipeline → Service)
+- [ ] 노드 간 연결선 그리기 (Database → Pipeline → Service)
 
 **완료 기준**:
 - 처음부터 끝까지 캔버스만으로 시연 가능
@@ -525,8 +536,8 @@ frontend/src/
   - 메시지 버블 (USER/ASSISTANT)
 - [ ] SSE 응답 처리 (스트리밍 텍스트)
 - [ ] 도구 호출 진행 상황 시각화:
-  - "Datasource를 조회하는 중..." (thinking)
-  - "✓ list_datasources 완료" (tool_result)
+  - "Database를 조회하는 중..." (thinking)
+  - "✓ list_databases 완료" (tool_result)
 - [ ] 채팅 히스토리 (세션 목록)
 - [ ] 채팅으로 Pipeline 생성 시 캔버스 자동 갱신 (WebSocket 연동)
 
@@ -553,17 +564,14 @@ frontend/src/
 ```
 A (Infra) ─── 모든 사람 의존: EKS, Kafka, 배포, 로컬 환경
               ↓
-B (core) ←── E (Frontend가 API 호출)
+operations-backend ←── E (Frontend가 /api/v1 호출)
+   ├─ B(도메인) ↔ C(provisioning/watcher): 같은 모놀리스 in-process
+   │     (구 core→orchestrator REST/Kafka는 직접 호출 + 단일 PipelineStatusService)
+   └─ D (ai-service가 /internal/ops 호출)
               ↑
-              D (ai-service가 도구로 core API 호출)
+D (ai-service, FastAPI) ←── operations-backend (채팅/장애대응 SSE 위임)
               ↑
-C (orchestrator) ←── B (core가 orchestrator 호출)
-              ↓
-              Kafka 이벤트 발행 → B가 구독
-
-D (ai-service) ←── B (core가 채팅 SSE 위임)
-              ↑
-              E (채팅 UI가 SSE 받음, core 경유)
+              E (채팅 UI가 SSE 받음, operations-backend 경유)
 ```
 
 ### 시작 순서
@@ -672,7 +680,7 @@ Sprint 3 끝에 이거 다 되면 MVP 완성 (자연어 없이도 시연 가능)
 - [ ] PG와 MariaDB 둘 다 등록 → CDC readiness 검사
 - [ ] 캔버스에서 Pipeline 생성 → KafkaConnector 자동 생성 → 데이터 흐름
 - [ ] Consumer 연결 시 Service 노드 자동 등장
-- [ ] 멀티 테넌트 격리 검증 (2개 계정 동시 사용)
+- [ ] 멀티 워크스페이스 격리 검증 (2개 계정 동시 사용)
 - [ ] Pipeline 삭제 시 리소스 정리
 
 Sprint 4 끝에 추가로:

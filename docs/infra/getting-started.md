@@ -90,10 +90,14 @@ kubectl exec -n platform-kafka platform-kafka-kafka-0 -- \
 
 ### CDC 토픽 네이밍 규칙
 
+아래는 **수동/로컬 커넥터** 기준(이 가이드의 예시 connector가 쓰는 `topic.prefix`)이다.
+
 | DB | 토픽 패턴 | 예시 |
 |----|----------|------|
 | PostgreSQL | `cdc.postgres.<schema>.<table>` | `cdc.postgres.public.users` |
 | MariaDB | `cdc.mariadb.<database>.<table>` | `cdc.mariadb.testdb.orders` |
+
+> **플랫폼(operations-backend)이 프로비저닝하는 토픽**은 워크스페이스 격리를 위해 `cdc.table.{projectKey}.{dbName}.{schema}.{table}` 규칙을 따른다([ADR 0002](../adr/0002-multi-tenancy-model.md), [design provisioning](../../../skala/design/backend/springboot/DETAILS.md)). 위 단순 prefix는 로컬 검증용이다.
 
 ### Debezium 커넥터 관리
 
@@ -113,7 +117,7 @@ kubectl exec -n platform-kafka platform-connect-connect-0 -- \
 
 ## MetaDB 접속 정보
 
-플랫폼 내부 메타데이터 저장소 (파이프라인 설정, 테넌트 정보 등)
+플랫폼 내부 메타데이터 저장소 (파이프라인 설정, 워크스페이스 정보 등)
 
 ### 클러스터 내부
 
