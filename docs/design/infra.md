@@ -38,15 +38,17 @@ flowchart TB
 
 `platform-kafka`(Kafka·Connect·CR) · `bifrost-system`(FE·FastAPI·SpringBoot) · `registry`(Harbor) · `cicd`(Jenkins) · `argocd` · `monitoring`(Prometheus·Alertmanager·Grafana·Loki·Tempo·exporters) · `metadb` · `userdb`
 
-## 현재 상태 (2026-06-01)
+## 현재 상태 (2026-06-02)
 
 | 완료 | 미구성 |
 | --- | --- |
-| EKS 3노드, Strimzi Operator, `platform-kafka` Ready(broker/controller 3, PVC 3 Bound), 내부 topic 3, gp3 default, metadb/userdb 일부 | Kafka Connect, Harbor, Jenkins, Argo CD, Prometheus/Grafana/Loki/Tempo, exporter, 앱(FastAPI/Spring/Frontend), Evidence/Audit Store, IngressClass |
+| EKS 3노드, Strimzi Operator, `platform-kafka` Ready(3 broker/controller, PVC 3), 내부 topic 3, **Kafka Connect `platform-connect`(1 replica)**, **Harbor**(8 pod), **Jenkins**, **Argo CD**(앱 0개), gp3 default, metadb/userdb | Monitoring(Prometheus/Grafana/Loki/Tempo·exporter), 앱(FastAPI/Spring/Frontend, `bifrost-system`), Evidence/Audit Store, KafkaConnector/KafkaUser, metrics-server, IngressClass |
+
+> ⚠️ Harbor·Jenkins·Argo CD·Kafka Connect는 **수동 배포**되어 있고 **manifest가 repo에 YAML로 미반영**이다(Argo CD Application 0개 = GitOps 미연동). manifest 역추출·GitOps 연동은 후속 작업. 상세 스냅샷은 [§2 추가 배포 현황](#35-추가-배포-현황-2026-06-02-스냅샷-수동-배포).
 
 ## 다음 우선순위
 
-Harbor → Jenkins → Argo CD → GitOps repo → Monitoring(+Loki/Tempo) → Evidence/Audit/Metadata Store → Kafka Connect → KafkaConnector → Spring Boot → FastAPI → Frontend.
+(완료: Harbor·Jenkins·Argo CD·Kafka Connect 수동 배포) → **manifest 역추출·GitOps(Argo CD Application) 연동** → Monitoring(+Loki/Tempo) → Evidence/Audit/Metadata Store → KafkaConnector/KafkaUser → Spring Boot → FastAPI → Frontend.
 
 ## 점검 필요 (운영 전)
 
@@ -356,9 +358,12 @@ Namespace:
 | `kube-public` | Active | Kubernetes 기본 |
 | `kube-node-lease` | Active | Kubernetes 기본 |
 | `strimzi-system` | Active | Strimzi operator |
-| `platform-kafka` | Active | Kafka cluster |
+| `platform-kafka` | Active | Kafka cluster + Kafka Connect |
 | `metadb` | Active | metadata / audit / evidence DB |
 | `userdb` | Active | demo/source/sink DB |
+| `harbor` | Active | Harbor registry (수동 배포, 25h) |
+| `jenkins` | Active | Jenkins (수동 배포, 25h) |
+| `argocd` | Active | Argo CD (수동 배포, 25h, App 0개) |
 
 ### 3. 현재 설치된 핵심 리소스
 
@@ -442,6 +447,21 @@ Listener:
 | `platform-internal-service-discovered` | 3 | 3 | True |
 | `platform-internal-service-lag-updated` | 3 | 3 | True |
 
+#### 3.5 추가 배포 현황 (2026-06-02 스냅샷, 수동 배포)
+
+> ⚠️ 아래 리소스는 **수동(kubectl/Helm)으로 배포**된 상태이며 **manifest가 repo에 YAML로 반영되어 있지 않다**. manifest 역추출과 GitOps(Argo CD) 연동은 후속 작업이다(Argo CD는 설치되어 있으나 등록된 Application이 0개다).
+
+| Namespace | 워크로드 | 상태 |
+| --- | --- | --- |
+| `harbor` | Harbor 8 pod (core·database·jobservice·nginx·portal·redis·registry[2/2]·trivy) | 정상 Running. PVC: registry 50Gi·db 10Gi·trivy 10Gi·redis 5Gi·jobservice 5Gi (gp3 Bound) |
+| `jenkins` | `jenkins-0` (2/2, StatefulSet) | 정상. PVC 20Gi |
+| `argocd` | Argo CD 7 pod (server·repo-server·application/applicationset/notifications-controller·dex·redis) | 정상. **등록 Application 0개(GitOps 미연동)** |
+| `platform-kafka` | `platform-connect` (KafkaConnect CR, **replicas 1** READY) + entity-operator | Connect 가동. 목표 2 replica, connector plugin image는 Harbor 기반 재정의 예정. **KafkaConnector/KafkaUser CR은 아직 없음** |
+
+여전히 미구성: `monitoring`(Prometheus/Grafana/Loki/Tempo·exporter), `bifrost-system`(FE/FastAPI/Spring 앱), Evidence/Audit Store, KafkaConnector/KafkaUser CR, metrics-server(`kubectl top` 불가), IngressClass.
+
+**이상 징후: 없음.** 모든 pod Running, Pending/CrashLoop 0, 과다 재시작 0. harbor-database(1회)·harbor-jobservice(3회)·jenkins-0(3회)·argocd-dex(2회)에 기동 시점 소수 재시작이 있으나 의존성 기동 순서에 따른 정상 범위다. **Harbor 8 pod는 Harbor 표준 구성요소로 과다하지 않다**(각 pod가 별개 컴포넌트). trivy(취약점 스캐너)만 선택적이라 불필요 시 비활성화해 리소스를 줄일 수 있다.
+
 ### 4. 현재 수정 검토가 필요한 항목
 
 #### 4.1 Kafka `auto.create.topics.enable`
@@ -468,17 +488,13 @@ MVP로는 적절하다. 다만 리소스 여유가 생기면 controller와 broke
 
 데모 또는 외부 접속 목적이면 유지할 수 있지만, 운영 기준으로는 ClusterIP 전환 또는 접근 제한을 검토한다.
 
-#### 4.5 Kafka Connect 미구성
+#### 4.5 Kafka Connect — 배포됨(보강 필요)
 
-KafkaConnect CRD는 설치되어 있지만 실제 KafkaConnect 리소스는 확인되지 않았다.
+KafkaConnect CR `platform-connect`가 **replicas 1**로 가동 중이다(§3.5). 다만 (a) 목표 replicas 2로 증설, (b) connector plugin 포함 custom image를 Harbor 기반으로 재정의, (c) source/sink **KafkaConnector CR**와 워크스페이스 **KafkaUser CR** 생성이 남았다.
 
-Bifrost pipeline 운영을 위해 Kafka Connect cluster와 connector plugin image 구성이 필요하다.
+#### 4.6 CI/CD와 Registry — 배포됨(수동, GitOps 미연동)
 
-#### 4.6 CI/CD와 Registry 미구성
-
-현재 Harbor, Jenkins, Argo CD namespace/workload는 확인되지 않았다.
-
-ECR을 사용할 수 없으므로 Harbor를 먼저 올리고, Jenkins build image push, Argo CD deploy 흐름을 구성해야 한다.
+Harbor·Jenkins·Argo CD가 각각 `harbor`/`jenkins`/`argocd` namespace에 **수동 배포**되어 정상 가동 중이다(§3.5). 남은 일: (a) **Argo CD Application 등록**(현재 0개)으로 GitOps 연동, (b) Jenkins build→Harbor push→manifest tag update 파이프라인 구성, (c) 이 리소스들의 **manifest를 repo에 YAML로 역추출**(현재 미반영).
 
 #### 4.7 Observability 미구성
 
@@ -493,9 +509,9 @@ Agent RCA를 위해 metric/log/trace/event 수집 계층이 필요하다.
 | `strimzi-system` | Strimzi operator | 존재 |
 | `platform-kafka` | Kafka, Kafka Connect, Kafka topic/user/rebalance | 일부 존재 |
 | `bifrost-system` | Frontend, FastAPI Agent, Spring Boot Backend | 필요 |
-| `registry` | Harbor | 필요 |
-| `cicd` | Jenkins | 필요 |
-| `argocd` | Argo CD | 필요 |
+| `harbor` | Harbor (registry) — 계획상 `registry`였으나 실제 ns명 `harbor` | 존재(수동) |
+| `jenkins` | Jenkins — 계획상 `cicd`였으나 실제 ns명 `jenkins` | 존재(수동) |
+| `argocd` | Argo CD | 존재(수동, App 0개) |
 | `monitoring` | Prometheus, Grafana, Loki, exporters | 필요 |
 | `metadb` | metadata / audit / evidence DB | 존재 |
 | `userdb` | demo/source/sink DB | 존재 |
@@ -684,7 +700,11 @@ KafkaNodePool brokers
 - Kafka broker/controller 3개 Running
 - Kafka broker PVC 3개 Bound
 - 내부 KafkaTopic 3개 Ready
-- metadb/userdb workload 일부 Running
+- metadb/userdb workload Running
+- Kafka Connect `platform-connect`(KafkaConnect CR, replicas 1) Ready — 2026-06-02 (수동)
+- Harbor 8 pod Running — 2026-06-02 (수동, manifest 미반영)
+- Jenkins `jenkins-0` Running — 2026-06-02 (수동)
+- Argo CD 7 pod Running — 2026-06-02 (수동, Application 0개)
 
 #### 수정 검토
 
@@ -697,21 +717,19 @@ KafkaNodePool brokers
 
 #### 남은 작업
 
-1. Harbor 설치
-2. Harbor imagePullSecret 배포
-3. Jenkins 설치
-4. Argo CD 설치
-5. GitOps repository와 Argo CD Application 구성
-6. Monitoring stack 설치
-7. Loki와 Tempo 설치
+> Harbor·Jenkins·Argo CD·Kafka Connect 설치는 완료(수동). 아래는 그 이후 남은 작업이다.
+
+1. **수동 배포 리소스(Harbor/Jenkins/Argo CD/Kafka Connect)의 manifest를 repo에 YAML로 역추출**
+2. Argo CD Application 등록 + GitOps repository 구성(현재 App 0개)
+3. Jenkins build → Harbor push → manifest tag update 파이프라인
+4. Harbor imagePullSecret을 각 application namespace에 배포
+5. Kafka Connect replicas 2 증설 + connector plugin image(Harbor) 재정의
+6. KafkaUser / KafkaConnector / 추가 KafkaTopic 정의
+7. Monitoring stack 설치(Prometheus/Grafana) + Loki/Tempo + exporter + metrics-server
 8. Evidence Store / Audit Store / Metadata Store 구성
-9. Kafka Connect 배포
-10. KafkaUser / KafkaConnector / 추가 KafkaTopic 정의
-11. Cruise Control / KafkaRebalance 활성화
-12. Spring Boot Operations Backend 배포
-13. FastAPI Agent 배포
-14. Frontend 배포
-15. NetworkPolicy / RBAC 정리
+9. Cruise Control / KafkaRebalance 활성화
+10. Spring Boot Operations Backend / FastAPI Agent / Frontend 배포(`bifrost-system`)
+11. NetworkPolicy / RBAC / IngressClass 정리
 
 ### 9. 배포 순서
 
