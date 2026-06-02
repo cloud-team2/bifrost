@@ -134,7 +134,7 @@ LLM agent (8):
 
 결정론적 단계 (LLM 추론 없음):
 
-- Correlation Engine: 4.7 / [§10 Correlation Rules](catalogs.md#10-catalog-correlation-rules)의 rule/score/window로 alert를 묶는다.
+- Correlation Engine: [§4 Alert와 Incident 상관관계](#4-alert와-incident-상관관계) / [§10 Correlation Rules](catalogs.md#10-catalog-correlation-rules)의 rule/score/window로 alert를 묶는다.
 - Policy Guard: [§12 Policy Matrix](catalogs.md#12-catalog-policy-matrix) lookup으로 `allow`/`require_approval`/`require_change_management`/`deny`를 결정한다.
 - Executor: 승인된 tool을 정해진 순서로 호출하는 도구 실행 오케스트레이터다.
 - Approval Gate / Change Management Gate: 사람 승인과 변경관리 검증 단계다.

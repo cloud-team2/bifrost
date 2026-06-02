@@ -1095,7 +1095,7 @@ Spring Boot Operations Backend는 같은 기준을 다시 검증한다.
 | `CRITICAL` | approval 요청 우선순위를 높이고, customer-visible action은 change management 검토 |
 | `WARNING` | runtime mutation은 최소 approval 유지, 기본 decision 유지 (자동 허용으로 낮추지 않음) |
 
-> 에이전트와 플랫폼은 같은 2단계 severity를 쓴다. 별도의 4단계(critical/high/medium/low) 축은 두지 않는다 — 과거 문서의 4단계 표기는 폐기한다. RCA가 결정한 severity는 [Spring Report Support API](../../api/springboot.md#24-report-support-api)의 `PATCH .../incidents/{id}/rca`로 incident에 기록한다.
+> 에이전트와 플랫폼은 같은 2단계 severity를 쓴다. 별도의 4단계(critical/high/medium/low) 축은 두지 않는다 — 과거 문서의 4단계 표기는 폐기한다. RCA 분석으로 보정된 severity(있으면)는 [Spring Report Support API](../../api/springboot.md#24-report-support-api)의 `PATCH .../incidents/{id}/rca`로 incident에 기록한다.
 
 ### 7. Deny 대상
 

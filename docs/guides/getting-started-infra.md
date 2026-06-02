@@ -226,8 +226,8 @@ EKS (ap-northeast-2)
     │   ├── topic-operator           # KafkaTopic CRD 처리
     │   └── user-operator            # KafkaUser CRD 처리
     ├── platform-connect-connect-0   # Kafka Connect (현재 replicas 1, 목표 2; Debezium)
-    │   ├── debezium-postgres        # PostgreSQL CDC 커넥터
-    │   └── debezium-mariadb         # MariaDB CDC 커넥터
+    │   ├── debezium-postgres        # PostgreSQL CDC 커넥터 (예정, 현재 EKS에 CR 미생성)
+    │   └── debezium-mariadb         # MariaDB CDC 커넥터 (예정, 현재 미생성)
 
 metadb
 └── metadb                           # PostgreSQL 15 (플랫폼 메타DB)

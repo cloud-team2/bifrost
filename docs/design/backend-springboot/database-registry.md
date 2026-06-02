@@ -134,3 +134,4 @@ CdcReadinessChecker checker = checkerRegistry.forEngine(db.getEngine());
 | `GET` | `/api/v1/workspaces/{wsId}/databases/{dbId}/cdc-readiness` | CDC 준비도 점검 |
 | `GET` | `/api/v1/workspaces/{wsId}/databases/{dbId}/schema` | 스키마(FR-016) |
 | `GET` | `/api/v1/workspaces/{wsId}/databases/{dbId}/metrics` | 지표(FR-017) |
+| `GET` | `/api/v1/workspaces/{wsId}/databases/{dbId}/pipelines` | 연결된 파이프라인 목록(FR-018) |

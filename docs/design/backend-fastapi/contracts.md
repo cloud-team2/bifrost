@@ -719,7 +719,7 @@ if verifier.status == "fail":
 run(report)
 ```
 
-> 위 분기는 매 step 진입 시 **전역 가드**(`run.step_count`·LLM/token 예산·wall-clock)를 먼저 검사한다. 어느 하나라도 초과하면 즉시 `finalize(report, reason=...)`로 수렴한다([§5.1](#51-루프-방지와-종료-보장)). 모든 `finalize`는 종료 사유를 timeline·audit에 남긴다.
+> 위 분기는 매 step 진입 시 **전역 가드**(`run.step_count`·LLM/token 예산·wall-clock)를 먼저 검사한다. 어느 하나라도 초과하면 즉시 `finalize(report, reason=...)`로 수렴한다([§5.1](#51-루프-방지와-종료-보장)). 모든 `finalize`는 종료 사유를 timeline·audit에 남긴다. 위 의사코드는 대표 분기만 보이며, `scope_unclear`(scope_loops)·`revise_action`(revise_action_loops) 분기도 [§5.1](#51-루프-방지와-종료-보장)의 상한을 동일하게 따른다.
 
 ---
 
