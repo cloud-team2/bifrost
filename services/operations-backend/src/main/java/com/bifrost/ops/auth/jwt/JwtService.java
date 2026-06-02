@@ -17,6 +17,8 @@ import java.util.UUID;
 @Service
 public class JwtService {
 
+    private static final int MIN_SECRET_BYTES = 32;
+
     private final SecretKey key;
     private final String issuer;
     private final Duration ttl;
@@ -24,7 +26,13 @@ public class JwtService {
     public JwtService(@Value("${jwt.secret}") String secret,
                       @Value("${jwt.issuer:bifrost-ops}") String issuer,
                       @Value("${jwt.expiration-hours:24}") long expirationHours) {
-        this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
+        byte[] keyBytes = secret.getBytes(StandardCharsets.UTF_8);
+        if (keyBytes.length < MIN_SECRET_BYTES) {
+            throw new IllegalStateException(
+                "jwt.secret 은 최소 " + MIN_SECRET_BYTES + " 바이트(256bit) 이상이어야 합니다. 현재: "
+                    + keyBytes.length + " 바이트");
+        }
+        this.key = Keys.hmacShaKeyFor(keyBytes);
         this.issuer = issuer;
         this.ttl = Duration.ofHours(expirationHours);
     }

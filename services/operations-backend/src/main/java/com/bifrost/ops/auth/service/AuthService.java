@@ -16,6 +16,7 @@ import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -59,19 +60,39 @@ public class AuthService {
         workspace.setName(req.workspaceName());
         workspace.setNamespace(req.namespace());
         workspace.setStatus(WorkspaceEntity.Status.PROVISIONING);
-        workspace = workspaceRepository.save(workspace);
 
         UserEntity user = new UserEntity();
-        user.setTenantId(workspace.getId());
         user.setEmail(req.email());
         user.setPasswordHash(passwordEncoder.encode(req.password()));
-        user = userRepository.save(user);
+
+        try {
+            workspace = workspaceRepository.save(workspace);
+            user.setTenantId(workspace.getId());
+            user = userRepository.save(user);
+        } catch (DataIntegrityViolationException e) {
+            throw mapRegistrationConflict(req, e);
+        }
 
         triggerProvisioning(workspace);
 
         String token = jwtService.issue(user.getId(), workspace.getId(), user.getEmail());
         return new AuthTokensResponse(
             token, "Bearer", jwtService.ttl().toSeconds(), user.getId(), workspace.getId());
+    }
+
+    private ApiException mapRegistrationConflict(RegisterRequest req, DataIntegrityViolationException e) {
+        String detail = e.getMostSpecificCause() != null ? e.getMostSpecificCause().getMessage() : "";
+        if (detail.contains("email")) {
+            return new ApiException(ErrorCode.EMAIL_ALREADY_USED, "이미 가입된 이메일");
+        }
+        if (detail.contains("namespace")) {
+            return new ApiException(ErrorCode.WORKSPACE_NAMESPACE_CONFLICT, "이미 사용 중인 namespace");
+        }
+        if (detail.contains("name")) {
+            return new ApiException(ErrorCode.WORKSPACE_NAME_CONFLICT, "이미 사용 중인 워크스페이스 이름");
+        }
+        log.warn("회원가입 중 unique 제약 충돌 — 매핑 실패: {}", detail);
+        return new ApiException(ErrorCode.EMAIL_ALREADY_USED, "이미 사용 중인 값이 있습니다");
     }
 
     public AuthTokensResponse login(LoginRequest req) {

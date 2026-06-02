@@ -178,6 +178,17 @@ class AuthServiceTest {
     }
 
     @Test
+    void loginRejectsUnknownEmail() {
+        when(userRepository.findByEmail("unknown@example.com")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> authService.login(new LoginRequest("unknown@example.com", "password123")))
+            .isInstanceOfSatisfying(ApiException.class, ex ->
+                assertThat(ex.code()).isEqualTo(ErrorCode.INVALID_CREDENTIALS));
+
+        verify(jwtService, never()).issue(any(), any(), any());
+    }
+
+    @Test
     void loginRejectsWrongPassword() {
         UserEntity user = user(UUID.randomUUID(), UUID.randomUUID(), "user@example.com", "encoded-password");
         when(userRepository.findByEmail("user@example.com")).thenReturn(Optional.of(user));
@@ -188,6 +199,18 @@ class AuthServiceTest {
                 assertThat(ex.code()).isEqualTo(ErrorCode.INVALID_CREDENTIALS));
 
         verify(jwtService, never()).issue(any(), any(), any());
+    }
+
+    @Test
+    void meThrowsWhenWorkspaceMissing() {
+        UUID userId = UUID.randomUUID();
+        UUID workspaceId = UUID.randomUUID();
+        when(workspaceRepository.findById(workspaceId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() ->
+            authService.me(new AuthenticatedUser(userId, workspaceId, "user@example.com")))
+            .isInstanceOfSatisfying(ApiException.class, ex ->
+                assertThat(ex.code()).isEqualTo(ErrorCode.WORKSPACE_NOT_FOUND));
     }
 
     @Test

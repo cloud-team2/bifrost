@@ -1,6 +1,8 @@
 package com.bifrost.ops.auth.jwt;
 
+import com.bifrost.ops.api.error.ErrorCode;
 import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -48,8 +50,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
                 principal, null, AuthorityUtils.NO_AUTHORITIES);
             SecurityContextHolder.getContext().setAuthentication(auth);
+        } catch (ExpiredJwtException e) {
+            SecurityContextHolder.clearContext();
+            request.setAttribute("ops.errorCode", ErrorCode.AUTH_TOKEN_EXPIRED);
         } catch (JwtException | IllegalArgumentException e) {
             SecurityContextHolder.clearContext();
+            request.setAttribute("ops.errorCode", ErrorCode.AUTH_TOKEN_INVALID);
         }
 
         chain.doFilter(request, response);
