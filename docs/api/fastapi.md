@@ -73,7 +73,7 @@ Spring Boot 내부 운영 API는 [Spring Boot DETAILS](../design/backend-springb
 | Method | Path | 설명 |
 | --- | --- | --- |
 | `GET` | `/api/v1/health` | FastAPI 서버 생존 상태를 확인한다. |
-| `GET` | `/api/v1/ready` | LLM, Spring Boot, State Store, Evidence Store 연결 준비 상태를 확인한다. |
+| `GET` | `/api/v1/ready` | LLM, Spring Boot, Agent Run Store, Knowledge Vector Store, Evidence Store 연결 준비 상태를 확인한다. |
 | `GET` | `/api/v1/version` | API version, build version, catalog version을 반환한다. |
 | `GET` | `/api/v1/capabilities` | 사용 가능한 Agent mode, model tier, streaming 지원 여부를 반환한다. |
 
@@ -89,7 +89,8 @@ Spring Boot 내부 운영 API는 [Spring Boot DETAILS](../design/backend-springb
     "dependencies": {
       "spring_operations": "ok",
       "llm_provider": "ok",
-      "state_store": "ok",
+      "agent_run_store": "ok",
+      "vector_store": "ok",
       "evidence_store": "ok"
     }
   }

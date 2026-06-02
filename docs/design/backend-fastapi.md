@@ -23,11 +23,13 @@ flowchart TB
       SUP <--> ST[(State<br/>namespace·patch)]
       WF --> REG[Tool Client Registry<br/>allowlist·schema·risk]
       WF --> EV[Evidence metadata]
+      WF --> VEC[(Knowledge Vector Store<br/>RAG·pgvector)]
     end
 
     REG -->|/internal/ops| SB[Spring Boot Operations Backend]
     SB --> RT[K8s·Kafka·Connect·Prometheus·Loki·Tempo]
-    EV -. reference .-> ES[(Evidence Store)]
+    EV -. reference .-> ES[(Evidence Store<br/>Spring·metadb)]
+    ST -. persist .-> RUNDB[(Agent Run Store<br/>PostgreSQL·agentdb)]
     SUP --> LLM[LLM Provider<br/>역할별 tier]
 ```
 
@@ -93,6 +95,28 @@ flowchart LR
 ## Spring Boot 연계
 
 Agent는 논리 tool 이름만 쓰고, Tool Client Registry가 Spring Boot operation으로 매핑한다. read는 조회 tool, mutation은 승인된 action만 Executor가 실행. Agent는 K8s/Kafka/Prometheus credential을 갖지 않는다.
+
+## 영속성 — 저장소 구성
+
+FastAPI는 성격이 다른 **세 저장소**를 쓴다(운영 raw data는 어디에도 직접 적재하지 않음). 상세 스키마는 [§2 Server Design §9](#2-server-design).
+
+| 저장소 | 종류 | 소유 | 담는 것 |
+| --- | --- | --- | --- |
+| **Agent Run Store** | 관계형(PostgreSQL `agentdb`) | FastAPI | run 메타·State patch(append-only)·SSE event·approval 연계·report 스냅샷 |
+| **Knowledge Vector Store** | 벡터(pgvector 권장) | FastAPI | RAG 코퍼스(runbook·문서·과거 인시던트 요약) 임베딩 |
+| Evidence Store | blob/관계형 | **Spring/`metadb`** | 운영 조회 raw 원문. FastAPI는 `store_ref`만 참조 |
+
+```mermaid
+erDiagram
+    agent_run ||--o{ state_patch     : "append-only State"
+    agent_run ||--o{ run_event       : "SSE replay"
+    agent_run ||--o{ approval_link    : "facade(SoT=Spring)"
+    agent_run ||--o{ report_snapshot  : "최종 응답"
+```
+
+- Agent Run Store: `agent_run`([§6 api](../api/fastapi.md)) · `state_patch`([§14](#14-contract-state-schema)) · `run_event`([§16](#16-contract-streaming-events)) · `approval_link`(Spring approval_id 캐시) · `report_snapshot`([§17](#17-contract-output-schemas)).
+- approval·incident·audit·evidence 원문의 **SoT는 Spring `metadb`**, FastAPI는 run 상태·지식 코퍼스·캐시·요약만 둔다.
+- **서비스 경계 = HTTP/JSON**([ADR 0004](../adr/0004-monorepo-monolith.md)): `project_id`·`incident_id`·`approval_id`·evidence `store_ref`는 모두 **논리 참조**(Spring `metadb`로 가는 DB FK 없음).
 
 ## 더 읽기 → [DETAILS.md](#)
 
@@ -492,12 +516,19 @@ app/
   evidence/
     metadata.py
     redaction.py
+  knowledge/                 # RAG (Knowledge Vector Store)
+    vector_store.py          #   pgvector client (또는 외부 벡터 DB)
+    embedder.py
+    indexer.py               #   runbook/문서 임베딩 인덱싱(배치)
   streaming/
     event_bus.py
     sse.py
-  persistence/
+  persistence/               # Agent Run Store (PostgreSQL)
     run_repository.py
     state_repository.py
+    event_repository.py
+    approval_link_repository.py
+    report_repository.py
 ```
 
 `agents/`에는 LLM 판단·생성이 필요한 8개 Agent만 둔다. Correlation, Policy Guard, Executor, Approval/Change Management Gate처럼 결정론적으로 동작해야 하는 단계는 `workflow/stages/`에 둬서 LLM agent와 실행 제어 경계를 분리한다.
@@ -577,19 +608,194 @@ Streaming 대상:
 
 양방향 제어가 필요해지면 WebSocket을 추가한다.
 
-### 9. Persistence
+### 9. Persistence (Data Model)
 
-FastAPI는 다음 데이터를 저장해야 한다.
+#### 9.1 저장소 구성
 
-| 데이터 | 목적 |
-| --- | --- |
-| run metadata | run 조회와 재개 |
-| state patch | workflow replay와 audit |
-| event log | UI streaming 재연결 |
-| approval request metadata | 승인 대기 상태 관리 |
-| report snapshot | 최종 응답 재조회 |
+FastAPI는 성격이 다른 **세 종류의 저장소**를 쓴다(운영 raw data는 어디에도 직접 적재하지 않는다).
 
-운영 raw data는 Evidence Store 또는 Spring Boot가 관리하는 저장소에 reference로 남긴다.
+| 저장소 | 종류 | 소유 | 담는 것 |
+| --- | --- | --- | --- |
+| **Agent Run Store** | 관계형(PostgreSQL) | FastAPI | run 메타·State patch·SSE event·approval 연계·report 스냅샷 |
+| **Knowledge Vector Store** | 벡터(pgvector 권장) | FastAPI | RAG 코퍼스(runbook·용어집·운영 문서·과거 인시던트 요약) 임베딩 |
+| Evidence Store | blob/관계형 | **Spring/`metadb`** | 운영 조회 raw 결과(원문). FastAPI는 `store_ref`만 참조 |
+
+- **인스턴스**: Agent Run Store는 FastAPI 전용 PostgreSQL(논리 DB `agentdb`). Knowledge Vector Store는 **pgvector 확장으로 같은 PostgreSQL에 co-locate**하는 것을 v1 기본으로 한다(폐쇄망·클러스터 용량 제약[infra §11](./infra.md#11-클러스터-용량-분석-및-대응안-2026-06-02) 상 전용 벡터 DB 컴포넌트를 새로 띄우지 않음). 코퍼스/스케일이 커지면 전용 벡터 DB(Qdrant·Milvus 등)로 외부화한다(인터페이스 동일).
+- v1엔 `agentdb`를 `metadb` 네임스페이스의 PostgreSQL 인스턴스에 별도 database로 co-locate할 수 있으나 Spring 테이블과 상호 직접접근하지 않는다(서비스 경계=HTTP/JSON, [ADR 0004](../adr/0004-monorepo-monolith.md)). 인프라 배치는 [infra §6.6](./infra.md#66-bifrost-application).
+- **SoT 경계**: 운영 raw·evidence 원문·approval·incident·audit의 원본은 Spring `metadb`다([Spring DETAILS §4](./backend-springboot.md#4-data-model)). FastAPI 저장소는 run 상태·지식 코퍼스·캐시·요약만 둔다.
+- (선택) 다중 replica에서 SSE 라이브 fan-out·run 잠금이 필요하면 Redis를 캐시/pub-sub로 둘 수 있다(resume 이력은 `run_event`로 충분).
+
+#### 9.2 Agent Run Store (관계형)
+
+**Agent run의 실행 상태**를 저장한다(플랫폼 메타데이터가 아니라 에이전트 orchestration 상태).
+
+| 데이터 | 목적 | 테이블 |
+| --- | --- | --- |
+| run metadata | run 조회와 재개 | `agent_run` |
+| state patch | workflow replay와 audit(append-only) | `state_patch` |
+| event log | SSE 재연결(resume) | `run_event` |
+| approval 연계 | 승인 대기 상태(Spring facade) | `approval_link` |
+| report snapshot | 최종 응답 재조회 | `report_snapshot` |
+
+**ERD**
+
+```mermaid
+erDiagram
+    agent_run ||--o{ state_patch     : "append-only State"
+    agent_run ||--o{ run_event       : "SSE replay"
+    agent_run ||--o{ approval_link    : "facade(SoT=Spring)"
+    agent_run ||--o{ report_snapshot  : "최종 응답"
+
+    agent_run {
+        text   run_id PK
+        uuid   project_id "= workspace_id (Spring metadb 논리 참조)"
+        text   mode "simple_query/incident_analysis/action_execution/approval_decision"
+        bool   remediation_requested
+        text   incident_id "Spring incident 논리 참조(nullable)"
+        text   status "running/waiting_for_approval/completed/failed/cancelled"
+        text   catalog_version "replay 재현 기준"
+    }
+    state_patch {
+        bigint id PK
+        text   run_id FK
+        int    seq "run 내 단조 증가"
+        text   namespace "run/incident/correlation/evidence/analysis/actions/verification/report"
+        text   author "Router..Report / Supervisor"
+        text   op "append/version/tombstone"
+        jsonb  patch "메타데이터만(raw evidence inline 금지)"
+    }
+    run_event {
+        text   event_id PK
+        text   run_id FK
+        int    seq "resume 커서"
+        text   type "agent_started/tool_call_completed/approval_required/run_completed..."
+        text   message "사용자 표시용 요약"
+        jsonb  payload "민감정보·raw 금지(nullable)"
+    }
+    approval_link {
+        uuid   id PK
+        text   run_id FK
+        text   action_id
+        text   approval_id "Spring approval id(원본)"
+        text   params_hash "표시·precheck용"
+        text   status_cache "Spring 응답 캐시: pending/approved/rejected/expired"
+    }
+    report_snapshot {
+        uuid   id PK
+        text   run_id FK
+        text   root_cause_id "§8 catalog id(nullable)"
+        bool   verified "Verifier approved_for_final_response"
+        jsonb  body "final_response(§17) 스냅샷"
+    }
+```
+
+> 텍스트 요약: `agent_run`이 `state_patch`(State 변경 이력)·`run_event`(SSE 재연결)·`approval_link`(승인 facade)·`report_snapshot`(최종 응답)을 1:N으로 소유한다. `project_id`/`incident_id`/`approval_id`/evidence `store_ref`는 모두 Spring `metadb`로 가는 **논리 참조**이며 DB FK를 걸지 않는다(서비스 경계).
+
+**테이블**
+
+**`agent_run`** — run 메타데이터 (Agent Run API [api.md §6](../api/fastapi.md))
+
+| 컬럼 | 타입 | 설명 |
+| --- | --- | --- |
+| `run_id` | text PK | 예: `run_20260601_001` |
+| `project_id` | uuid | = `workspace_id`(scope). Spring `metadb` workspace 논리 참조 |
+| `requested_by` | text | 요청 사용자 |
+| `mode` | text | `simple_query`/`incident_analysis`/`action_execution`/`approval_decision`(현재 turn 기준) |
+| `remediation_requested` | bool | 조치 후보 생성 요청 여부(기본 false=diagnose_only) |
+| `incident_id` | text null | 분석 대상 Spring incident 논리 참조 |
+| `status` | text | `running`/`waiting_for_approval`/`completed`/`failed`/`cancelled` |
+| `current_agent` | text null | 진행 중 단계 |
+| `catalog_version` | text | tool/catalog 버전(replay 재현 기준, [§4.18](#4-tool-catalog)) |
+| `created_at` `updated_at` `closed_at` | timestamptz | |
+
+**`state_patch`** — State 변경 이력(append-only, event-sourced. [§14](#14-contract-state-schema))
+
+| 컬럼 | 타입 | 설명 |
+| --- | --- | --- |
+| `id` | bigint PK | |
+| `run_id` | text FK | → `agent_run` |
+| `seq` | int | run 내 순서. `unique(run_id, seq)` |
+| `namespace` | text | `run`/`incident`/`correlation`/`evidence`/`analysis`/`actions`/`verification`/`report` |
+| `author` | text | 작성 주체(Agent 또는 Supervisor). 자기 namespace만 기록 |
+| `op` | text | `append`/`version`(수정)/`tombstone`(삭제 대체) |
+| `path` | text | namespace 내 경로 |
+| `patch` | jsonb | 변경 내용. **raw evidence/secret inline 금지**, evidence는 `store_ref`만 |
+| `created_at` | timestamptz | |
+
+**`run_event`** — SSE event 로그(재연결 history. [§16](#16-contract-streaming-events), [api.md §7](../api/fastapi.md))
+
+| 컬럼 | 타입 | 설명 |
+| --- | --- | --- |
+| `event_id` | text PK | 예: `evt_001` |
+| `run_id` | text FK | → `agent_run` |
+| `seq` | int | resume 커서. `unique(run_id, seq)` |
+| `type` | text | `agent_started`/`tool_call_completed`/`approval_required`/`verification_completed`/`run_completed`/… |
+| `agent` | text null | 단계명 |
+| `message` | text | 사용자 표시용 요약 |
+| `payload` | jsonb null | 부가 컨텍스트(secret·connection string·원문 로그·내부 prompt 금지) |
+| `created_at` | timestamptz | |
+
+**`approval_link`** — approval facade 연계 (**SoT는 Spring**, [Spring api §19](../api/springboot.md#19-approval-api))
+
+| 컬럼 | 타입 | 설명 |
+| --- | --- | --- |
+| `id` | uuid PK | |
+| `run_id` | text FK | → `agent_run` |
+| `action_id` | text | State `actions` 후보의 action |
+| `approval_id` | text | Spring approval id(원본) |
+| `params_hash` | text | UI 표시·실행 직전 precheck용(검증 원본은 Spring) |
+| `status_cache` | text | Spring 응답 캐시 `pending`/`approved`/`rejected`/`expired` |
+| `created_at` `updated_at` | timestamptz | |
+
+> approval record(상태·params hash·승인자·만료·single-use)의 **원본·검증·감사는 Spring**이 집행한다. 이 표는 run↔approval 연계와 UI 표시용 캐시이며, 동일 approval을 양쪽에 중복 생성하지 않는다([§핵심 동작 Approval SoT](#핵심-동작)).
+
+**`report_snapshot`** — 최종 report 재조회 (Report API [api.md §13](../api/fastapi.md))
+
+| 컬럼 | 타입 | 설명 |
+| --- | --- | --- |
+| `id` | uuid PK | |
+| `run_id` | text FK | → `agent_run` |
+| `incident_id` | text null | Spring incident 논리 참조 |
+| `root_cause_id` | text null | [§8 Root Cause Catalog](#8-catalog-root-cause) id |
+| `confidence` | numeric null | |
+| `verified` | bool | Verifier `approved_for_final_response`=true만 노출 |
+| `body` | jsonb | `final_response`([§17](#17-contract-output-schemas)) 스냅샷 |
+| `created_at` | timestamptz | |
+
+#### 9.3 Knowledge Vector Store (RAG)
+
+Retrieval 에이전트의 **문서 RAG**([§1 Agent Principles](#1-agent-principles)) 코퍼스를 임베딩으로 보관한다. `simple_query`(지식 질의, 예: "DLQ가 뭐야?")와 인시던트 분석 시 runbook·운영 문서 근거를 **유사도 검색**으로 가져오고, 결과는 evidence item(`store_ref`=청크 참조)으로 State에 올린다.
+
+> **여기 담는 건 큐레이션된 지식 코퍼스**(runbook·문서)이지 런타임 운영 raw(로그·secret)가 아니다. 그래서 본문 `content` 저장이 허용된다(§9.4의 raw 미저장 규칙과 구분).
+
+**collection `knowledge_chunk`** (pgvector 테이블)
+
+| 컬럼 | 타입 | 설명 |
+| --- | --- | --- |
+| `chunk_id` | uuid PK | |
+| `doc_id` | text | 출처 문서/런북 id |
+| `doc_type` | text | `runbook`/`glossary`/`ops_doc`/`catalog`/`incident_report` |
+| `title` | text | |
+| `content` | text | 청크 본문(큐레이션 지식; 운영 raw 아님) |
+| `embedding` | vector(N) | 차원 N은 임베딩 모델에 맞춰 고정 |
+| `scope` | text | `global`(플랫폼 공통) 또는 `project:{project_id}`(과거 인시던트 등) |
+| `doc_version` | text | 문서/카탈로그 버전(재인덱싱 기준) |
+| `metadata` | jsonb | 태그·링크 |
+| `updated_at` | timestamptz | |
+
+- 인덱스: `embedding`에 hnsw/ivfflat(pgvector), `scope`·`doc_type` 필터.
+- 임베딩 인덱싱은 오프라인 배치(`knowledge/indexer`). runbook·catalog·문서 버전이 바뀌면 재인덱싱한다.
+- `scope=project:{id}` 청크는 해당 project로만 검색되게 테넌시 격리한다.
+
+#### 9.4 운영 규칙
+
+1. **raw 미저장**: 로그·metric·trace·event payload 원문, secret, connection string은 저장하지 않는다. evidence는 Evidence Store(Spring/`metadb`)에 두고 `store_ref`만 참조한다. (단, Knowledge Vector Store의 **큐레이션 지식 코퍼스**(runbook·문서)는 운영 raw가 아니므로 본문 저장 허용 — §9.3.)
+2. **append-only**: `state_patch`·`run_event`는 추가만 하고 삭제는 tombstone patch로 표현한다. State는 patch 재생으로 복원하며, 빠른 조회용 materialized 캐시는 구현 디테일이다.
+3. **SoT 경계**: approval·audit·incident의 원본은 Spring `metadb`. FastAPI는 run 연계·캐시·요약만 둔다(중복 생성 금지).
+4. **FK 경계**: `project_id`·`incident_id`·`approval_id`·evidence `store_ref`는 Spring 소유라 **DB FK를 걸지 않는다**(논리 참조, 유효성은 API로 검증 — [ADR 0004](../adr/0004-monorepo-monolith.md)).
+5. **retention**: 오래된 run의 `state_patch`/`run_event`는 보존 정책에 따라 아카이브·tombstone한다(무한 적재 금지).
+6. **replay 재현성**: `agent_run.catalog_version`을 고정해 동일 catalog 기준으로 run을 재생한다([admin replay api.md §17](../api/fastapi.md)).
+7. **지식 코퍼스 인덱싱·격리**: Knowledge Vector Store는 runbook/catalog/문서 버전 변경 시 재인덱싱하고, `scope=project:*` 청크는 해당 project로만 검색되게 격리한다.
 
 ### 10. 보안
 
