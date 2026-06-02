@@ -41,6 +41,11 @@ jwt:
   expiration-hours: 24
   issuer: bifrost-ops
 
+# Secret 저장소 (DB 자격증명 보관)
+# mock = InMemorySecretStore (MVP/로컬, 재시작 시 휘발). 추후 k8s/secrets-manager 구현으로 교체.
+secret-store:
+  provider: ${SECRET_STORE_PROVIDER:mock}
+
 # 외부 서비스 (Agent는 별도 FastAPI)
 ai-service:
   url: ${AI_SERVICE_URL:http://localhost:8082}
