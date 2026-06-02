@@ -1,0 +1,214 @@
+/* ------------------------------------------------------------------ core */
+
+export type DbTech = 'postgres' | 'mariadb'
+export type NodeStatus = 'healthy' | 'warning' | 'error'
+export type GroupState = 'STABLE' | 'REBALANCING' | 'DEAD' | 'EMPTY'
+
+export interface Node {
+  id: string
+  type: 'database' | 'service'
+  label: string
+  alias?: string
+  tech?: DbTech
+  techLabel: string
+  host: string
+  status: NodeStatus
+  x: number
+  y: number
+  /* database only */
+  schema?: { tables: number; rows: string; size: string }
+  cdc?: { wal_level: string; replication: string; slots: string; wal_senders: string }
+  metrics?: { tps: number; lag_ms: number }
+  checks?: CapabilityCheck[]
+  /* service (consumer) only */
+  lang?: string
+  consumerGroup?: string
+  subscribedTopic?: string
+  lag?: number
+  groupState?: GroupState
+}
+
+export interface CapabilityCheck {
+  label: string
+  state: 'pass' | 'warn' | 'fail'
+  detail: string
+}
+
+export type EdgePattern = 'fan-out' | 'direct'
+export type EdgeStatus = 'active' | 'lag' | 'error' | 'paused' | 'creating'
+
+export interface Edge {
+  id: string
+  name: string
+  alias?: string
+  pattern: EdgePattern
+  source: string
+  sink: string | null
+  consumers?: string[]
+  table?: { schema: string; name: string }
+  topic: string
+  status: EdgeStatus
+  partitions: number
+  metrics?: { produce_rate: number; consume_rate: number; lag: number; error_pct: number }
+  syncStatus?: { sourceRows: number; sinkRows: number; delta: number; lastSynced: string }
+}
+
+export interface Project {
+  id: string
+  name: string
+  slug: string
+  ownerId: string
+  pipelineIds: string[]
+  dbIds: string[]
+  memberCount: number
+  createdAt: string
+}
+
+export type Role = 'developer' | 'admin' | 'operator'
+
+export interface User {
+  name: string
+  email: string
+  role: Role
+  initial: string
+}
+
+/* -------------------------------------------------------------- incidents */
+
+export type Severity = 'critical' | 'warning' | 'info'
+
+export interface AiAction {
+  id: string
+  label: string
+  risk: 'low' | 'medium' | 'high'
+  estimatedTime: string
+  detail: string
+}
+
+export interface IncidentReport {
+  id: string
+  title: string
+  severity: Severity
+  status: 'open' | 'investigating' | 'resolved'
+  createdAt: string
+  updatedAt: string
+  summary: string
+  rootCause: string
+  affectedPipelines: string[]
+  affectedTeams: string[]
+  aiActions: AiAction[]
+  actionLog: { time: string; actor: string; action: string }[]
+  triggerEventId: string
+  relatedEventIds: string[]
+}
+
+/* ---------------------------------------------------------------- events */
+
+export type LogLevel = 'error' | 'warning' | 'info'
+
+export interface ActivityEvent {
+  id: string
+  time: string
+  level: LogLevel
+  message: string
+  pipelineId?: string
+  incidentId?: string
+}
+
+export interface ResourceEvent {
+  id: string
+  time: string
+  level: LogLevel
+  resourceType: string
+  resourceName: string
+  message: string
+  incidentId?: string
+}
+
+/* --------------------------------------------------------------- cluster */
+
+export interface Broker {
+  id: number
+  name: string
+  status: NodeStatus
+  leaderPartitions: number
+  cpu: number
+  disk: number
+  netIn: number
+  netOut: number
+}
+
+export interface ClusterTopic {
+  name: string
+  type: 'EDA' | 'CDC'
+  project: string
+  status: 'active' | 'lag' | 'error'
+  partitions: number
+  produceRate: number
+  consumeRate: number
+  replicaPct: number
+}
+
+export interface ConsumerGroupRow {
+  name: string
+  state: GroupState
+  members: number
+  totalLag: number
+  lastCommit: string
+  partitionStrategy: string
+  instances: { id: string; host: string; partitions: number; lag: number }[]
+}
+
+export interface ClusterConnector {
+  name: string
+  kind: 'Source' | 'Sink'
+  status: 'RUNNING' | 'PARTIALLY_FAILED' | 'FAILED' | 'PAUSED' | 'UNASSIGNED'
+  project: string
+  pipeline: string
+  tasks: number
+  recordsPerSec: number
+}
+
+/* --------------------------------------------------------------- settings */
+
+export interface Member {
+  name: string
+  email: string
+  role: Role
+  joinedAt: string
+}
+
+export interface KafkaUser {
+  id: string
+  principal: string
+  auth: 'SCRAM-SHA-512' | 'mTLS'
+  secret: string
+  acl: { read: boolean; write: boolean; admin: boolean }
+  status: 'active' | 'inactive'
+  lastActive: string
+}
+
+export interface KafkaSecret {
+  id: string
+  name: string
+  type: 'SCRAM' | 'mTLS'
+  cluster: string
+  connections: number
+  lastRotated: string
+  status: 'active' | 'revoked'
+}
+
+export interface Account {
+  name: string
+  email: string
+  role: Role
+  joinedAt: string
+  lastLogin: string
+}
+
+/* ----------------------------------------------------------------- chart */
+
+export interface Point {
+  t: string
+  [k: string]: number | string
+}

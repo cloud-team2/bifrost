@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bifrost" x1="8" y1="32" x2="56" y2="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#29b6ff" />
+      <stop offset="0.3" stop-color="#4f6bff" />
+      <stop offset="0.52" stop-color="#9b3dff" />
+      <stop offset="0.72" stop-color="#ff3d96" />
+      <stop offset="1" stop-color="#ff8a2b" />
+    </linearGradient>
+  </defs>
+  <g fill="none" stroke="url(#bifrost)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 54 Q14 21 32 9 Q50 21 52 54" />
+    <path d="M22 39 H42" />
+  </g>
+</svg>
