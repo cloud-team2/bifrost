@@ -1,53 +1,92 @@
 package com.bifrost.ops.database.controller;
 
-import com.bifrost.ops.database.connection.DatabaseConnectionTester;
+import com.bifrost.ops.auth.jwt.AuthenticatedUser;
 import com.bifrost.ops.database.dto.ConnectionTestRequest;
 import com.bifrost.ops.database.dto.ConnectionTestResponse;
+import com.bifrost.ops.database.dto.DatabaseRegisterRequest;
+import com.bifrost.ops.database.dto.DatabaseResponse;
+import com.bifrost.ops.database.service.DatabaseService;
 import com.bifrost.ops.global.common.datasource.DbType;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
 import jakarta.validation.Valid;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
  * Database Registry 플랫폼 API(frontend-facing, database-registry.md §6).
  *
- * <p>이번 슬라이스(#26)는 연결 테스트만 제공한다. 등록·목록·상세는 #27, 스키마는 #28,
- * CDC 준비도는 #29, metrics·pipelines는 #30에서 같은 컨트롤러에 추가된다.
+ * <p>제공: 연결 테스트(#26), 등록·목록·상세(#27). 스키마(#28)·CDC 준비도(#29)·
+ * metrics·pipelines(#30)는 같은 컨트롤러에 추가된다.
  *
- * <p>{@code wsId} 워크스페이스 scope·ownership 검증은 #27에서 도입한다(연결 테스트는
- * 영속 상태를 건드리지 않는다).
+ * <p>모든 엔드포인트는 경로의 {@code wsId}가 인증 사용자의 워크스페이스인지 scope 검증한다
+ * (v1 단일 멤버십: {@code wsId == principal.tenantId()}, 위반 시 403 RESOURCE_NOT_OWNED_BY_PROJECT).
  */
 @RestController
 @RequestMapping("/api/v1/workspaces/{wsId}/databases")
 public class DatabaseController {
 
-    private final DatabaseConnectionTester connectionTester;
+    private final DatabaseService databaseService;
 
-    public DatabaseController(DatabaseConnectionTester connectionTester) {
-        this.connectionTester = connectionTester;
+    public DatabaseController(DatabaseService databaseService) {
+        this.databaseService = databaseService;
     }
 
-    /** 연결 테스트(FR-014). 실패도 200으로 분류해 반환한다. */
+    /** 연결 테스트(FR-014). 실패도 200으로 분류 반환. */
     @PostMapping("/connection-test")
     public ConnectionTestResponse connectionTest(@PathVariable UUID wsId,
+                                                 @AuthenticationPrincipal AuthenticatedUser principal,
                                                  @Valid @RequestBody ConnectionTestRequest req) {
-        DbType engine = parseEngine(req.engine());
-        return connectionTester.test(
+        requireScope(wsId, principal);
+        DbType engine = DatabaseService.parseEngine(req.engine());
+        return databaseService.testConnection(
                 engine, req.host(), req.port(), req.dbName(), req.user(), req.password());
     }
 
-    private static DbType parseEngine(String engine) {
-        try {
-            return DbType.valueOf(engine.trim().toUpperCase());
-        } catch (IllegalArgumentException e) {
-            throw new ApiException(ErrorCode.VALIDATION_FAILED, "지원하지 않는 engine: " + engine);
+    /** 등록(FR-014). 성공 시 201, 자격증명은 secretRef로 보관·응답 마스킹. */
+    @PostMapping
+    public ResponseEntity<DatabaseResponse> register(@PathVariable UUID wsId,
+                                                     @AuthenticationPrincipal AuthenticatedUser principal,
+                                                     @Valid @RequestBody DatabaseRegisterRequest req) {
+        requireScope(wsId, principal);
+        return ResponseEntity.status(201).body(databaseService.register(wsId, req));
+    }
+
+    /** 목록(FR-013). role(파생)·engine·q 필터. */
+    @GetMapping
+    public List<DatabaseResponse> list(@PathVariable UUID wsId,
+                                       @AuthenticationPrincipal AuthenticatedUser principal,
+                                       @RequestParam(required = false) String role,
+                                       @RequestParam(required = false) String engine,
+                                       @RequestParam(required = false) String q) {
+        requireScope(wsId, principal);
+        return databaseService.list(wsId, role, engine, q);
+    }
+
+    /** 상세(password 마스킹). */
+    @GetMapping("/{dbId}")
+    public DatabaseResponse get(@PathVariable UUID wsId,
+                                @PathVariable UUID dbId,
+                                @AuthenticationPrincipal AuthenticatedUser principal) {
+        requireScope(wsId, principal);
+        return databaseService.get(wsId, dbId);
+    }
+
+    /** 경로의 wsId가 인증 사용자 소속 워크스페이스인지 검증(scope). */
+    private static void requireScope(UUID wsId, AuthenticatedUser principal) {
+        if (principal == null || !wsId.equals(principal.tenantId())) {
+            throw new ApiException(ErrorCode.RESOURCE_NOT_OWNED_BY_PROJECT,
+                    "워크스페이스 접근 권한이 없습니다");
         }
     }
 }
