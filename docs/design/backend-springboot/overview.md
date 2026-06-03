@@ -57,4 +57,5 @@ flowchart LR
 - [database-registry.md](./database-registry.md) — §3 Database Registry (연결 테스트·secretRef·CDC 준비도)
 - [data-model.md](./data-model.md) — §4 Data Model (metadb 스키마)
 - [monitoring.md](./monitoring.md) — Monitoring & Incident Engine (수집기·상태 산정·이벤트/인시던트 자동화·Sync/Messages/Metrics·SSE)
+- [governance.md](./governance.md) — Governance Engine (운영 조치 집행: policy·approval·change·idempotency·audit/evidence)
 - [api/springboot.md](../../api/springboot.md) — §5 API Reference (플랫폼 `/api/v1` + 내부 운영 `/internal/ops`)
