@@ -26,6 +26,20 @@ spec:
         artifacts:
           - type: tgz
             url: https://repo1.maven.org/maven2/io/debezium/debezium-connector-mariadb/3.5.1.Final/debezium-connector-mariadb-3.5.1.Final-plugin.tar.gz
+      # CDC(direct) Sink: Confluent JDBC Sink + JDBC 드라이버.
+      # 드라이버 jar는 connector와 같은 plugin 디렉토리(sandbox)에 있어야 classpath에 잡힌다.
+      - name: jdbc-sink
+        artifacts:
+          - type: zip
+            url: https://d1i4a15mxbxib1.cloudfront.net/api/plugins/confluentinc/kafka-connect-jdbc/versions/10.7.4/confluentinc-kafka-connect-jdbc-10.7.4.zip
+          - type: jar
+            url: https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.4/postgresql-42.7.4.jar
+          - type: jar
+            url: https://repo1.maven.org/maven2/org/mariadb/jdbc/mariadb-java-client/3.4.1/mariadb-java-client-3.4.1.jar
+          # Debezium envelope 평탄화 SMT(ExtractNewRecordState)가 sink와 같은 sandbox에 있어야 한다.
+          # JdbcSinkConnectorMapper의 transforms.unwrap.type 참조.
+          - type: jar
+            url: https://repo1.maven.org/maven2/io/debezium/debezium-core/3.5.1.Final/debezium-core-3.5.1.Final.jar
 
   groupId: platform-connect
   offsetStorageTopic: platform-connect-offsets
