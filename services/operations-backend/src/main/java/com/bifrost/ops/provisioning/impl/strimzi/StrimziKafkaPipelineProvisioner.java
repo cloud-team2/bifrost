@@ -12,8 +12,10 @@ import com.bifrost.ops.provisioning.naming.ConnectorNaming;
 import com.bifrost.ops.provisioning.port.KafkaPipelineProvisioner;
 import com.bifrost.ops.secret.DbCredential;
 import com.bifrost.ops.secret.SecretStore;
+import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.dsl.NonDeletingOperation;
+import io.fabric8.kubernetes.client.utils.Serialization;
 import io.strimzi.api.kafka.model.connector.KafkaConnector;
 import io.strimzi.api.kafka.model.connector.KafkaConnectorStatus;
 import org.slf4j.Logger;
@@ -123,29 +125,42 @@ public class StrimziKafkaPipelineProvisioner implements KafkaPipelineProvisioner
 
     @Override
     public PipelineProvisionStatus getConnectorStatus(String projectId, String connectorName) {
-        KafkaConnector cr = k8s.resources(KafkaConnector.class)
+        // genericKubernetesResources로 v1 명시 — typed API는 v1beta2로 조회해 404 반환
+        GenericKubernetesResource generic = k8s.genericKubernetesResources("kafka.strimzi.io/v1", "KafkaConnector")
                 .inNamespace(namespace)
                 .withName(connectorName)
                 .get();
-        if (cr == null) {
+        if (generic == null) {
             return new PipelineProvisionStatus(connectorName, "UNKNOWN", List.of());
         }
-        return new PipelineProvisionStatus(
-                connectorName, readConnectorState(cr), readTasks(cr));
+        KafkaConnector cr = Serialization.unmarshal(Serialization.asJson(generic), KafkaConnector.class);
+        return new PipelineProvisionStatus(connectorName, readConnectorState(cr), readTasks(cr));
     }
 
     @Override
     public void deletePipelineResources(PipelineResourceRef resourceRef) {
         String ns = resourceRef.namespace() != null ? resourceRef.namespace() : namespace;
         for (String name : resourceRef.connectorNames()) {
-            k8s.resources(KafkaConnector.class).inNamespace(ns).withName(name).delete();
+            k8s.genericKubernetesResources("kafka.strimzi.io/v1", "KafkaConnector")
+                    .inNamespace(ns).withName(name).delete();
             log.info("connector 삭제 요청: namespace={}, name={}", ns, name);
         }
     }
 
-    /** KafkaConnector CR을 멱등하게 apply(create-or-update)한다. */
+    /**
+     * KafkaConnector CR을 멱등하게 apply(create-or-update)한다.
+     *
+     * <p>Strimzi Java API 0.45.0의 KafkaConnector 모델이 {@code CustomResource}를 상속하므로
+     * {@code getApiVersion()}이 항상 v1beta2를 반환한다. 클러스터(Strimzi 1.0.0)는 v1만 지원하므로
+     * JSON 직렬화 후 {@link GenericKubernetesResource}로 변환해 v1 엔드포인트로 apply한다.
+     */
     private void applyConnector(KafkaConnector cr) {
-        k8s.resource(cr).inNamespace(namespace).createOr(NonDeletingOperation::update);
+        GenericKubernetesResource generic = Serialization.unmarshal(
+                Serialization.asJson(cr), GenericKubernetesResource.class);
+        k8s.genericKubernetesResources("kafka.strimzi.io/v1", "KafkaConnector")
+                .inNamespace(namespace)
+                .resource(generic)
+                .createOr(NonDeletingOperation::update);
     }
 
     private PipelineProvisionResult fail(PipelineProvisionCommand command,
