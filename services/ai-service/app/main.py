@@ -6,8 +6,8 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
-from app.api import agent, health
-from app.config import settings
+from app.api import routes_agent, routes_health
+from app.core.config import settings
 
 
 def create_app() -> FastAPI:
@@ -18,8 +18,8 @@ def create_app() -> FastAPI:
     )
 
     # 설계 API 표면: /api/v1
-    app.include_router(health.router, prefix="/api/v1", tags=["health"])
-    app.include_router(agent.router, prefix="/api/v1/agent", tags=["agent"])
+    app.include_router(routes_health.router, prefix="/api/v1", tags=["health"])
+    app.include_router(routes_agent.router, prefix="/api/v1/agent", tags=["agent"])
 
     # K8s liveness/readiness probe용 경량 엔드포인트 (helm deployment에서 사용)
     @app.get("/health", tags=["health"])
