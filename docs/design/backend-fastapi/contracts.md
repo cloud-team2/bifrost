@@ -117,7 +117,7 @@ Supervisor는 이 단계들을 제어하는 control layer다. Policy Guard와 Ex
 
 - [§11 Remediation Runbooks](catalogs.md#11-catalog-remediation-runbooks)를 기준으로 action 후보를 만든다.
 - action 후보에는 `runtime_tool`, `workflow_action`, `composite_action`, `notification`, `escalation` 중 하나의 `action_type`을 붙인다.
-- expected effect, risk, rollback hint를 기록한다.
+- expected effect, risk, 예상 소요시간(estimated_duration, FR-022), rollback hint를 기록한다.
 - 고객사 소유 영역은 escalation action으로 둔다.
 
 금지:
@@ -973,7 +973,8 @@ Retrieval output에는 raw `content`를 넣지 않는다.
       "risk": "medium",
       "reason": "connector task is FAILED and no schema/config regression evidence found",
       "expected_effect": "clear transient task failure",
-      "rollback_plan": "pause connector if task fails again"
+      "rollback_plan": "pause connector if task fails again",
+      "estimated_duration": "약 30초"
     }
   ]
 }
@@ -1067,6 +1068,8 @@ Status enum:
     "actions": [
       {
         "action_id": "act_001",
+        "risk": "medium",
+        "estimated_duration": "약 30초",
         "status": "approval_required"
       }
     ],

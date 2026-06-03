@@ -37,7 +37,7 @@
 | FR-022 | 상 | 에이전트 | 사용자가 AI 추천 조치를 위험도·예상 소요시간과 함께 검토한 뒤 Run으로 승인 실행한다 (HITL) | AlertsView, BifrostAgentPanel |
 | FR-023 | 중 | 일반 | 사용자가 Kafka Broker·Kafka Connect Worker 현황을 클러스터 탭에서 확인한다 | OperatorClusterView |
 | FR-024 | 중 | 일반 | 사용자가 클러스터 레이어에서 발생하는 리소스 이벤트 로그를 조회한다 | OperatorResourceEventsView |
-| FR-025 | 상 | 에이전트 | 사용자가 AI 채팅 패널에서 Pipeline 조회·상태 확인·Pause/Resume/Create를 자연어로 요청하며 Tool Call이 카드로 시각화된다 | BifrostAgentPanel |
+| FR-025 | 상 | 에이전트 | 사용자가 AI 채팅 패널에서 Pipeline 조회·상태 확인·Pause/Resume를 자연어로 요청하며 Tool Call이 카드로 시각화된다 | BifrostAgentPanel |
 | FR-026 | 상 | 에이전트 | AI가 다중 파이프라인 랙 급증·커넥터 중단을 자동 감지하여 장애 리포트와 근본 원인·조치 옵션을 생성한다 | BifrostAgentPanel |
 
 ---
@@ -109,13 +109,13 @@
 - **사전 조건**: `pattern='direct'`.
 - **기본 흐름**: 1) Sync 탭 → 2) Source/Sink 행 수·동기화율(%)·지연 ms 카드 → 3) 지연 추이 차트 → 4) 동기화율 < 100% 경고.
 - **예외 흐름**: ① EDA Pipeline → "CDC에서만 사용 가능" ② Sink 연결 불가 → 안내.
-- **비고**: 동기화율 급하락 시 FR-026 자동 감지 트리거.
+- **비고**: 동기화율 급하락 시 FR-026 자동 감지 트리거. 동기화율은 **Kafka 오프셋 기반 근사**(sink 소비 오프셋 vs source 생산량)로 산출하며, 고객 DB `count(*)` 정밀 비교는 하지 않는다(v1).
 
 ### FR-010 — 토픽 메시지 조회
 - **기능 설명**: Debezium 이벤트 메시지 목록과 페이로드(before/after).
 - **사전 조건**: `active` 상태 + 메시지 존재.
 - **기본 흐름**: 1) Messages 탭 → 2) Offset·Partition·Timestamp·Operation·Key 목록 → 3) 행 클릭 → before/after JSON.
-- **비고**: Topic 이름은 이 탭에서 노출하지 않고 별칭(alias)으로만 표시.
+- **비고**: Topic 이름은 이 탭에서 노출하지 않고 별칭(alias)으로만 표시. 메시지는 토픽 **최근 N건을 bounded consume**해 before/after를 표시한다(v1 기본).
 
 ### FR-011 — 구독 가이드 및 코드 스니펫
 - **기능 설명**: Topic Name·Bootstrap Server·Consumer Group ID + 언어별(Java/Python/Node.js) 코드 스니펫 복사.
@@ -155,6 +155,7 @@
 ### FR-017 — Database Metrics
 - **기능 설명**: TPS·쿼리 응답 시간(avg/p95)·활성 연결 수 + 시계열.
 - **기본 흐름**: 1) Metrics 탭 → 2) 지표 카드 → 3) 차트.
+- **비고**: 지표는 inspector가 엔진별 stat을 질의해 산출한다(v1 기본: 활성 연결·기본 TPS — 예: PG `pg_stat_activity`/`pg_stat_database`, MariaDB `SHOW GLOBAL STATUS`).
 
 ### FR-018 — 연결된 Pipeline 목록
 - **기능 설명**: 해당 DB를 Source/Sink로 쓰는 Pipeline 목록과 상태.
@@ -172,7 +173,7 @@
 ### FR-021 — 인시던트 목록 및 상세 조회
 - **기능 설명**: 미해결 인시던트를 배너로 인지, 통합 이벤트 스트림에서 이벤트-인시던트 연결 확인. 인시던트 클릭 시 우측 슬라이드 패널에서 근본 원인·영향 파이프라인·관련 이벤트 타임라인·추천 조치.
 - **기본 흐름**: 1) AlertsView 상단 open/investigating 배너(심각도 색) → 2) 이벤트 스트림(최신순, 인시던트 연결 이벤트에 `[inc-N ↗]` 배지) → 3) 레벨 필터 → 4) 배너/배지 클릭 → 우측 패널 슬라이드인 → 5) 패널(상태·영향 Pipeline·영향 행·근본 원인·관련 이벤트 타임라인(trigger 강조)·추천 조치 Run) → 6) 해결된 인시던트는 하단 텍스트 링크.
-- **비고**: FR-022 연계. 부록 B.7 이벤트-인시던트 연결 모델 참조.
+- **비고**: FR-022 연계. 부록 B.7 이벤트-인시던트 연결 모델 참조. 패널의 **영향 행**은 sync gap/consumer lag 기반 **추정치**다(정밀 카운트 아님).
 
 ### FR-022 — AI 추천 조치 실행 (HITL)
 - **액터**: 사용자, AI 에이전트
@@ -191,17 +192,17 @@
 
 ### FR-025 — AI 채팅 어시스턴트
 - **액터**: 사용자, AI 에이전트
-- **기능 설명**: 헤더 AI 버튼으로 채팅 패널, Pipeline 조회·상태 확인·Pause/Resume/Create를 자연어 요청. 인텐트·Tool Call 결과가 카드로 시각화.
-- **기본 흐름**: 1) AI 버튼 → BifrostAgentPanel → 2) 자연어 입력 → 3) 인텐트 분류 후 Tool Call → 4) 결과 카드 → 5) 분석·요약·권장 조치 텍스트 → 6) 조치 요청(Pause/Resume/Create) → 확인 카드 → 사용자 승인 후 실행.
+- **기능 설명**: 헤더 AI 버튼으로 채팅 패널, Pipeline 조회·상태 확인·Pause/Resume를 자연어 요청. 인텐트·Tool Call 결과가 카드로 시각화.
+- **기본 흐름**: 1) AI 버튼 → BifrostAgentPanel → 2) 자연어 입력 → 3) 인텐트 분류 후 Tool Call → 4) 결과 카드 → 5) 분석·요약·권장 조치 텍스트 → 6) 조치 요청(Pause/Resume) → 확인 카드 → 사용자 승인 후 실행.
 - **예외 흐름**: ① 인텐트 인식 실패 안내 ② Tool 호출 실패 + 재시도.
-- **비고**: 인텐트 유형: 상태/랙/에러 조회, 파이프라인 생성, Pause/Resume, 이벤트 로그 요약.
+- **비고**: 인텐트 유형: 상태/랙/에러 조회, Pause/Resume, 이벤트 로그 요약. 파이프라인 **생성은 마법사(FR-004) 전용**이며 v1 agent는 생성을 실행하지 않는다.
 
 ### FR-026 — AI 인시던트 자동 감지 및 장애 리포트
 - **액터**: 사용자, AI 에이전트
 - **기능 설명**: 여러 파이프라인의 Lag 급증·Connector 중단·CDC 동기화 이탈을 자동 감지해 장애 리포트(근본 원인 추론·영향 파이프라인·영향 행·추천 조치) 생성. 사용자가 시나리오 선택·실행하고 HITL 승인.
 - **기본 흐름**: 1) 임계 초과 감지(Lag ≥ 5,000 또는 Connector FAILED 등) → 2) 영향 Pipeline 공통 원인 분석 → 3) 리포트 생성 → 4) 시나리오 카드 선택 → 5) "Run" → 사용자 승인 → 6) 타임라인 기록.
 - **예외 흐름**: ① 근본 원인 신뢰도 낮음 → "불확실" 라벨 + 수동 경로 ② 실행 실패 기록 ③ 에이전트 타임아웃 → 알림 + 수동 안내.
-- **비고**: 모든 조치는 사용자 승인 필수(HITL).
+- **비고**: 모든 조치는 사용자 승인 필수(HITL). 인시던트는 자동 생성되나 **RCA 분석 run은 사용자가 AlertsView에서 시작**한다(v1 — 자동 run 트리거 아님). **영향 행**은 sync gap/lag 추정치.
 
 ---
 

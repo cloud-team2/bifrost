@@ -977,7 +977,8 @@ Unknown 상태에서는 mutation action을 만들지 않는다.
   "requires_human_approval": true,
   "reason": "connector task is FAILED and no schema/config regression evidence found",
   "expected_effect": "task restart may clear transient failure",
-  "rollback_plan": "pause connector if task fails again"
+  "rollback_plan": "pause connector if task fails again",
+  "estimated_duration": "약 30초 (예상, FR-022 표시용)"
 }
 ```
 

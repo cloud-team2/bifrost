@@ -53,6 +53,7 @@ erDiagram
         text engine
         text secret_ref "외부 Secret 참조(평문·암호문 저장 금지)"
         text cdc_overall_status
+        text health_status "B.3 런타임: healthy/warning/error"
     }
     pipeline {
         uuid id PK
@@ -150,6 +151,8 @@ PK는 (`workspace_id`, `app_user_id`). 워크스페이스 생성 시 `created_by
 | `secret_ref` | text | K8s Secret/Secrets Manager **참조**(자격증명 평문·암호문 DB 저장 금지) |
 | `cdc_overall_status` | text | 마지막 점검 결과 `OK`/`WARNING`/`BLOCKED` |
 | `cdc_checked_at` | timestamptz | |
+| `health_status` | text | **런타임** 상태 `healthy`/`warning`/`error`([부록 B.3](../../spec.md#b3-databasenode-상태값)). monitoring.collector의 DB ping·replication lag로 갱신. cdc 준비도(readiness)와 별개 |
+| `health_checked_at` | timestamptz | |
 
 > `role`(source/sink) 컬럼은 두지 않는다. DB의 역할은 파이프라인에서 결정된다(기능명세서 §4). 한 DB가 source이자 sink일 수 있다. 목록 API의 `role` 필터는 파이프라인 사용 이력에서 **파생**하며, 생성 마법사의 소스 선택에는 적용하지 않는다(신규 등록 DB도 소스 후보).
 
@@ -208,6 +211,7 @@ PK는 (`workspace_id`, `app_user_id`). 워크스페이스 생성 시 `created_by
 | `trigger_event_id` | uuid FK | 최초 감지 이벤트 |
 | `root_cause_summary` | text null | RCA 결과(에이전트가 채움) |
 | `grouping_key` | text | source_db/worker/consumer_group 등 |
+| `affected_rows_estimate` | int null | 영향 행 추정치(sync gap/consumer lag 기반, FR-021/026) |
 | `opened_at` `resolved_at` | timestamptz | |
 
 > **그룹 멤버는 정규화로 도출한다(중복 저장 금지).** 인시던트에 묶인 이벤트 목록은 `incident.related_event_ids uuid[]` 같은 배열을 두지 않고 **`event.incident_id`로 역참조**해 구하며, 타임라인 순서는 `event.occurred_at`으로 정렬한다(`trigger_event_id`만 "최초 감지"로 강조). 배열은 `event.incident_id`와 같은 정보를 이중 저장해 불일치 위험이 있고 `uuid[]`엔 FK 무결성도 걸 수 없으므로 폐기했다. 또한 `incident.trigger_event_id ↔ event.incident_id`는 순환 FK이므로 **`event.incident_id`를 nullable로 두고 인시던트 생성 후 set**해 닭-달걀 문제를 푼다.

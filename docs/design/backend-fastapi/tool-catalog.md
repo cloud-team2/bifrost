@@ -223,6 +223,8 @@ Mutation tool은 Executor만 호출할 수 있다.
 
 Backfill과 rollback은 v1 초기에는 비활성화하고, 변경관리 체계가 준비된 뒤 연다.
 
+> 파이프라인 **생성**은 플랫폼 마법사(FR-004) 전용이며 agent tool로 노출하지 않는다(v1). agent는 조회·Pause/Resume·backfill/rollback만 수행한다.
+
 #### 9.4 Rebalance Mutation
 
 | Agent 논리 tool | Spring Boot operation | API 영역 | 정책 |
