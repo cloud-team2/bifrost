@@ -4,9 +4,12 @@ import com.bifrost.ops.auth.jwt.AuthenticatedUser;
 import com.bifrost.ops.database.connection.DbConnectionFailureReason;
 import com.bifrost.ops.database.dto.ConnectionTestRequest;
 import com.bifrost.ops.database.dto.ConnectionTestResponse;
+import com.bifrost.ops.database.cdc.CdcReadinessStatus;
+import com.bifrost.ops.database.dto.CdcReadinessResponse;
 import com.bifrost.ops.database.dto.DatabaseRegisterRequest;
 import com.bifrost.ops.database.dto.DatabaseResponse;
 import com.bifrost.ops.database.dto.DatabaseSchemaResponse;
+import com.bifrost.ops.database.service.CdcReadinessService;
 import com.bifrost.ops.database.service.DatabaseSchemaService;
 import com.bifrost.ops.database.service.DatabaseService;
 import com.bifrost.ops.global.common.datasource.DbType;
@@ -35,7 +38,9 @@ class DatabaseControllerTest {
 
     private final DatabaseService service = mock(DatabaseService.class);
     private final DatabaseSchemaService schemaService = mock(DatabaseSchemaService.class);
-    private final DatabaseController controller = new DatabaseController(service, schemaService);
+    private final CdcReadinessService cdcReadinessService = mock(CdcReadinessService.class);
+    private final DatabaseController controller =
+            new DatabaseController(service, schemaService, cdcReadinessService);
 
     private final UUID wsId = UUID.randomUUID();
     private final AuthenticatedUser member = new AuthenticatedUser(UUID.randomUUID(), wsId, "u@bifrost.io");
@@ -130,6 +135,20 @@ class DatabaseControllerTest {
 
         assertThat(out.tables()).hasSize(1);
         assertThat(out.tables().get(0).columns().get(0).primaryKey()).isTrue();
+    }
+
+    @Test
+    void cdcReadinessDelegates() {
+        UUID dbId = UUID.randomUUID();
+        CdcReadinessResponse body = new CdcReadinessResponse(CdcReadinessStatus.BLOCKED, List.of(
+                CdcReadinessResponse.CdcCheck.of("WAL Level", CdcReadinessStatus.BLOCKED,
+                        "replica", "logical", "ALTER SYSTEM SET wal_level = logical;")));
+        when(cdcReadinessService.check(wsId, dbId)).thenReturn(body);
+
+        CdcReadinessResponse out = controller.cdcReadiness(wsId, dbId, member);
+
+        assertThat(out.overallStatus()).isEqualTo(CdcReadinessStatus.BLOCKED);
+        assertThat(out.checks().get(0).hint()).isNotNull();
     }
 
     private static DatabaseResponse sample(String name) {

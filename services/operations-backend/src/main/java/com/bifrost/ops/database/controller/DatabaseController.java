@@ -1,11 +1,13 @@
 package com.bifrost.ops.database.controller;
 
 import com.bifrost.ops.auth.jwt.AuthenticatedUser;
+import com.bifrost.ops.database.dto.CdcReadinessResponse;
 import com.bifrost.ops.database.dto.ConnectionTestRequest;
 import com.bifrost.ops.database.dto.ConnectionTestResponse;
 import com.bifrost.ops.database.dto.DatabaseRegisterRequest;
 import com.bifrost.ops.database.dto.DatabaseResponse;
 import com.bifrost.ops.database.dto.DatabaseSchemaResponse;
+import com.bifrost.ops.database.service.CdcReadinessService;
 import com.bifrost.ops.database.service.DatabaseSchemaService;
 import com.bifrost.ops.database.service.DatabaseService;
 import com.bifrost.ops.global.common.datasource.DbType;
@@ -40,10 +42,13 @@ public class DatabaseController {
 
     private final DatabaseService databaseService;
     private final DatabaseSchemaService schemaService;
+    private final CdcReadinessService cdcReadinessService;
 
-    public DatabaseController(DatabaseService databaseService, DatabaseSchemaService schemaService) {
+    public DatabaseController(DatabaseService databaseService, DatabaseSchemaService schemaService,
+                              CdcReadinessService cdcReadinessService) {
         this.databaseService = databaseService;
         this.schemaService = schemaService;
+        this.cdcReadinessService = cdcReadinessService;
     }
 
     /** 연결 테스트(FR-014). 실패도 200으로 분류 반환. */
@@ -93,6 +98,15 @@ public class DatabaseController {
                                          @AuthenticationPrincipal AuthenticatedUser principal) {
         requireScope(wsId, principal);
         return schemaService.getSchema(wsId, dbId);
+    }
+
+    /** CDC 준비도 점검(FR-015). {overallStatus, checks[name·status·actual·expected·hint]}. */
+    @GetMapping("/{dbId}/cdc-readiness")
+    public CdcReadinessResponse cdcReadiness(@PathVariable UUID wsId,
+                                             @PathVariable UUID dbId,
+                                             @AuthenticationPrincipal AuthenticatedUser principal) {
+        requireScope(wsId, principal);
+        return cdcReadinessService.check(wsId, dbId);
     }
 
     /** 경로의 wsId가 인증 사용자 소속 워크스페이스인지 검증(scope). */
