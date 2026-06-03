@@ -1,6 +1,6 @@
 package com.bifrost.ops.provisioning.mock;
 
-import com.bifrost.ops.common.datasource.DbType;
+import com.bifrost.ops.global.common.datasource.DbType;
 import com.bifrost.ops.provisioning.dto.ConnectorKind;
 import com.bifrost.ops.provisioning.dto.PipelinePattern;
 import com.bifrost.ops.provisioning.dto.PipelineProvisionCommand;

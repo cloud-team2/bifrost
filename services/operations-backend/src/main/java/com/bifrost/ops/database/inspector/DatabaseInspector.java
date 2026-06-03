@@ -1,8 +1,8 @@
 package com.bifrost.ops.database.inspector;
 
-import com.bifrost.ops.common.datasource.DbType;
+import com.bifrost.ops.global.common.datasource.DbType;
 import com.bifrost.ops.provisioning.dto.DebeziumConnectorConfig;
-import com.bifrost.ops.common.pipeline.TableRef;
+import com.bifrost.ops.global.common.pipeline.TableRef;
 
 import java.time.Duration;
 import java.time.Instant;

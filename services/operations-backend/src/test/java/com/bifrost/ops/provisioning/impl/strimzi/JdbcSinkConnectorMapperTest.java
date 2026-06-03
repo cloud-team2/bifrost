@@ -1,6 +1,6 @@
 package com.bifrost.ops.provisioning.impl.strimzi;
 
-import com.bifrost.ops.common.datasource.DbType;
+import com.bifrost.ops.global.common.datasource.DbType;
 import com.bifrost.ops.provisioning.dto.PipelinePattern;
 import com.bifrost.ops.provisioning.dto.PipelineProvisionCommand;
 import com.bifrost.ops.secret.DbCredential;

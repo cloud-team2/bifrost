@@ -1,6 +1,6 @@
 package com.bifrost.ops.database.inspector.mariadb;
 
-import com.bifrost.ops.common.datasource.DbType;
+import com.bifrost.ops.global.common.datasource.DbType;
 import com.bifrost.ops.provisioning.dto.DebeziumConnectorConfig;
 import com.bifrost.ops.database.inspector.DatabaseInspector;
 import com.bifrost.ops.database.persistence.entity.DatasourceEntity;
