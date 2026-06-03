@@ -42,6 +42,30 @@ Spring Boot Operations Backend
 - **`projectKey`(슬러그)**: 워크스페이스 이름에서 자동 생성하는 영소문자·숫자·하이픈 문자열. Kafka 토픽·ACL·KafkaUser 등 DNS-safe 리소스 이름의 기준.
 - 코드/DB는 `tenant`/`datasource` 용어를 쓰되 설계 용어(`workspace`/`database`)와 공존한다([ADR 0002](./adr/0002-multi-tenancy-model.md), [ADR 0004](./adr/0004-monorepo-monolith.md)).
 
+## 소유권 · SoT 맵
+
+> 같은 정보를 여러 곳에서 정의하지 않도록, 각 항목의 **정본(Source of Truth)** 을 한 곳으로 고정한다. 나머지 문서/서비스는 인용·미러링만 한다.
+
+| 항목 | 소유(SoT) | 정본 위치 |
+| --- | --- | --- |
+| 기능 요구사항(FR) | 기능명세 | [spec.md](./spec.md) |
+| 상태값·임계값·이벤트→인시던트 규칙 | 기능명세 부록 B | [spec.md 부록 B](./spec.md#부록-b--리소스-상태값-정의-및-자동-기준-단일-출처) |
+| 식별자(`workspace_id`=`project_id`·`projectKey`) | 공통 규약 | [위 식별자](#식별자) |
+| 플랫폼 메타데이터(workspace·DB·pipeline·connector·event·incident·audit) | **Spring**(`metadb`) | [data-model.md](./design/backend-springboot/data-model.md#4-data-model) |
+| 운영 operation·집행 allowlist(무엇을 실행하나) | **Spring** | [server.md §7.1](./design/backend-springboot/server.md#71-operation-allowlist-집행-경계-단일-출처) |
+| approval·change·idempotency 검증·audit 원본 | **Spring** | [server.md §8](./design/backend-springboot/server.md#8-approval과-change-management) |
+| Evidence 원문(운영 raw) | **Spring**(Evidence Store) | [data-model.md §3.9](./design/backend-springboot/data-model.md#4-data-model) |
+| DB 연결테스트 오류 5종 분류 | **Spring** | [database-registry.md §2](./design/backend-springboot/database-registry.md#3-database-registry) |
+| 모니터링 수집(상태=watch / 지표=폴링·질의) | **Spring** | [server.md §11.1](./design/backend-springboot/server.md#111-관측모니터링-데이터-수집-상태-vs-지표) |
+| RCA 판단 카탈로그(장애유형·root cause·evidence matrix·correlation·runbook·policy) | **FastAPI** | [catalogs.md §6~§12](./design/backend-fastapi/catalogs.md#6-catalog-failure-types) |
+| Agent run 상태(run·state·event·approval facade·report) | **FastAPI**(`agentdb`) | [contracts.md §14](./design/backend-fastapi/contracts.md#14-contract-state-schema) |
+| Knowledge 코퍼스(RAG runbook·문서) | **FastAPI**(Vector Store) | [principles.md §2.9](./design/backend-fastapi/principles.md#2-server-design) |
+| Tool 매핑(논리 tool→operation) | **FastAPI** Tool Client Registry | [tool-catalog.md §8·§9](./design/backend-fastapi/tool-catalog.md#4-tool-catalog) |
+| API 에러코드 | 표면별(각자 소유) | [Spring](./api/springboot.md) · [FastAPI](./api/fastapi.md) |
+| 인프라 현황(클러스터·용량) | 인프라 | [infra.md §2](./design/infra.md#2-리소스-계획현황-resource-plan) |
+
+> 방향 주의: **실행(tool/operation·allowlist)은 Spring이 정본**(FastAPI는 미러), **판단(RCA 카탈로그)은 FastAPI가 정본**(Spring은 모름), **임계값·상태 규칙은 spec 부록 B가 정본**(양쪽이 인용).
+
 ## 읽는 순서
 
 1. 이 문서(README) → 2. [spec.md](./spec.md)(FR·임계값) → 3. [scenario.md](./scenario.md) → 4. 설계 [design/](./design/) → 5. API [api/](./api/) → 6. [team/todo.md](./team/todo.md)(현재 작업)
