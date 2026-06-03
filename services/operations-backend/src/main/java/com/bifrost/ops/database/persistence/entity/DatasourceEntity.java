@@ -79,4 +79,11 @@ public class DatasourceEntity {
     public void setUsername(String username) { this.username = username; }
     public String getSecretRef() { return secretRef; }
     public void setSecretRef(String secretRef) { this.secretRef = secretRef; }
+    public String getCdcReadinessStatus() { return cdcReadinessStatus; }
+    public void setCdcReadinessStatus(String cdcReadinessStatus) { this.cdcReadinessStatus = cdcReadinessStatus; }
+    public String getCdcReadinessReport() { return cdcReadinessReport; }
+    public void setCdcReadinessReport(String cdcReadinessReport) { this.cdcReadinessReport = cdcReadinessReport; }
+    public Instant getLastInspectedAt() { return lastInspectedAt; }
+    public void setLastInspectedAt(Instant lastInspectedAt) { this.lastInspectedAt = lastInspectedAt; }
+    public Instant getCreatedAt() { return createdAt; }
 }
