@@ -5,6 +5,8 @@ import com.bifrost.ops.database.dto.ConnectionTestRequest;
 import com.bifrost.ops.database.dto.ConnectionTestResponse;
 import com.bifrost.ops.database.dto.DatabaseRegisterRequest;
 import com.bifrost.ops.database.dto.DatabaseResponse;
+import com.bifrost.ops.database.dto.DatabaseSchemaResponse;
+import com.bifrost.ops.database.service.DatabaseSchemaService;
 import com.bifrost.ops.database.service.DatabaseService;
 import com.bifrost.ops.global.common.datasource.DbType;
 import com.bifrost.ops.global.common.error.ApiException;
@@ -37,9 +39,11 @@ import java.util.UUID;
 public class DatabaseController {
 
     private final DatabaseService databaseService;
+    private final DatabaseSchemaService schemaService;
 
-    public DatabaseController(DatabaseService databaseService) {
+    public DatabaseController(DatabaseService databaseService, DatabaseSchemaService schemaService) {
         this.databaseService = databaseService;
+        this.schemaService = schemaService;
     }
 
     /** 연결 테스트(FR-014). 실패도 200으로 분류 반환. */
@@ -80,6 +84,15 @@ public class DatabaseController {
                                 @AuthenticationPrincipal AuthenticatedUser principal) {
         requireScope(wsId, principal);
         return databaseService.get(wsId, dbId);
+    }
+
+    /** 스키마 조회(FR-016). 테이블·컬럼·타입·nullable·pk·index. */
+    @GetMapping("/{dbId}/schema")
+    public DatabaseSchemaResponse schema(@PathVariable UUID wsId,
+                                         @PathVariable UUID dbId,
+                                         @AuthenticationPrincipal AuthenticatedUser principal) {
+        requireScope(wsId, principal);
+        return schemaService.getSchema(wsId, dbId);
     }
 
     /** 경로의 wsId가 인증 사용자 소속 워크스페이스인지 검증(scope). */

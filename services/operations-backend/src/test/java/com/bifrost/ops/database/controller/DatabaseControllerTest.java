@@ -6,6 +6,8 @@ import com.bifrost.ops.database.dto.ConnectionTestRequest;
 import com.bifrost.ops.database.dto.ConnectionTestResponse;
 import com.bifrost.ops.database.dto.DatabaseRegisterRequest;
 import com.bifrost.ops.database.dto.DatabaseResponse;
+import com.bifrost.ops.database.dto.DatabaseSchemaResponse;
+import com.bifrost.ops.database.service.DatabaseSchemaService;
 import com.bifrost.ops.database.service.DatabaseService;
 import com.bifrost.ops.global.common.datasource.DbType;
 import com.bifrost.ops.global.common.error.ApiException;
@@ -32,7 +34,8 @@ import static org.mockito.Mockito.when;
 class DatabaseControllerTest {
 
     private final DatabaseService service = mock(DatabaseService.class);
-    private final DatabaseController controller = new DatabaseController(service);
+    private final DatabaseSchemaService schemaService = mock(DatabaseSchemaService.class);
+    private final DatabaseController controller = new DatabaseController(service, schemaService);
 
     private final UUID wsId = UUID.randomUUID();
     private final AuthenticatedUser member = new AuthenticatedUser(UUID.randomUUID(), wsId, "u@bifrost.io");
@@ -113,6 +116,20 @@ class DatabaseControllerTest {
         UUID dbId = UUID.fromString(body.id());
         when(service.get(wsId, dbId)).thenReturn(body);
         assertThat(controller.get(wsId, dbId, member).name()).isEqualTo("orders-db");
+    }
+
+    @Test
+    void schemaDelegates() {
+        UUID dbId = UUID.randomUUID();
+        DatabaseSchemaResponse body = new DatabaseSchemaResponse(List.of(
+                new DatabaseSchemaResponse.TableSchema("public", "orders", List.of(
+                        new DatabaseSchemaResponse.ColumnSchema("id", "int8", false, true, true)))));
+        when(schemaService.getSchema(wsId, dbId)).thenReturn(body);
+
+        DatabaseSchemaResponse out = controller.schema(wsId, dbId, member);
+
+        assertThat(out.tables()).hasSize(1);
+        assertThat(out.tables().get(0).columns().get(0).primaryKey()).isTrue();
     }
 
     private static DatabaseResponse sample(String name) {
