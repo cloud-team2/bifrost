@@ -1,6 +1,6 @@
 package com.bifrost.ops.provisioning.dto;
 
-import com.bifrost.ops.common.datasource.DbType;
+import com.bifrost.ops.global.common.datasource.DbType;
 
 import java.util.UUID;
 

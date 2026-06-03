@@ -1,6 +1,6 @@
 package com.bifrost.ops.auth.jwt;
 
-import com.bifrost.ops.api.error.ErrorCode;
+import com.bifrost.ops.global.common.error.ErrorCode;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.JwtException;

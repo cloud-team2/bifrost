@@ -1,6 +1,6 @@
 package com.bifrost.ops.database.persistence.entity;
 
-import com.bifrost.ops.common.datasource.DbType;
+import com.bifrost.ops.global.common.datasource.DbType;
 import jakarta.persistence.*;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;

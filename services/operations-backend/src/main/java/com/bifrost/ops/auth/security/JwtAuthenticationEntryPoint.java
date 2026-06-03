@@ -1,7 +1,7 @@
 package com.bifrost.ops.auth.security;
 
-import com.bifrost.ops.api.error.ErrorCode;
-import com.bifrost.ops.api.error.ErrorResponse;
+import com.bifrost.ops.global.common.error.ErrorCode;
+import com.bifrost.ops.global.common.error.ErrorResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;

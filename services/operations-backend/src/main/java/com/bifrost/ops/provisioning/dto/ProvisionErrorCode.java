@@ -3,7 +3,7 @@ package com.bifrost.ops.provisioning.dto;
 /**
  * 파이프라인 프로비저닝 실패 원인 코드(#15).
  *
- * <p>API 공통 {@code com.bifrost.ops.api.error.ErrorCode}는 HTTP 응답 단위의 코드인 반면,
+ * <p>API 공통 {@code com.bifrost.ops.global.common.error.ErrorCode}는 HTTP 응답 단위의 코드인 반면,
  * 이 enum은 {@link PipelineProvisionResult} 안에서 실패 {@link ProvisionStage}와 함께
  * 전달/저장되는 도메인 상세 코드다. 호출부(pipeline 서비스)는 이 코드로 pipeline 상태를
  * {@code error}로 반영하고 원인을 구분한다(설계 §2.1 부분 실패 구분).

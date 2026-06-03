@@ -1,11 +1,11 @@
 package com.bifrost.ops.auth.service;
 
-import com.bifrost.ops.api.error.ApiException;
-import com.bifrost.ops.api.error.ErrorCode;
-import com.bifrost.ops.api.platform.dto.AuthTokensResponse;
-import com.bifrost.ops.api.platform.dto.LoginRequest;
-import com.bifrost.ops.api.platform.dto.MeResponse;
-import com.bifrost.ops.api.platform.dto.RegisterRequest;
+import com.bifrost.ops.global.common.error.ApiException;
+import com.bifrost.ops.global.common.error.ErrorCode;
+import com.bifrost.ops.auth.dto.AuthTokensResponse;
+import com.bifrost.ops.auth.dto.LoginRequest;
+import com.bifrost.ops.auth.dto.MeResponse;
+import com.bifrost.ops.auth.dto.RegisterRequest;
 import com.bifrost.ops.auth.jwt.AuthenticatedUser;
 import com.bifrost.ops.auth.jwt.JwtService;
 import com.bifrost.ops.auth.persistence.entity.UserEntity;
