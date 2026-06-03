@@ -44,6 +44,19 @@ public record PipelineProvisionResult(
                 "provisioned " + connectors.size() + " connector(s)");
     }
 
+    /**
+     * 단계별 실패 결과. {@link ProvisionErrorCode}가 stage와 code를 함께 고정하므로
+     * 호출부는 stage/errorCode 불일치를 걱정하지 않아도 된다(#15).
+     */
+    public static PipelineProvisionResult failure(UUID pipelineId,
+                                                  ProvisionErrorCode errorCode,
+                                                  List<ConnectorRef> created,
+                                                  String topicPrefix,
+                                                  String message) {
+        return new PipelineProvisionResult(
+                pipelineId, false, errorCode.stage(), created, topicPrefix, errorCode.code(), message);
+    }
+
     public static PipelineProvisionResult failure(UUID pipelineId,
                                                   ProvisionStage failedStage,
                                                   List<ConnectorRef> created,
