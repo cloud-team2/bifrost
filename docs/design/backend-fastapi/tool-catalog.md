@@ -128,6 +128,8 @@ Report는 tool을 직접 호출하지 않는다. 검증된 State만 사용한다
 
 ### 8. Read-only Runtime Tool Catalog
 
+> 아래 논리 tool ↔ Spring `/internal/ops` 엔드포인트의 입출력·error mapping·evidence 반환 계약은 [api/internal-ops-read-tools.md](../../api/internal-ops-read-tools.md)에 정리되어 있다(FastAPI↔Spring 공유 계약).
+
 #### 8.1 Observability
 
 | Agent 논리 tool | Spring Boot operation | API 영역 |
