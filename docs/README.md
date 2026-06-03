@@ -9,7 +9,7 @@
 | 분류 | 문서 | 내용 |
 | --- | --- | --- |
 | 요구사항(SoT) | [spec.md](./spec.md) | 기능명세서 — FR 카탈로그 + 부록 B(상태값·임계값·이벤트→인시던트 규칙)의 **단일 출처** |
-| 시나리오 | [scenario.md](./scenario.md) | 시연 Critical Path, 통합 시나리오, 완료 정의(DoD), Sprint 로드맵 |
+| 시나리오 | [scenario.md](./scenario.md) | 시연 Critical Path, 통합 시나리오, 완료 정의(DoD). 주차 로드맵은 team/roadmap |
 | 설계 | [design/infra.md](./design/infra.md) | 인프라(단일 EKS·Strimzi·Harbor·CI/CD·Observability) |
 | 설계 | [design/frontend.md](./design/frontend.md) | 프론트엔드 화면(FR)별 백엔드 연동 |
 | 설계 | [design/backend-springboot/](./design/backend-springboot/overview.md) | Spring Boot Operations Backend(플랫폼 본체·운영 집행) |

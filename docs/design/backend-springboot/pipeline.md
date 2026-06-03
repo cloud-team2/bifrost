@@ -87,7 +87,7 @@ PipelineStatusService.recompute(pipelineId):
 ### 7. 데이터·API
 
 - 테이블 `pipeline`·`connector` — [data-model §3.4·§3.5](./data-model.md#4-data-model).
-- API: `GET/POST .../pipelines`·`{id}/pause|resume`·`DELETE` ([api A.4](../../api/springboot.md)). 상세 탭 read(metrics/consumer-groups/connectors/sync/messages)는 `monitoring.query` 위임.
+- API: `GET/POST .../pipelines`·`{id}/pause|resume`·`DELETE` ([api A.4](../../api/springboot.md)). 상세 탭 read 중 metrics/consumer-groups/connectors/sync/messages는 `monitoring.query` 위임, **connection-guide(FR-011: topic alias·bootstrap·group·언어별 스니펫)·table-mapping(FR-012: 컬럼→Kafka 필드)** 은 pipeline/connector 메타데이터·schema에서 직접 구성.
 
 ### 8. 구현 메모
 
