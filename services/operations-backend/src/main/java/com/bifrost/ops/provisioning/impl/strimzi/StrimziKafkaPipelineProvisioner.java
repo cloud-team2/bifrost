@@ -9,6 +9,8 @@ import com.bifrost.ops.provisioning.dto.PipelineResourceRef;
 import com.bifrost.ops.provisioning.dto.PipelinePattern;
 import com.bifrost.ops.provisioning.dto.ProvisionStage;
 import com.bifrost.ops.provisioning.naming.ConnectorNaming;
+import com.bifrost.ops.provisioning.persistence.entity.ConnectorEntity;
+import com.bifrost.ops.provisioning.persistence.repository.ConnectorRepository;
 import com.bifrost.ops.provisioning.port.KafkaPipelineProvisioner;
 import com.bifrost.ops.secret.DbCredential;
 import com.bifrost.ops.secret.SecretStore;
@@ -50,6 +52,7 @@ public class StrimziKafkaPipelineProvisioner implements KafkaPipelineProvisioner
     private final SecretStore secretStore;
     private final SourceDebeziumConnectorMapper sourceMapper;
     private final JdbcSinkConnectorMapper sinkMapper;
+    private final ConnectorRepository connectorRepository;
     private final String namespace;
     private final String connectCluster;
 
@@ -58,12 +61,14 @@ public class StrimziKafkaPipelineProvisioner implements KafkaPipelineProvisioner
             SecretStore secretStore,
             SourceDebeziumConnectorMapper sourceMapper,
             JdbcSinkConnectorMapper sinkMapper,
+            ConnectorRepository connectorRepository,
             @Value("${kafka-cluster.namespace:platform-kafka}") String namespace,
             @Value("${kafka-connect.cluster:platform-connect}") String connectCluster) {
         this.k8s = k8s;
         this.secretStore = secretStore;
         this.sourceMapper = sourceMapper;
         this.sinkMapper = sinkMapper;
+        this.connectorRepository = connectorRepository;
         this.namespace = namespace;
         this.connectCluster = connectCluster;
     }
@@ -89,6 +94,7 @@ public class StrimziKafkaPipelineProvisioner implements KafkaPipelineProvisioner
             applyConnector(source);
             created.add(new ConnectorRef(
                     source.getMetadata().getName(), ConnectorKind.SOURCE, source.getSpec().getClassName()));
+            persistConnector(command.pipelineId(), source, ConnectorKind.SOURCE);
             log.info("source connector apply 완료: pipeline={}, name={}",
                     command.pipelineId(), source.getMetadata().getName());
         } catch (RuntimeException e) {
@@ -110,6 +116,7 @@ public class StrimziKafkaPipelineProvisioner implements KafkaPipelineProvisioner
                 applyConnector(sink);
                 created.add(new ConnectorRef(
                         sink.getMetadata().getName(), ConnectorKind.SINK, sink.getSpec().getClassName()));
+                persistConnector(command.pipelineId(), sink, ConnectorKind.SINK);
                 log.info("sink connector apply 완료: pipeline={}, name={}",
                         command.pipelineId(), sink.getMetadata().getName());
             } catch (RuntimeException e) {
@@ -146,6 +153,28 @@ public class StrimziKafkaPipelineProvisioner implements KafkaPipelineProvisioner
     /** KafkaConnector CR을 멱등하게 apply(create-or-update)한다. */
     private void applyConnector(KafkaConnector cr) {
         k8s.resource(cr).inNamespace(namespace).createOr(NonDeletingOperation::update);
+    }
+
+    /**
+     * connectors 메타 행을 기록한다(watcher 상태 반영의 대상, #43/#46). cr_name 기준 upsert.
+     * DB 오류가 CR apply 성공을 가리지 않도록 best-effort로 처리한다(상태는 watcher가 재반영).
+     */
+    private void persistConnector(java.util.UUID pipelineId, KafkaConnector cr, ConnectorKind kind) {
+        String name = cr.getMetadata().getName();
+        try {
+            ConnectorEntity entity = connectorRepository.findByCrName(name)
+                    .orElseGet(ConnectorEntity::new);
+            entity.setPipelineId(pipelineId);
+            entity.setCrName(name);
+            entity.setKind(kind);
+            entity.setConnectorClass(cr.getSpec().getClassName());
+            Integer tasksMax = cr.getSpec().getTasksMax();
+            entity.setTasksMax(tasksMax != null ? tasksMax : (kind == ConnectorKind.SOURCE ? 1 : 3));
+            connectorRepository.save(entity);
+        } catch (RuntimeException e) {
+            log.warn("connector 메타 영속화 실패(무시): name={}, cause={}",
+                    name, e.getClass().getSimpleName());
+        }
     }
 
     private PipelineProvisionResult fail(PipelineProvisionCommand command,

@@ -3,6 +3,7 @@ package com.bifrost.ops.provisioning.watcher;
 import com.bifrost.ops.pipeline.ConnectorStatusUpdate;
 import com.bifrost.ops.pipeline.PipelineLifecycle;
 import com.bifrost.ops.pipeline.PipelineStatusService;
+import com.bifrost.ops.provisioning.persistence.ConnectorStatusSink;
 import io.fabric8.kubernetes.client.Watcher;
 import io.strimzi.api.kafka.model.connector.KafkaConnector;
 import io.strimzi.api.kafka.model.connector.KafkaConnectorBuilder;
@@ -16,8 +17,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * watcher가 이벤트를 매핑해 PipelineStatusService(단일 writer)로만 전달하는지 검증(#13).
- * pipeline row를 직접 수정하지 않고 서비스 호출만 하는 경계를 확인한다.
+ * watcher가 이벤트를 매핑해 connector 메타 sink + PipelineStatusService(단일 writer) 두 경로로
+ * 전달하는지, 재구독 가드가 종료 상태를 존중하는지 검증(#13/#46).
  */
 class KafkaConnectorWatcherTest {
 
@@ -32,31 +33,65 @@ class KafkaConnectorWatcherTest {
         return cr;
     }
 
+    private KafkaConnectorWatcher watcher(ConnectorStatusSink sink, PipelineStatusService service) {
+        return new KafkaConnectorWatcher(
+                null, sink, service, new ConnectorStateMapper(), "platform-kafka", "platform-connect");
+    }
+
     @Test
-    void delegatesMappedUpdateToStatusService() {
-        AtomicReference<ConnectorStatusUpdate> captured = new AtomicReference<>();
-        PipelineStatusService service = captured::set;
+    void delegatesMappedUpdateToSinkAndStatusService() {
+        AtomicReference<ConnectorStatusUpdate> sinkCaptured = new AtomicReference<>();
+        AtomicReference<ConnectorStatusUpdate> serviceCaptured = new AtomicReference<>();
 
-        KafkaConnectorWatcher watcher = new KafkaConnectorWatcher(
-                null, service, new ConnectorStateMapper(), "platform-kafka", "platform-connect");
-
+        KafkaConnectorWatcher watcher = watcher(sinkCaptured::set, serviceCaptured::set);
         watcher.handleEvent(Watcher.Action.MODIFIED, running());
 
-        assertThat(captured.get()).isNotNull();
-        assertThat(captured.get().connectorName()).isEqualTo("pipe-source");
-        assertThat(captured.get().pipelineStatus()).isEqualTo(PipelineLifecycle.ACTIVE);
+        assertThat(sinkCaptured.get()).isNotNull();
+        assertThat(sinkCaptured.get().connectorName()).isEqualTo("pipe-source");
+        assertThat(serviceCaptured.get()).isNotNull();
+        assertThat(serviceCaptured.get().pipelineStatus()).isEqualTo(PipelineLifecycle.ACTIVE);
     }
 
     @Test
     void ignoresDeleteEvents() {
-        AtomicReference<ConnectorStatusUpdate> captured = new AtomicReference<>();
-        PipelineStatusService service = captured::set;
+        AtomicReference<ConnectorStatusUpdate> sinkCaptured = new AtomicReference<>();
+        AtomicReference<ConnectorStatusUpdate> serviceCaptured = new AtomicReference<>();
 
-        KafkaConnectorWatcher watcher = new KafkaConnectorWatcher(
-                null, service, new ConnectorStateMapper(), "platform-kafka", "platform-connect");
-
+        KafkaConnectorWatcher watcher = watcher(sinkCaptured::set, serviceCaptured::set);
         watcher.handleEvent(Watcher.Action.DELETED, running());
 
-        assertThat(captured.get()).isNull();
+        assertThat(sinkCaptured.get()).isNull();
+        assertThat(serviceCaptured.get()).isNull();
+    }
+
+    @Test
+    void sinkFailureDoesNotBlockStatusService() {
+        AtomicReference<ConnectorStatusUpdate> serviceCaptured = new AtomicReference<>();
+        ConnectorStatusSink failingSink = u -> { throw new RuntimeException("db down"); };
+
+        KafkaConnectorWatcher watcher = watcher(failingSink, serviceCaptured::set);
+        watcher.handleEvent(Watcher.Action.MODIFIED, running());
+
+        // 메타 sink가 실패해도 pipeline status writer는 호출되어야 한다
+        assertThat(serviceCaptured.get()).isNotNull();
+        assertThat(serviceCaptured.get().connectorName()).isEqualTo("pipe-source");
+    }
+
+    @Test
+    void doesNotReconnectAfterStop() {
+        KafkaConnectorWatcher watcher = watcher(u -> {}, u -> {});
+
+        assertThat(watcher.shouldReconnect()).isTrue();
+        watcher.stop();
+        assertThat(watcher.shouldReconnect()).isFalse();
+        // 종료 후 onClose가 와도 재구독을 시도하지 않는다(null k8s NPE 없이 무사 반환)
+        watcher.handleClose(null);
+    }
+
+    @Test
+    void healthyEventResetsBackoff() {
+        KafkaConnectorWatcher watcher = watcher(u -> {}, u -> {});
+        watcher.handleEvent(Watcher.Action.MODIFIED, running());
+        assertThat(watcher.currentBackoffMs()).isEqualTo(1_000L);
     }
 }

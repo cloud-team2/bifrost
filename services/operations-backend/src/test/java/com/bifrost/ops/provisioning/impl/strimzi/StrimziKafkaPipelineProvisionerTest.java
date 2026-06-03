@@ -5,6 +5,8 @@ import com.bifrost.ops.provisioning.dto.PipelinePattern;
 import com.bifrost.ops.provisioning.dto.PipelineProvisionCommand;
 import com.bifrost.ops.provisioning.dto.PipelineProvisionResult;
 import com.bifrost.ops.provisioning.dto.ProvisionStage;
+import com.bifrost.ops.provisioning.persistence.entity.ConnectorEntity;
+import com.bifrost.ops.provisioning.persistence.repository.ConnectorRepository;
 import com.bifrost.ops.secret.DbCredential;
 import com.bifrost.ops.secret.SecretContext;
 import com.bifrost.ops.secret.mock.InMemorySecretStore;
@@ -13,9 +15,13 @@ import io.fabric8.kubernetes.client.server.mock.EnableKubernetesMockClient;
 import io.strimzi.api.kafka.model.connector.KafkaConnector;
 import org.junit.jupiter.api.Test;
 
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * real provisioner(#12) 스모크 테스트: Fabric8 mock 서버 위에서 EDA/CDC 생성 시
@@ -30,10 +36,14 @@ class StrimziKafkaPipelineProvisionerTest {
     private static final String CLUSTER = "platform-connect";
 
     private StrimziKafkaPipelineProvisioner provisioner(InMemorySecretStore secretStore) {
+        ConnectorRepository connectorRepository = mock(ConnectorRepository.class);
+        when(connectorRepository.findByCrName(any())).thenReturn(Optional.empty());
+        when(connectorRepository.save(any(ConnectorEntity.class)))
+                .thenAnswer(inv -> inv.getArgument(0));
         return new StrimziKafkaPipelineProvisioner(
                 client, secretStore,
                 new SourceDebeziumConnectorMapper(), new JdbcSinkConnectorMapper(),
-                NS, CLUSTER);
+                connectorRepository, NS, CLUSTER);
     }
 
     @Test
