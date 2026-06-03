@@ -54,8 +54,8 @@ Spring Boot Operations Backend
 | 플랫폼 메타데이터(workspace·DB·pipeline·connector·event·incident·audit) | **Spring**(`metadb`) | [data-model.md](./design/backend-springboot/data-model.md#4-data-model) |
 | 운영 operation·집행 allowlist(무엇을 실행하나) | **Spring** | [server.md §7.1](./design/backend-springboot/server.md#71-operation-allowlist-집행-경계-단일-출처) |
 | approval·change·idempotency 검증·audit 원본 | **Spring** | [server.md §8](./design/backend-springboot/server.md#8-approval과-change-management) |
-| Evidence 원문(운영 raw) | **Spring**(Evidence Store) | [data-model.md §3.9](./design/backend-springboot/data-model.md#4-data-model) |
-| DB 연결테스트 오류 5종 분류 | **Spring** | [database-registry.md §2](./design/backend-springboot/database-registry.md#3-database-registry) |
+| Evidence 원문(운영 raw) | **Spring**(Evidence Store) | [data-model.md §3.9](./design/backend-springboot/data-model.md#39-evidence_ref) |
+| DB 연결테스트 오류 5종 분류 | **Spring** | [database-registry.md §2](./design/backend-springboot/database-registry.md#2-step-1--연결-테스트-동적-datasource) |
 | 모니터링 수집(상태=watch / 지표=폴링·질의) | **Spring** | [server.md §11.1](./design/backend-springboot/server.md#111-관측모니터링-데이터-수집-상태-vs-지표) |
 | RCA 판단 카탈로그(장애유형·root cause·evidence matrix·correlation·runbook·policy) | **FastAPI** | [catalog-* §6~§12](./design/backend-fastapi/catalog/catalog-failure-types.md#6-catalog-failure-types) |
 | Agent run 상태(run·state·event·approval facade·report) | **FastAPI**(`agentdb`) | [contract-state-schema §14](./design/backend-fastapi/contract/contract-state-schema.md#14-contract-state-schema) |

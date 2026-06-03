@@ -210,6 +210,7 @@ Mutation 성공 응답은 before/after evidence reference를 포함해야 한다
 | `APPROVAL_SCOPE_MISMATCH` | 승인 scope와 실행 요청 불일치 |
 | `CHANGE_TICKET_REQUIRED` | 변경관리 티켓 필요 |
 | `CHANGE_WINDOW_CLOSED` | 실행 window가 아님 |
+| `CHANGE_SCOPE_MISMATCH` | 변경 ticket scope와 실행 요청 불일치 |
 | `RESOURCE_NOT_FOUND` | 요청 resource 없음 |
 | `RESOURCE_NOT_OWNED_BY_PROJECT` | project 소유 resource가 아님 |
 | `CONFLICT` | resource 상태 또는 idempotency 충돌 |
