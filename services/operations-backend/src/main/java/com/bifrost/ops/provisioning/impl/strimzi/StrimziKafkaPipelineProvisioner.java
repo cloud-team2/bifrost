@@ -7,7 +7,7 @@ import com.bifrost.ops.provisioning.dto.PipelineProvisionResult.ConnectorRef;
 import com.bifrost.ops.provisioning.dto.PipelineProvisionStatus;
 import com.bifrost.ops.provisioning.dto.PipelineResourceRef;
 import com.bifrost.ops.provisioning.dto.PipelinePattern;
-import com.bifrost.ops.provisioning.dto.ProvisionStage;
+import com.bifrost.ops.provisioning.dto.ProvisionErrorCode;
 import com.bifrost.ops.provisioning.naming.ConnectorNaming;
 import com.bifrost.ops.provisioning.port.KafkaPipelineProvisioner;
 import com.bifrost.ops.secret.DbCredential;
@@ -79,8 +79,8 @@ public class StrimziKafkaPipelineProvisioner implements KafkaPipelineProvisioner
         try {
             sourceCred = secretStore.resolve(command.source().secretRef());
         } catch (RuntimeException e) {
-            return fail(command, ProvisionStage.SECRET, created, topicPrefix,
-                    "SECRET_RESOLVE_FAILED", "source secret resolve 실패", e);
+            return fail(command, ProvisionErrorCode.SECRET_RESOLVE_FAILED, created, topicPrefix,
+                    "source secret resolve 실패", e);
         }
 
         // 2) Source(Debezium) KafkaConnector apply
@@ -92,8 +92,8 @@ public class StrimziKafkaPipelineProvisioner implements KafkaPipelineProvisioner
             log.info("source connector apply 완료: pipeline={}, name={}",
                     command.pipelineId(), source.getMetadata().getName());
         } catch (RuntimeException e) {
-            return fail(command, ProvisionStage.SOURCE_CONNECTOR, created, topicPrefix,
-                    "SOURCE_CONNECTOR_FAILED", "source connector apply 실패", e);
+            return fail(command, ProvisionErrorCode.SOURCE_CONNECTOR_FAILED, created, topicPrefix,
+                    "source connector apply 실패", e);
         }
 
         // 3) CDC(direct)면 Sink(JDBC) KafkaConnector apply
@@ -102,8 +102,8 @@ public class StrimziKafkaPipelineProvisioner implements KafkaPipelineProvisioner
             try {
                 sinkCred = secretStore.resolve(command.sink().secretRef());
             } catch (RuntimeException e) {
-                return fail(command, ProvisionStage.SECRET, created, topicPrefix,
-                        "SECRET_RESOLVE_FAILED", "sink secret resolve 실패", e);
+                return fail(command, ProvisionErrorCode.SECRET_RESOLVE_FAILED, created, topicPrefix,
+                        "sink secret resolve 실패", e);
             }
             try {
                 KafkaConnector sink = sinkMapper.map(command, sinkCred, namespace, connectCluster);
@@ -113,8 +113,8 @@ public class StrimziKafkaPipelineProvisioner implements KafkaPipelineProvisioner
                 log.info("sink connector apply 완료: pipeline={}, name={}",
                         command.pipelineId(), sink.getMetadata().getName());
             } catch (RuntimeException e) {
-                return fail(command, ProvisionStage.SINK_CONNECTOR, created, topicPrefix,
-                        "SINK_CONNECTOR_FAILED", "sink connector apply 실패", e);
+                return fail(command, ProvisionErrorCode.SINK_CONNECTOR_FAILED, created, topicPrefix,
+                        "sink connector apply 실패", e);
             }
         }
 
@@ -149,17 +149,17 @@ public class StrimziKafkaPipelineProvisioner implements KafkaPipelineProvisioner
     }
 
     private PipelineProvisionResult fail(PipelineProvisionCommand command,
-                                         ProvisionStage stage,
+                                         ProvisionErrorCode errorCode,
                                          List<ConnectorRef> created,
                                          String topicPrefix,
-                                         String errorCode,
                                          String message,
                                          RuntimeException e) {
-        // 비밀값 노출 방지를 위해 예외 메시지 전체가 아니라 단계·코드만 로깅
-        log.warn("프로비저닝 실패: pipeline={}, stage={}, code={}",
-                command.pipelineId(), stage, errorCode);
+        // 비밀값 노출 방지를 위해 예외 메시지 전체가 아니라 단계·코드·예외 타입만 로깅
+        log.warn("프로비저닝 실패: pipeline={}, stage={}, code={}, createdSoFar={}, cause={}",
+                command.pipelineId(), errorCode.stage(), errorCode.code(), created.size(),
+                e.getClass().getSimpleName());
         return PipelineProvisionResult.failure(
-                command.pipelineId(), stage, created, topicPrefix, errorCode, message);
+                command.pipelineId(), errorCode, created, topicPrefix, message);
     }
 
     /** {@code status.connectorStatus.connector.state} 추출. */

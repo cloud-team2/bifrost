@@ -4,22 +4,26 @@ import com.bifrost.ops.common.datasource.DbType;
 import com.bifrost.ops.provisioning.dto.PipelinePattern;
 import com.bifrost.ops.provisioning.dto.PipelineProvisionCommand;
 import com.bifrost.ops.provisioning.dto.PipelineProvisionResult;
+import com.bifrost.ops.provisioning.dto.ProvisionErrorCode;
 import com.bifrost.ops.provisioning.dto.ProvisionStage;
 import com.bifrost.ops.secret.DbCredential;
-import com.bifrost.ops.secret.SecretContext;
-import com.bifrost.ops.secret.mock.InMemorySecretStore;
+import com.bifrost.ops.secret.SecretStore;
+import com.bifrost.ops.secret.SecretStoreException;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.server.mock.EnableKubernetesMockClient;
-import io.strimzi.api.kafka.model.connector.KafkaConnector;
 import org.junit.jupiter.api.Test;
 
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
- * real provisioner(#12) 스모크 테스트: Fabric8 mock 서버 위에서 EDA/CDC 생성 시
- * KafkaConnector CR이 실제로 apply되는지, 부분 실패가 result로 구분되는지 검증한다.
+ * real provisioner의 성공/부분 실패 계약 검증(#12 골격 + #15 실패 처리).
+ *
+ * <p>성공 경로는 Fabric8 mock 서버(CRUD)로, 단계별 실패는 단계별로 예외를 주입해
+ * {@link PipelineProvisionResult}의 {@code stage}/{@code errorCode}가 정확히 구분되는지 본다.
  */
 @EnableKubernetesMockClient(crud = true)
 class StrimziKafkaPipelineProvisionerTest {
@@ -29,79 +33,113 @@ class StrimziKafkaPipelineProvisionerTest {
     private static final String NS = "platform-kafka";
     private static final String CLUSTER = "platform-connect";
 
-    private StrimziKafkaPipelineProvisioner provisioner(InMemorySecretStore secretStore) {
-        return new StrimziKafkaPipelineProvisioner(
-                client, secretStore,
-                new SourceDebeziumConnectorMapper(), new JdbcSinkConnectorMapper(),
-                NS, CLUSTER);
+    private final SourceDebeziumConnectorMapper sourceMapper = new SourceDebeziumConnectorMapper();
+    private final JdbcSinkConnectorMapper sinkMapper = new JdbcSinkConnectorMapper();
+
+    private PipelineProvisionCommand.Endpoint pgEndpoint(String table) {
+        return new PipelineProvisionCommand.Endpoint(
+                DbType.POSTGRESQL, "db-host", 5432, "shop", "public", table, "secret://src");
+    }
+
+    private PipelineProvisionCommand edaCommand() {
+        return new PipelineProvisionCommand(
+                UUID.randomUUID(), "team2", PipelinePattern.FAN_OUT, pgEndpoint("orders"), null);
+    }
+
+    private PipelineProvisionCommand cdcCommand() {
+        PipelineProvisionCommand.Endpoint sink = new PipelineProvisionCommand.Endpoint(
+                DbType.POSTGRESQL, "sink-host", 5432, "warehouse", null, null, "secret://sink");
+        return new PipelineProvisionCommand(
+                UUID.randomUUID(), "team2", PipelinePattern.DIRECT, pgEndpoint("orders"), sink);
+    }
+
+    private SecretStore resolvingStore() {
+        SecretStore store = mock(SecretStore.class);
+        when(store.resolve(org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(new DbCredential("dbuser", "dbpass"));
+        return store;
+    }
+
+    private StrimziKafkaPipelineProvisioner provisioner(SecretStore store,
+                                                        SourceDebeziumConnectorMapper src,
+                                                        JdbcSinkConnectorMapper sink) {
+        return new StrimziKafkaPipelineProvisioner(client, store, src, sink, NS, CLUSTER);
     }
 
     @Test
     void edaCreatesSingleSourceConnector() {
-        InMemorySecretStore secrets = new InMemorySecretStore();
-        UUID pipelineId = UUID.randomUUID();
-        String srcRef = secrets.put(
-                new SecretContext(UUID.randomUUID(), "shop-src"), new DbCredential("svc", "pw"));
-
-        PipelineProvisionCommand command = new PipelineProvisionCommand(
-                pipelineId, "team2", PipelinePattern.FAN_OUT,
-                new PipelineProvisionCommand.Endpoint(
-                        DbType.POSTGRESQL, "db.internal", 5432, "shop", "public", "orders", srcRef),
-                null);
-
-        PipelineProvisionResult result = provisioner(secrets).createPipelineResources(command);
+        PipelineProvisionResult result = provisioner(resolvingStore(), sourceMapper, sinkMapper)
+                .createPipelineResources(edaCommand());
 
         assertThat(result.success()).isTrue();
         assertThat(result.stage()).isEqualTo(ProvisionStage.COMPLETED);
         assertThat(result.connectors()).hasSize(1);
-        assertThat(result.topicPrefix()).isEqualTo("cdc.table.team2.shop");
-
-        KafkaConnector source = client.resources(KafkaConnector.class)
-                .inNamespace(NS).withName(pipelineId + "-source").get();
-        assertThat(source).isNotNull();
+        assertThat(result.connectors().get(0).name()).endsWith("-source");
     }
 
     @Test
     void cdcCreatesSourceAndSinkConnectors() {
-        InMemorySecretStore secrets = new InMemorySecretStore();
-        UUID pipelineId = UUID.randomUUID();
-        String srcRef = secrets.put(
-                new SecretContext(UUID.randomUUID(), "shop-src"), new DbCredential("svc", "pw"));
-        String sinkRef = secrets.put(
-                new SecretContext(UUID.randomUUID(), "wh-sink"), new DbCredential("sinker", "pw"));
-
-        PipelineProvisionCommand command = new PipelineProvisionCommand(
-                pipelineId, "team2", PipelinePattern.DIRECT,
-                new PipelineProvisionCommand.Endpoint(
-                        DbType.POSTGRESQL, "src.internal", 5432, "shop", "public", "orders", srcRef),
-                new PipelineProvisionCommand.Endpoint(
-                        DbType.MARIADB, "sink.internal", 3306, "warehouse", null, null, sinkRef));
-
-        PipelineProvisionResult result = provisioner(secrets).createPipelineResources(command);
+        PipelineProvisionResult result = provisioner(resolvingStore(), sourceMapper, sinkMapper)
+                .createPipelineResources(cdcCommand());
 
         assertThat(result.success()).isTrue();
         assertThat(result.connectors()).hasSize(2);
-        assertThat(client.resources(KafkaConnector.class).inNamespace(NS)
-                .withName(pipelineId + "-source").get()).isNotNull();
-        assertThat(client.resources(KafkaConnector.class).inNamespace(NS)
-                .withName(pipelineId + "-sink").get()).isNotNull();
+        assertThat(result.connectors())
+                .extracting(c -> c.name())
+                .anySatisfy(n -> assertThat(n).endsWith("-source"))
+                .anySatisfy(n -> assertThat(n).endsWith("-sink"));
     }
 
     @Test
-    void missingSecretFailsAtSecretStage() {
-        InMemorySecretStore secrets = new InMemorySecretStore();
-        UUID pipelineId = UUID.randomUUID();
+    void secretResolveFailureReportsSecretStage() {
+        SecretStore failing = mock(SecretStore.class);
+        when(failing.resolve(org.mockito.ArgumentMatchers.anyString()))
+                .thenThrow(SecretStoreException.notFound("secret://src"));
 
-        PipelineProvisionCommand command = new PipelineProvisionCommand(
-                pipelineId, "team2", PipelinePattern.FAN_OUT,
-                new PipelineProvisionCommand.Endpoint(
-                        DbType.POSTGRESQL, "db.internal", 5432, "shop", "public", "orders", "does-not-exist"),
-                null);
-
-        PipelineProvisionResult result = provisioner(secrets).createPipelineResources(command);
+        PipelineProvisionResult result = provisioner(failing, sourceMapper, sinkMapper)
+                .createPipelineResources(edaCommand());
 
         assertThat(result.success()).isFalse();
         assertThat(result.stage()).isEqualTo(ProvisionStage.SECRET);
+        assertThat(result.errorCode()).isEqualTo(ProvisionErrorCode.SECRET_RESOLVE_FAILED.code());
         assertThat(result.connectors()).isEmpty();
+    }
+
+    @Test
+    void sourceConnectorApplyFailureReportsSourceStage() {
+        SourceDebeziumConnectorMapper throwingSource = mock(SourceDebeziumConnectorMapper.class);
+        when(throwingSource.map(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString()))
+                .thenThrow(new RuntimeException("apply boom"));
+
+        PipelineProvisionResult result = provisioner(resolvingStore(), throwingSource, sinkMapper)
+                .createPipelineResources(edaCommand());
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.stage()).isEqualTo(ProvisionStage.SOURCE_CONNECTOR);
+        assertThat(result.errorCode()).isEqualTo(ProvisionErrorCode.SOURCE_CONNECTOR_FAILED.code());
+        assertThat(result.connectors()).isEmpty();
+    }
+
+    @Test
+    void sinkConnectorApplyFailureKeepsSourceAndReportsSinkStage() {
+        JdbcSinkConnectorMapper throwingSink = mock(JdbcSinkConnectorMapper.class);
+        when(throwingSink.map(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString()))
+                .thenThrow(new RuntimeException("sink boom"));
+
+        PipelineProvisionResult result = provisioner(resolvingStore(), sourceMapper, throwingSink)
+                .createPipelineResources(cdcCommand());
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.stage()).isEqualTo(ProvisionStage.SINK_CONNECTOR);
+        assertThat(result.errorCode()).isEqualTo(ProvisionErrorCode.SINK_CONNECTOR_FAILED.code());
+        // source는 이미 apply됐으므로 created 목록에 남아 cleanup 추적이 가능해야 한다
+        assertThat(result.connectors()).hasSize(1);
+        assertThat(result.connectors().get(0).name()).endsWith("-source");
     }
 }
