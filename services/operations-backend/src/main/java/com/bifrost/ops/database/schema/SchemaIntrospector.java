@@ -1,13 +1,12 @@
 package com.bifrost.ops.database.schema;
 
-import com.bifrost.ops.database.connection.JdbcUrls;
+import com.bifrost.ops.database.connection.DynamicDataSourceFactory;
 import com.bifrost.ops.database.dto.DatabaseSchemaResponse;
 import com.bifrost.ops.database.dto.DatabaseSchemaResponse.ColumnSchema;
 import com.bifrost.ops.database.dto.DatabaseSchemaResponse.TableSchema;
 import com.bifrost.ops.database.persistence.entity.DatasourceEntity;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
-import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import org.springframework.stereotype.Component;
 
@@ -30,20 +29,14 @@ import java.util.Set;
 @Component
 public class SchemaIntrospector {
 
-    private static final long TIMEOUT_MS = 5000;
+    private final DynamicDataSourceFactory dataSourceFactory;
+
+    public SchemaIntrospector(DynamicDataSourceFactory dataSourceFactory) {
+        this.dataSourceFactory = dataSourceFactory;
+    }
 
     public DatabaseSchemaResponse introspect(DatasourceEntity ds, String password) {
-        HikariConfig cfg = new HikariConfig();
-        cfg.setJdbcUrl(JdbcUrls.build(ds.getDbType(), ds.getHost(), ds.getPort(), ds.getDbName()));
-        cfg.setUsername(ds.getUsername());
-        cfg.setPassword(password);
-        cfg.setConnectionTimeout(TIMEOUT_MS);
-        cfg.setMaximumPoolSize(1);
-        cfg.setInitializationFailTimeout(1);
-        cfg.setReadOnly(true);
-        cfg.setPoolName("db-schema-introspect");
-
-        try (HikariDataSource dataSource = new HikariDataSource(cfg);
+        try (HikariDataSource dataSource = dataSourceFactory.create(ds, password, true);
              Connection conn = dataSource.getConnection()) {
             return read(conn);
         } catch (SQLException | RuntimeException e) {

@@ -1,5 +1,6 @@
 package com.bifrost.ops.database.schema;
 
+import com.bifrost.ops.database.connection.DynamicDataSourceFactory;
 import com.bifrost.ops.database.dto.DatabaseSchemaResponse;
 import com.bifrost.ops.database.dto.DatabaseSchemaResponse.ColumnSchema;
 import com.bifrost.ops.database.dto.DatabaseSchemaResponse.TableSchema;
@@ -55,7 +56,8 @@ class SchemaIntrospectorTest {
         ds.setDbName(POSTGRES.getDatabaseName());
         ds.setUsername(POSTGRES.getUsername());
 
-        DatabaseSchemaResponse schema = new SchemaIntrospector().introspect(ds, POSTGRES.getPassword());
+        DatabaseSchemaResponse schema =
+                new SchemaIntrospector(new DynamicDataSourceFactory()).introspect(ds, POSTGRES.getPassword());
 
         Optional<TableSchema> orders = schema.tables().stream()
                 .filter(t -> t.name().equals("orders")).findFirst();
