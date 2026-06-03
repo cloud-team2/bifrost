@@ -6,6 +6,8 @@ import com.bifrost.ops.database.dto.ConnectionTestRequest;
 import com.bifrost.ops.database.dto.ConnectionTestResponse;
 import com.bifrost.ops.database.cdc.CdcReadinessStatus;
 import com.bifrost.ops.database.dto.CdcReadinessResponse;
+import com.bifrost.ops.database.dto.DatabaseMetricsResponse;
+import com.bifrost.ops.database.dto.DatabasePipelineSummary;
 import com.bifrost.ops.database.dto.DatabaseRegisterRequest;
 import com.bifrost.ops.database.dto.DatabaseResponse;
 import com.bifrost.ops.database.dto.DatabaseSchemaResponse;
@@ -135,6 +137,21 @@ class DatabaseControllerTest {
 
         assertThat(out.tables()).hasSize(1);
         assertThat(out.tables().get(0).columns().get(0).primaryKey()).isTrue();
+    }
+
+    @Test
+    void metricsDelegates() {
+        UUID dbId = UUID.randomUUID();
+        when(service.getMetrics(wsId, dbId)).thenReturn(DatabaseMetricsResponse.placeholder());
+        assertThat(controller.metrics(wsId, dbId, member).stub()).isTrue();
+    }
+
+    @Test
+    void pipelinesDelegates() {
+        UUID dbId = UUID.randomUUID();
+        when(service.listPipelines(wsId, dbId)).thenReturn(List.of(
+                new DatabasePipelineSummary(UUID.randomUUID().toString(), "orders-cdc", "CDC", "ACTIVE")));
+        assertThat(controller.pipelines(wsId, dbId, member)).hasSize(1);
     }
 
     @Test

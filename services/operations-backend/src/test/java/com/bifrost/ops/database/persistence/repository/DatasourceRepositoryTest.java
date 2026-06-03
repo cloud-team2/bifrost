@@ -75,6 +75,23 @@ class DatasourceRepositoryTest {
                 .doesNotContain(unused.getId());
     }
 
+    @Test
+    void findPipelinesUsingDatasourceReturnsRows() {
+        insertTenant(ws);
+        DatasourceEntity used = saveDatasource(ws, "source-db");
+        DatasourceEntity idle = saveDatasource(ws, "idle-db");
+        insertPipeline(ws, used.getId());
+
+        assertThat(repo.findPipelinesUsingDatasource(ws, used.getId()))
+                .singleElement()
+                .satisfies(r -> {
+                    assertThat(r.getName()).startsWith("pipe-");
+                    assertThat(r.getType()).isEqualTo("CDC");      // V2 default
+                    assertThat(r.getStatus()).isEqualTo("PENDING"); // V2 default
+                });
+        assertThat(repo.findPipelinesUsingDatasource(ws, idle.getId())).isEmpty();
+    }
+
     private void insertTenant(UUID id) {
         em.getEntityManager().createNativeQuery(
                         "INSERT INTO tenants(id, name, namespace) VALUES (?1, ?2, ?3)")

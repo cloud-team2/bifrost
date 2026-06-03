@@ -4,6 +4,8 @@ import com.bifrost.ops.auth.jwt.AuthenticatedUser;
 import com.bifrost.ops.database.dto.CdcReadinessResponse;
 import com.bifrost.ops.database.dto.ConnectionTestRequest;
 import com.bifrost.ops.database.dto.ConnectionTestResponse;
+import com.bifrost.ops.database.dto.DatabaseMetricsResponse;
+import com.bifrost.ops.database.dto.DatabasePipelineSummary;
 import com.bifrost.ops.database.dto.DatabaseRegisterRequest;
 import com.bifrost.ops.database.dto.DatabaseResponse;
 import com.bifrost.ops.database.dto.DatabaseSchemaResponse;
@@ -107,6 +109,24 @@ public class DatabaseController {
                                              @AuthenticationPrincipal AuthenticatedUser principal) {
         requireScope(wsId, principal);
         return cdcReadinessService.check(wsId, dbId);
+    }
+
+    /** 지표(FR-017). 이번 주는 계약용 stub 응답. */
+    @GetMapping("/{dbId}/metrics")
+    public DatabaseMetricsResponse metrics(@PathVariable UUID wsId,
+                                           @PathVariable UUID dbId,
+                                           @AuthenticationPrincipal AuthenticatedUser principal) {
+        requireScope(wsId, principal);
+        return databaseService.getMetrics(wsId, dbId);
+    }
+
+    /** 이 DB를 쓰는 파이프라인 목록(FR-018). */
+    @GetMapping("/{dbId}/pipelines")
+    public List<DatabasePipelineSummary> pipelines(@PathVariable UUID wsId,
+                                                   @PathVariable UUID dbId,
+                                                   @AuthenticationPrincipal AuthenticatedUser principal) {
+        requireScope(wsId, principal);
+        return databaseService.listPipelines(wsId, dbId);
     }
 
     /** 경로의 wsId가 인증 사용자 소속 워크스페이스인지 검증(scope). */

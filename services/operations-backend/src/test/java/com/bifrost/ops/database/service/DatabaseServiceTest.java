@@ -3,10 +3,13 @@ package com.bifrost.ops.database.service;
 import com.bifrost.ops.database.connection.DatabaseConnectionTester;
 import com.bifrost.ops.database.connection.DbConnectionFailureReason;
 import com.bifrost.ops.database.dto.ConnectionTestResponse;
+import com.bifrost.ops.database.dto.DatabaseMetricsResponse;
+import com.bifrost.ops.database.dto.DatabasePipelineSummary;
 import com.bifrost.ops.database.dto.DatabaseRegisterRequest;
 import com.bifrost.ops.database.dto.DatabaseResponse;
 import com.bifrost.ops.database.persistence.entity.DatasourceEntity;
 import com.bifrost.ops.database.persistence.repository.DatasourceRepository;
+import com.bifrost.ops.database.persistence.repository.PipelineSummaryRow;
 import com.bifrost.ops.global.common.datasource.DbType;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
@@ -139,6 +142,42 @@ class DatabaseServiceTest {
         assertThatThrownBy(() -> service.get(ws, missing))
                 .isInstanceOf(ApiException.class)
                 .satisfies(ex -> assertThat(((ApiException) ex).code()).isEqualTo(ErrorCode.DATABASE_NOT_FOUND));
+    }
+
+    @Test
+    void metricsReturnsStubAndChecksExistence() {
+        DatasourceEntity e = entity("orders", DbType.POSTGRESQL);
+        when(repo.findByIdAndTenantId(e.getId(), ws)).thenReturn(Optional.of(e));
+        DatabaseMetricsResponse m = service.getMetrics(ws, e.getId());
+        assertThat(m.stub()).isTrue();
+
+        UUID missing = UUID.randomUUID();
+        when(repo.findByIdAndTenantId(missing, ws)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.getMetrics(ws, missing))
+                .isInstanceOf(ApiException.class)
+                .satisfies(ex -> assertThat(((ApiException) ex).code()).isEqualTo(ErrorCode.DATABASE_NOT_FOUND));
+    }
+
+    @Test
+    void listPipelinesMapsRows() {
+        DatasourceEntity e = entity("orders", DbType.POSTGRESQL);
+        when(repo.findByIdAndTenantId(e.getId(), ws)).thenReturn(Optional.of(e));
+        PipelineSummaryRow row = mock(PipelineSummaryRow.class);
+        UUID pid = UUID.randomUUID();
+        when(row.getId()).thenReturn(pid);
+        when(row.getName()).thenReturn("orders-cdc");
+        when(row.getType()).thenReturn("CDC");
+        when(row.getStatus()).thenReturn("ACTIVE");
+        when(repo.findPipelinesUsingDatasource(ws, e.getId())).thenReturn(List.of(row));
+
+        List<DatabasePipelineSummary> out = service.listPipelines(ws, e.getId());
+
+        assertThat(out).singleElement().satisfies(p -> {
+            assertThat(p.id()).isEqualTo(pid.toString());
+            assertThat(p.name()).isEqualTo("orders-cdc");
+            assertThat(p.type()).isEqualTo("CDC");
+            assertThat(p.status()).isEqualTo("ACTIVE");
+        });
     }
 
     private DatasourceEntity entity(String name, DbType type) {
