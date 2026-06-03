@@ -190,7 +190,7 @@ BifrostAgentPanel (FR-022/025/026) — AI는 FastAPI
 | Spring Boot | `pipeline_status_changed` | 파이프라인 상태(creating/active/lag/error/paused) 갱신 |
 | Spring Boot | `connector_state_changed` | connector state watch 결과 (상세 토글용) |
 | Spring Boot | `incident_opened` / `incident_updated` | 사이드바 배지·알럿 |
-| FastAPI | `agent_started`/`agent_completed`/`tool_call_*`/`evidence_collected`/`report_preview_available`/`partial_result`/`approval_required`/`verification_completed`/`run_completed` | AI 진행 상태 + 부분 결과(검증 전 preview) ([FastAPI DETAILS §16](./backend-fastapi/contract-streaming-events.md#16-contract-streaming-events)) |
+| FastAPI | `agent_started`/`agent_completed`/`tool_call_*`/`evidence_collected`/`report_preview_available`/`partial_result`/`approval_required`/`verification_completed`/`run_completed` | AI 진행 상태 + 부분 결과(검증 전 preview) ([FastAPI DETAILS §16](./backend-fastapi/contract/contract-streaming-events.md#16-contract-streaming-events)) |
 
 플랫폼 SSE 구독 엔드포인트(예): `GET /api/v1/workspaces/{wsId}/events/stream`.
 

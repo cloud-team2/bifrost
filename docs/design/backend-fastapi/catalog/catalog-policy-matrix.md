@@ -1,6 +1,6 @@
 # Catalog — Policy Matrix (§12)
 
-> FastAPI Agent 카탈로그 · 개요 [overview](./overview.md) · 원리 [agent-principles](./agent-principles.md). **카탈로그**: [failure-types](./catalog-failure-types.md) · [incident→rootcause](./catalog-incident-root-cause-map.md) · [root-causes](./catalog-root-causes.md) · [evidence-matrix](./catalog-evidence-matrix.md) · [correlation-rules](./catalog-correlation-rules.md) · [runbooks](./catalog-remediation-runbooks.md) · [policy-matrix](./catalog-policy-matrix.md)
+> FastAPI Agent 카탈로그 · 개요 [overview](../overview.md) · 원리 [agent-principles](../agent-principles.md). **카탈로그**: [failure-types](./catalog-failure-types.md) · [incident→rootcause](./catalog-incident-root-cause-map.md) · [root-causes](./catalog-root-causes.md) · [evidence-matrix](./catalog-evidence-matrix.md) · [correlation-rules](./catalog-correlation-rules.md) · [runbooks](./catalog-remediation-runbooks.md) · [policy-matrix](./catalog-policy-matrix.md)
 
 ## 12. Catalog: Policy Matrix
 
@@ -9,7 +9,7 @@
 
 이 문서는 Agent action의 위험도와 승인 기준을 정의한다. Policy Guard는 이 문서를 기준으로 `allow`, `require_approval`, `require_change_management`, `deny` 중 하나를 선택한다.
 
-**최종 집행·정본은 Spring Boot의 [server.md §7.1 Operation Allowlist](../backend-springboot/server.md#71-operation-allowlist-집행-경계-단일-출처)다.** 이 policy matrix는 그 allowlist를 미러링한 *사전 판단*이며, Spring이 실행 직전 같은 기준을 재검증한다(불일치 시 Spring 기준 우선).
+**최종 집행·정본은 Spring Boot의 [server.md §7.1 Operation Allowlist](../../backend-springboot/server.md#71-operation-allowlist-집행-경계-단일-출처)다.** 이 policy matrix는 그 allowlist를 미러링한 *사전 판단*이며, Spring이 실행 직전 같은 기준을 재검증한다(불일치 시 Spring 기준 우선).
 
 ### 2. Decision
 
@@ -92,14 +92,14 @@
 
 ### 6. Severity 보정
 
-`incident.severity`는 플랫폼과 동일하게 **`WARNING`/`CRITICAL` 2단계**다([기능명세서 부록 B.7](../../spec.md#b7-인시던트-자동-생성-및-그룹화-규칙)). severity는 action을 더 위험한 decision으로 **올릴 때만** 사용하고, 자동으로 낮추는 데는 쓰지 않는다.
+`incident.severity`는 플랫폼과 동일하게 **`WARNING`/`CRITICAL` 2단계**다([기능명세서 부록 B.7](../../../spec.md#b7-인시던트-자동-생성-및-그룹화-규칙)). severity는 action을 더 위험한 decision으로 **올릴 때만** 사용하고, 자동으로 낮추는 데는 쓰지 않는다.
 
 | Severity | 정책 보정 |
 | --- | --- |
 | `CRITICAL` | approval 요청 우선순위를 높이고, customer-visible action은 change management 검토 |
 | `WARNING` | runtime mutation은 최소 approval 유지, 기본 decision 유지 (자동 허용으로 낮추지 않음) |
 
-> 에이전트와 플랫폼은 같은 2단계 severity를 쓴다. 별도의 4단계(critical/high/medium/low) 축은 두지 않는다 — 과거 문서의 4단계 표기는 폐기한다. RCA 분석으로 보정된 severity(있으면)는 [Spring Report Support API](../../api/springboot.md#24-report-support-api)의 `PATCH .../incidents/{id}/rca`로 incident에 기록한다.
+> 에이전트와 플랫폼은 같은 2단계 severity를 쓴다. 별도의 4단계(critical/high/medium/low) 축은 두지 않는다 — 과거 문서의 4단계 표기는 폐기한다. RCA 분석으로 보정된 severity(있으면)는 [Spring Report Support API](../../../api/springboot.md#24-report-support-api)의 `PATCH .../incidents/{id}/rca`로 incident에 기록한다.
 
 ### 7. Deny 대상
 
@@ -169,6 +169,6 @@
 
 ### 12. Versioning
 
-Policy 변경은 audit와 replay test에 영향을 준다. 새로운 mutation tool을 추가할 때는 이 문서와 [§4 Tool Catalog](tool-catalog.md#4-tool-catalog)를 함께 갱신한다.
+Policy 변경은 audit와 replay test에 영향을 준다. 새로운 mutation tool을 추가할 때는 이 문서와 [§4 Tool Catalog](../tool-catalog.md#4-tool-catalog)를 함께 갱신한다.
 
 ---

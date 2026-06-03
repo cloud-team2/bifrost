@@ -1,6 +1,6 @@
 # Catalog — Remediation Runbooks (§11)
 
-> FastAPI Agent 카탈로그 · 개요 [overview](./overview.md) · 원리 [agent-principles](./agent-principles.md). **카탈로그**: [failure-types](./catalog-failure-types.md) · [incident→rootcause](./catalog-incident-root-cause-map.md) · [root-causes](./catalog-root-causes.md) · [evidence-matrix](./catalog-evidence-matrix.md) · [correlation-rules](./catalog-correlation-rules.md) · [runbooks](./catalog-remediation-runbooks.md) · [policy-matrix](./catalog-policy-matrix.md)
+> FastAPI Agent 카탈로그 · 개요 [overview](../overview.md) · 원리 [agent-principles](../agent-principles.md). **카탈로그**: [failure-types](./catalog-failure-types.md) · [incident→rootcause](./catalog-incident-root-cause-map.md) · [root-causes](./catalog-root-causes.md) · [evidence-matrix](./catalog-evidence-matrix.md) · [correlation-rules](./catalog-correlation-rules.md) · [runbooks](./catalog-remediation-runbooks.md) · [policy-matrix](./catalog-policy-matrix.md)
 
 ## 11. Catalog: Remediation Runbooks
 
@@ -19,7 +19,7 @@
 4. 고객사 소유 영역은 직접 수정하지 않고 escalation한다.
 5. 데이터 손실 가능성이 있는 조치는 기본 금지 또는 변경관리 대상이다.
 
-Runbook의 `Action`은 항상 Spring Boot mutation tool을 뜻하지 않는다. 추가 evidence 수집은 `workflow_action`, 고객사/플랫폼 전달은 `escalation`, 알림은 `notification`, 여러 조치 후보로 분해해야 하는 의도는 `composite_action`으로 둔다. 실제 실행 가능한 단일 tool은 [§4 Tool Catalog](tool-catalog.md#4-tool-catalog)의 `runtime_tool` catalog에 등록되어야 한다.
+Runbook의 `Action`은 항상 Spring Boot mutation tool을 뜻하지 않는다. 추가 evidence 수집은 `workflow_action`, 고객사/플랫폼 전달은 `escalation`, 알림은 `notification`, 여러 조치 후보로 분해해야 하는 의도는 `composite_action`으로 둔다. 실제 실행 가능한 단일 tool은 [§4 Tool Catalog](../tool-catalog.md#4-tool-catalog)의 `runtime_tool` catalog에 등록되어야 한다.
 
 ### 3. Source 계층
 

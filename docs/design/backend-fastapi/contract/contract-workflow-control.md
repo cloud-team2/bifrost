@@ -1,6 +1,6 @@
 # Contract — Workflow Control (§15)
 
-> FastAPI Agent 계약 · 개요 [overview](./overview.md) · 원리 [agent-principles](./agent-principles.md). **계약**: [agent-roles](./contract-agent-roles.md) · [state-schema](./contract-state-schema.md) · [workflow-control](./contract-workflow-control.md) · [streaming-events](./contract-streaming-events.md) · [output-schemas](./contract-output-schemas.md)
+> FastAPI Agent 계약 · 개요 [overview](../overview.md) · 원리 [agent-principles](../agent-principles.md). **계약**: [agent-roles](./contract-agent-roles.md) · [state-schema](./contract-state-schema.md) · [workflow-control](./contract-workflow-control.md) · [streaming-events](./contract-streaming-events.md) · [output-schemas](./contract-output-schemas.md)
 
 ## 15. Contract: Workflow Control
 
@@ -16,7 +16,7 @@ Supervisor는 자유 추론 Agent가 아니라 정책 기반 workflow controller
 - Router는 run당 1회가 아니라 **사용자 메시지마다** mode를 재판정한다.
 - 기존 run State(`evidence`, `analysis`, action 후보)가 유효하면 **재사용하고 새로 필요한 단계만** 실행한다.
 - `incident_analysis`는 기본적으로 원인까지만 분석하고(`diagnose_only`), 조치 후보 생성·실행은 사용자가 요청할 때만 진행한다.
-- Retrieval은 단계 안에서 **독립 read tool을 병렬 실행**해 retrieval wall-clock을 줄인다(§13.5, [§4](tool-catalog.md#4-tool-catalog) Tool Catalog [§13.1](tool-catalog.md#131-read-only-tool-병렬-실행)).
+- Retrieval은 단계 안에서 **독립 read tool을 병렬 실행**해 retrieval wall-clock을 줄인다(§13.5, [§4](../tool-catalog.md#4-tool-catalog) Tool Catalog [§13.1](../tool-catalog.md#131-read-only-tool-병렬-실행)).
 - 단계가 끝나는 대로 **부분 결과를 스트리밍**한다([§4.2](contract-workflow-control.md#42-지연-최소화latency-원칙), [§16](contract-streaming-events.md#16-contract-streaming-events)). 사용자는 전체 chain 완료를 기다리지 않고 진행 상황과 중간 RCA preview를 본다.
 - 결과적으로 대부분의 채팅 턴은 2~5개 단계만 실행한다.
 
@@ -132,14 +132,14 @@ State 재사용 규칙:
 
 | 기법 | 적용 | 효과 |
 | --- | --- | --- |
-| **Retrieval 병렬 read tool** | 독립 read tool fan-out(§13.5, [§4](tool-catalog.md#4-tool-catalog) [§13.1](tool-catalog.md#131-read-only-tool-병렬-실행)) | retrieval wall-clock = Σtool → max(tool) |
+| **Retrieval 병렬 read tool** | 독립 read tool fan-out(§13.5, [§4](../tool-catalog.md#4-tool-catalog) [§13.1](../tool-catalog.md#131-read-only-tool-병렬-실행)) | retrieval wall-clock = Σtool → max(tool) |
 | **부분 결과 스트리밍** | 단계 완료 즉시 event 전송, RCA 후보는 `report/preview`로 선노출([§16](contract-streaming-events.md#16-contract-streaming-events)) | 체감 지연 ↓, 사용자는 최종 Report 전에 진행/중간 결론 확인 |
 | **stage별 timeout** | 각 단계(특히 Retrieval/RCA/Verifier)에 개별 SLO timeout([§5.1](contract-workflow-control.md#51-루프-방지와-종료-보장)) | 한 단계 지연이 run 전체를 잡지 않음 → 부분 결과로 Report |
 | **저복잡도 stage 축약** | evidence가 적고 incident type이 단일·명확하면 Classifier+RCA를 한 LLM 호출로 합치고, read-only `simple_query`는 Verifier를 경량(룰 체크)으로 단축 | LLM 호출 수 ↓ |
-| **모델 tier 분리** | Router/Planner/Classifier/Report=lightweight, RCA/Verifier=reasoning([§1](agent-principles.md#1-agent-principles) [§10](catalog-correlation-rules.md#10-catalog-correlation-rules)) | critical path에서 무거운 모델 호출 최소화 |
+| **모델 tier 분리** | Router/Planner/Classifier/Report=lightweight, RCA/Verifier=reasoning([§1](../agent-principles.md#1-agent-principles) [§10](../catalog/catalog-correlation-rules.md#10-catalog-correlation-rules)) | critical path에서 무거운 모델 호출 최소화 |
 | **State 재사용** | [§4.1](contract-workflow-control.md#41-의도별-최소-실행-단계) 후속 turn 재사용 | 후속 turn 2~5단계 |
 
-축약·병렬화는 **근거(evidence) 기반 판단과 Verifier 차단기 원칙을 우회하지 않는다.** Classifier+RCA를 합치더라도 [§9](catalog-evidence-matrix.md#9-catalog-evidence-matrix) Evidence Matrix의 required evidence 검증과 confidence cap은 그대로 적용하고, 부분 결과 preview에는 "검증 전(preview)" 표시를 붙여 최종 Report([§13](contract-agent-roles.md#13-contract-agent-roles) Report, Verifier 통과분)와 구분한다.
+축약·병렬화는 **근거(evidence) 기반 판단과 Verifier 차단기 원칙을 우회하지 않는다.** Classifier+RCA를 합치더라도 [§9](../catalog/catalog-evidence-matrix.md#9-catalog-evidence-matrix) Evidence Matrix의 required evidence 검증과 confidence cap은 그대로 적용하고, 부분 결과 preview에는 "검증 전(preview)" 표시를 붙여 최종 Report([§13](contract-agent-roles.md#13-contract-agent-roles) Report, Verifier 통과분)와 구분한다.
 
 ### 5. Retry 규칙
 
@@ -176,10 +176,10 @@ workflow에는 순환 경로가 있다(`Verifier → 책임 Agent → … → Ve
 
 **진행성(monotonic progress) 규칙** — 카운터만으로 부족한 경우를 막는다.
 
-- **새 evidence 없으면 루프 금지**: Retrieval이 직전 대비 새 `evidence_id`를 하나도 추가하지 못하면 그 가설은 "수집 가능한 근거 없음"으로 보고 재시도하지 않는다(Stop 조건 [§10](catalog-correlation-rules.md#10-catalog-correlation-rules)).
+- **새 evidence 없으면 루프 금지**: Retrieval이 직전 대비 새 `evidence_id`를 하나도 추가하지 못하면 그 가설은 "수집 가능한 근거 없음"으로 보고 재시도하지 않는다(Stop 조건 [§10](../catalog/catalog-correlation-rules.md#10-catalog-correlation-rules)).
 - **retrieval plan dedup**: 이미 실행한 plan과 동일한(tool+params hash 동일) plan은 재실행하지 않는다. Planner가 같은 plan만 반복 생성하면 evidence_gap 루프로 카운트한다.
 - **needs_revision은 사유가 직전과 달라야 진짜 진행**: 같은 target에 동일 사유의 `needs_revision`이 반복되면 즉시 revision 상한으로 간주한다.
-- **mutation 비재시도**: mutation timeout/실패는 자동 재실행하지 않는다([§4](tool-catalog.md#4-tool-catalog) Tool Catalog [§15](contract-workflow-control.md#15-contract-workflow-control)) — 실행 루프 자체가 생기지 않는다.
+- **mutation 비재시도**: mutation timeout/실패는 자동 재실행하지 않는다([§4](../tool-catalog.md#4-tool-catalog) Tool Catalog [§15](contract-workflow-control.md#15-contract-workflow-control)) — 실행 루프 자체가 생기지 않는다.
 
 가드에 걸려 멈추는 것은 실패가 아니라 **안전한 종료**다. Report는 어디까지 분석했는지, 무엇이 부족한지, 사람이 이어받을 지점을 명시한다. 모든 가드 초과는 audit·timeline에 사유와 함께 기록한다.
 

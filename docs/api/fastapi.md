@@ -229,7 +229,7 @@ event: report_preview_available
 data: {"run_id":"run_001","root_cause_id":"SOURCE_DB_CONNECTION_TIMEOUT","confidence":0.82,"verified":false}
 ```
 
-전체 event 종류는 [DETAILS §16](../design/backend-fastapi/contract-streaming-events.md#16-contract-streaming-events)를 따른다.
+전체 event 종류는 [DETAILS §16](../design/backend-fastapi/contract/contract-streaming-events.md#16-contract-streaming-events)를 따른다.
 
 ### 8. State / Timeline API
 

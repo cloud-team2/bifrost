@@ -407,4 +407,4 @@
 | `investigating` | 사용자 확인·조치 중 |
 | `resolved` | 원인 해소 확인됨(사용자 수동 전이) |
 
-**인시던트 심각도**: `WARNING` / `CRITICAL` 2단계. (에이전트 내부 분석은 동일 2단계를 사용하며, 정책 에스컬레이션 시에만 가산한다 — [design/backend-fastapi/catalogs.md §12.6 Severity 보정](./design/backend-fastapi/catalog-policy-matrix.md#6-severity-보정) 참조.)
+**인시던트 심각도**: `WARNING` / `CRITICAL` 2단계. (에이전트 내부 분석은 동일 2단계를 사용하며, 정책 에스컬레이션 시에만 가산한다 — [design/backend-fastapi/catalogs.md §12.6 Severity 보정](./design/backend-fastapi/catalog/catalog-policy-matrix.md#6-severity-보정) 참조.)

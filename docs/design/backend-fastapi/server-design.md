@@ -146,7 +146,7 @@ State는 Agent workflow의 단일 공유 컨텍스트다. FastAPI는 State names
 - State 변경은 patch로 append한다.
 - Verifier가 승인한 내용만 Report가 출력한다.
 
-상세 schema는 [§14 State Schema](contract-state-schema.md#14-contract-state-schema)를 따른다.
+상세 schema는 [§14 State Schema](contract/contract-state-schema.md#14-contract-state-schema)를 따른다.
 
 ### 5. Tool Client Registry
 
@@ -308,7 +308,7 @@ erDiagram
 | `catalog_version` | text | tool/catalog 버전(replay 재현 기준, [§4.18](tool-catalog.md#4-tool-catalog)) |
 | `created_at` `updated_at` `closed_at` | timestamptz | |
 
-**`state_patch`** — State 변경 이력(append-only, event-sourced. [§14](contract-state-schema.md#14-contract-state-schema))
+**`state_patch`** — State 변경 이력(append-only, event-sourced. [§14](contract/contract-state-schema.md#14-contract-state-schema))
 
 | 컬럼 | 타입 | 설명 |
 | --- | --- | --- |
@@ -322,7 +322,7 @@ erDiagram
 | `patch` | jsonb | 변경 내용. **raw evidence/secret inline 금지**, evidence는 `store_ref`만 |
 | `created_at` | timestamptz | |
 
-**`run_event`** — SSE event 로그(재연결 history. [§16](contract-streaming-events.md#16-contract-streaming-events), [api.md §7](../../api/fastapi.md))
+**`run_event`** — SSE event 로그(재연결 history. [§16](contract/contract-streaming-events.md#16-contract-streaming-events), [api.md §7](../../api/fastapi.md))
 
 | 컬럼 | 타입 | 설명 |
 | --- | --- | --- |
@@ -356,10 +356,10 @@ erDiagram
 | `id` | uuid PK | |
 | `run_id` | text FK | → `agent_run` |
 | `incident_id` | text null | Spring incident 논리 참조 |
-| `root_cause_id` | text null | [§8 Root Cause Catalog](catalog-root-causes.md#8-catalog-root-cause) id |
+| `root_cause_id` | text null | [§8 Root Cause Catalog](catalog/catalog-root-causes.md#8-catalog-root-cause) id |
 | `confidence` | numeric null | |
 | `verified` | bool | Verifier `approved_for_final_response`=true만 노출 |
-| `body` | jsonb | `final_response`([§17](contract-output-schemas.md#17-contract-output-schemas)) 스냅샷 |
+| `body` | jsonb | `final_response`([§17](contract/contract-output-schemas.md#17-contract-output-schemas)) 스냅샷 |
 | `created_at` | timestamptz | |
 
 #### 9.3 Knowledge Vector Store (RAG)
