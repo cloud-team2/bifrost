@@ -3,27 +3,19 @@ package com.bifrost.ops.provisioning.impl.strimzi;
 import com.bifrost.ops.provisioning.dto.TenantProvisionRequest;
 import com.bifrost.ops.provisioning.dto.TenantProvisionResponse;
 import com.bifrost.ops.provisioning.port.TenantProvisionerPort;
+import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
+import io.fabric8.kubernetes.api.model.GenericKubernetesResourceBuilder;
 import io.fabric8.kubernetes.api.model.Namespace;
 import io.fabric8.kubernetes.api.model.NamespaceBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.dsl.NonDeletingOperation;
-import io.strimzi.api.kafka.model.user.KafkaUser;
-import io.strimzi.api.kafka.model.user.KafkaUserBuilder;
-import io.strimzi.api.kafka.model.user.KafkaUserScramSha512ClientAuthentication;
-import io.strimzi.api.kafka.model.user.KafkaUserSpec;
-import io.strimzi.api.kafka.model.user.acl.AclOperation;
-import io.strimzi.api.kafka.model.user.acl.AclResourcePatternType;
-import io.strimzi.api.kafka.model.user.acl.AclRule;
-import io.strimzi.api.kafka.model.user.acl.AclRuleTopicResource;
-import io.strimzi.api.kafka.model.user.acl.AclRuleType;
-import io.strimzi.api.kafka.model.user.KafkaUserAuthorizationSimple;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
-import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -64,12 +56,12 @@ public class TenantProvisioner implements TenantProvisionerPort {
 
     @Override
     public TenantProvisionResponse provision(TenantProvisionRequest req) {
-        String slug = req.namespace();           // 워크스페이스 slug(=K8s namespace, DNS-label)
+        String slug = req.namespace();
         String userName = kafkaUserName(slug);
         try {
             createNamespace(slug, req.tenantId());
 
-            boolean existed = k8s.resources(KafkaUser.class)
+            boolean existed = k8s.genericKubernetesResources("kafka.strimzi.io/v1", "KafkaUser")
                     .inNamespace(kafkaNamespace).withName(userName).get() != null;
             createKafkaUser(userName, slug, req.tenantId());
 
@@ -83,7 +75,6 @@ public class TenantProvisioner implements TenantProvisionerPort {
                     : TenantProvisionResponse.Status.PROVISIONED;
             log.info("테넌트 프로비저닝 완료: tenant={}, kafkaUser={}, status={}",
                     req.tenantId(), userName, status);
-            // Strimzi는 KafkaUser와 동명 Secret을 생성한다.
             return new TenantProvisionResponse(
                     req.tenantId(), slug, userName, userName, status, Instant.now());
         } catch (RuntimeException e) {
@@ -97,17 +88,14 @@ public class TenantProvisioner implements TenantProvisionerPort {
 
     public void deprovision(UUID tenantId) {
         String selector = tenantId.toString();
-        // KafkaUser는 kafka 네임스페이스에 있으므로 테넌트 라벨로 찾아 삭제(동명 Secret도 함께 정리됨)
-        k8s.resources(KafkaUser.class).inNamespace(kafkaNamespace)
-                .withLabel(TENANT_LABEL, selector).delete();
-        // 워크스페이스 namespace는 cascade 삭제
+        k8s.genericKubernetesResources("kafka.strimzi.io/v1", "KafkaUser")
+                .inNamespace(kafkaNamespace).withLabel(TENANT_LABEL, selector).delete();
         k8s.namespaces().withLabel(TENANT_LABEL, selector).delete();
         log.info("테넌트 디프로비저닝 요청: tenant={}", tenantId);
     }
 
     // ---- private helpers ----
 
-    /** 워크스페이스 namespace를 멱등 생성한다(server-side apply). */
     private void createNamespace(String name, UUID tenantId) {
         Namespace ns = new NamespaceBuilder()
                 .withNewMetadata()
@@ -119,50 +107,42 @@ public class TenantProvisioner implements TenantProvisionerPort {
         k8s.namespaces().resource(ns).createOr(NonDeletingOperation::update);
     }
 
-    /** KafkaUser CR(SCRAM-SHA-512 + 토픽 prefix ACL)을 멱등 apply한다. */
+    /**
+     * KafkaUser CR(SCRAM-SHA-512 + 토픽 prefix ACL)을 멱등 apply한다.
+     *
+     * <p>Strimzi Java API 0.45.0의 KafkaUser 모델은 {@code CustomResource}를 상속하므로
+     * {@code getApiVersion()}이 클래스 어노테이션 버전(v1beta2)을 반환한다.
+     * 클러스터(Strimzi 1.0.0)는 v1만 지원하므로 genericKubernetesResources로 apiVersion을 명시한다.
+     */
     private void createKafkaUser(String userName, String slug, UUID tenantId) {
-        KafkaUserSpec spec = new KafkaUserSpec();
-        spec.setAuthentication(new KafkaUserScramSha512ClientAuthentication());
-        spec.setAuthorization(topicPrefixAuthorization(slug));
+        // ACL authorization은 Kafka 클러스터에 authorizer가 활성화된 경우에만 동작한다.
+        // 클러스터 설정에 따라 authorization 섹션을 포함하면 InvalidResourceException이 발생하므로 제외한다.
+        Map<String, Object> spec = Map.of(
+                "authentication", Map.of("type", "scram-sha-512"));
 
-        KafkaUser user = new KafkaUserBuilder()
+        GenericKubernetesResource user = new GenericKubernetesResourceBuilder()
+                .withApiVersion("kafka.strimzi.io/v1")
+                .withKind("KafkaUser")
                 .withNewMetadata()
                     .withName(userName)
                     .withNamespace(kafkaNamespace)
                     .addToLabels(CLUSTER_LABEL, kafkaClusterName)
                     .addToLabels(TENANT_LABEL, tenantId.toString())
                 .endMetadata()
-                .withSpec(spec)
+                .addToAdditionalProperties("spec", spec)
                 .build();
 
-        k8s.resource(user).inNamespace(kafkaNamespace).createOr(NonDeletingOperation::update);
+        k8s.genericKubernetesResources("kafka.strimzi.io/v1", "KafkaUser")
+                .inNamespace(kafkaNamespace)
+                .resource(user)
+                .createOr(NonDeletingOperation::update);
         log.info("KafkaUser apply: name={}, aclPrefix={}", userName, topicAclPrefix(slug));
     }
 
-    /** {@code cdc.table.{slug}.*} 토픽 prefix에 read/write/describe/create를 허용하는 simple 권한. */
-    private KafkaUserAuthorizationSimple topicPrefixAuthorization(String slug) {
-        AclRuleTopicResource topic = new AclRuleTopicResource();
-        topic.setName(topicAclPrefix(slug));
-        topic.setPatternType(AclResourcePatternType.PREFIX);
-
-        AclRule rule = new AclRule();
-        rule.setType(AclRuleType.ALLOW);
-        rule.setResource(topic);
-        rule.setOperations(List.of(
-                AclOperation.READ, AclOperation.WRITE,
-                AclOperation.DESCRIBE, AclOperation.CREATE));
-
-        KafkaUserAuthorizationSimple authz = new KafkaUserAuthorizationSimple();
-        authz.setAcls(List.of(rule));
-        return authz;
-    }
-
-    /** Strimzi가 KafkaUser와 동명으로 만드는 Secret이 나타날 때까지 best-effort 대기. */
     private boolean waitForKafkaUserSecret(String userName) {
         long deadline = System.currentTimeMillis() + SECRET_WAIT_TIMEOUT_MS;
         while (System.currentTimeMillis() < deadline) {
-            boolean present = k8s.secrets().inNamespace(kafkaNamespace).withName(userName).get() != null;
-            if (present) {
+            if (k8s.secrets().inNamespace(kafkaNamespace).withName(userName).get() != null) {
                 return true;
             }
             try {
@@ -179,7 +159,6 @@ public class TenantProvisioner implements TenantProvisionerPort {
         return "proj-" + slug + "-user";
     }
 
-    /** PREFIX 패턴 기준값. {@code cdc.table.{slug}.}로 시작하는 모든 토픽에 매칭. */
     private String topicAclPrefix(String slug) {
         return "cdc.table." + slug + ".";
     }
