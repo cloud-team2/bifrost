@@ -3,11 +3,15 @@ package com.bifrost.ops.provisioning.watcher;
 import com.bifrost.ops.pipeline.ConnectorStatusUpdate;
 import com.bifrost.ops.pipeline.PipelineStatusService;
 import com.bifrost.ops.provisioning.persistence.ConnectorStatusSink;
+import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
+import io.fabric8.kubernetes.api.model.ObjectMeta;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.Watch;
 import io.fabric8.kubernetes.client.Watcher;
 import io.fabric8.kubernetes.client.WatcherException;
 import io.strimzi.api.kafka.model.connector.KafkaConnector;
+import io.strimzi.api.kafka.model.connector.KafkaConnectorBuilder;
+import io.strimzi.api.kafka.model.connector.KafkaConnectorStatus;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -80,22 +84,35 @@ public class KafkaConnectorWatcher {
         this.connectCluster = connectCluster;
     }
 
-    /** 애플리케이션 기동 완료 후 watch를 등록한다. */
+    /** 애플리케이션 기동 완료 후 watch를 등록한다. 초기 연결 실패 시 앱을 죽이지 않고 백오프 재시도한다. */
     @EventListener(ApplicationReadyEvent.class)
     public void start() {
         log.info("KafkaConnectorWatcher 시작: namespace={}, cluster={}", namespace, connectCluster);
-        register();
+        try {
+            register();
+        } catch (RuntimeException e) {
+            long delay = currentBackoffMs;
+            advanceBackoff();
+            log.warn("KafkaConnectorWatcher 초기 watch 등록 실패, {}ms 후 재시도: {}", delay, e.getMessage());
+            reconnectExecutor.schedule(this::reestablish, delay, TimeUnit.MILLISECONDS);
+        }
     }
 
-    /** watch를 (재)등록한다. 실패 시 호출부가 백오프 재시도를 스케줄한다. */
+    /**
+     * watch를 (재)등록한다. 실패 시 호출부가 백오프 재시도를 스케줄한다.
+     *
+     * <p>Strimzi Java API 0.45.0의 KafkaConnector 모델은 v1beta2로 고정되어 있으나,
+     * 클러스터(Strimzi 1.0.0)의 CRD는 v1만 지원한다. 따라서 genericKubernetesResources로
+     * v1을 명시하고, 콜백에서 typed KafkaConnector로 변환해 기존 매퍼를 재사용한다.
+     */
     void register() {
-        this.watch = k8s.resources(KafkaConnector.class)
+        this.watch = k8s.genericKubernetesResources("kafka.strimzi.io/v1", "KafkaConnector")
                 .inNamespace(namespace)
                 .withLabel(CLUSTER_LABEL, connectCluster)
                 .watch(new Watcher<>() {
                     @Override
-                    public void eventReceived(Action action, KafkaConnector resource) {
-                        handleEvent(action, resource);
+                    public void eventReceived(Action action, GenericKubernetesResource resource) {
+                        handleEvent(action, toTyped(resource));
                     }
 
                     @Override
@@ -103,6 +120,30 @@ public class KafkaConnectorWatcher {
                         handleClose(cause);
                     }
                 });
+    }
+
+    /** GenericKubernetesResource → KafkaConnector 변환 (mapper 재사용, name/status만 필요). */
+    @SuppressWarnings("unchecked")
+    private KafkaConnector toTyped(GenericKubernetesResource resource) {
+        KafkaConnectorBuilder builder = new KafkaConnectorBuilder();
+        ObjectMeta meta = resource.getMetadata();
+        if (meta != null) {
+            builder.withNewMetadata()
+                    .withName(meta.getName())
+                    .withNamespace(meta.getNamespace())
+                    .withLabels(meta.getLabels())
+                    .endMetadata();
+        }
+        Object statusObj = resource.getAdditionalProperties().get("status");
+        if (statusObj instanceof java.util.Map<?, ?> statusMap) {
+            KafkaConnectorStatus status = new KafkaConnectorStatus();
+            Object cs = statusMap.get("connectorStatus");
+            if (cs instanceof java.util.Map<?, ?>) {
+                status.setConnectorStatus((java.util.Map<String, Object>) cs);
+            }
+            builder.withStatus(status);
+        }
+        return builder.build();
     }
 
     /**
