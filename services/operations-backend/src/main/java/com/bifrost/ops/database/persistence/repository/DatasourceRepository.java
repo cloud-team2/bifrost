@@ -30,4 +30,11 @@ public interface DatasourceRepository extends JpaRepository<DatasourceEntity, UU
     @Query(value = "SELECT DISTINCT source_datasource_id FROM pipelines WHERE tenant_id = :tenantId",
             nativeQuery = true)
     List<UUID> findSourceDatasourceIds(@Param("tenantId") UUID tenantId);
+
+    /** 이 datasource를 source로 쓰는 파이프라인 목록(#30, FR-018). */
+    @Query(value = "SELECT id, name, type, status FROM pipelines "
+            + "WHERE tenant_id = :tenantId AND source_datasource_id = :dbId ORDER BY created_at DESC",
+            nativeQuery = true)
+    List<PipelineSummaryRow> findPipelinesUsingDatasource(@Param("tenantId") UUID tenantId,
+                                                          @Param("dbId") UUID dbId);
 }

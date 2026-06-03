@@ -2,6 +2,8 @@ package com.bifrost.ops.database.service;
 
 import com.bifrost.ops.database.connection.DatabaseConnectionTester;
 import com.bifrost.ops.database.dto.ConnectionTestResponse;
+import com.bifrost.ops.database.dto.DatabaseMetricsResponse;
+import com.bifrost.ops.database.dto.DatabasePipelineSummary;
 import com.bifrost.ops.database.dto.DatabaseRegisterRequest;
 import com.bifrost.ops.database.dto.DatabaseResponse;
 import com.bifrost.ops.database.persistence.entity.DatasourceEntity;
@@ -109,6 +111,29 @@ public class DatabaseService {
                         "데이터베이스를 찾을 수 없습니다"));
         Set<UUID> sourceIds = new HashSet<>(repo.findSourceDatasourceIds(tenantId));
         return DatabaseResponse.of(e, rolesOf(e, sourceIds));
+    }
+
+    /** 지표(FR-017). 이번 주는 계약용 stub — 실수집은 monitoring.collector 연동(후속). */
+    @Transactional(readOnly = true)
+    public DatabaseMetricsResponse getMetrics(UUID tenantId, UUID dbId) {
+        requireExists(tenantId, dbId);
+        return DatabaseMetricsResponse.placeholder();
+    }
+
+    /** 이 DB를 source로 쓰는 파이프라인 목록(FR-018). */
+    @Transactional(readOnly = true)
+    public List<DatabasePipelineSummary> listPipelines(UUID tenantId, UUID dbId) {
+        requireExists(tenantId, dbId);
+        return repo.findPipelinesUsingDatasource(tenantId, dbId).stream()
+                .map(r -> new DatabasePipelineSummary(
+                        r.getId().toString(), r.getName(), r.getType(), r.getStatus()))
+                .toList();
+    }
+
+    private void requireExists(UUID tenantId, UUID dbId) {
+        if (repo.findByIdAndTenantId(dbId, tenantId).isEmpty()) {
+            throw new ApiException(ErrorCode.DATABASE_NOT_FOUND, "데이터베이스를 찾을 수 없습니다");
+        }
     }
 
     /** 파생 역할: 파이프라인 source로 쓰이면 {@code source}. sink는 아직 미모델링(빈 리스트). */
