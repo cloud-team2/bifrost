@@ -309,18 +309,29 @@ FastAPI가 담당하지 않는다.
 
 ```text
 app/
-  api/
-    routes_agent.py
-    routes_runs.py
-    routes_events.py
-    routes_approvals.py
-    routes_reports.py
-    routes_admin.py
+  api/                       # 라우트 = api.md 표면(§5~§17)과 1:1
+    routes_health.py         #   health/ready/version/capabilities (§5)
+    routes_agent.py          #   runs·chat·plan·incidents/analyze (§6)
+    routes_runs.py           #   run 조회·state/timeline·steps·actions (§6·§8)
+    routes_events.py         #   SSE stream·history (§7)
+    routes_evidence.py       #   evidence 조회·hydrate (§9)
+    routes_approvals.py      #   approval facade (§10)
+    routes_change.py         #   change management (§11)
+    routes_actions.py        #   action execution·verify (§12)
+    routes_reports.py        #   report·preview·regenerate (§13)
+    routes_catalogs.py       #   catalog/tool metadata (§15)
+    routes_feedback.py       #   feedback·audit UI 요약 (§16)
+    routes_admin.py          #   models·dependencies·replay·reload (§17)
   core/
     config.py
     auth.py
     logging.py
     errors.py
+  llm/                       # LLM provider + 모델 tier 라우팅(§10)
+    provider.py              #   벤더 추상화 client (생성/structured output 호출)
+    model_router.py          #   역할별 tier 선택(Router..Report=lightweight / RCA·Verifier=reasoning)
+  prompts/                   # 에이전트별 프롬프트 템플릿(버전·테스트 대상)
+    router.py · planner.py · retrieval.py · classifier.py · rca.py · remediation.py · verifier.py · report.py
   agents/
     router.py
     planner.py
@@ -380,9 +391,9 @@ app/
     report_repository.py
 ```
 
-`agents/`에는 LLM 판단·생성이 필요한 8개 Agent만 둔다. Correlation, Policy Guard, Executor, Approval/Change Management Gate처럼 결정론적으로 동작해야 하는 단계는 `workflow/stages/`에 둬서 LLM agent와 실행 제어 경계를 분리한다.
+`agents/`에는 LLM 판단·생성이 필요한 8개 Agent만 둔다. **프롬프트 템플릿은 `prompts/`(에이전트별, 버전·테스트 대상), LLM provider 호출과 역할별 model tier 라우팅(§10)은 `llm/`** 에 두어 Agent 구현에서 분리한다(프롬프트가 코드에 묻히지 않게). Correlation, Policy Guard, Executor, Approval/Change Management Gate처럼 결정론적으로 동작해야 하는 단계는 `workflow/stages/`에 둬서 LLM agent와 실행 제어 경계를 분리한다.
 
-`catalogs/`는 failure type, root cause, evidence matrix, runbook, policy처럼 운영 기준이 되는 정적 계약을 담는다. `schemas/`는 State, streaming event, structured output, tool I/O, API DTO 같은 검증 schema를 담아 Agent 구현 파일 안에 상수와 모델이 흩어지지 않게 한다.
+`api/` 라우트는 [api.md](../../api/fastapi.md) 표면(§5~§17)과 1:1로 맞춘다(run-scoped state/timeline·steps·actions는 `routes_runs`가 묶는다). `catalogs/`는 failure type, root cause, evidence matrix, runbook, policy처럼 운영 기준이 되는 정적 계약을 담고, `schemas/`는 State·streaming event·structured output·tool I/O·API DTO 같은 **공유 검증 schema**를 담아 Agent 구현 파일 안에 상수와 모델이 흩어지지 않게 한다(에이전트 고유 output schema도 여기 둔다).
 
 ### 4. State 관리
 
