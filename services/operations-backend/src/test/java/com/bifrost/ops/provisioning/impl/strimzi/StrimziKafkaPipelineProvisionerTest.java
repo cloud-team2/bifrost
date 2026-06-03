@@ -6,6 +6,8 @@ import com.bifrost.ops.provisioning.dto.PipelineProvisionCommand;
 import com.bifrost.ops.provisioning.dto.PipelineProvisionResult;
 import com.bifrost.ops.provisioning.dto.ProvisionErrorCode;
 import com.bifrost.ops.provisioning.dto.ProvisionStage;
+import com.bifrost.ops.provisioning.persistence.entity.ConnectorEntity;
+import com.bifrost.ops.provisioning.persistence.repository.ConnectorRepository;
 import com.bifrost.ops.secret.DbCredential;
 import com.bifrost.ops.secret.SecretStore;
 import com.bifrost.ops.secret.SecretStoreException;
@@ -13,9 +15,11 @@ import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.server.mock.EnableKubernetesMockClient;
 import org.junit.jupiter.api.Test;
 
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -63,7 +67,12 @@ class StrimziKafkaPipelineProvisionerTest {
     private StrimziKafkaPipelineProvisioner provisioner(SecretStore store,
                                                         SourceDebeziumConnectorMapper src,
                                                         JdbcSinkConnectorMapper sink) {
-        return new StrimziKafkaPipelineProvisioner(client, store, src, sink, NS, CLUSTER);
+        ConnectorRepository connectorRepository = mock(ConnectorRepository.class);
+        when(connectorRepository.findByCrName(any())).thenReturn(Optional.empty());
+        when(connectorRepository.save(any(ConnectorEntity.class)))
+                .thenAnswer(inv -> inv.getArgument(0));
+        return new StrimziKafkaPipelineProvisioner(
+                client, store, src, sink, connectorRepository, NS, CLUSTER);
     }
 
     @Test
