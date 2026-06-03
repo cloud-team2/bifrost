@@ -93,24 +93,21 @@ Controller
 
 ### 5. 패키지 구조
 
-**구성 원칙 — package-by-feature**: platform 도메인은 각자 `controller/service/repository/dto/entity`를 품어 응집도를 높이고(한 기능을 한 패키지에서 본다), 전역 관심사는 `config`/`common`으로 분리한다. agent-facing(`/internal/ops`)은 인증·응답봉투·idempotency가 platform과 근본적으로 다르고 여러 도메인을 가로지르므로 `internalops` 한 곳에 모은다.
+**구성 원칙 — package-by-feature**: platform 도메인은 각자 `controller/service/repository/dto/entity`를 품어 응집도를 높이고(한 기능을 한 패키지에서 본다), 전역 관심사는 `global`(config·common)로 묶는다. 모니터링 read·이벤트·인시던트는 별도 도메인 패키지(`monitoring`/`event`/`incident`)로 두고, 운영 조치 거버넌스(정책·승인·변경관리·멱등성·감사·증거)는 `governance`로 묶는다. agent-facing(`/internal/ops`)은 인증·응답봉투·idempotency가 platform과 근본적으로 다르고 여러 도메인을 가로지르므로 `internalops` 한 곳에 모은다.
 
 ```text
 com.bifrost.ops
-  ├─ config               # 전역: SecurityConfig, JacksonConfig, OpenApiConfig, WebConfig, KubernetesClientConfig ...
-  ├─ common               # request_id, response envelope, 공통 error mapping, validation helper
+  ├─ global               # 전역 관심사 묶음
+  │   ├─ config           #   SecurityConfig, JacksonConfig, OpenApiConfig, WebConfig, KubernetesClientConfig ...
+  │   └─ common           #   request_id, response envelope, 공통 error mapping, validation helper
   ├─ auth                 # 로그인/JWT (controller·service)
   ├─ workspace            # 워크스페이스 (FR-002)
-  │   ├─ controller       #   /api/v1/workspaces ...
-  │   ├─ service
-  │   ├─ repository
-  │   ├─ dto
-  │   └─ entity
+  │   └─ controller · service · repository · dto · entity
   ├─ database             # DB 등록·연결테스트·CDC 점검 (FR-013~015)
   │   ├─ controller · service · repository · dto · entity
   │   ├─ cdc              #   CdcReadinessChecker 인터페이스 + Postgres/Mariadb 구현
   │   └─ inspector        #   동적 DataSource 조회(연결테스트·schema)
-  ├─ pipeline             # 파이프라인 CRUD·생명주기 (FR-003~005)
+  ├─ pipeline             # 파이프라인 CRUD·생명주기 (FR-003~005). 상세 탭 read는 monitoring.query에 위임
   │   └─ controller · service · repository · dto · entity
   ├─ provisioning         # 파이프라인 리소스 생성 추상화 + 구현
   │   ├─ port             #   KafkaPipelineProvisioner 인터페이스
@@ -118,22 +115,31 @@ com.bifrost.ops
   │   ├─ mock             #   mock-first E2E 구현
   │   ├─ impl.strimzi     #   Fabric8/Strimzi real 구현
   │   └─ watcher          #   KafkaConnector watch → PipelineStatusService
-  ├─ secret               # 자격증명 secretRef 보관(K8s Secret/Secrets Manager)
-  ├─ streaming            # platform SSE: pipeline_status_changed 등
+  ├─ monitoring           # 플랫폼 read + 폴링 수집기 (FR-006~009·017·023)
+  │   ├─ query            #   consumer-lag/connector/metric/cluster 조회 (port 인터페이스; platform·internalops 공용)
+  │   └─ collector        #   주기 폴링(Kafka Admin 30s·Connect REST 10s·JMX 60s·DB ping 5s) → event/incident 트리거 (§11.1)
+  ├─ event                # 이벤트 로그·카탈로그 (FR-019·024, 부록 B.5/B.6)
+  ├─ incident             # 인시던트 자동 생성·그룹화·severity·RCA 기록 (FR-021·026, 부록 B.7)
+  ├─ secret               # 자격증명 secretRef 보관(K8s Secret/Secrets Manager; port+mock)
+  ├─ streaming            # platform SSE: pipeline_status_changed·connector_state_changed·incident_opened ...
   ├─ internalops          # ── agent-facing 전용(/internal/ops). 여러 도메인을 가로지름 ──
   │   ├─ controller · dto · error      # platform과 다른 인증·봉투·idempotency
   │   ├─ project          #   내부 ops project scope/ownership·resource registry
-  │   └─ operations       #   observability / kafka / k8s / strimzi / dependency / schema / workflow
-  ├─ policy · approval · changemanagement · idempotency   # 정책·승인·변경관리·멱등성 (platform·internalops 공용)
-  ├─ audit · evidence
-  └─ adapters             # 외부 client: kubernetes · kafka · connect · prometheus · logstore · tempo · notification · schemaregistry
+  │   └─ operations       #   observability/kafka/k8s/strimzi/dependency/schema/workflow — monitoring.query 재사용
+  ├─ governance           # 운영 조치 거버넌스(§4 실행 체인, platform·internalops 공용)
+  │   ├─ policy · approval · changemanagement · idempotency
+  │   └─ audit · evidence
+  └─ adapters             # 외부 client(+port 인터페이스): kubernetes · kafka · connect · prometheus · logstore · tempo · notification · schemaregistry
 ```
 
 설계 의도:
 - **platform 도메인 = feature별 레이어드**: `workspace`/`database`/`pipeline`이 각각 `controller·service·repository·dto·entity`를 가져 한 기능 변경이 한 패키지 안에서 끝난다.
-- **`internalops` 분리**: agent-facing API는 인증 방식·response envelope·idempotency·evidence/audit 필드가 platform과 달라 섞지 않는다. project scope/ownership과 운영 조회(`operations.*`)도 여기 둔다.
-- **`config`/`common` 분리**: 전역 설정과 공통 응답/에러 유틸을 도메인에서 떼어낸다.
-- `provisioning.port/dto/mock`은 파이프라인 생성 흐름을 먼저 완성하기 위한 안정 계약, `provisioning.impl.strimzi`·`watcher`는 Fabric8/Strimzi 실제 구현. Platform SSE는 `streaming`, Agent run progress streaming은 FastAPI 담당.
+- **`global` 묶음**: 전역 설정(`config`)과 공통 응답/에러 유틸(`common`)을 한 상위 패키지로 모아 도메인에서 떼어낸다.
+- **모니터링·이벤트·인시던트 분리**: 플랫폼 read와 폴링 수집기는 `monitoring`(query+collector), 이벤트 로그는 `event`, 인시던트 자동 생성·그룹화·RCA 기록은 `incident`로 둔다(부록 B.6/B.7). `pipeline` 상세 탭(metrics/consumer-groups/connectors/sync) 컨트롤러는 `monitoring.query`를 호출한다.
+- **read 로직 단일화**: 플랫폼(FR-006~009)과 agent(`internalops.operations`)가 같은 Kafka/Prometheus 조회를 `monitoring.query`(port) 한 곳에서 공유해 중복을 막는다.
+- **`internalops` 분리**: agent-facing API는 인증 방식·response envelope·idempotency·evidence/audit 필드가 platform과 달라 섞지 않는다. project scope/ownership도 여기 둔다.
+- **`governance` 묶음**: 정책·승인·변경관리·멱등성·감사·증거는 §4 실행 체인을 이루는 횡단 관심사라 한 상위 패키지로 모은다(platform·internalops 공용).
+- **추상화 일관성(mock-first)**: `provisioning`·`secret`처럼 외부 의존(`adapters`의 kafka/k8s/prometheus/connect)도 port 인터페이스를 두어 mock 교체·테스트가 가능하게 한다. `provisioning.impl.strimzi`·`watcher`는 Fabric8/Strimzi 실제 구현, Platform SSE는 `streaming`, Agent run progress streaming은 FastAPI 담당.
 
 > ⚠️ 이 구조는 **설계 목표**다. 패키지 skeleton은 권세빈 담당이고 현재 코드는 일부만 이 형태이므로, 코드 재배치는 별도 합의·chore로 진행한다(이 문서는 목표 구조만 정의).
 

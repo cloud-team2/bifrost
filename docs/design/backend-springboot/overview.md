@@ -65,9 +65,9 @@ erDiagram
 
 ## 패키지 (com.bifrost.ops)
 
-**package-by-feature**: platform 도메인은 각자 `controller/service/repository/dto/entity`를 품고(응집), global은 `config`/`common`으로 분리, agent-facing은 표면이 근본적으로 달라 `internalops`로 별도 분리한다.
+**package-by-feature**: platform 도메인은 각자 `controller/service/repository/dto/entity`를 품고(응집), 전역 관심사는 `global`(config·common)로 묶는다. 모니터링 read·이벤트·인시던트는 `monitoring`/`event`/`incident`, 운영 조치 거버넌스는 `governance`로 묶고, agent-facing은 표면이 근본적으로 달라 `internalops`로 별도 분리한다.
 
-`config(global) · common(envelope/error) · auth · workspace · database(+cdc/inspector) · pipeline · provisioning(port/dto/mock/impl·watcher) · secret · streaming · internalops(agent-facing 전용) · policy · approval · changemanagement · idempotency · audit · evidence · adapters(kubernetes/kafka/connect/prometheus/...)`
+`global(config·common) · auth · workspace · database(+cdc/inspector) · pipeline · provisioning(port/dto/mock/impl·watcher) · monitoring(query·collector) · event · incident · secret · streaming · internalops(agent-facing) · governance(policy·approval·changemanagement·idempotency·audit·evidence) · adapters(+port: kubernetes/kafka/connect/prometheus/...)`
 
 > 각 platform 도메인(`workspace`/`database`/`pipeline`)은 내부에 `controller·service·repository·dto·entity`를 둔다. `internalops`는 여러 도메인을 가로지르고 인증·응답봉투·idempotency가 platform과 달라 한데 묶지 않는다. 상세는 [server.md §5 패키지 구조](./server.md#5-패키지-구조).
 

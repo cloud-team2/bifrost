@@ -23,7 +23,7 @@
 | --- | --- | --- |
 | 정재환 | **DB 쪽 전부** | `database`, `database/cdc`, `secret`, `V2__database.sql`, DB 관련 `/api/v1`와 Agent read 계약 |
 | 백강민 | **Fabric8/Strimzi 쪽 전부** | `provisioning/impl`, `adapters/kafka`, `watcher`, `V3__connector.sql`, KafkaConnector/Watcher |
-| 권세빈 | **나머지 Spring Boot 전부** | `api/common`, `config`, `auth`, `workspace`, `pipeline`, `provisioning` interface/mock/DTO, `streaming`, `V1__core.sql`, event/audit/status |
+| 권세빈 | **나머지 Spring Boot 전부** | `global`(config·common), `auth`, `workspace`, `pipeline`, `provisioning` interface/mock/DTO, `monitoring`/`event`/`incident`, `governance`(policy·approval·changemanagement·idempotency·audit), `streaming`, `V1__core.sql`, status |
 | 김연수 | **Agent 점검/마무리** | 목요일 Agent 로직 검토, 금요일 Agent 마무리 |
 | 이성민 | **Spring Boot 검토/연동/마무리** | 금요일 Spring Boot PR/API/E2E 검토와 마무리 |
 
