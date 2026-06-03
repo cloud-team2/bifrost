@@ -311,7 +311,7 @@ Read-only tool:
 
 Retrieval이 받은 plan에서 **서로 입력 의존이 없는 read-only tool은 동시에 실행한다.** Registry는 plan을 의존 그래프로 보고, 독립 노드를 concurrency 한도(예: 5~8 동시) 안에서 fan-out한다. 의존이 있는 tool(앞 tool 결과가 parameter가 되는 경우)만 순차로 둔다.
 
-- 각 tool은 [§15](contracts.md#15-contract-workflow-control)의 개별 timeout/retry를 그대로 가진다. 한 tool이 timeout/실패해도 나머지 결과는 살리고, 실패는 evidence gap으로 RCA에 전달한다(부분 수집 허용).
+- 각 tool은 [§15](contract-workflow-control.md#15-contract-workflow-control)의 개별 timeout/retry를 그대로 가진다. 한 tool이 timeout/실패해도 나머지 결과는 살리고, 실패는 evidence gap으로 RCA에 전달한다(부분 수집 허용).
 - 완료된 tool은 즉시 `tool_call_completed`·`evidence_collected` event로 스트리밍한다. 전체 fan-out 완료를 기다려 한 번에 반영하지 않는다.
 - mutation tool은 병렬 대상이 아니다(Executor가 정해진 순서로 단건 실행).
 
@@ -564,11 +564,11 @@ FastAPI tool wrapper는 Spring Boot API 호출만 한다. Fabric8, Kafka AdminCl
 | 문서/섹션 | 역할 |
 | --- | --- |
 | [backend 개요](../../README.md) | FastAPI/Spring Boot 책임 분리 |
-| [§2](principles.md#2-server-design) Server Design | FastAPI Agent Server 설계 |
+| [§2](server-design.md#2-server-design) Server Design | FastAPI Agent Server 설계 |
 | [§3](../../api/fastapi.md) API Reference | Frontend-facing FastAPI API |
-| [§1](principles.md#1-agent-principles) Agent Principles | Agent workflow와 판단 원칙 |
-| [§6](catalogs.md#6-catalog-failure-types)~[§12](catalogs.md#12-catalog-policy-matrix) Catalogs | 장애 유형, RCA 후보, evidence, runbook, policy |
-| [§13](contracts.md#13-contract-agent-roles)~[§17](contracts.md#17-contract-output-schemas) Contracts | Agent 역할, State, workflow, streaming, output schema |
+| [§1](agent-principles.md#1-agent-principles) Agent Principles | Agent workflow와 판단 원칙 |
+| [§6](catalog-failure-types.md#6-catalog-failure-types)~[§12](catalog-policy-matrix.md#12-catalog-policy-matrix) Catalogs | 장애 유형, RCA 후보, evidence, runbook, policy |
+| [§13](contract-agent-roles.md#13-contract-agent-roles)~[§17](contract-output-schemas.md#17-contract-output-schemas) Contracts | Agent 역할, State, workflow, streaming, output schema |
 | [Spring Boot DETAILS](../backend-springboot/overview.md) | Operations Backend 설계 + 내부 운영 API |
 | [§4](#4-tool-catalog) Tool Catalog | Agent tool catalog와 mapping |
 | [Infra DETAILS](../infra.md) | runtime infra와 권한 경계 |

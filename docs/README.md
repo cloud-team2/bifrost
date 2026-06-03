@@ -57,9 +57,9 @@ Spring Boot Operations Backend
 | Evidence 원문(운영 raw) | **Spring**(Evidence Store) | [data-model.md §3.9](./design/backend-springboot/data-model.md#4-data-model) |
 | DB 연결테스트 오류 5종 분류 | **Spring** | [database-registry.md §2](./design/backend-springboot/database-registry.md#3-database-registry) |
 | 모니터링 수집(상태=watch / 지표=폴링·질의) | **Spring** | [server.md §11.1](./design/backend-springboot/server.md#111-관측모니터링-데이터-수집-상태-vs-지표) |
-| RCA 판단 카탈로그(장애유형·root cause·evidence matrix·correlation·runbook·policy) | **FastAPI** | [catalogs.md §6~§12](./design/backend-fastapi/catalogs.md#6-catalog-failure-types) |
-| Agent run 상태(run·state·event·approval facade·report) | **FastAPI**(`agentdb`) | [contracts.md §14](./design/backend-fastapi/contracts.md#14-contract-state-schema) |
-| Knowledge 코퍼스(RAG runbook·문서) | **FastAPI**(Vector Store) | [principles.md §2.9](./design/backend-fastapi/principles.md#2-server-design) |
+| RCA 판단 카탈로그(장애유형·root cause·evidence matrix·correlation·runbook·policy) | **FastAPI** | [catalog-* §6~§12](./design/backend-fastapi/catalog-failure-types.md#6-catalog-failure-types) |
+| Agent run 상태(run·state·event·approval facade·report) | **FastAPI**(`agentdb`) | [contract-state-schema §14](./design/backend-fastapi/contract-state-schema.md#14-contract-state-schema) |
+| Knowledge 코퍼스(RAG runbook·문서) | **FastAPI**(Vector Store) | [server-design §9](./design/backend-fastapi/server-design.md#2-server-design) |
 | Tool 매핑(논리 tool→operation) | **FastAPI** Tool Client Registry | [tool-catalog.md §8·§9](./design/backend-fastapi/tool-catalog.md#4-tool-catalog) |
 | API 에러코드 | 표면별(각자 소유) | [Spring](./api/springboot.md) · [FastAPI](./api/fastapi.md) |
 | 인프라 현황(클러스터·용량) | 인프라 | [infra.md §2](./design/infra.md#2-리소스-계획현황-resource-plan) |

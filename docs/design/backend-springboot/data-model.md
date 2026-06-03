@@ -171,7 +171,7 @@ PK는 (`workspace_id`, `app_user_id`). 워크스페이스 생성 시 `created_by
 | `status` | text | `creating`/`active`/`lag`/`error`/`paused` |
 | `created_at` | timestamptz | |
 
-상태값 정의와 자동 전이 임계값(consumer lag 5,000/50,000, connector FAILED, error rate 0.5%/2% 등)의 **단일 출처는 [기능명세서 부록 B](../../spec.md#부록-b--리소스-상태값-정의-및-자동-기준-단일-출처)**다(여기서 중복 정의하지 않는다). 에이전트 [Evidence Matrix](../backend-fastapi/catalogs.md#9-catalog-evidence-matrix)는 이 임계값을 정성 신호로 참조한다.
+상태값 정의와 자동 전이 임계값(consumer lag 5,000/50,000, connector FAILED, error rate 0.5%/2% 등)의 **단일 출처는 [기능명세서 부록 B](../../spec.md#부록-b--리소스-상태값-정의-및-자동-기준-단일-출처)**다(여기서 중복 정의하지 않는다). 에이전트 [Evidence Matrix](../backend-fastapi/catalog-evidence-matrix.md#9-catalog-evidence-matrix)는 이 임계값을 정성 신호로 참조한다.
 
 #### 3.5 `connector` (FR-008)
 

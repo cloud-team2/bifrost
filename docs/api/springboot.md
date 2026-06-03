@@ -396,7 +396,7 @@ Schema 강제 변경 API는 v1에서 제공하지 않는다.
 | `POST` | `/internal/ops/projects/{project_id}/approvals/{approval_id}/decision` | approval 승인 또는 거절을 기록한다. | approver |
 | `POST` | `/internal/ops/projects/{project_id}/approvals/{approval_id}/validate` | 실행 직전 approval 유효성을 검증한다. | internal |
 
-> **Approval source of truth = Spring Boot.** approval record(상태·params hash·승인자·만료·single-use)의 원본은 이 테이블이다. FastAPI의 `/api/v1/approvals/**`는 프론트용 facade로, 이 내부 API를 호출하고 run 연계 메타데이터(run_id↔approval_id, UI 표시용)만 보관한다. 승인 결정·검증·감사는 모두 Spring Boot가 집행한다([FastAPI Server Design §9 Persistence](../design/backend-fastapi/principles.md#2-server-design)). 동일 approval을 양쪽에 중복 생성하지 않는다.
+> **Approval source of truth = Spring Boot.** approval record(상태·params hash·승인자·만료·single-use)의 원본은 이 테이블이다. FastAPI의 `/api/v1/approvals/**`는 프론트용 facade로, 이 내부 API를 호출하고 run 연계 메타데이터(run_id↔approval_id, UI 표시용)만 보관한다. 승인 결정·검증·감사는 모두 Spring Boot가 집행한다([FastAPI Server Design §9 Persistence](../design/backend-fastapi/server-design.md#2-server-design)). 동일 approval을 양쪽에 중복 생성하지 않는다.
 
 ### 20. Change Management API
 

@@ -62,9 +62,9 @@
 - 정재환: DB API 누락 정리, source/sink seed data와 smoke command 준비, Agent read tool용 Spring 내부 API 계약 정리.
 - 백강민: mock/real provisioner 스왑, KafkaConnector 생성, Watcher -> `PipelineStatusService` 연결, 금요일 부재 전 잔여 이슈/운영 방법을 정재환에게 인계.
 - 김연수: Agent 쪽 로직에 문제 있는지 확인. Tool Client Registry, State, diagnose-only workflow, SSE progress event, Spring `/internal/ops` client 경계가 설계와 맞는지 검토하고 이슈를 정리.
-- 김연수: **루프 가드 중앙 집행 검증** — 전역 step(`MAX_STEPS`=24)·revision·fail·gap·scope·revise_action 상한이 `run` namespace 카운터로 Supervisor 한 곳에서 집행되는지, 어떤 분기도 가드 검사를 우회하지 않는지 확인([fastapi DETAILS §15.5.1](../design/backend-fastapi/contracts.md#51-루프-방지와-종료-보장)).
+- 김연수: **루프 가드 중앙 집행 검증** — 전역 step(`MAX_STEPS`=24)·revision·fail·gap·scope·revise_action 상한이 `run` namespace 카운터로 Supervisor 한 곳에서 집행되는지, 어떤 분기도 가드 검사를 우회하지 않는지 확인([fastapi DETAILS §15.5.1](../design/backend-fastapi/contract-workflow-control.md#51-루프-방지와-종료-보장)).
 - 김연수: **fail 경로 캡 확인** — `Verifier fail → Planner`가 `MAX_FAIL_LOOPS`로 막히는지(과거 무제한 되돌림 여부) 점검.
-- 김연수: **latency 보강 검토** — Retrieval 독립 read tool 병렬 실행, 부분 결과 스트리밍(`report_preview_available`/`partial_result`), stage별 timeout이 설계대로 들어가는지 확인([fastapi DETAILS §15.4.2](../design/backend-fastapi/contracts.md#42-지연-최소화latency-원칙)).
+- 김연수: **latency 보강 검토** — Retrieval 독립 read tool 병렬 실행, 부분 결과 스트리밍(`report_preview_available`/`partial_result`), stage별 timeout이 설계대로 들어가는지 확인([fastapi DETAILS §15.4.2](../design/backend-fastapi/contract-workflow-control.md#42-지연-최소화latency-원칙)).
 
 완료 기준:
 - mock 기준 EDA/CDC 생성 E2E 성공.
