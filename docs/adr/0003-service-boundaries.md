@@ -12,7 +12,7 @@
 | 서비스 | 책임 | 외부 노출 |
 | --- | --- | --- |
 | operations-backend | 인증, 도메인, REST API, WebSocket, K8s/Kafka 자동화(provisioning·watcher) | ✅ (`/api/v1`) |
-| ai-service | LLM 통합 / AI 장애대응 (FastAPI, Sprint 4) | ❌ |
+| ai-service | LLM 통합 / AI 장애대응 (FastAPI, W3 — [roadmap](../team/roadmap.md)) | ❌ |
 | frontend | React UI | ✅ |
 
 > 기존 core/orchestrator 분리는 폐기. K8s/Kafka 자동화는 operations-backend의 `provisioning`·`adapters` 패키지로 in-process 흡수된다.
@@ -30,7 +30,7 @@
 core 안의 모듈로 내장 (별도 서비스 X). DB 추상화 인터페이스 + PG/MariaDB 구현체.
 
 ### MCP 서버
-ai-service 안의 도구 정의로 통합 (별도 서비스 X). Phase 2에서 외부 노출 시 분리.
+v1에서는 MCP Server를 두지 않는다([design/backend-fastapi/tool-catalog.md §5 MCP Decision](../design/backend-fastapi/tool-catalog.md#5-mcp-decision)). Agent는 Spring Boot `/internal/ops` + Tool Client Registry로만 운영을 위임한다(별도 MCP 서비스·endpoint·sidecar 없음). 필요 시 Phase 2 이후 read-only/proxy 용도로 재검토한다.
 
 ## Rationale
 

@@ -2,7 +2,9 @@
 .gradle/
 build/
 out/
+bin/
 **/build/
+**/bin/
 **/.gradle/
 !gradle/wrapper/gradle-wrapper.jar
 !gradle/wrapper/gradle-wrapper.properties
