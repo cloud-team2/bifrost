@@ -3,6 +3,7 @@ package com.bifrost.ops.api.error;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -27,6 +28,19 @@ public class GlobalExceptionHandler {
             .toList();
         return ResponseEntity.status(ErrorCode.VALIDATION_FAILED.status())
             .body(ErrorResponse.of(ErrorCode.VALIDATION_FAILED, "유효성 검증 실패", details));
+    }
+
+    /**
+     * 잘못된 요청 본문(JSON 파싱 실패 또는 record 컴팩트 생성자의 검증 실패).
+     * PipelineProvisionCommand 등은 생성자에서 IllegalArgumentException을 던지며,
+     * Jackson이 이를 HttpMessageNotReadableException으로 감싼다. 둘 다 400으로 매핑.
+     */
+    @ExceptionHandler({HttpMessageNotReadableException.class, IllegalArgumentException.class})
+    public ResponseEntity<ErrorResponse> handleBadRequest(Exception e) {
+        Throwable cause = e instanceof HttpMessageNotReadableException && e.getCause() != null
+                ? e.getCause() : e;
+        return ResponseEntity.status(ErrorCode.VALIDATION_FAILED.status())
+            .body(ErrorResponse.of(ErrorCode.VALIDATION_FAILED, cause.getMessage()));
     }
 
     @ExceptionHandler(Exception.class)
