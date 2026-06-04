@@ -30,6 +30,8 @@ services:
       POSTGRES_DB: testdb
     volumes:
       - user-postgres-data:/var/lib/postgresql/data
+      # 최초 기동 시 샘플 스키마 주입(파이프라인 테이블 선택/CDC 데모용, #90)
+      - ./infra/local/userdb-init/postgres:/docker-entrypoint-initdb.d:ro
 
   user-mariadb:
     image: mariadb:10.11
@@ -49,6 +51,8 @@ services:
       MARIADB_DATABASE: testdb
     volumes:
       - user-mariadb-data:/var/lib/mysql
+      # 최초 기동 시 샘플 스키마 주입(#90)
+      - ./infra/local/userdb-init/mariadb:/docker-entrypoint-initdb.d:ro
 
   # ─────────────── Kafka (KRaft) ───────────────
   kafka:
