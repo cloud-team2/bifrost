@@ -9,6 +9,7 @@ import io.fabric8.kubernetes.api.model.Namespace;
 import io.fabric8.kubernetes.api.model.NamespaceBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.dsl.NonDeletingOperation;
+import io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -42,6 +43,23 @@ public class TenantProvisioner implements TenantProvisionerPort {
     private static final long SECRET_WAIT_TIMEOUT_MS = 15_000L;
     private static final long SECRET_POLL_INTERVAL_MS = 1_000L;
 
+    /**
+     * KafkaUser CR의 GVK를 명시하는 {@link ResourceDefinitionContext}.
+     *
+     * <p>{@code genericKubernetesResources(apiVersion, kind)} 문자열 오버로드는 CRD 메타데이터
+     * discovery에 의존해 fabric8 KubernetesMockServer에서 "Could not find the metadata ...
+     * pass a ResourceDefinitionContext instead" 예외가 난다. RDC는 group/version/kind/plural을
+     * 직접 들고 있어 discovery 없이 mock·real 모두에서 동작한다. 클러스터(Strimzi 1.0.0)는 CRD를
+     * {@code v1}로 서빙하므로 version은 {@code v1}(typed 모델 api 0.45.0은 v1beta2를 내므로 미사용).
+     */
+    private static final ResourceDefinitionContext KAFKA_USER = new ResourceDefinitionContext.Builder()
+            .withGroup("kafka.strimzi.io")
+            .withVersion("v1")
+            .withKind("KafkaUser")
+            .withPlural("kafkausers")
+            .withNamespaced(true)
+            .build();
+
     private final KubernetesClient k8s;
     private final String kafkaClusterName;
     private final String kafkaNamespace;
@@ -61,7 +79,7 @@ public class TenantProvisioner implements TenantProvisionerPort {
         try {
             createNamespace(slug, req.tenantId());
 
-            boolean existed = k8s.genericKubernetesResources("kafka.strimzi.io/v1", "KafkaUser")
+            boolean existed = k8s.genericKubernetesResources(KAFKA_USER)
                     .inNamespace(kafkaNamespace).withName(userName).get() != null;
             createKafkaUser(userName, slug, req.tenantId());
 
@@ -88,7 +106,7 @@ public class TenantProvisioner implements TenantProvisionerPort {
 
     public void deprovision(UUID tenantId) {
         String selector = tenantId.toString();
-        k8s.genericKubernetesResources("kafka.strimzi.io/v1", "KafkaUser")
+        k8s.genericKubernetesResources(KAFKA_USER)
                 .inNamespace(kafkaNamespace).withLabel(TENANT_LABEL, selector).delete();
         k8s.namespaces().withLabel(TENANT_LABEL, selector).delete();
         log.info("테넌트 디프로비저닝 요청: tenant={}", tenantId);
@@ -132,7 +150,7 @@ public class TenantProvisioner implements TenantProvisionerPort {
                 .addToAdditionalProperties("spec", spec)
                 .build();
 
-        k8s.genericKubernetesResources("kafka.strimzi.io/v1", "KafkaUser")
+        k8s.genericKubernetesResources(KAFKA_USER)
                 .inNamespace(kafkaNamespace)
                 .resource(user)
                 .createOr(NonDeletingOperation::update);
