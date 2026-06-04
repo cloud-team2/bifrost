@@ -89,7 +89,5 @@ spec:
   ports:
     - port: 3306
       targetPort: 3306
-  type: LoadBalancer
-  loadBalancerSourceRanges:
-    - 13.228.214.171/32
-    - 52.77.50.136/32
+  # 내부 통신만 사용(커넥터는 cluster DNS 직통, 로컬 백엔드는 port-forward). 외부 LB 미사용.
+  type: ClusterIP

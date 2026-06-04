@@ -31,15 +31,14 @@ spec:
       - name: jdbc-sink
         artifacts:
           - type: zip
-            url: https://d1i4a15mxbxib1.cloudfront.net/api/plugins/confluentinc/kafka-connect-jdbc/versions/10.7.4/confluentinc-kafka-connect-jdbc-10.7.4.zip
+            url: https://hub-downloads.confluent.io/api/plugins/confluentinc/kafka-connect-jdbc/versions/10.7.4/confluentinc-kafka-connect-jdbc-10.7.4.zip
           - type: jar
             url: https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.4/postgresql-42.7.4.jar
           - type: jar
             url: https://repo1.maven.org/maven2/org/mariadb/jdbc/mariadb-java-client/3.4.1/mariadb-java-client-3.4.1.jar
-          # Debezium envelope 평탄화 SMT(ExtractNewRecordState)가 sink와 같은 sandbox에 있어야 한다.
-          # JdbcSinkConnectorMapper의 transforms.unwrap.type 참조.
-          - type: jar
-            url: https://repo1.maven.org/maven2/io/debezium/debezium-core/3.5.1.Final/debezium-core-3.5.1.Final.jar
+          # ExtractNewRecordState SMT(transforms.unwrap)는 debezium-postgres/mariadb 플러그인에
+          # 번들된 debezium-core에서 Connect가 plugin.path 전역으로 로드한다(별도 jar 불필요 —
+          # debezium-core 런타임 jar은 Maven Central에 미배포, tarball에만 포함).
 
   groupId: platform-connect
   offsetStorageTopic: platform-connect-offsets
