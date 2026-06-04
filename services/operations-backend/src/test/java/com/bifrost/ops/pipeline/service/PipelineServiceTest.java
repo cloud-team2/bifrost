@@ -3,20 +3,23 @@ package com.bifrost.ops.pipeline.service;
 import com.bifrost.ops.auth.jwt.AuthenticatedUser;
 import com.bifrost.ops.database.persistence.entity.DatasourceEntity;
 import com.bifrost.ops.database.persistence.repository.DatasourceRepository;
+import com.bifrost.ops.event.EventService;
 import com.bifrost.ops.global.common.datasource.DbType;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
+import com.bifrost.ops.governance.audit.AuditService;
 import com.bifrost.ops.pipeline.PipelineLifecycle;
 import com.bifrost.ops.pipeline.dto.PipelineCreateRequest;
 import com.bifrost.ops.pipeline.dto.PipelineResponse;
 import com.bifrost.ops.pipeline.persistence.entity.PipelineEntity;
 import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
+import com.bifrost.ops.pipeline.status.PipelineActivationSimulator;
 import com.bifrost.ops.provisioning.PipelineProvisioningService;
 import com.bifrost.ops.provisioning.dto.ConnectorKind;
 import com.bifrost.ops.provisioning.dto.PipelinePattern;
 import com.bifrost.ops.provisioning.dto.PipelineProvisionCommand;
 import com.bifrost.ops.provisioning.dto.PipelineProvisionResult;
-import com.bifrost.ops.provisioning.dto.PipelineProvisionStatus;
+import com.bifrost.ops.provisioning.persistence.repository.ConnectorRepository;
 import com.bifrost.ops.workspace.WorkspaceAccessGuard;
 import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
@@ -25,6 +28,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.ObjectProvider;
 
 import java.util.List;
 import java.util.Optional;
@@ -44,12 +48,17 @@ class PipelineServiceTest {
     @Mock private PipelineRepository pipelineRepository;
     @Mock private DatasourceRepository datasourceRepository;
     @Mock private WorkspaceRepository workspaceRepository;
+    @Mock private ConnectorRepository connectorRepository;
     @Mock private PipelineProvisioningService provisioningService;
     @Mock private WorkspaceAccessGuard accessGuard;
+    @Mock private EventService eventService;
+    @Mock private AuditService auditService;
+    @Mock private ObjectProvider<PipelineActivationSimulator> activationSimulator;
 
     private PipelineService service() {
         return new PipelineService(pipelineRepository, datasourceRepository, workspaceRepository,
-                provisioningService, accessGuard, Runnable::run);
+                connectorRepository, provisioningService, accessGuard, eventService, auditService,
+                Runnable::run, activationSimulator);
     }
 
     private final UUID wsId = UUID.randomUUID();
@@ -151,38 +160,6 @@ class PipelineServiceTest {
         when(pipelineRepository.existsByTenantIdAndSourceDatasourceIdAndSchemaNameAndTableNameAndPattern(
                 any(), any(), any(), any(), any())).thenReturn(true);
         assertValidationFailure(new PipelineCreateRequest("x", "fan-out", sourceId, null, "public", "orders"));
-    }
-
-    // ---------- mock active 전이 ----------
-
-    @Test
-    void activateFromProvisionerTransitionsCreatingToActive() {
-        UUID pid = UUID.randomUUID();
-        PipelineEntity p = new PipelineEntity();
-        p.setId(pid);
-        p.setStatus(PipelineLifecycle.CREATING);
-        p.setSourceConnectorName("src");
-        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
-        when(provisioningService.status(any(), any()))
-                .thenReturn(new PipelineProvisionStatus("src", "RUNNING", List.of()));
-
-        service().activateFromProvisioner(pid, "team-a");
-
-        assertThat(p.getStatus()).isEqualTo(PipelineLifecycle.ACTIVE);
-        verify(pipelineRepository).save(p);
-    }
-
-    @Test
-    void activateIsNoOpWhenNotCreating() {
-        UUID pid = UUID.randomUUID();
-        PipelineEntity p = new PipelineEntity();
-        p.setId(pid);
-        p.setStatus(PipelineLifecycle.ACTIVE);
-        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
-
-        service().activateFromProvisioner(pid, "team-a");
-
-        verify(pipelineRepository, never()).save(any());
     }
 
     // ---------- 목록 / 상세 / 생명주기 ----------
