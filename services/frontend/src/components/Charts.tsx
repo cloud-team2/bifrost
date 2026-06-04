@@ -45,7 +45,8 @@ export function TrendChart({
 
   return (
     <div style={{ height }}>
-      <ResponsiveContainer width="100%" height="100%">
+      {/* initialDimension: ResizeObserver 측정 전 첫 렌더의 -1 → recharts "width(-1) height(-1)" 경고 방지 */}
+      <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 300, height }}>
         {type === 'area' ? (
           <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
             <defs>

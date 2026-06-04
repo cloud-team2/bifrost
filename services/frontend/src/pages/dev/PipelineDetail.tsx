@@ -564,7 +564,7 @@ function ConsumersTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
         ) : (
           <>
             <div className="px-3 pt-3" style={{ height: 200 }}>
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 300, height: 200 }}>
                 <BarChart
                   data={lagChartData}
                   margin={{ top: 4, right: 16, bottom: 0, left: -8 }}
@@ -1419,7 +1419,7 @@ function PartitionViz({ partitions }: {
           )}
         </div>
         <div style={{ height: chartH }}>
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 300, height: chartH }}>
             <BarChart layout="vertical" data={chartData}
               margin={{ top: 0, right: 40, bottom: 0, left: 4 }} barSize={14}>
               <XAxis type="number" tick={axis} tickLine={false} axisLine={false}
