@@ -1,0 +1,58 @@
+{{- if .Values.rbac.namespaceManager }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: operations-backend-namespace-manager
+  labels:
+    {{- include "bifrost.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: operations-backend-namespace-manager
+  labels:
+    {{- include "bifrost.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: operations-backend
+    namespace: {{ .Values.namespace }}
+roleRef:
+  kind: ClusterRole
+  name: operations-backend-namespace-manager
+  apiGroup: rbac.authorization.k8s.io
+---
+{{- end }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: operations-backend-strimzi
+  namespace: {{ .Values.rbac.strimziNamespace }}
+  labels:
+    {{- include "bifrost.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["kafka.strimzi.io"]
+    resources: ["kafkaconnectors", "kafkausers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: operations-backend-strimzi
+  namespace: {{ .Values.rbac.strimziNamespace }}
+  labels:
+    {{- include "bifrost.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: operations-backend
+    namespace: {{ .Values.namespace }}
+roleRef:
+  kind: Role
+  name: operations-backend-strimzi
+  apiGroup: rbac.authorization.k8s.io

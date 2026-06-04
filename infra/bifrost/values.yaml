@@ -1,0 +1,49 @@
+namespace: bifrost-system
+
+replicaCount: 1
+
+image:
+  repository: harbor.harbor.svc.cluster.local/library/operations-backend
+  pullPolicy: IfNotPresent
+  tag: latest
+
+service:
+  type: ClusterIP
+  port: 8080
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+
+env:
+  SPRING_PROFILES_ACTIVE: prod
+  META_DB_URL: jdbc:postgresql://metadb-service.metadb.svc.cluster.local:5432/metadb
+  META_DB_USER: platform
+  KAFKA_BOOTSTRAP: platform-kafka-kafka-bootstrap.platform-kafka.svc.cluster.local:9092
+  KAFKA_CLUSTER_NAME: platform-kafka
+  KAFKA_CLUSTER_NAMESPACE: platform-kafka
+  KAFKA_CONNECT_CLUSTER: platform-connect
+  PROVISIONING_MODE: real
+  AI_SERVICE_URL: http://ai-service.bifrost-system.svc.cluster.local:8082
+
+# kubectl create secret generic operations-backend-secrets 으로 사전 생성 필요
+secrets:
+  jwtSecretKey: JWT_SECRET
+  dbPasswordKey: META_DB_PASSWORD
+
+rbac:
+  strimziNamespace: platform-kafka
+  namespaceManager: true
+
+ingress:
+  enabled: false
+  className: alb
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+  host: ""

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: bifrost
+description: Bifrost Operations Backend — Helm chart
+type: application
+version: 0.1.0
+appVersion: "latest"

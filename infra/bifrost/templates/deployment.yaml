@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: operations-backend
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "bifrost.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "bifrost.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "bifrost.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: operations-backend
+      containers:
+        - name: operations-backend
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: operations-backend-env
+          env:
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: operations-backend-secrets
+                  key: {{ .Values.secrets.jwtSecretKey }}
+                  optional: true
+            - name: META_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: operations-backend-secrets
+                  key: {{ .Values.secrets.dbPasswordKey }}
+                  optional: true
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: {{ .Values.service.port }}
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: {{ .Values.service.port }}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
