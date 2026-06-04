@@ -1,0 +1,26 @@
+# Role: platform-kafka 네임스페이스의 Strimzi CR(KafkaConnector, KafkaUser) 및 Secret 관리
+# operations-backend가 real provisioner로 KafkaConnector/KafkaUser를 apply하고
+# KafkaConnectorWatcher가 watch/list할 수 있는 최소 권한.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: operations-backend-strimzi
+  namespace: platform-kafka
+rules:
+  - apiGroups: ["kafka.strimzi.io"]
+    resources: ["kafkaconnectors", "kafkausers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+---
+# ClusterRole: 워크스페이스(테넌트) Namespace 생성/조회/삭제
+# TenantProvisioner.createNamespace(), deprovision()에서 사용
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: operations-backend-namespace-manager
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]

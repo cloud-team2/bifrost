@@ -1,0 +1,28 @@
+# RoleBinding: operations-backend SA → platform-kafka 네임스페이스 Strimzi CR 권한
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: operations-backend-strimzi
+  namespace: platform-kafka
+subjects:
+  - kind: ServiceAccount
+    name: operations-backend
+    namespace: bifrost-system
+roleRef:
+  kind: Role
+  name: operations-backend-strimzi
+  apiGroup: rbac.authorization.k8s.io
+---
+# ClusterRoleBinding: operations-backend SA → Namespace 관리 권한
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: operations-backend-namespace-manager
+subjects:
+  - kind: ServiceAccount
+    name: operations-backend
+    namespace: bifrost-system
+roleRef:
+  kind: ClusterRole
+  name: operations-backend-namespace-manager
+  apiGroup: rbac.authorization.k8s.io
