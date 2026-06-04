@@ -47,11 +47,20 @@ class JdbcSinkConnectorMapperTest {
         assertThat(config).containsEntry("connection.user", "sinker");
         assertThat(config).containsEntry("insert.mode", "upsert");
         assertThat(config).containsEntry("pk.mode", "record_key");
-        // Debezium envelope 평탄화 SMT
-        assertThat(config).containsEntry("transforms", "unwrap");
+        // pk.mode=record_key가 키 스키마를 요구하므로 스키마 인지 JSON 컨버터
+        assertThat(config).containsEntry("key.converter", "org.apache.kafka.connect.json.JsonConverter");
+        assertThat(config).containsEntry("key.converter.schemas.enable", "true");
+        assertThat(config).containsEntry("value.converter", "org.apache.kafka.connect.json.JsonConverter");
+        assertThat(config).containsEntry("value.converter.schemas.enable", "true");
+        // Debezium envelope 평탄화(unwrap) + 토픽명→테이블명 축약(route)
+        assertThat(config).containsEntry("transforms", "unwrap,route");
         assertThat(config).containsEntry("transforms.unwrap.type",
                 "io.debezium.transforms.ExtractNewRecordState");
         assertThat(config).containsEntry("transforms.unwrap.delete.handling.mode", "none");
         assertThat(config).containsEntry("transforms.unwrap.drop.tombstones", "true");
+        assertThat(config).containsEntry("transforms.route.type",
+                "org.apache.kafka.connect.transforms.RegexRouter");
+        assertThat(config).containsEntry("transforms.route.regex", ".*\\.([^.]+)$");
+        assertThat(config).containsEntry("transforms.route.replacement", "$1");
     }
 }

@@ -124,6 +124,13 @@ KafkaConnector source = new KafkaConnectorBuilder()
         .addToConfig("database.password", cred.password())   // resolve 결과, State·로그에 남기지 않음
         .addToConfig("topic.prefix",      "cdc.table." + projectKey + "." + dbName)
         .addToConfig("plugin.name",       "pgoutput")
+        // JDBC sink가 키(PK Struct)·값 타입을 읽을 수 있도록 스키마 인지 JSON을 강제(worker 기본값 false 오버라이드)
+        .addToConfig("key.converter",                "org.apache.kafka.connect.json.JsonConverter")
+        .addToConfig("key.converter.schemas.enable", "true")
+        .addToConfig("value.converter",                "org.apache.kafka.connect.json.JsonConverter")
+        .addToConfig("value.converter.schemas.enable", "true")
+        // 시간 타입을 Connect 논리 타입으로(기본 adaptive는 epoch 마이크로초 int64 → sink 컬럼이 BIGINT가 됨)
+        .addToConfig("time.precision.mode", "connect")
     .endSpec()
     .build();
 kubernetesClient.resource(source).inNamespace("platform-kafka").create();
@@ -136,6 +143,10 @@ kubernetesClient.resource(source).inNamespace("platform-kafka").create();
 - `io.confluent.connect.jdbc.JdbcSinkConnector`, `tasksMax=3` (파티션 병렬).
 - `topics` = Debezium이 만든 토픽명.
 - `insert.mode=upsert`, `pk.mode=record_key` (중복 없는 적재).
+- 컨버터는 source와 동일하게 **스키마 인지 JSON**(`key/value.converter.schemas.enable=true`) — `pk.mode=record_key`가 스키마 없는 HashMap 키를 거부하기 때문.
+- SMT 체인 `unwrap,route`:
+  - `unwrap` = `io.debezium.transforms.ExtractNewRecordState` (envelope 평탄화, after-image만 적재).
+  - `route` = `RegexRouter`(`.*\.([^.]+)$` → `$1`)로 토픽명 `cdc.table.{project}.{db}.{schema}.{table}`을 마지막 세그먼트(테이블명)로 축약. JDBC sink는 토픽명을 테이블 식별자로 쓰는데 점(.)이 있으면 MariaDB/MySQL이 `catalog.table`로 오해하므로 필수.
 
 ### 5. 생명주기 (FR-005)
 

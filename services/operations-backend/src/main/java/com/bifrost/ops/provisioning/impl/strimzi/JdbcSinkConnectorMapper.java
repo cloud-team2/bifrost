@@ -59,6 +59,12 @@ public class JdbcSinkConnectorMapper {
                     .withClassName(JDBC_SINK_CLASS)
                     .withTasksMax(3)
                     .addToConfig("topics", sourceTopic)
+                    // 스키마 인지 JSON: source가 schemas.enable=true로 적재한 키(PK Struct)·값을 그대로 읽어야
+                    // pk.mode=record_key와 auto.create가 동작한다(worker 기본값 false를 per-connector로 오버라이드).
+                    .addToConfig("key.converter", "org.apache.kafka.connect.json.JsonConverter")
+                    .addToConfig("key.converter.schemas.enable", "true")
+                    .addToConfig("value.converter", "org.apache.kafka.connect.json.JsonConverter")
+                    .addToConfig("value.converter.schemas.enable", "true")
                     .addToConfig("connection.url", jdbcUrl(sink))
                     .addToConfig("connection.user", sinkCred.user())
                     .addToConfig("connection.password", sinkCred.password())
@@ -67,13 +73,20 @@ public class JdbcSinkConnectorMapper {
                     .addToConfig("pk.mode", "record_key")
                     .addToConfig("auto.create", "true")
                     .addToConfig("auto.evolve", "true")
-                    // Debezium envelope 평탄화: after-image 필드만 sink 테이블에 적재
-                    .addToConfig("transforms", "unwrap")
+                    // Debezium envelope 평탄화(unwrap) → 토픽명을 테이블명으로 축약(route)
+                    .addToConfig("transforms", "unwrap,route")
                     .addToConfig("transforms.unwrap.type",
                             "io.debezium.transforms.ExtractNewRecordState")
                     // DELETE 이벤트는 sink에 전달하지 않음 (tombstone만 drop)
                     .addToConfig("transforms.unwrap.delete.handling.mode", "none")
                     .addToConfig("transforms.unwrap.drop.tombstones", "true")
+                    // 토픽명 `cdc.table.{project}.{db}.{schema}.{table}`을 마지막 세그먼트(테이블명)로
+                    // 축약한다. JDBC sink는 기본적으로 토픽명을 테이블 식별자로 쓰는데, 점(.)이 들어가면
+                    // MariaDB/MySQL이 `cdc`.`table`처럼 catalog.table로 오해해 적재가 깨진다.
+                    .addToConfig("transforms.route.type",
+                            "org.apache.kafka.connect.transforms.RegexRouter")
+                    .addToConfig("transforms.route.regex", ".*\\.([^.]+)$")
+                    .addToConfig("transforms.route.replacement", "$1")
                 .endSpec()
                 .build();
     }
