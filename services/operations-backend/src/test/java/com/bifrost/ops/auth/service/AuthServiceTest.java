@@ -202,15 +202,16 @@ class AuthServiceTest {
     }
 
     @Test
-    void meThrowsWhenWorkspaceMissing() {
+    void meThrowsUnauthorizedWhenWorkspaceMissing() {
         UUID userId = UUID.randomUUID();
         UUID workspaceId = UUID.randomUUID();
         when(workspaceRepository.findById(workspaceId)).thenReturn(Optional.empty());
 
+        // 토큰은 유효하나 워크스페이스가 사라진 stale 세션 → 401(AUTH_TOKEN_INVALID)
         assertThatThrownBy(() ->
             authService.me(new AuthenticatedUser(userId, workspaceId, "user@example.com")))
             .isInstanceOfSatisfying(ApiException.class, ex ->
-                assertThat(ex.code()).isEqualTo(ErrorCode.WORKSPACE_NOT_FOUND));
+                assertThat(ex.code()).isEqualTo(ErrorCode.AUTH_TOKEN_INVALID));
     }
 
     @Test

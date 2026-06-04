@@ -23,6 +23,8 @@ const VIEW_LABEL: Record<View, string> = {
 export default function App() {
   const app = useApp()
 
+  // 세션 복원(토큰→me()) 완료 전엔 로그인 화면 깜빡임을 피하려 빈 화면 유지.
+  if (!app.authReady) return null
   if (!app.currentUser) return <Login />
   if (!app.currentProject) return <ProjectListView />
 

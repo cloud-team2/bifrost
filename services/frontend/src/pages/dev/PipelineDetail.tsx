@@ -1,8 +1,8 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
-import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Bar, BarChart, CartesianGrid, Cell, Tooltip, XAxis, YAxis } from 'recharts'
 import { Icon } from '../../components/Icon'
 import { MetricCard, Panel, StatusBadge } from '../../components/blocks'
-import { TrendChart, CHART_COLORS } from '../../components/Charts'
+import { TrendChart, CHART_COLORS, ResponsiveChart } from '../../components/Charts'
 import { TechIcon, nodeKind } from '../../components/TechIcon'
 import { useToast } from '../../components/Toast'
 import { useApp, CLUSTER } from '../../store/AppStore'
@@ -564,7 +564,7 @@ function ConsumersTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
         ) : (
           <>
             <div className="px-3 pt-3" style={{ height: 200 }}>
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveChart width="100%" height="100%" initialDimension={{ width: 300, height: 200 }}>
                 <BarChart
                   data={lagChartData}
                   margin={{ top: 4, right: 16, bottom: 0, left: -8 }}
@@ -590,7 +590,7 @@ function ConsumersTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
                     ))}
                   </Bar>
                 </BarChart>
-              </ResponsiveContainer>
+              </ResponsiveChart>
             </div>
             <p className="pb-3 pt-1 text-center text-[11px] text-gray-400">
               바를 클릭하면 파티션별 오프셋을 확인할 수 있습니다
@@ -989,7 +989,7 @@ function SyncTab({ edge }: { edge: Edge }) {
 
       <Panel title="이벤트 타입 분포" right={<span className="text-[12px] text-gray-400">최근 1시간</span>}>
         <div className="px-4 py-3">
-          <ResponsiveContainer width="100%" height={140}>
+          <ResponsiveChart width="100%" height={140}>
             <BarChart data={eventDist} barSize={10} margin={{ top: 4, right: 8, left: -28, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
               <XAxis dataKey="ts" tick={axis} tickLine={false} axisLine={false} />
@@ -999,7 +999,7 @@ function SyncTab({ edge }: { edge: Edge }) {
               <Bar dataKey="update" stackId="a" fill={CHART_COLORS.amber}   name="UPDATE" radius={[0,0,0,0]} />
               <Bar dataKey="delete" stackId="a" fill={CHART_COLORS.red}     name="DELETE" radius={[2,2,0,0]} />
             </BarChart>
-          </ResponsiveContainer>
+          </ResponsiveChart>
           <div className="mt-2 flex justify-center gap-5">
             {[['INSERT', CHART_COLORS.emerald], ['UPDATE', CHART_COLORS.amber], ['DELETE', CHART_COLORS.red]].map(([label, color]) => (
               <div key={label} className="flex items-center gap-1.5">
@@ -1419,7 +1419,7 @@ function PartitionViz({ partitions }: {
           )}
         </div>
         <div style={{ height: chartH }}>
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveChart width="100%" height="100%" initialDimension={{ width: 300, height: chartH }}>
             <BarChart layout="vertical" data={chartData}
               margin={{ top: 0, right: 40, bottom: 0, left: 4 }} barSize={14}>
               <XAxis type="number" tick={axis} tickLine={false} axisLine={false}
@@ -1437,7 +1437,7 @@ function PartitionViz({ partitions }: {
                 ))}
               </Bar>
             </BarChart>
-          </ResponsiveContainer>
+          </ResponsiveChart>
         </div>
       </div>
 

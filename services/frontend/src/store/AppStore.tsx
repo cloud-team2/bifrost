@@ -20,7 +20,7 @@ import {
   KAFKA_USERS,
   MEMBERS,
 } from '../data/mock'
-import { api, setToken, type PipelineCreateInput } from '../lib/api'
+import { api, getToken, setToken, type PipelineCreateInput } from '../lib/api'
 import { datasourceToNode, pipelineToEdge, workspaceToProject } from '../lib/mappers'
 
 export type View =
@@ -67,6 +67,7 @@ export interface AppSettings {
 
 interface Store {
   /* auth + nav */
+  authReady: boolean
   currentUser: User | null
   currentProject: Project | null
   view: View
@@ -140,6 +141,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [opSelectedIncidentId, setOpSelectedIncidentId] = useState<string | null>(null)
   const [aiPanelOpen, setAiPanelOpen] = useState(false)
   const [agentTask, setAgentTask] = useState<AgentTask | null>(null)
+  const [authReady, setAuthReady] = useState(false)
 
   /* 실데이터: 로그인/워크스페이스 선택 시 백엔드에서 로드 */
   const [projects, setProjects] = useState<Project[]>([])
@@ -230,6 +232,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  /* 새로고침 시 세션 복원: 토큰이 있으면 me()로 사용자/워크스페이스를 되살린다(없으면 토큰 폐기). */
+  useEffect(() => {
+    if (!getToken()) {
+      setAuthReady(true)
+      return
+    }
+    let cancelled = false
+    api
+      .me()
+      .then(async (me) => {
+        if (cancelled) return
+        setCurrentUser(userFromEmail(me.email))
+        await loadWorkspaces()
+      })
+      .catch(() => setToken(null))
+      .finally(() => {
+        if (!cancelled) setAuthReady(true)
+      })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   /** 워크스페이스 선택 시 DB·파이프라인을 백엔드에서 로드하고 project 인덱스를 채운다. */
   async function loadProjectData(wsId: string) {
     try {
@@ -251,6 +277,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }
 
   const value: Store = {
+    authReady,
     currentUser,
     currentProject,
     view,

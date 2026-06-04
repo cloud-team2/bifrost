@@ -126,8 +126,11 @@ public class AuthService {
     }
 
     public MeResponse me(AuthenticatedUser principal) {
+        // 토큰 서명은 유효하나 가리키는 워크스페이스가 없으면(예: DB 초기화 후 옛 토큰) 세션 무효로 본다.
+        // 404가 아니라 401을 반환해 프론트가 자연스럽게 재로그인으로 떨어지게 한다.
         WorkspaceEntity workspace = workspaceRepository.findById(principal.tenantId())
-            .orElseThrow(() -> new ApiException(ErrorCode.WORKSPACE_NOT_FOUND, "워크스페이스를 찾을 수 없습니다"));
+            .orElseThrow(() -> new ApiException(ErrorCode.AUTH_TOKEN_INVALID,
+                    "세션이 더 이상 유효하지 않습니다. 다시 로그인해주세요"));
         return new MeResponse(
             principal.userId(),
             principal.email(),

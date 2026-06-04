@@ -1,11 +1,18 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Icon } from '../../components/Icon'
 import { PageHead } from '../../components/blocks'
 import { useApp } from '../../store/AppStore'
-import { ACTIVITY_EVENTS } from '../../data/mock'
 import { pipelineLabel } from '../../data/helpers'
-import type { LogLevel } from '../../data/types'
+import type { ActivityEvent, LogLevel } from '../../data/types'
 import { cn } from '../../lib/format'
+import { api } from '../../lib/api'
+import { eventToActivity } from '../../lib/mappers'
+
+const FILTER_TO_LEVEL: Record<Exclude<'all' | LogLevel, 'all'>, string> = {
+  error: 'ERROR',
+  warning: 'WARN',
+  info: 'INFO',
+}
 
 const LEVEL_META: Record<LogLevel, { tone: string; bar: string; icon: 'alert' | 'info' }> = {
   error: { tone: 'bg-rose-50 text-rose-700', bar: 'border-rose-400', icon: 'alert' },
@@ -16,7 +23,29 @@ const LEVEL_META: Record<LogLevel, { tone: string; bar: string; icon: 'alert' | 
 export function ActivityLog() {
   const app = useApp()
   const [filter, setFilter] = useState<'all' | LogLevel>('all')
-  const rows = ACTIVITY_EVENTS.filter((e) => filter === 'all' || e.level === filter)
+  const [rows, setRows] = useState<ActivityEvent[]>([])
+
+  // 워크스페이스 이벤트 로그(FR-019). 서버 측 level 필터로 조회.
+  useEffect(() => {
+    const wsId = app.currentProject?.id
+    if (!wsId) {
+      setRows([])
+      return
+    }
+    const level = filter === 'all' ? undefined : FILTER_TO_LEVEL[filter]
+    let cancelled = false
+    api
+      .listEvents(wsId, level)
+      .then((es) => {
+        if (!cancelled) setRows(es.map(eventToActivity))
+      })
+      .catch(() => {
+        if (!cancelled) setRows([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [app.currentProject?.id, filter])
 
   return (
     <div className="px-6 py-5">

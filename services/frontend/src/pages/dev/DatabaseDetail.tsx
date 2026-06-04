@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Icon } from '../../components/Icon'
 import { TechIcon, nodeKind } from '../../components/TechIcon'
 import { MetricCard, Panel, StatusBadge } from '../../components/blocks'
@@ -7,32 +7,7 @@ import { useApp } from '../../store/AppStore'
 import { dbPipelines, nodeName, pipelineLabel } from '../../data/helpers'
 import type { CapabilityCheck, Edge, Node } from '../../data/types'
 import { cn } from '../../lib/format'
-
-const SCHEMA_TABLES = [
-  { name: 'orders', rows: '8.4M', size: '4.2 GB', cols: [
-    { name: 'id', type: 'bigint', pk: true },
-    { name: 'customer_id', type: 'bigint', pk: false },
-    { name: 'status', type: 'varchar(32)', pk: false },
-    { name: 'amount', type: 'numeric(12,2)', pk: false },
-    { name: 'created_at', type: 'timestamptz', pk: false },
-  ] },
-  { name: 'order_items', rows: '21.7M', size: '6.1 GB', cols: [
-    { name: 'id', type: 'bigint', pk: true },
-    { name: 'order_id', type: 'bigint', pk: false },
-    { name: 'sku', type: 'varchar(64)', pk: false },
-    { name: 'qty', type: 'integer', pk: false },
-  ] },
-  { name: 'customers', rows: '2.1M', size: '1.4 GB', cols: [
-    { name: 'id', type: 'bigint', pk: true },
-    { name: 'email', type: 'varchar(255)', pk: false },
-    { name: 'created_at', type: 'timestamptz', pk: false },
-  ] },
-  { name: 'audit_log', rows: '54M', size: '0.4 GB', cols: [
-    { name: 'id', type: 'bigint', pk: true },
-    { name: 'actor', type: 'varchar(128)', pk: false },
-    { name: 'action', type: 'varchar(64)', pk: false },
-  ] },
-]
+import { api, type SchemaTable } from '../../lib/api'
 
 function defaultChecks(node: Node): CapabilityCheck[] {
   if (node.checks) return node.checks
@@ -159,7 +134,7 @@ export function DatabaseDetail() {
           </div>
         )}
 
-        {tab === 'Schema' && <SchemaTab />}
+        {tab === 'Schema' && <SchemaTab wsId={app.currentProject?.id ?? null} dbId={node.id} />}
 
         {tab === '연결 검사' && (
           <ConnectionCheckTab node={node} edges={pipelines} />
@@ -331,39 +306,89 @@ function ConnectionCheckTab({ node, edges }: { node: Node; edges: Edge[] }) {
   )
 }
 
-function SchemaTab() {
-  const [open, setOpen] = useState<string | null>('orders')
+function SchemaTab({ wsId, dbId }: { wsId: string | null; dbId: string }) {
+  const [tables, setTables] = useState<SchemaTable[]>([])
+  const [loading, setLoading] = useState(false)
+  const [open, setOpen] = useState<string | null>(null)
+
+  // 실제 DB 스키마 introspection(FR-016). 어떤 DB를 열었느냐(dbId)에 따라 라이브 조회.
+  useEffect(() => {
+    if (!wsId) return
+    let cancelled = false
+    setLoading(true)
+    api
+      .databaseSchema(wsId, dbId)
+      .then((res) => {
+        if (cancelled) return
+        setTables(res.tables)
+        const first = res.tables[0]
+        setOpen(first ? `${first.schema}.${first.name}` : null)
+      })
+      .catch(() => {
+        if (!cancelled) setTables([])
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [wsId, dbId])
+
+  if (loading) {
+    return (
+      <Panel title="Tables">
+        <div className="px-4 py-8 text-center text-[12.5px] text-gray-400">스키마를 불러오는 중…</div>
+      </Panel>
+    )
+  }
+  if (tables.length === 0) {
+    return (
+      <Panel title="Tables">
+        <div className="px-4 py-8 text-center text-[12.5px] text-gray-400">조회된 테이블이 없습니다.</div>
+      </Panel>
+    )
+  }
+
   return (
     <Panel title="Tables">
       <div className="divide-y divide-gray-50">
-        {SCHEMA_TABLES.map((t) => (
-          <div key={t.name}>
-            <button
-              onClick={() => setOpen(open === t.name ? null : t.name)}
-              className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-gray-50"
-            >
-              <Icon name={open === t.name ? 'chevron-down' : 'chevron-right'} size={14} className="text-gray-400" />
-              <Icon name="table" size={15} className="text-gray-400" />
-              <span className="font-mono text-[13px] font-medium text-gray-800">{t.name}</span>
-              <div className="flex-1" />
-              <span className="text-[12px] text-gray-500">{t.rows} rows</span>
-              <span className="w-16 text-right text-[12px] text-gray-400">{t.size}</span>
-            </button>
-            {open === t.name && (
-              <div className="bg-gray-50/60 px-4 py-2">
-                {t.cols.map((c) => (
-                  <div key={c.name} className="flex items-center gap-2 py-1 pl-9 text-[12px]">
-                    <span className="font-mono font-medium text-gray-700">{c.name}</span>
-                    <span className="font-mono text-gray-400">{c.type}</span>
-                    {c.pk && (
-                      <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">PK</span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
+        {tables.map((t) => {
+          const key = `${t.schema}.${t.name}`
+          return (
+            <div key={key}>
+              <button
+                onClick={() => setOpen(open === key ? null : key)}
+                className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-gray-50"
+              >
+                <Icon name={open === key ? 'chevron-down' : 'chevron-right'} size={14} className="text-gray-400" />
+                <Icon name="table" size={15} className="text-gray-400" />
+                <span className="font-mono text-[13px] font-medium text-gray-800">{t.schema}.{t.name}</span>
+                <div className="flex-1" />
+                <span className="text-[12px] text-gray-400">{t.columns.length} cols</span>
+              </button>
+              {open === key && (
+                <div className="bg-gray-50/60 px-4 py-2">
+                  {t.columns.map((c) => (
+                    <div key={c.name} className="flex items-center gap-2 py-1 pl-9 text-[12px]">
+                      <span className="font-mono font-medium text-gray-700">{c.name}</span>
+                      <span className="font-mono text-gray-400">{c.type}</span>
+                      {c.primaryKey && (
+                        <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">PK</span>
+                      )}
+                      {c.indexed && !c.primaryKey && (
+                        <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">IDX</span>
+                      )}
+                      {!c.nullable && (
+                        <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">NOT NULL</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        })}
       </div>
     </Panel>
   )

@@ -18,8 +18,7 @@ import java.util.UUID;
  * 내부(control-plane) 운영 API.
  *
  * <p>pipeline 생성/조회/삭제는 {@link PipelineProvisioningService}를 거쳐
- * {@code KafkaPipelineProvisioner} 포트로 위임된다. {@code provisioning.mode}에 따라
- * mock/real 구현이 바뀌어도 컨트롤러는 그대로다(#45).
+ * {@code KafkaPipelineProvisioner} 포트(Strimzi 구현)로 위임된다(#45).
  */
 @RestController
 @RequestMapping("/internal")

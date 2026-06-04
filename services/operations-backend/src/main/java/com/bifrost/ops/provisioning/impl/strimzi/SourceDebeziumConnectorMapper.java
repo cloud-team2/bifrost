@@ -81,6 +81,17 @@ public class SourceDebeziumConnectorMapper {
                     // 토픽 네이밍 (Debezium이 .{schema}.{table} 자동 부여)
                     .addToConfig("topic.prefix", topicPrefix)
                     .addToConfig("table.include.list", tableInclude)
+                    // 스키마 인지 JSON: JDBC sink가 키(PK Struct)·값 타입을 알 수 있도록 per-connector로
+                    // schemas.enable=true 강제(worker 기본값 false를 오버라이드). sink의 pk.mode=record_key가
+                    // 스키마 없는 HashMap 키를 거부하는 문제를 막는다.
+                    .addToConfig("key.converter", "org.apache.kafka.connect.json.JsonConverter")
+                    .addToConfig("key.converter.schemas.enable", "true")
+                    .addToConfig("value.converter", "org.apache.kafka.connect.json.JsonConverter")
+                    .addToConfig("value.converter.schemas.enable", "true")
+                    // 시간 타입을 Kafka Connect 논리 타입(Date/Time/Timestamp)으로 매핑한다.
+                    // 기본(adaptive)은 created_at을 epoch 마이크로초(int64)로 보내 JDBC sink가 대상 컬럼을
+                    // BIGINT로 만들어버린다 → connect 모드면 SQL TIMESTAMP로 자연스럽게 적재된다.
+                    .addToConfig("time.precision.mode", "connect")
                     // 자동 토픽 생성 기본값 (설계 §2 4.1)
                     .addToConfig("topic.creation.default.partitions", "6")
                     .addToConfig("topic.creation.default.replication.factor", "3")

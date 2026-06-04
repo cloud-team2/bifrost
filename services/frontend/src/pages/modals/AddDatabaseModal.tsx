@@ -97,15 +97,20 @@ export function AddDatabaseModal({ open, onClose }: { open: boolean; onClose: ()
         username: user,
         password,
       })
-      app.addDatabaseNode(datasourceToNode(db, app.nodes.length))
+      // 등록 응답엔 cdcReadinessStatus가 아직 없으므로(점검 전) readiness를 먼저 받아
+      // 노드 상태(OK/WARNING/BLOCKED)에 반영한 뒤 store에 추가한다. 그래야 파이프라인 생성
+      // 마법사에서 BLOCKED source가 곧바로 선택 불가로 표시된다.
+      let overallStatus: CdcStatus | null = null
       try {
         const readiness = await api.cdcReadiness(wsId, db.id)
         setChecks(cdcChecksToCapability(readiness))
         setOverall(readiness.overallStatus)
+        overallStatus = readiness.overallStatus
       } catch {
         setChecks([])
         setOverall(null)
       }
+      app.addDatabaseNode(datasourceToNode({ ...db, cdcReadinessStatus: overallStatus }, app.nodes.length))
       setStep(2)
       toast(`Database "${db.name}" registered`)
     } catch (e) {

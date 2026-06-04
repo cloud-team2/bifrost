@@ -13,7 +13,6 @@ import com.bifrost.ops.pipeline.dto.PipelineCreateRequest;
 import com.bifrost.ops.pipeline.dto.PipelineResponse;
 import com.bifrost.ops.pipeline.persistence.entity.PipelineEntity;
 import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
-import com.bifrost.ops.pipeline.status.PipelineActivationSimulator;
 import com.bifrost.ops.provisioning.PipelineProvisioningService;
 import com.bifrost.ops.provisioning.dto.ConnectorKind;
 import com.bifrost.ops.provisioning.dto.PipelinePattern;
@@ -28,7 +27,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.beans.factory.ObjectProvider;
 
 import java.util.List;
 import java.util.Optional;
@@ -53,12 +51,10 @@ class PipelineServiceTest {
     @Mock private WorkspaceAccessGuard accessGuard;
     @Mock private EventService eventService;
     @Mock private AuditService auditService;
-    @Mock private ObjectProvider<PipelineActivationSimulator> activationSimulator;
 
     private PipelineService service() {
         return new PipelineService(pipelineRepository, datasourceRepository, workspaceRepository,
-                connectorRepository, provisioningService, accessGuard, eventService, auditService,
-                Runnable::run, activationSimulator);
+                connectorRepository, provisioningService, accessGuard, eventService, auditService);
     }
 
     private final UUID wsId = UUID.randomUUID();

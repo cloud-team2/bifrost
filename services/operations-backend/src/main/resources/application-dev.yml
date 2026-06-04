@@ -10,7 +10,9 @@ spring:
   jpa:
     hibernate:
       ddl-auto: validate
-    show-sql: true
+    # show-sql(raw stdout)과 org.hibernate.SQL 로거가 둘 다 켜지면 같은 SQL이 중복 출력된다.
+    # 로거(org.hibernate.SQL=DEBUG)로 한 번만 남기고 raw 출력은 끈다(#99).
+    show-sql: false
     properties:
       hibernate:
         format_sql: true
@@ -46,11 +48,8 @@ jwt:
 secret-store:
   provider: ${SECRET_STORE_PROVIDER:mock}
 
-# 파이프라인 provisioner 스왑 (#16)
-# mock = MockKafkaPipelineProvisioner (CR 미생성, 이름/상태만 반환, 기본값)
-# real = StrimziKafkaPipelineProvisioner (Fabric8로 KafkaConnector CR apply) + KafkaConnectorWatcher 활성화
-provisioning:
-  mode: ${PROVISIONING_MODE:mock}
+# 파이프라인 provisioner는 Strimzi(K8s) 단일 경로 — 파이프라인 생성에는 kind+Strimzi가 필요하다.
+# (KafkaConnector CR apply + KafkaConnectorWatcher 상태 반영). KUBECONFIG로 대상 클러스터를 지정한다.
 
 # 외부 서비스 (Agent는 별도 FastAPI)
 ai-service:
@@ -87,5 +86,5 @@ logging:
     com.bifrost: DEBUG
     bifrost.ops: INFO          # 비즈니스 이벤트 가독 로그(#93, [도메인] 작업)
     org.springframework.web: INFO
-    org.hibernate.SQL: DEBUG
+    org.hibernate.SQL: INFO    # SQL 끔 — [도메인] 흐름 로그만 보이게(#99)
     io.fabric8.kubernetes.client: INFO

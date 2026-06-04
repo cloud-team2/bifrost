@@ -8,17 +8,9 @@ import com.bifrost.ops.provisioning.dto.PipelineResourceRef;
 /**
  * 파이프라인 Kafka 리소스 생성·조회·삭제 추상화(설계 §2.1).
  *
- * <p>파이프라인 생성 흐름을 실제 Kafka/K8s 구현과 인터페이스로 분리한다. 같은 계약 위에서
- * 두 구현이 공존한다:
- * <ul>
- *   <li><b>mock</b>({@code provisioning.mock}, 권세빈) — CR을 만들지 않고 이름·상태만 반환,
- *       프론트·상태 흐름을 먼저 검증.</li>
- *   <li><b>real</b>({@code provisioning.impl.strimzi}, 백강민) — Fabric8로 Strimzi
- *       KafkaConnector CR을 apply/watch.</li>
- * </ul>
- *
- * <p>구현 스왑은 설정으로 제어한다(예: {@code provisioning.mode=mock|real}, #16/목요일).
- * command/result 계약이 고정되어 있으므로 두 작업을 병렬로 진행할 수 있다.
+ * <p>파이프라인 생성 흐름을 실제 Kafka/K8s 구현과 인터페이스로 분리한다. 구현체는
+ * {@code provisioning.impl.strimzi.StrimziKafkaPipelineProvisioner} — Fabric8로 Strimzi
+ * KafkaConnector CR을 apply/watch한다. command/result 계약이 고정되어 있어 호출부는 구현을 모른다.
  */
 public interface KafkaPipelineProvisioner {
 

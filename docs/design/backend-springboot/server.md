@@ -112,8 +112,7 @@ com.bifrost.ops
   ├─ provisioning         # 파이프라인 리소스 생성 추상화 + 구현
   │   ├─ port             #   KafkaPipelineProvisioner 인터페이스
   │   ├─ dto              #   command/result/status/resource ref
-  │   ├─ mock             #   mock-first E2E 구현
-  │   ├─ impl.strimzi     #   Fabric8/Strimzi real 구현
+  │   ├─ impl.strimzi     #   Fabric8/Strimzi 구현(단일)
   │   └─ watcher          #   KafkaConnector watch → PipelineStatusService
   ├─ monitoring           # 플랫폼 read + 폴링 수집기 (FR-006~009·017·023)
   │   ├─ query            #   consumer-lag/connector/metric/cluster 조회 (port 인터페이스; platform·internalops 공용)
