@@ -2,6 +2,7 @@ package com.bifrost.ops.pipeline.status;
 
 import com.bifrost.ops.event.EventLevel;
 import com.bifrost.ops.event.EventService;
+import com.bifrost.ops.global.common.log.OpsLog;
 import com.bifrost.ops.governance.audit.AuditService;
 import com.bifrost.ops.pipeline.ConnectorStatusUpdate;
 import com.bifrost.ops.pipeline.PipelineLifecycle;
@@ -94,6 +95,7 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
         auditService.record(p.getTenantId(), AuditService.ACTOR_SYSTEM, "PIPELINE_STATUS_TRANSITION",
                 "PIPELINE", p.getId(), current + " -> " + next);
         ssePublisher.pipelineStatusChanged(p.getTenantId(), p.getId(), next.name().toLowerCase());
+        OpsLog.ok("Pipeline", "상태 전이", "name=" + p.getName() + ", " + current + "→" + next);
         log.info("pipeline {} 상태 전이: {} → {}", p.getId(), current, next);
     }
 

@@ -7,6 +7,7 @@ import com.bifrost.ops.event.EventLevel;
 import com.bifrost.ops.event.EventService;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
+import com.bifrost.ops.global.common.log.OpsLog;
 import com.bifrost.ops.governance.audit.AuditService;
 import com.bifrost.ops.pipeline.PipelineLifecycle;
 import com.bifrost.ops.pipeline.PipelinePatternCodec;
@@ -170,6 +171,8 @@ public class PipelineService {
             eventService.record(wsId, p.getId(), EventLevel.INFO, "PIPELINE_CREATED",
                     "pipeline '" + p.getName() + "' 생성 요청 수락(creating)");
             scheduleActivation(p.getId());
+            OpsLog.ok("Pipeline", "파이프라인 생성 요청",
+                    "name=" + p.getName() + ", pattern=" + pattern + ", status=creating");
         } else {
             applyConnectorNames(p, result); // 성공한 단계까지의 connector도 기록
             p.setStatus(PipelineLifecycle.ERROR);
@@ -179,6 +182,8 @@ public class PipelineService {
             eventService.record(wsId, p.getId(), EventLevel.ERROR, "PIPELINE_CREATE_FAILED",
                     p.getStatusMessage());
             log.warn("pipeline {} 생성 실패 — {}", p.getId(), p.getStatusMessage());
+            OpsLog.fail("Pipeline", "파이프라인 생성 실패",
+                    "name=" + p.getName() + ", stage=" + result.stage() + ", code=" + result.errorCode());
         }
         return PipelineResponse.from(p);
     }
@@ -247,12 +252,14 @@ public class PipelineService {
                 "pipeline '" + p.getName() + "' 삭제");
         auditService.record(wsId, principal.email(), "PIPELINE_DELETE", "PIPELINE", id,
                 "pipeline '" + p.getName() + "' 삭제");
+        OpsLog.ok("Pipeline", "파이프라인 삭제", "name=" + p.getName());
     }
 
     private void recordUserAction(UUID wsId, AuthenticatedUser principal, PipelineEntity p,
                                   String action, String message) {
         eventService.record(wsId, p.getId(), EventLevel.INFO, action, message);
         auditService.record(wsId, principal.email(), action, "PIPELINE", p.getId(), message);
+        OpsLog.ok("Pipeline", message);
     }
 
     // ---------- mock active 전이 (단일 writer: PipelineStatusService 경유) ----------
@@ -343,6 +350,7 @@ public class PipelineService {
     }
 
     private static ApiException validation(String message) {
+        OpsLog.fail("Pipeline", "검증 실패", message);
         return new ApiException(ErrorCode.VALIDATION_FAILED, message);
     }
 }
