@@ -17,6 +17,7 @@ import com.bifrost.ops.database.service.DatabaseService;
 import com.bifrost.ops.global.common.datasource.DbType;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
+import com.bifrost.ops.workspace.WorkspaceAccessGuard;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.ResponseEntity;
 
@@ -29,6 +30,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -41,8 +44,9 @@ class DatabaseControllerTest {
     private final DatabaseService service = mock(DatabaseService.class);
     private final DatabaseSchemaService schemaService = mock(DatabaseSchemaService.class);
     private final CdcReadinessService cdcReadinessService = mock(CdcReadinessService.class);
+    private final WorkspaceAccessGuard accessGuard = mock(WorkspaceAccessGuard.class);
     private final DatabaseController controller =
-            new DatabaseController(service, schemaService, cdcReadinessService);
+            new DatabaseController(service, schemaService, cdcReadinessService, accessGuard);
 
     private final UUID wsId = UUID.randomUUID();
     private final AuthenticatedUser member = new AuthenticatedUser(UUID.randomUUID(), wsId, "u@bifrost.io");
@@ -82,6 +86,9 @@ class DatabaseControllerTest {
     @Test
     void rejectsAccessToOtherWorkspace() {
         AuthenticatedUser other = new AuthenticatedUser(UUID.randomUUID(), UUID.randomUUID(), "x@bifrost.io");
+        doThrow(new ApiException(ErrorCode.RESOURCE_NOT_OWNED_BY_PROJECT, "no"))
+                .when(accessGuard).requireAccess(wsId, other);
+
         assertThatThrownBy(() -> controller.get(wsId, UUID.randomUUID(), other))
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).code())
@@ -90,6 +97,9 @@ class DatabaseControllerTest {
 
     @Test
     void rejectsUnauthenticated() {
+        doThrow(new ApiException(ErrorCode.UNAUTHENTICATED, "no"))
+                .when(accessGuard).requireAccess(eq(wsId), isNull());
+
         assertThatThrownBy(() -> controller.list(wsId, null, null, null, null))
                 .isInstanceOf(ApiException.class);
     }

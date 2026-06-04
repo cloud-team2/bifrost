@@ -21,6 +21,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.UUID;
+
 @Service
 public class AuthService {
 
@@ -62,8 +64,12 @@ public class AuthService {
         workspace.setStatus(WorkspaceEntity.Status.PROVISIONING);
 
         UserEntity user = new UserEntity();
+        // 소유 기반 다중 워크스페이스(#72): home 워크스페이스 소유자를 가입자로 연결하려면
+        // workspace 저장 전에 user id가 필요하므로 미리 생성한다(추가 write 없이 단일 save 유지).
+        user.setId(UUID.randomUUID());
         user.setEmail(req.email());
         user.setPasswordHash(passwordEncoder.encode(req.password()));
+        workspace.setOwnerUserId(user.getId());
 
         try {
             workspace = workspaceRepository.saveAndFlush(workspace);
@@ -107,6 +113,13 @@ public class AuthService {
         String token = jwtService.issue(user.getId(), user.getTenantId(), user.getEmail());
         return new AuthTokensResponse(
             token, "Bearer", jwtService.ttl().toSeconds(), user.getId(), user.getTenantId());
+    }
+
+    /** 액세스 토큰 재발급(#72, 최소 stub). 인증된 사용자에게 동일 scope의 새 토큰을 발급한다. */
+    public AuthTokensResponse refresh(AuthenticatedUser principal) {
+        String token = jwtService.issue(principal.userId(), principal.tenantId(), principal.email());
+        return new AuthTokensResponse(
+            token, "Bearer", jwtService.ttl().toSeconds(), principal.userId(), principal.tenantId());
     }
 
     public MeResponse me(AuthenticatedUser principal) {

@@ -13,8 +13,7 @@ import com.bifrost.ops.database.service.CdcReadinessService;
 import com.bifrost.ops.database.service.DatabaseSchemaService;
 import com.bifrost.ops.database.service.DatabaseService;
 import com.bifrost.ops.global.common.datasource.DbType;
-import com.bifrost.ops.global.common.error.ApiException;
-import com.bifrost.ops.global.common.error.ErrorCode;
+import com.bifrost.ops.workspace.WorkspaceAccessGuard;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -35,8 +34,8 @@ import java.util.UUID;
  * <p>제공: 연결 테스트(#26), 등록·목록·상세(#27). 스키마(#28)·CDC 준비도(#29)·
  * metrics·pipelines(#30)는 같은 컨트롤러에 추가된다.
  *
- * <p>모든 엔드포인트는 경로의 {@code wsId}가 인증 사용자의 워크스페이스인지 scope 검증한다
- * (v1 단일 멤버십: {@code wsId == principal.tenantId()}, 위반 시 403 RESOURCE_NOT_OWNED_BY_PROJECT).
+ * <p>모든 엔드포인트는 경로의 {@code wsId}가 인증 사용자가 접근 가능한 워크스페이스인지
+ * {@link WorkspaceAccessGuard}로 scope 검증한다(소유 기반 다중 워크스페이스, #72).
  */
 @RestController
 @RequestMapping("/api/v1/workspaces/{wsId}/databases")
@@ -45,12 +44,14 @@ public class DatabaseController {
     private final DatabaseService databaseService;
     private final DatabaseSchemaService schemaService;
     private final CdcReadinessService cdcReadinessService;
+    private final WorkspaceAccessGuard accessGuard;
 
     public DatabaseController(DatabaseService databaseService, DatabaseSchemaService schemaService,
-                              CdcReadinessService cdcReadinessService) {
+                              CdcReadinessService cdcReadinessService, WorkspaceAccessGuard accessGuard) {
         this.databaseService = databaseService;
         this.schemaService = schemaService;
         this.cdcReadinessService = cdcReadinessService;
+        this.accessGuard = accessGuard;
     }
 
     /** 연결 테스트(FR-014). 실패도 200으로 분류 반환. */
@@ -58,7 +59,7 @@ public class DatabaseController {
     public ConnectionTestResponse connectionTest(@PathVariable UUID wsId,
                                                  @AuthenticationPrincipal AuthenticatedUser principal,
                                                  @Valid @RequestBody ConnectionTestRequest req) {
-        requireScope(wsId, principal);
+        accessGuard.requireAccess(wsId, principal);
         DbType engine = DatabaseService.parseEngine(req.engine());
         return databaseService.testConnection(
                 engine, req.host(), req.port(), req.dbName(), req.user(), req.password());
@@ -69,7 +70,7 @@ public class DatabaseController {
     public ResponseEntity<DatabaseResponse> register(@PathVariable UUID wsId,
                                                      @AuthenticationPrincipal AuthenticatedUser principal,
                                                      @Valid @RequestBody DatabaseRegisterRequest req) {
-        requireScope(wsId, principal);
+        accessGuard.requireAccess(wsId, principal);
         return ResponseEntity.status(201).body(databaseService.register(wsId, req));
     }
 
@@ -80,7 +81,7 @@ public class DatabaseController {
                                        @RequestParam(required = false) String role,
                                        @RequestParam(required = false) String engine,
                                        @RequestParam(required = false) String q) {
-        requireScope(wsId, principal);
+        accessGuard.requireAccess(wsId, principal);
         return databaseService.list(wsId, role, engine, q);
     }
 
@@ -89,7 +90,7 @@ public class DatabaseController {
     public DatabaseResponse get(@PathVariable UUID wsId,
                                 @PathVariable UUID dbId,
                                 @AuthenticationPrincipal AuthenticatedUser principal) {
-        requireScope(wsId, principal);
+        accessGuard.requireAccess(wsId, principal);
         return databaseService.get(wsId, dbId);
     }
 
@@ -98,7 +99,7 @@ public class DatabaseController {
     public DatabaseSchemaResponse schema(@PathVariable UUID wsId,
                                          @PathVariable UUID dbId,
                                          @AuthenticationPrincipal AuthenticatedUser principal) {
-        requireScope(wsId, principal);
+        accessGuard.requireAccess(wsId, principal);
         return schemaService.getSchema(wsId, dbId);
     }
 
@@ -107,7 +108,7 @@ public class DatabaseController {
     public CdcReadinessResponse cdcReadiness(@PathVariable UUID wsId,
                                              @PathVariable UUID dbId,
                                              @AuthenticationPrincipal AuthenticatedUser principal) {
-        requireScope(wsId, principal);
+        accessGuard.requireAccess(wsId, principal);
         return cdcReadinessService.check(wsId, dbId);
     }
 
@@ -116,7 +117,7 @@ public class DatabaseController {
     public DatabaseMetricsResponse metrics(@PathVariable UUID wsId,
                                            @PathVariable UUID dbId,
                                            @AuthenticationPrincipal AuthenticatedUser principal) {
-        requireScope(wsId, principal);
+        accessGuard.requireAccess(wsId, principal);
         return databaseService.getMetrics(wsId, dbId);
     }
 
@@ -125,15 +126,7 @@ public class DatabaseController {
     public List<DatabasePipelineSummary> pipelines(@PathVariable UUID wsId,
                                                    @PathVariable UUID dbId,
                                                    @AuthenticationPrincipal AuthenticatedUser principal) {
-        requireScope(wsId, principal);
+        accessGuard.requireAccess(wsId, principal);
         return databaseService.listPipelines(wsId, dbId);
-    }
-
-    /** 경로의 wsId가 인증 사용자 소속 워크스페이스인지 검증(scope). */
-    private static void requireScope(UUID wsId, AuthenticatedUser principal) {
-        if (principal == null || !wsId.equals(principal.tenantId())) {
-            throw new ApiException(ErrorCode.RESOURCE_NOT_OWNED_BY_PROJECT,
-                    "워크스페이스 접근 권한이 없습니다");
-        }
     }
 }
