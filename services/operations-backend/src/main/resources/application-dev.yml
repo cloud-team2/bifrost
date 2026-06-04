@@ -48,11 +48,8 @@ jwt:
 secret-store:
   provider: ${SECRET_STORE_PROVIDER:mock}
 
-# 파이프라인 provisioner 스왑 (#16)
-# mock = MockKafkaPipelineProvisioner (CR 미생성, 이름/상태만 반환, 기본값)
-# real = StrimziKafkaPipelineProvisioner (Fabric8로 KafkaConnector CR apply) + KafkaConnectorWatcher 활성화
-provisioning:
-  mode: ${PROVISIONING_MODE:mock}
+# 파이프라인 provisioner는 Strimzi(K8s) 단일 경로 — 파이프라인 생성에는 kind+Strimzi가 필요하다.
+# (KafkaConnector CR apply + KafkaConnectorWatcher 상태 반영). KUBECONFIG로 대상 클러스터를 지정한다.
 
 # 외부 서비스 (Agent는 별도 FastAPI)
 ai-service:

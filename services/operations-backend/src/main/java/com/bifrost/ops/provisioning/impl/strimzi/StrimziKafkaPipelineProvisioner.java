@@ -23,7 +23,6 @@ import io.strimzi.api.kafka.model.connector.KafkaConnectorStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -41,11 +40,10 @@ import java.util.Map;
  * 구분한다(SECRET/SOURCE_CONNECTOR/SINK_CONNECTOR). 자격증명은 mapper 내부에서만 config에 주입하고
  * 로그에는 connector 이름·단계만 남긴다(설계 §1 보안, 비밀값 미노출).
  *
- * <p>구현 스왑(#16): {@code provisioning.mode=real}일 때 활성화한다. 기본(미설정)은 mock-first
- * 원칙에 따라 mock 구현(권세빈)이 담당하므로 이 빈은 생성되지 않는다.
+ * <p>{@link KafkaPipelineProvisioner}의 단일 구현이다. 파이프라인 생성은 Strimzi(K8s)를 통해
+ * 실제 KafkaConnector CR을 만든다 — 로컬에서는 kind+Strimzi가 필요하다.
  */
 @Component
-@ConditionalOnProperty(name = "provisioning.mode", havingValue = "real")
 public class StrimziKafkaPipelineProvisioner implements KafkaPipelineProvisioner {
 
     private static final Logger log = LoggerFactory.getLogger(StrimziKafkaPipelineProvisioner.class);

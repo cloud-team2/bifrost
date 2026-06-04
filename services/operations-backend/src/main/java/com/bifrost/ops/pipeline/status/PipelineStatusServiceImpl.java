@@ -25,12 +25,9 @@ import java.util.UUID;
 /**
  * pipeline 상태 변경 단일 writer 구현(#70, pipeline.md §5).
  *
- * <p>watcher/mock 모두 {@link #applyConnectorStatus}로만 들어온다. connector 상태({@code connectors}
- * 테이블, sink가 갱신)를 보고 pipeline 상태를 재계산하고, 변경된 경우에만 pipeline row를 갱신하며
- * event/audit/SSE를 발행한다. 동일 상태 반복 통지는 no-op이라 중복 이벤트가 나지 않는다.
- *
- * <p>이 빈이 존재하면 real 모드의 log-only fallback({@code PipelineStatusFallbackConfig})은
- * {@code @ConditionalOnMissingBean}으로 비활성화된다.
+ * <p>{@code KafkaConnectorWatcher}가 {@link #applyConnectorStatus}로만 들어온다. connector 상태
+ * ({@code connectors} 테이블, sink가 갱신)를 보고 pipeline 상태를 재계산하고, 변경된 경우에만 pipeline
+ * row를 갱신하며 event/audit/SSE를 발행한다. 동일 상태 반복 통지는 no-op이라 중복 이벤트가 나지 않는다.
  */
 @Service
 public class PipelineStatusServiceImpl implements PipelineStatusService {

@@ -16,7 +16,6 @@ import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
@@ -38,11 +37,8 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>재구독(#46): watch가 끊기면(onClose, abnormal) 지수 백오프로 재등록한다. 정상 이벤트 수신 시
  * 백오프를 리셋하고, 종료({@link #stop()}) 중에는 재구독하지 않는다.
- *
- * <p>스왑/의존: {@code provisioning.mode=real}일 때만 활성화한다(기본 mock에서는 watch 불필요).
  */
 @Component
-@ConditionalOnProperty(name = "provisioning.mode", havingValue = "real")
 public class KafkaConnectorWatcher {
 
     private static final Logger log = LoggerFactory.getLogger(KafkaConnectorWatcher.class);

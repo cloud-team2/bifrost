@@ -13,9 +13,8 @@ import org.springframework.stereotype.Service;
  * 파이프라인 생성/조회/삭제 호출 경로의 단일 진입점(#45).
  *
  * <p>API 계층({@code InternalController})과 provisioner 구현 사이의 seam이다. 컨트롤러는
- * 구체 구현(mock/real)을 모르고 {@link KafkaPipelineProvisioner} 포트만 의존하므로,
- * {@code provisioning.mode}로 mock({@code MockKafkaPipelineProvisioner})과
- * real({@code StrimziKafkaPipelineProvisioner})을 무중단으로 바꿔 끼울 수 있다.
+ * 구체 구현을 모르고 {@link KafkaPipelineProvisioner} 포트만 의존한다
+ * (구현체는 {@code StrimziKafkaPipelineProvisioner}).
  *
  * <p>connector 메타데이터 영속화(connectors 테이블 반영)는 watcher 상태 adapter(#46)가 맡는다.
  * 여기서는 호출 위임과 로깅 경계만 둔다.

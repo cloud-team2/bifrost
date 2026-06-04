@@ -1,8 +1,8 @@
 # EDA/CDC 파이프라인 real E2E smoke (#76 갱신)
 
-operations-backend real provisioner(`provisioning.mode=real`)가 실제 EKS 클러스터에서
-EDA/CDC 파이프라인을 생성하고 KafkaConnector가 정상 동작하는지 판정하는 smoke 절차다.
-자동화 스크립트는 [`scripts/pipeline-e2e-smoke.sh`](../../scripts/pipeline-e2e-smoke.sh).
+operations-backend가 실제 EKS 클러스터에서 EDA/CDC 파이프라인을 생성하고 KafkaConnector가 정상
+동작하는지 판정하는 smoke 절차다. provisioner는 Strimzi 단일 경로이므로 `KUBECONFIG`만 대상 클러스터로
+지정하면 된다(별도 모드 플래그 없음). 자동화 스크립트는 [`scripts/pipeline-e2e-smoke.sh`](../../scripts/pipeline-e2e-smoke.sh).
 
 ## 전제 조건
 
@@ -11,7 +11,7 @@ EDA/CDC 파이프라인을 생성하고 KafkaConnector가 정상 동작하는지
 | Kafka 클러스터 `platform-kafka` | Ready (KRaft, 3 브로커) | `kubectl get kafka -n platform-kafka` |
 | KafkaConnect `platform-connect` | `status.conditions[Ready]=True` | `kubectl get kafkaconnect -n platform-kafka` |
 | KafkaConnect 플러그인 | Debezium PG/MariaDB + JDBC Sink 포함 | `kubectl get kafkaconnect platform-connect -n platform-kafka -o jsonpath='{.status.connectorPlugins[*].class}'` |
-| operations-backend | `PROVISIONING_MODE=real` 로 기동, `/actuator/health` → UP | `curl http://localhost:8080/actuator/health` |
+| operations-backend | `KUBECONFIG`을 대상 클러스터로 지정해 기동, `/actuator/health` → UP | `curl http://localhost:8080/actuator/health` |
 | Source DB `secretRef` | `SecretStore`에 등록된 secretRef | DB 등록 API 호출 후 반환값 사용 |
 | `connectors` 테이블 | V4 마이그레이션 적용 | 앱 기동 시 Flyway 자동 실행 |
 
@@ -23,9 +23,8 @@ EDA/CDC 파이프라인을 생성하고 KafkaConnector가 정상 동작하는지
 # MetaDB 포트포워딩
 kubectl port-forward svc/metadb-service -n metadb 5433:5432 &
 
-# operations-backend 기동 (real 모드)
+# operations-backend 기동 (KUBECONFIG으로 대상 클러스터 지정)
 META_DB_URL=jdbc:postgresql://localhost:5433/metadb \
-PROVISIONING_MODE=real \
 KUBECONFIG=~/.kube/config-skala_student \
 ./gradlew :services:operations-backend:bootRun
 ```
@@ -150,7 +149,7 @@ mysql -h <sink_host> -u <user> -p<password> warehouse \
 
 ```text
 [ ] kubectl port-forward svc/metadb-service -n metadb 5433:5432
-[ ] PROVISIONING_MODE=real, KUBECONFIG=~/.kube/config-skala_student 로 앱 기동
+[ ] KUBECONFIG=~/.kube/config-skala_student 로 앱 기동
 [ ] 앱 기동 로그에서 KafkaConnectorWatcher 시작 확인 (WARN 없어야 함)
 [ ] SRC_SECRET_REF 확보 (DB 등록 API 또는 임시 seed)
 [ ] ./scripts/pipeline-e2e-smoke.sh eda → GREEN 확인

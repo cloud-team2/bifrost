@@ -15,7 +15,6 @@ import com.bifrost.ops.pipeline.dto.PipelineCreateRequest;
 import com.bifrost.ops.pipeline.dto.PipelineResponse;
 import com.bifrost.ops.pipeline.persistence.entity.PipelineEntity;
 import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
-import com.bifrost.ops.pipeline.status.PipelineActivationSimulator;
 import com.bifrost.ops.provisioning.PipelineProvisioningService;
 import com.bifrost.ops.provisioning.dto.ConnectorKind;
 import com.bifrost.ops.provisioning.dto.PipelinePattern;
@@ -29,14 +28,9 @@ import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.core.task.TaskExecutor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -47,11 +41,9 @@ import java.util.UUID;
  * 파이프라인 플랫폼 도메인(#71, FR-003~005).
  *
  * <p>생성 마법사 검증 → {@code creating} 저장 → {@link PipelineProvisioningService} 위임
- * (mock/real) → connector 메타데이터 영속화. mock mode에서는 트랜잭션 커밋 후 비동기로
- * {@code creating → active} 전이를 만든다(provisioner가 RUNNING을 보고).
- *
- * <p><b>상태 단일 writer(#70) 이관 예정</b>: 현재 active 전이는 이 서비스가 직접 수행하지만,
- * #70에서 {@code PipelineStatusService}로 옮겨 event/audit/SSE와 함께 일원화한다.
+ * (Strimzi로 KafkaConnector CR apply) → connector 메타데이터 영속화. {@code creating → active}
+ * 전이는 {@code KafkaConnectorWatcher}가 실제 connector RUNNING을 보고 {@code PipelineStatusService}
+ * (단일 writer)를 통해 만든다.
  */
 @Service
 public class PipelineService {
@@ -66,9 +58,6 @@ public class PipelineService {
     private final WorkspaceAccessGuard accessGuard;
     private final EventService eventService;
     private final AuditService auditService;
-    private final TaskExecutor activationExecutor;
-    /** mock 모드에서만 존재(real 모드는 실제 watcher가 전이). */
-    private final ObjectProvider<PipelineActivationSimulator> activationSimulator;
 
     public PipelineService(PipelineRepository pipelineRepository,
                            DatasourceRepository datasourceRepository,
@@ -77,9 +66,7 @@ public class PipelineService {
                            PipelineProvisioningService provisioningService,
                            WorkspaceAccessGuard accessGuard,
                            EventService eventService,
-                           AuditService auditService,
-                           @Qualifier("pipelineActivationExecutor") TaskExecutor activationExecutor,
-                           ObjectProvider<PipelineActivationSimulator> activationSimulator) {
+                           AuditService auditService) {
         this.pipelineRepository = pipelineRepository;
         this.datasourceRepository = datasourceRepository;
         this.workspaceRepository = workspaceRepository;
@@ -88,8 +75,6 @@ public class PipelineService {
         this.accessGuard = accessGuard;
         this.eventService = eventService;
         this.auditService = auditService;
-        this.activationExecutor = activationExecutor;
-        this.activationSimulator = activationSimulator;
     }
 
     // ---------- 목록 / 상세 ----------
@@ -161,7 +146,7 @@ public class PipelineService {
         auditService.record(wsId, principal.email(), "PIPELINE_CREATE", "PIPELINE", p.getId(),
                 "pattern=" + pattern + ", source=" + source.getId() + ", table=" + req.schema() + "." + req.table());
 
-        // provisioner 위임(mock/real). 부분 실패는 result.stage/errorCode로 구분.
+        // provisioner(Strimzi) 위임. 부분 실패는 result.stage/errorCode로 구분.
         PipelineProvisionResult result = provisioningService.provision(buildCommand(p, projectKey, source, sink, pattern));
         if (result.success()) {
             applyConnectorNames(p, result);
@@ -170,7 +155,6 @@ public class PipelineService {
             ensureConnectorRows(p, result);
             eventService.record(wsId, p.getId(), EventLevel.INFO, "PIPELINE_CREATED",
                     "pipeline '" + p.getName() + "' 생성 요청 수락(creating)");
-            scheduleActivation(p.getId());
             OpsLog.ok("Pipeline", "파이프라인 생성 요청",
                     "name=" + p.getName() + ", pattern=" + pattern + ", status=creating");
         } else {
@@ -189,9 +173,8 @@ public class PipelineService {
     }
 
     /**
-     * provision 결과의 connector를 {@code connectors} 행으로 멱등 생성한다.
-     * real provisioner는 이미 행을 만들었으므로 skip되고, mock은 여기서 행을 만들어
-     * recompute/simulator가 상태를 추적할 수 있게 한다.
+     * provision 결과의 connector를 {@code connectors} 행으로 멱등 생성한다(방어적 보강).
+     * provisioner가 이미 행을 만들었으면 skip한다.
      */
     private void ensureConnectorRows(PipelineEntity p, PipelineProvisionResult result) {
         for (PipelineProvisionResult.ConnectorRef ref : result.connectors()) {
@@ -218,7 +201,7 @@ public class PipelineService {
         if (p.getStatus() == PipelineLifecycle.CREATING) {
             throw validation("creating 상태에서는 pause할 수 없습니다");
         }
-        // 사용자 lifecycle 액션. mock: 실제 connector state patch는 real(#78). 여기서는 상태만 전이.
+        // 사용자 lifecycle 액션. 실제 connector state patch는 #78. 여기서는 상태만 전이.
         setStatus(p, PipelineLifecycle.PAUSED);
         p = pipelineRepository.saveAndFlush(p);
         recordUserAction(wsId, principal, p, "PIPELINE_PAUSE", "pipeline '" + p.getName() + "' 일시중지");
@@ -260,26 +243,6 @@ public class PipelineService {
         eventService.record(wsId, p.getId(), EventLevel.INFO, action, message);
         auditService.record(wsId, principal.email(), action, "PIPELINE", p.getId(), message);
         OpsLog.ok("Pipeline", message);
-    }
-
-    // ---------- mock active 전이 (단일 writer: PipelineStatusService 경유) ----------
-
-    /**
-     * 트랜잭션 커밋 후, mock 모드에 한해 simulator가 connector RUNNING을 통지해
-     * {@code creating → active} 전이를 만든다(PipelineStatusService 단일 writer 경유).
-     * real 모드는 simulator 빈이 없어 skip되고 실제 watcher가 전이를 만든다. 트랜잭션이 없으면 skip.
-     */
-    private void scheduleActivation(UUID pipelineId) {
-        PipelineActivationSimulator simulator = activationSimulator.getIfAvailable();
-        if (simulator == null || !TransactionSynchronizationManager.isSynchronizationActive()) {
-            return;
-        }
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                activationExecutor.execute(() -> simulator.simulateRunning(pipelineId));
-            }
-        });
     }
 
     // ---------- 내부 헬퍼 ----------

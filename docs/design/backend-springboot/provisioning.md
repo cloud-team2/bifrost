@@ -18,9 +18,9 @@
 | 플러그인 이미지 레지스트리 | **Harbor** | infra: ECR 사용 불가. 구현방법의 ECR push는 Harbor로 대체 |
 | K8s 접근 | Spring Boot의 Fabric8 Kubernetes Client | Agent는 직접 접근 금지 |
 
-### 1.1 Provisioner 추상화 (인터페이스 + mock→real)
+### 1.1 Provisioner 추상화 (인터페이스)
 
-파이프라인 생성 흐름은 실제 Kafka/K8s 구현과 **인터페이스로 분리**한다. 초기엔 local/mock 구현으로 전체 흐름(프로젝트→DB→table→Pipeline 생성 요청→provisioner 호출→상태 반영)을 먼저 연결하고, 이후 실제 Fabric8/Strimzi 구현으로 교체한다. API 계약(command/result)이 고정되므로 두 작업을 병렬로 진행할 수 있다.
+파이프라인 생성 흐름은 실제 Kafka/K8s 구현과 **인터페이스로 분리**한다. API 계약(command/result)이 고정되어 호출부는 구현을 모른다.
 
 ```java
 public interface KafkaPipelineProvisioner {
@@ -30,8 +30,7 @@ public interface KafkaPipelineProvisioner {
 }
 ```
 
-- **mock 구현체**: 실제 CR을 만들지 않고 topic/connector name·상태(`creating`/`active`)만 반환 → 프론트·상태 흐름 먼저 검증.
-- **real 구현체**: 아래 §3~§6(Fabric8/Strimzi CR 생성·watch).
+- **구현체**: `StrimziKafkaPipelineProvisioner` 단일 구현(아래 §3~§6, Fabric8/Strimzi CR 생성·watch). 파이프라인 생성은 항상 Strimzi(K8s)를 거치므로 로컬에서도 kind+Strimzi가 필요하다([local-dev-fullstack.md](../../guides/local-dev-fullstack.md) 트랙 B).
 - **부분 실패**는 result로 구분한다: Secret/Topic/Connector 중 어느 단계에서 실패했는지, Connector는 생성됐으나 state가 FAILED인지 등을 식별해 pipeline `error`로 반영.
 
 > 토픽 네이밍 규칙: **`cdc.table.{projectKey}.{dbName}.{schema}.{table}`** (table 중심). Debezium `topic.prefix = cdc.table.{projectKey}.{dbName}` → `.{schema}.{table}` 자동 부여. KafkaUser ACL은 프로젝트 격리를 위해 `cdc.table.{projectKey}.*` prefix로 부여한다.

@@ -17,7 +17,7 @@ set -euo pipefail
 #   1. operations-backend port-forward:
 #      kubectl -n bifrost-system port-forward deploy/operations-backend 8080:8080
 #      (로컬 개발 시: ./gradlew :services:operations-backend:bootRun 로 기동)
-#   2. PROVISIONING_MODE=real 로 기동
+#   2. KUBECONFIG을 대상 클러스터로 지정해 기동(provisioner는 Strimzi 단일 경로)
 #   3. SRC_SECRET_REF: DB 등록 API 또는 InMemorySecretStore에 등록된 secretRef
 #   4. KafkaConnect platform-connect Ready
 #

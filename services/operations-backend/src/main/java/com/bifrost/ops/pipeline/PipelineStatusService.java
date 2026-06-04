@@ -8,8 +8,7 @@ package com.bifrost.ops.pipeline;
  * event/audit 기록과 SSE({@code pipeline_status_changed}, {@code connector_state_changed})
  * 발행은 이 서비스 구현(권세빈)이 담당한다.
  *
- * <p>이 인터페이스는 watcher가 호출할 안정 계약이다. 구현체는 권세빈의 pipeline 도메인에 있으며,
- * 미구현 상태에서는 watcher({@code provisioning.mode=real})를 활성화하지 않는다.
+ * <p>이 인터페이스는 watcher가 호출할 안정 계약이다. 구현체는 {@code PipelineStatusServiceImpl}이다.
  */
 public interface PipelineStatusService {
 
