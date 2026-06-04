@@ -1,0 +1,35 @@
+# kind(로컬) 전용 KafkaConnect(#99). EKS는 spec.build로 이미지를 만들지만 kind는 미리 로컬 빌드해
+# `kind load`한 이미지를 직접 참조한다(non-latest 태그라 imagePullPolicy 기본 IfNotPresent → 로컬 사용).
+# 이름은 백엔드 설정(kafka-connect.cluster=platform-connect)과 동일.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaConnect
+metadata:
+  name: platform-connect
+  namespace: platform-kafka
+  annotations:
+    strimzi.io/use-connector-resources: "true"   # KafkaConnector CR을 reconcile
+spec:
+  version: 4.2.0
+  replicas: 1
+  image: bifrost/kafka-connect-kind:v1
+  bootstrapServers: platform-kafka-kafka-bootstrap:9092   # plain 리스너(인증 없음)
+  # Strimzi 1.0.0(v1)은 group/internal topic을 spec 최상위 필드로 받는다(config 안이 아님).
+  groupId: platform-connect
+  offsetStorageTopic: platform-connect-offsets
+  configStorageTopic: platform-connect-configs
+  statusStorageTopic: platform-connect-status
+  config:
+    config.storage.replication.factor: 1
+    offset.storage.replication.factor: 1
+    status.storage.replication.factor: 1
+    key.converter: org.apache.kafka.connect.json.JsonConverter
+    value.converter: org.apache.kafka.connect.json.JsonConverter
+    key.converter.schemas.enable: false
+    value.converter.schemas.enable: false
+  resources:
+    requests:
+      memory: 768Mi
+      cpu: 250m
+    limits:
+      memory: 1280Mi
+      cpu: "1"
