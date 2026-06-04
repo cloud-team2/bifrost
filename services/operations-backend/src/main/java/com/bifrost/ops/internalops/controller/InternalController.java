@@ -64,6 +64,17 @@ public class InternalController {
         return ResponseEntity.ok(pipelineService.status(projectId, connectorName));
     }
 
+    /**
+     * Canonical connector 상태 조회 (설계 §6, smoke script 및 Agent read tool 계약).
+     * {@code /internal/pipelines/status}와 동일한 서비스를 사용하며 경로만 표준화.
+     */
+    @GetMapping("/ops/projects/{projectId}/kafka/connectors/{connectorName}/status")
+    public ResponseEntity<PipelineProvisionStatus> getConnectorStatus(
+            @PathVariable String projectId,
+            @PathVariable String connectorName) {
+        return ResponseEntity.ok(pipelineService.status(projectId, connectorName));
+    }
+
     @DeleteMapping("/pipelines")
     public ResponseEntity<Void> deletePipeline(@RequestBody PipelineResourceRef resourceRef) {
         pipelineService.delete(resourceRef);
