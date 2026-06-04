@@ -3,25 +3,32 @@ package com.bifrost.ops.pipeline.service;
 import com.bifrost.ops.auth.jwt.AuthenticatedUser;
 import com.bifrost.ops.database.persistence.entity.DatasourceEntity;
 import com.bifrost.ops.database.persistence.repository.DatasourceRepository;
+import com.bifrost.ops.event.EventLevel;
+import com.bifrost.ops.event.EventService;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
+import com.bifrost.ops.governance.audit.AuditService;
 import com.bifrost.ops.pipeline.PipelineLifecycle;
 import com.bifrost.ops.pipeline.PipelinePatternCodec;
 import com.bifrost.ops.pipeline.dto.PipelineCreateRequest;
 import com.bifrost.ops.pipeline.dto.PipelineResponse;
 import com.bifrost.ops.pipeline.persistence.entity.PipelineEntity;
 import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
+import com.bifrost.ops.pipeline.status.PipelineActivationSimulator;
 import com.bifrost.ops.provisioning.PipelineProvisioningService;
+import com.bifrost.ops.provisioning.dto.ConnectorKind;
 import com.bifrost.ops.provisioning.dto.PipelinePattern;
 import com.bifrost.ops.provisioning.dto.PipelineProvisionCommand;
 import com.bifrost.ops.provisioning.dto.PipelineProvisionResult;
-import com.bifrost.ops.provisioning.dto.PipelineProvisionStatus;
 import com.bifrost.ops.provisioning.dto.PipelineResourceRef;
+import com.bifrost.ops.provisioning.persistence.entity.ConnectorEntity;
+import com.bifrost.ops.provisioning.persistence.repository.ConnectorRepository;
 import com.bifrost.ops.workspace.WorkspaceAccessGuard;
 import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -53,22 +60,35 @@ public class PipelineService {
     private final PipelineRepository pipelineRepository;
     private final DatasourceRepository datasourceRepository;
     private final WorkspaceRepository workspaceRepository;
+    private final ConnectorRepository connectorRepository;
     private final PipelineProvisioningService provisioningService;
     private final WorkspaceAccessGuard accessGuard;
+    private final EventService eventService;
+    private final AuditService auditService;
     private final TaskExecutor activationExecutor;
+    /** mock 모드에서만 존재(real 모드는 실제 watcher가 전이). */
+    private final ObjectProvider<PipelineActivationSimulator> activationSimulator;
 
     public PipelineService(PipelineRepository pipelineRepository,
                            DatasourceRepository datasourceRepository,
                            WorkspaceRepository workspaceRepository,
+                           ConnectorRepository connectorRepository,
                            PipelineProvisioningService provisioningService,
                            WorkspaceAccessGuard accessGuard,
-                           @Qualifier("pipelineActivationExecutor") TaskExecutor activationExecutor) {
+                           EventService eventService,
+                           AuditService auditService,
+                           @Qualifier("pipelineActivationExecutor") TaskExecutor activationExecutor,
+                           ObjectProvider<PipelineActivationSimulator> activationSimulator) {
         this.pipelineRepository = pipelineRepository;
         this.datasourceRepository = datasourceRepository;
         this.workspaceRepository = workspaceRepository;
+        this.connectorRepository = connectorRepository;
         this.provisioningService = provisioningService;
         this.accessGuard = accessGuard;
+        this.eventService = eventService;
+        this.auditService = auditService;
         this.activationExecutor = activationExecutor;
+        this.activationSimulator = activationSimulator;
     }
 
     // ---------- 목록 / 상세 ----------
@@ -137,22 +157,51 @@ public class PipelineService {
             throw validation("중복된 파이프라인입니다(이름 또는 source·테이블·패턴)");
         }
 
+        auditService.record(wsId, principal.email(), "PIPELINE_CREATE", "PIPELINE", p.getId(),
+                "pattern=" + pattern + ", source=" + source.getId() + ", table=" + req.schema() + "." + req.table());
+
         // provisioner 위임(mock/real). 부분 실패는 result.stage/errorCode로 구분.
         PipelineProvisionResult result = provisioningService.provision(buildCommand(p, projectKey, source, sink, pattern));
         if (result.success()) {
             applyConnectorNames(p, result);
             p.setStatusMessage(null);
             p = pipelineRepository.saveAndFlush(p);
-            scheduleActivation(p.getId(), projectKey);
+            ensureConnectorRows(p, result);
+            eventService.record(wsId, p.getId(), EventLevel.INFO, "PIPELINE_CREATED",
+                    "pipeline '" + p.getName() + "' 생성 요청 수락(creating)");
+            scheduleActivation(p.getId());
         } else {
             applyConnectorNames(p, result); // 성공한 단계까지의 connector도 기록
             p.setStatus(PipelineLifecycle.ERROR);
             p.setStatusUpdatedAt(Instant.now());
             p.setStatusMessage("provisioning 실패: stage=" + result.stage() + ", code=" + result.errorCode());
             p = pipelineRepository.saveAndFlush(p);
+            eventService.record(wsId, p.getId(), EventLevel.ERROR, "PIPELINE_CREATE_FAILED",
+                    p.getStatusMessage());
             log.warn("pipeline {} 생성 실패 — {}", p.getId(), p.getStatusMessage());
         }
         return PipelineResponse.from(p);
+    }
+
+    /**
+     * provision 결과의 connector를 {@code connectors} 행으로 멱등 생성한다.
+     * real provisioner는 이미 행을 만들었으므로 skip되고, mock은 여기서 행을 만들어
+     * recompute/simulator가 상태를 추적할 수 있게 한다.
+     */
+    private void ensureConnectorRows(PipelineEntity p, PipelineProvisionResult result) {
+        for (PipelineProvisionResult.ConnectorRef ref : result.connectors()) {
+            if (connectorRepository.findByCrName(ref.name()).isPresent()) {
+                continue;
+            }
+            ConnectorEntity c = new ConnectorEntity();
+            c.setPipelineId(p.getId());
+            c.setCrName(ref.name());
+            c.setKind(ref.kind());
+            c.setConnectorClass(ref.connectorClass());
+            c.setTasksMax(ref.kind() == ConnectorKind.SOURCE ? 1 : 3);
+            c.setState("UNASSIGNED");
+            connectorRepository.save(c);
+        }
     }
 
     // ---------- 생명주기 (skeleton) ----------
@@ -164,9 +213,11 @@ public class PipelineService {
         if (p.getStatus() == PipelineLifecycle.CREATING) {
             throw validation("creating 상태에서는 pause할 수 없습니다");
         }
-        // mock: 실제 connector state patch는 real(#78). 여기서는 상태만 전이.
+        // 사용자 lifecycle 액션. mock: 실제 connector state patch는 real(#78). 여기서는 상태만 전이.
         setStatus(p, PipelineLifecycle.PAUSED);
-        return PipelineResponse.from(pipelineRepository.saveAndFlush(p));
+        p = pipelineRepository.saveAndFlush(p);
+        recordUserAction(wsId, principal, p, "PIPELINE_PAUSE", "pipeline '" + p.getName() + "' 일시중지");
+        return PipelineResponse.from(p);
     }
 
     @Transactional
@@ -177,7 +228,9 @@ public class PipelineService {
             throw validation("paused 상태의 파이프라인만 resume할 수 있습니다");
         }
         setStatus(p, PipelineLifecycle.ACTIVE);
-        return PipelineResponse.from(pipelineRepository.saveAndFlush(p));
+        p = pipelineRepository.saveAndFlush(p);
+        recordUserAction(wsId, principal, p, "PIPELINE_RESUME", "pipeline '" + p.getName() + "' 재개");
+        return PipelineResponse.from(p);
     }
 
     @Transactional
@@ -188,46 +241,36 @@ public class PipelineService {
             throw validation("creating 상태에서는 삭제할 수 없습니다");
         }
         provisioningService.delete(new PipelineResourceRef(p.getId(), null, connectorNames(p)));
+        connectorRepository.deleteAll(connectorRepository.findByPipelineId(p.getId()));
         pipelineRepository.delete(p);
+        eventService.record(wsId, null, EventLevel.INFO, "PIPELINE_DELETED",
+                "pipeline '" + p.getName() + "' 삭제");
+        auditService.record(wsId, principal.email(), "PIPELINE_DELETE", "PIPELINE", id,
+                "pipeline '" + p.getName() + "' 삭제");
     }
 
-    // ---------- mock active 전이 (#70에서 PipelineStatusService로 이관) ----------
+    private void recordUserAction(UUID wsId, AuthenticatedUser principal, PipelineEntity p,
+                                  String action, String message) {
+        eventService.record(wsId, p.getId(), EventLevel.INFO, action, message);
+        auditService.record(wsId, principal.email(), action, "PIPELINE", p.getId(), message);
+    }
+
+    // ---------- mock active 전이 (단일 writer: PipelineStatusService 경유) ----------
 
     /**
-     * provisioner가 모든 connector를 RUNNING으로 보고하면 {@code creating → active}로 전이한다.
-     * mock provisioner는 항상 RUNNING이므로 생성 직후 active가 된다.
+     * 트랜잭션 커밋 후, mock 모드에 한해 simulator가 connector RUNNING을 통지해
+     * {@code creating → active} 전이를 만든다(PipelineStatusService 단일 writer 경유).
+     * real 모드는 simulator 빈이 없어 skip되고 실제 watcher가 전이를 만든다. 트랜잭션이 없으면 skip.
      */
-    public void activateFromProvisioner(UUID pipelineId, String projectKey) {
-        PipelineEntity p = pipelineRepository.findById(pipelineId).orElse(null);
-        if (p == null || p.getStatus() != PipelineLifecycle.CREATING) {
-            return;
-        }
-        boolean allRunning = isRunning(projectKey, p.getSourceConnectorName())
-                && (p.getSinkConnectorName() == null || isRunning(projectKey, p.getSinkConnectorName()));
-        if (allRunning) {
-            setStatus(p, PipelineLifecycle.ACTIVE);
-            pipelineRepository.save(p);
-            log.info("[mock] pipeline {} → active 전이", pipelineId);
-        }
-    }
-
-    private boolean isRunning(String projectKey, String connectorName) {
-        if (connectorName == null) {
-            return false;
-        }
-        PipelineProvisionStatus st = provisioningService.status(projectKey, connectorName);
-        return "RUNNING".equalsIgnoreCase(st.connectorState());
-    }
-
-    /** 트랜잭션 커밋 후 비동기로 active 전이를 시도한다(커밋 전 race 방지). 트랜잭션이 없으면 skip. */
-    private void scheduleActivation(UUID pipelineId, String projectKey) {
-        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+    private void scheduleActivation(UUID pipelineId) {
+        PipelineActivationSimulator simulator = activationSimulator.getIfAvailable();
+        if (simulator == null || !TransactionSynchronizationManager.isSynchronizationActive()) {
             return;
         }
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                activationExecutor.execute(() -> activateFromProvisioner(pipelineId, projectKey));
+                activationExecutor.execute(() -> simulator.simulateRunning(pipelineId));
             }
         });
     }

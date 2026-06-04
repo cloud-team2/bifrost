@@ -33,13 +33,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain chain) throws ServletException, IOException {
-        String header = request.getHeader(AUTH_HEADER);
-        if (header == null || !header.startsWith(BEARER)) {
+        String token = resolveToken(request);
+        if (token == null) {
             chain.doFilter(request, response);
             return;
         }
 
-        String token = header.substring(BEARER.length());
         try {
             Claims claims = jwtService.parse(token);
             UUID userId = UUID.fromString(claims.getSubject());
@@ -59,5 +58,23 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
 
         chain.doFilter(request, response);
+    }
+
+    /**
+     * 토큰 추출. 우선 {@code Authorization: Bearer} 헤더, 없으면 SSE 스트림 경로에 한해
+     * {@code ?access_token=} 쿼리 파라미터를 읽는다(브라우저 EventSource는 헤더를 못 붙임).
+     */
+    private static String resolveToken(HttpServletRequest request) {
+        String header = request.getHeader(AUTH_HEADER);
+        if (header != null && header.startsWith(BEARER)) {
+            return header.substring(BEARER.length());
+        }
+        if (request.getRequestURI().endsWith("/events/stream")) {
+            String param = request.getParameter("access_token");
+            if (param != null && !param.isBlank()) {
+                return param;
+            }
+        }
+        return null;
     }
 }
