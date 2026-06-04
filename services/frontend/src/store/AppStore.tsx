@@ -15,15 +15,13 @@ import {
   CLUSTER_CONNECTORS,
   CLUSTER_TOPICS,
   CONSUMER_GROUPS,
-  DEMO_ACCOUNTS,
-  EDGES,
   INCIDENTS,
   KAFKA_SECRETS,
   KAFKA_USERS,
   MEMBERS,
-  NODES,
-  PROJECTS,
 } from '../data/mock'
+import { api, setToken } from '../lib/api'
+import { datasourceToNode, pipelineToEdge, workspaceToProject } from '../lib/mappers'
 
 export type View =
   | 'pipelines'
@@ -75,7 +73,7 @@ interface Store {
   selectedPipelineId: string | null
   selectedDatabaseId: string | null
   opSelectedIncidentId: string | null
-  login: (email: string, password: string) => boolean
+  login: (email: string, password: string) => Promise<boolean>
   logout: () => void
   setProject: (p: Project | null) => void
   setView: (v: View) => void
@@ -99,8 +97,9 @@ interface Store {
   settings: AppSettings
   visibleProjects: Project[]
   /* actions */
-  createProject: (name: string) => Project
-  addDatabase: (n: Omit<Node, 'id' | 'type' | 'x' | 'y' | 'status'>) => Node
+  createProject: (name: string) => Promise<Project | null>
+  reloadProjectData: () => void
+  addDatabaseNode: (n: Node) => void
   createPipeline: (e: Omit<Edge, 'id' | 'status'>) => Edge
   setPipelineStatus: (id: string, status: Edge['status']) => void
   deletePipeline: (id: string) => void
@@ -117,14 +116,18 @@ interface Store {
 }
 
 const Ctx = createContext<Store | null>(null)
-const slugify = (s: string) =>
-  s
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
 const today = () => new Date().toISOString().slice(0, 10)
 const clock = () =>
   new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+
+function userFromEmail(email: string): User {
+  return {
+    name: email.split('@')[0],
+    email,
+    role: 'developer',
+    initial: (email[0] ?? '?').toUpperCase(),
+  }
+}
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [currentUser, setCurrentUser] = useState<User | null>(null)
@@ -136,9 +139,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [aiPanelOpen, setAiPanelOpen] = useState(false)
   const [agentTask, setAgentTask] = useState<AgentTask | null>(null)
 
-  const [projects, setProjects] = useState<Project[]>(PROJECTS)
-  const [nodes, setNodes] = useState<Node[]>(NODES)
-  const [edges, setEdges] = useState<Edge[]>(EDGES)
+  /* 실데이터: 로그인/워크스페이스 선택 시 백엔드에서 로드 */
+  const [projects, setProjects] = useState<Project[]>([])
+  const [nodes, setNodes] = useState<Node[]>([])
+  const [edges, setEdges] = useState<Edge[]>([])
+  /* 아직 미연동(W2/W3): mock 유지 */
   const [incidents, setIncidents] = useState<IncidentReport[]>(INCIDENTS)
   const [members, setMembers] = useState<Member[]>(MEMBERS)
   const [kafkaUsers, setKafkaUsers] = useState<KafkaUser[]>(KAFKA_USERS)
@@ -168,7 +173,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   /** Restore a saved position when the browser back/forward buttons fire. */
   const applySnapshot = (s: NavSnapshot) => {
-    setCurrentProject(s.projectId ? projects.find((p) => p.id === s.projectId) ?? null : null)
+    const proj = s.projectId ? projects.find((p) => p.id === s.projectId) ?? null : null
+    setCurrentProject(proj)
+    if (proj) loadProjectData(proj.id)
     setViewRaw(s.view)
     setSelectedPipelineId(s.selectedPipelineId)
     setSelectedDatabaseId(s.selectedDatabaseId)
@@ -191,6 +198,37 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('popstate', onPopState)
   }, [])
 
+  /* ----------------------------------------------------------- 데이터 로딩 */
+
+  async function loadWorkspaces() {
+    try {
+      const list = await api.listWorkspaces()
+      setProjects(list.map((w) => workspaceToProject(w)))
+    } catch {
+      setProjects([])
+    }
+  }
+
+  /** 워크스페이스 선택 시 DB·파이프라인을 백엔드에서 로드하고 project 인덱스를 채운다. */
+  async function loadProjectData(wsId: string) {
+    try {
+      const [dbs, pls] = await Promise.all([api.listDatabases(wsId), api.listPipelines(wsId)])
+      const nextNodes = dbs.map((d, i) => datasourceToNode(d, i))
+      const nextEdges = pls.map(pipelineToEdge)
+      setNodes(nextNodes)
+      setEdges(nextEdges)
+      const dbIds = nextNodes.map((n) => n.id)
+      const pipelineIds = nextEdges.map((e) => e.id)
+      setProjects((prev) =>
+        prev.map((w) => (w.id === wsId ? { ...w, dbIds, pipelineIds } : w)),
+      )
+      setCurrentProject((w) => (w && w.id === wsId ? { ...w, dbIds, pipelineIds } : w))
+    } catch {
+      setNodes([])
+      setEdges([])
+    }
+  }
+
   const value: Store = {
     currentUser,
     currentProject,
@@ -199,25 +237,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
     selectedDatabaseId,
     opSelectedIncidentId,
 
-    login(email, password) {
-      const match = DEMO_ACCOUNTS.find(
-        (a) => a.user.email === email && a.password === password,
-      )
-      if (!match) return false
-      setCurrentUser(match.user)
-      setCurrentProject(null)
-      seedNav({
-        projectId: null,
-        view: 'pipelines',
-        selectedPipelineId: null,
-        selectedDatabaseId: null,
-        opSelectedIncidentId: null,
-      })
-      return true
+    async login(email, password) {
+      try {
+        const tokens = await api.login(email, password)
+        setToken(tokens.accessToken)
+        const me = await api.me()
+        setCurrentUser(userFromEmail(me.email))
+        setCurrentProject(null)
+        await loadWorkspaces()
+        seedNav({
+          projectId: null,
+          view: 'pipelines',
+          selectedPipelineId: null,
+          selectedDatabaseId: null,
+          opSelectedIncidentId: null,
+        })
+        return true
+      } catch {
+        setToken(null)
+        return false
+      }
     },
     logout() {
+      setToken(null)
       setCurrentUser(null)
       setCurrentProject(null)
+      setProjects([])
+      setNodes([])
+      setEdges([])
       setSelectedPipelineId(null)
       setSelectedDatabaseId(null)
       setAiPanelOpen(false)
@@ -229,6 +276,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setSelectedPipelineId(null)
         setSelectedDatabaseId(null)
         setOpSelectedIncidentId(null)
+        loadProjectData(p.id)
       }
       pushNav(
         snapshot({
@@ -283,44 +331,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
     settings,
     visibleProjects: projects,
 
-    createProject(name) {
-      const p: Project = {
-        id: `proj-${Date.now()}`,
-        name,
-        slug: slugify(name),
-        ownerId: currentUser?.email ?? '',
-        pipelineIds: [],
-        dbIds: [],
-        memberCount: 1,
-        createdAt: today(),
+    async createProject(name) {
+      try {
+        const ws = await api.createWorkspace(name)
+        const p = workspaceToProject(ws)
+        setProjects((prev) => [...prev, p])
+        setCurrentProject(p)
+        setViewRaw('pipelines')
+        setSelectedPipelineId(null)
+        setSelectedDatabaseId(null)
+        setOpSelectedIncidentId(null)
+        setNodes([])
+        setEdges([])
+        pushNav(
+          snapshot({
+            projectId: p.id,
+            view: 'pipelines',
+            selectedPipelineId: null,
+            selectedDatabaseId: null,
+            opSelectedIncidentId: null,
+          }),
+        )
+        return p
+      } catch {
+        return null
       }
-      setProjects((prev) => [...prev, p])
-      setCurrentProject(p)
-      setViewRaw('pipelines')
-      setSelectedPipelineId(null)
-      setSelectedDatabaseId(null)
-      setOpSelectedIncidentId(null)
-      pushNav(
-        snapshot({
-          projectId: p.id,
-          view: 'pipelines',
-          selectedPipelineId: null,
-          selectedDatabaseId: null,
-          opSelectedIncidentId: null,
-        }),
-      )
-      return p
     },
 
-    addDatabase(draft) {
-      const node: Node = {
-        ...draft,
-        id: `db-${Date.now()}`,
-        type: 'database',
-        status: 'healthy',
-        x: 120,
-        y: 440,
-      }
+    reloadProjectData() {
+      if (currentProject) loadProjectData(currentProject.id)
+    },
+
+    addDatabaseNode(node) {
       setNodes((p) => [...p, node])
       if (currentProject) {
         setProjects((p) =>
@@ -330,7 +372,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         )
         setCurrentProject((w) => (w ? { ...w, dbIds: [...w.dbIds, node.id] } : w))
       }
-      return node
     },
 
     createPipeline(draft) {
@@ -345,9 +386,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         )
         setCurrentProject((w) => (w ? { ...w, pipelineIds: [...w.pipelineIds, id] } : w))
       }
-      setTimeout(() => {
-        setEdges((p) => p.map((e) => (e.id === id ? { ...e, status: 'active' } : e)))
-      }, 3000)
       return edge
     },
 

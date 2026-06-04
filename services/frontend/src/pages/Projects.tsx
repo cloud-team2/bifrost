@@ -171,9 +171,18 @@ export function CreateProjectModal({ open, onClose }: { open: boolean; onClose: 
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
 
-  function handleCreate() {
-    app.createProject(name.trim())
-    toast(`프로젝트 "${name.trim()}" 생성됨`)
+  const [busy, setBusy] = useState(false)
+
+  async function handleCreate() {
+    if (busy || !name.trim()) return
+    setBusy(true)
+    const created = await app.createProject(name.trim())
+    setBusy(false)
+    if (!created) {
+      toast('프로젝트 생성에 실패했습니다')
+      return
+    }
+    toast(`프로젝트 "${created.name}" 생성됨`)
     onClose()
     setName('')
   }
@@ -194,11 +203,11 @@ export function CreateProjectModal({ open, onClose }: { open: boolean; onClose: 
             Cancel
           </button>
           <button
-            disabled={!name.trim()}
+            disabled={!name.trim() || busy}
             onClick={handleCreate}
             className="rounded-md bg-brand-600 px-3.5 py-1.5 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:bg-brand-300"
           >
-            Create
+            {busy ? 'Creating…' : 'Create'}
           </button>
         </>
       }
