@@ -1,22 +1,18 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Modal } from '../../components/Modal'
 import { Icon } from '../../components/Icon'
 import { TechIcon, nodeKind } from '../../components/TechIcon'
-import { StatusBadge } from '../../components/blocks'
 import { useToast } from '../../components/Toast'
 import { useApp } from '../../store/AppStore'
 import type { EdgePattern, Node } from '../../data/types'
 import { nodeName } from '../../data/helpers'
 import { cn } from '../../lib/format'
+import { ApiError, api, type SchemaTable } from '../../lib/api'
 
-const TABLE_POOL: { name: string; status: 'ok' | 'warning' | 'blocked' }[] = [
-  { name: 'orders', status: 'ok' },
-  { name: 'order_items', status: 'ok' },
-  { name: 'customers', status: 'ok' },
-  { name: 'payments', status: 'warning' },
-  { name: 'audit_log', status: 'ok' },
-  { name: 'legacy_events', status: 'blocked' },
-]
+interface SelectedTable {
+  schema: string
+  name: string
+}
 
 /* ---------------------------------------------------------------- Glossary tooltip */
 
@@ -62,13 +58,42 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
   const [pattern, setPattern] = useState<EdgePattern | null>(null)
   const [sourceId, setSourceId] = useState('')
   const [sinkId, setSinkId] = useState('')
-  const [table, setTable] = useState('')
+  const [selTable, setSelTable] = useState<SelectedTable | null>(null)
   const [name, setName] = useState('')
+  const [tables, setTables] = useState<SchemaTable[]>([])
+  const [tablesLoading, setTablesLoading] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
 
+  const wsId = app.currentProject?.id ?? null
   const dbs = useMemo(
     () => app.nodes.filter((n) => n.type === 'database' && app.currentProject?.dbIds.includes(n.id)),
     [app.nodes, app.currentProject],
   )
+
+  // Source DB 선택 후 실제 스키마(테이블) 로드. BLOCKED DB는 picker에서 선택 불가.
+  useEffect(() => {
+    if (!wsId || !sourceId) {
+      setTables([])
+      return
+    }
+    let cancelled = false
+    setTablesLoading(true)
+    api
+      .databaseSchema(wsId, sourceId)
+      .then((res) => {
+        if (!cancelled) setTables(res.tables)
+      })
+      .catch(() => {
+        if (!cancelled) setTables([])
+      })
+      .finally(() => {
+        if (!cancelled) setTablesLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [wsId, sourceId])
   const steps = pattern === 'direct'
     ? ['연결 방식', 'Source DB', 'Sink DB', '테이블', '확인']
     : ['연결 방식', 'Source DB', '테이블', '확인']
@@ -78,17 +103,17 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
     setPattern(null)
     setSourceId('')
     setSinkId('')
-    setTable('')
+    setSelTable(null)
     setName('')
+    setTables([])
+    setBusy(false)
+    setError('')
   }
   function close() {
     onClose()
     setTimeout(reset, 200)
   }
 
-  const topic = pattern === 'direct'
-    ? `cdc.${table || 'table'}.cdc`
-    : `eda.${table || 'table'}.events`
   const stepKey = steps[step]
 
   const canNext =
@@ -99,24 +124,27 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
         : stepKey === 'Sink DB'
           ? !!sinkId
           : stepKey === '테이블'
-            ? !!table
+            ? !!selTable
             : !!name.trim()
 
-  function create() {
-    if (!pattern || !sourceId) return
-    app.createPipeline({
-      name: name.trim().toLowerCase().replace(/\s+/g, '-'),
-      alias: name.trim(),
+  async function create() {
+    if (!pattern || !sourceId || !selTable || !wsId || busy) return
+    setBusy(true)
+    setError('')
+    const created = await app.createPipeline({
+      name: name.trim(),
       pattern,
-      source: sourceId,
-      sink: pattern === 'direct' ? sinkId : null,
-      consumers: pattern === 'fan-out' ? [] : undefined,
-      table: { schema: 'public', name: table },
-      topic,
-      partitions: 3,
-      metrics: { produce_rate: 0, consume_rate: 0, lag: 0, error_pct: 0 },
+      sourceDbId: sourceId,
+      sinkDbId: pattern === 'direct' ? sinkId : null,
+      schema: selTable.schema,
+      table: selTable.name,
     })
-    toast('파이프라인 생성됨 — 약 3초 후 활성화됩니다')
+    setBusy(false)
+    if (!created) {
+      setError('파이프라인 생성에 실패했습니다. 입력값을 확인하세요.')
+      return
+    }
+    toast('파이프라인 생성 요청됨 — 활성화되면 자동 반영됩니다')
     close()
   }
 
@@ -145,11 +173,11 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
             </button>
           ) : (
             <button
-              disabled={!canNext}
+              disabled={!canNext || busy}
               onClick={create}
               className="rounded-md bg-brand-600 px-4 py-1.5 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:bg-brand-300"
             >
-              파이프라인 생성
+              {busy ? '생성 중…' : '파이프라인 생성'}
             </button>
           )}
         </>
@@ -248,8 +276,15 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
         <DbPicker
           dbs={stepKey === 'Sink DB' ? dbs.filter((d) => d.id !== sourceId) : dbs}
           selected={stepKey === 'Sink DB' ? sinkId : sourceId}
-          onSelect={(id) => (stepKey === 'Sink DB' ? setSinkId(id) : setSourceId(id))}
+          onSelect={(id) => {
+            if (stepKey === 'Sink DB') setSinkId(id)
+            else {
+              setSourceId(id)
+              setSelTable(null)
+            }
+          }}
           label={stepKey === 'Sink DB' ? '데이터를 받을 DB를 선택하세요' : '변경을 감지할 DB를 선택하세요'}
+          disableBlocked={stepKey === 'Source DB'}
         />
       )}
 
@@ -257,52 +292,59 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
       {stepKey === '테이블' && (
         <div>
           <div className="mb-2 text-[12.5px] text-gray-500">변경을 감지할 테이블을 하나 선택하세요</div>
-          <div className="space-y-1.5">
-            {TABLE_POOL.map((t) => {
-              const selected = table === t.name
-              const blocked  = t.status === 'blocked'
-              return (
-                <label
-                  key={t.name}
-                  className={cn(
-                    'flex w-full cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 transition-colors',
-                    blocked      ? 'cursor-not-allowed border-gray-100 bg-gray-50 opacity-50'
-                    : selected   ? 'border-brand-500 bg-brand-50'
-                    : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50',
-                  )}
-                >
-                  <input
-                    type="radio"
-                    name="table"
-                    value={t.name}
-                    disabled={blocked}
-                    checked={selected}
-                    onChange={() => setTable(t.name)}
-                    className="sr-only"
-                  />
-                  {/* custom radio indicator */}
-                  <span className={cn(
-                    'flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 transition-colors',
-                    blocked   ? 'border-gray-300'
-                    : selected ? 'border-brand-600 bg-brand-600'
-                    : 'border-gray-300',
-                  )}>
-                    {selected && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
-                  </span>
-                  <Icon name="table" size={14} className={selected ? 'text-brand-500' : 'text-gray-400'} />
-                  <span className={cn(
-                    'flex-1 font-mono text-[12.5px]',
-                    selected ? 'font-semibold text-brand-700' : 'text-gray-800',
-                  )}>
-                    public.{t.name}
-                  </span>
-                  {t.status === 'ok'      && <StatusBadge status="healthy" label="사용 가능" />}
-                  {t.status === 'warning' && <StatusBadge status="warning" label="확인 권장" />}
-                  {t.status === 'blocked' && <StatusBadge status="error"   label="사용 불가" />}
-                </label>
-              )
-            })}
-          </div>
+          {tablesLoading ? (
+            <div className="rounded-lg border border-dashed border-gray-200 px-3 py-6 text-center text-[12.5px] text-gray-400">
+              스키마를 불러오는 중…
+            </div>
+          ) : tables.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-gray-200 px-3 py-6 text-center text-[12.5px] text-gray-400">
+              조회된 테이블이 없습니다.
+            </div>
+          ) : (
+            <div className="max-h-[280px] space-y-1.5 overflow-y-auto">
+              {tables.map((t) => {
+                const selected = selTable?.schema === t.schema && selTable?.name === t.name
+                return (
+                  <label
+                    key={`${t.schema}.${t.name}`}
+                    className={cn(
+                      'flex w-full cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 transition-colors',
+                      selected
+                        ? 'border-brand-500 bg-brand-50'
+                        : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50',
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name="table"
+                      value={`${t.schema}.${t.name}`}
+                      checked={selected}
+                      onChange={() => setSelTable({ schema: t.schema, name: t.name })}
+                      className="sr-only"
+                    />
+                    <span
+                      className={cn(
+                        'flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 transition-colors',
+                        selected ? 'border-brand-600 bg-brand-600' : 'border-gray-300',
+                      )}
+                    >
+                      {selected && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+                    </span>
+                    <Icon name="table" size={14} className={selected ? 'text-brand-500' : 'text-gray-400'} />
+                    <span
+                      className={cn(
+                        'flex-1 font-mono text-[12.5px]',
+                        selected ? 'font-semibold text-brand-700' : 'text-gray-800',
+                      )}
+                    >
+                      {t.schema}.{t.name}
+                    </span>
+                    <span className="text-[11px] text-gray-400">{t.columns.length} cols</span>
+                  </label>
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -310,7 +352,7 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
       {stepKey === '확인' && (
         <div>
           <div className="flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-4">
-            <FlowNode node={app.nodes.find((n) => n.id === sourceId)} caption={`[${table}]`} />
+            <FlowNode node={app.nodes.find((n) => n.id === sourceId)} caption={`[${selTable?.name ?? ''}]`} />
             <Icon name="arrow-right" size={16} className="text-gray-300" />
             <div className="flex flex-col items-center">
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-zinc-800 text-white">
@@ -339,6 +381,12 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
               placeholder="예: 주문 이벤트 스트림"
               className="h-10 w-full rounded-md border border-gray-300 px-3 text-sm outline-none focus:border-brand-600 focus:ring-1 focus:ring-brand-600"
             />
+            {error && (
+              <div className="mt-2 flex items-center gap-1.5 text-[12px] font-medium text-rose-600">
+                <Icon name="x" size={13} strokeWidth={3} />
+                {error}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -351,35 +399,57 @@ function DbPicker({
   selected,
   onSelect,
   label,
+  disableBlocked = false,
 }: {
   dbs: Node[]
   selected: string
   onSelect: (id: string) => void
   label: string
+  disableBlocked?: boolean
 }) {
   return (
     <div>
       <div className="mb-2 text-[12.5px] text-gray-500">{label}</div>
       <div className="space-y-1.5">
-        {dbs.map((d) => (
-          <button
-            key={d.id}
-            onClick={() => onSelect(d.id)}
-            className={cn(
-              'flex w-full items-center gap-2.5 rounded-lg border px-3 py-2 text-left transition-colors',
-              selected === d.id ? 'border-brand-500 bg-brand-50' : 'border-gray-200 hover:border-gray-300',
-            )}
-          >
-            <TechIcon kind={nodeKind(d)} size={32} />
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-[13px] font-medium text-gray-800">{nodeName(d)}</div>
-              <div className="truncate font-mono text-[11px] text-gray-400">{d.host}</div>
-            </div>
-            <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
-              {d.tech}
-            </span>
-          </button>
-        ))}
+        {dbs.map((d) => {
+          // Node.status는 cdc readiness에서 파생(BLOCKED→error, WARNING→warning).
+          const blocked = disableBlocked && d.status === 'error'
+          const warn = d.status === 'warning'
+          return (
+            <button
+              key={d.id}
+              disabled={blocked}
+              onClick={() => onSelect(d.id)}
+              className={cn(
+                'flex w-full items-center gap-2.5 rounded-lg border px-3 py-2 text-left transition-colors',
+                blocked
+                  ? 'cursor-not-allowed border-gray-100 bg-gray-50 opacity-50'
+                  : selected === d.id
+                    ? 'border-brand-500 bg-brand-50'
+                    : 'border-gray-200 hover:border-gray-300',
+              )}
+            >
+              <TechIcon kind={nodeKind(d)} size={32} />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[13px] font-medium text-gray-800">{nodeName(d)}</div>
+                <div className="truncate font-mono text-[11px] text-gray-400">{d.host}</div>
+              </div>
+              {blocked && (
+                <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700">
+                  CDC 차단
+                </span>
+              )}
+              {warn && !blocked && (
+                <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
+                  경고
+                </span>
+              )}
+              <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
+                {d.tech}
+              </span>
+            </button>
+          )
+        })}
         {dbs.length === 0 && (
           <div className="rounded-lg border border-dashed border-gray-200 px-3 py-6 text-center text-[12.5px] text-gray-400">
             등록된 데이터베이스가 없습니다. 먼저 DB를 등록해주세요.

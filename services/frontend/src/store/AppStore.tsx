@@ -20,7 +20,7 @@ import {
   KAFKA_USERS,
   MEMBERS,
 } from '../data/mock'
-import { api, setToken } from '../lib/api'
+import { api, setToken, type PipelineCreateInput } from '../lib/api'
 import { datasourceToNode, pipelineToEdge, workspaceToProject } from '../lib/mappers'
 
 export type View =
@@ -100,9 +100,11 @@ interface Store {
   createProject: (name: string) => Promise<Project | null>
   reloadProjectData: () => void
   addDatabaseNode: (n: Node) => void
-  createPipeline: (e: Omit<Edge, 'id' | 'status'>) => Edge
+  createPipeline: (input: PipelineCreateInput) => Promise<Edge | null>
+  pausePipeline: (id: string) => Promise<void>
+  resumePipeline: (id: string) => Promise<void>
   setPipelineStatus: (id: string, status: Edge['status']) => void
-  deletePipeline: (id: string) => void
+  deletePipeline: (id: string) => Promise<void>
   runIncidentAction: (incidentId: string, actionId: string) => void
   addMember: (email: string, role: Role) => void
   removeMember: (email: string) => void
@@ -197,6 +199,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
   }, [])
+
+  /* 워크스페이스 SSE: pipeline_status_changed로 creating→active 등 실시간 상태 반영(#73). */
+  useEffect(() => {
+    const wsId = currentProject?.id
+    if (!wsId) return
+    const es = new EventSource(api.eventStreamUrl(wsId))
+    es.addEventListener('pipeline_status_changed', (e) => {
+      try {
+        const data = JSON.parse((e as MessageEvent).data) as { pipelineId: string; status: Edge['status'] }
+        setEdges((prev) =>
+          prev.map((edge) => (edge.id === data.pipelineId ? { ...edge, status: data.status } : edge)),
+        )
+      } catch {
+        /* malformed payload — ignore */
+      }
+    })
+    // onerror 시 EventSource가 자동 재연결한다(워크스페이스 변경/언마운트 시 close).
+    return () => es.close()
+  }, [currentProject?.id])
 
   /* ----------------------------------------------------------- 데이터 로딩 */
 
@@ -374,26 +395,47 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     },
 
-    createPipeline(draft) {
-      const id = `pl-${Date.now()}`
-      const edge: Edge = { ...draft, id, status: 'creating' }
-      setEdges((p) => [...p, edge])
-      if (currentProject) {
+    async createPipeline(input) {
+      if (!currentProject) return null
+      try {
+        const created = await api.createPipeline(currentProject.id, input)
+        const edge = pipelineToEdge(created)
+        setEdges((p) => [...p, edge])
         setProjects((p) =>
           p.map((w) =>
-            w.id === currentProject.id ? { ...w, pipelineIds: [...w.pipelineIds, id] } : w,
+            w.id === currentProject.id ? { ...w, pipelineIds: [...w.pipelineIds, edge.id] } : w,
           ),
         )
-        setCurrentProject((w) => (w ? { ...w, pipelineIds: [...w.pipelineIds, id] } : w))
+        setCurrentProject((w) => (w ? { ...w, pipelineIds: [...w.pipelineIds, edge.id] } : w))
+        return edge
+      } catch {
+        return null
       }
-      return edge
+    },
+
+    async pausePipeline(id) {
+      if (!currentProject) return
+      const p = await api.pausePipeline(currentProject.id, id)
+      setEdges((prev) => prev.map((e) => (e.id === id ? { ...e, status: p.status } : e)))
+    },
+    async resumePipeline(id) {
+      if (!currentProject) return
+      const p = await api.resumePipeline(currentProject.id, id)
+      setEdges((prev) => prev.map((e) => (e.id === id ? { ...e, status: p.status } : e)))
     },
 
     setPipelineStatus(id, status) {
       setEdges((p) => p.map((e) => (e.id === id ? { ...e, status } : e)))
     },
 
-    deletePipeline(id) {
+    async deletePipeline(id) {
+      if (currentProject) {
+        try {
+          await api.deletePipeline(currentProject.id, id)
+        } catch {
+          return
+        }
+      }
       setEdges((p) => p.filter((e) => e.id !== id))
       setProjects((p) =>
         p.map((w) => ({ ...w, pipelineIds: w.pipelineIds.filter((x) => x !== id) })),

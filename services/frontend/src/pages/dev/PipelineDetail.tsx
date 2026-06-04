@@ -355,10 +355,10 @@ export function PipelineDetail() {
           <StatusBadge status={edge.status} />
           <div className="flex-1" />
           {edge.status === 'paused'
-            ? <ActBtn icon="play"  label="Resume" onClick={() => { app.setPipelineStatus(edge.id, 'active'); toast('Pipeline resumed') }} />
-            : <ActBtn icon="pause" label="Pause"  onClick={() => { app.setPipelineStatus(edge.id, 'paused'); toast('Pipeline paused') }} />}
+            ? <ActBtn icon="play"  label="Resume" onClick={async () => { await app.resumePipeline(edge.id); toast('Pipeline resumed') }} />
+            : <ActBtn icon="pause" label="Pause"  onClick={async () => { await app.pausePipeline(edge.id); toast('Pipeline paused') }} />}
           <ActBtn icon="trash" label="Delete" danger
-            onClick={() => { app.deletePipeline(edge.id); toast('Pipeline deleted', 'info'); app.setView('pipelines') }} />
+            onClick={async () => { await app.deletePipeline(edge.id); toast('Pipeline deleted', 'info'); app.setView('pipelines') }} />
         </div>
         <div className="mt-2.5 flex items-center gap-2 font-mono text-[12px] text-gray-500">
           <span className="text-gray-700">{source.alias ?? source.label}</span>
