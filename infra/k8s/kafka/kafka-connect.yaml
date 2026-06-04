@@ -47,15 +47,17 @@ spec:
   statusStorageTopic: platform-connect-status
 
   config:
-    offset.storage.replication.factor: 1
-    config.storage.replication.factor: 1
-    status.storage.replication.factor: 1
+    # dev 클러스터 3 브로커 기준 replication factor (운영은 3으로 올릴 것)
+    offset.storage.replication.factor: 3
+    config.storage.replication.factor: 3
+    status.storage.replication.factor: 3
     key.converter: org.apache.kafka.connect.json.JsonConverter
     value.converter: org.apache.kafka.connect.json.JsonConverter
     key.converter.schemas.enable: "false"
     value.converter.schemas.enable: "false"
     topic.creation.enable: "true"
-    topic.creation.default.replication.factor: "1"
+    # pipeline 생성 시 Debezium이 자동 생성하는 CDC 토픽 기본값 (설계 §4.1)
+    topic.creation.default.replication.factor: "3"
     topic.creation.default.partitions: "3"
     topic.creation.default.cleanup.policy: delete
     topic.creation.default.retention.ms: "604800000"

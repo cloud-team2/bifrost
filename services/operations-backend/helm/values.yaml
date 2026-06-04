@@ -19,10 +19,17 @@ resources:
 
 env:
   SPRING_PROFILES_ACTIVE: prod
-  META_DB_URL: jdbc:postgresql://meta-db.platform.svc.cluster.local:5432/metadb
-  KAFKA_BOOTSTRAP: kafka-bootstrap.platform-kafka.svc.cluster.local:9092
-  # orchestrator는 모놀리스로 흡수되어 in-process — 별도 URL 불필요
-  AI_SERVICE_URL: http://ai-service.platform.svc.cluster.local:8082
+  # metadb: namespace=metadb, service=metadb-service (실제 manifest 기준)
+  META_DB_URL: jdbc:postgresql://metadb-service.metadb.svc.cluster.local:5432/metadb
+  # Kafka: plain 9092 (dev 환경, 운영 전 scram 9094로 교체)
+  KAFKA_BOOTSTRAP: platform-kafka-kafka-bootstrap.platform-kafka.svc.cluster.local:9092
+  AI_SERVICE_URL: http://ai-service.bifrost-system.svc.cluster.local:8082
+  # Provisioning 모드: real = Fabric8/Strimzi CR 생성, mock = in-memory stub
+  PROVISIONING_MODE: real
+  # Kafka 클러스터/Connect 식별자 (application-dev.yml 기본값과 일치)
+  KAFKA_CLUSTER_NAME: platform-kafka
+  KAFKA_CLUSTER_NAMESPACE: platform-kafka
+  KAFKA_CONNECT_CLUSTER: platform-connect
 
 secrets:
   jwtSecret: ""        # K8s Secret 'jwt-secret' 참조
