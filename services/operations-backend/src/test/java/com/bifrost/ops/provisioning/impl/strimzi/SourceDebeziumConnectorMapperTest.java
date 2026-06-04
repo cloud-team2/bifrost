@@ -15,7 +15,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 /** Source Debezium mapper(설계 §2 4.1) 단위 테스트. */
 class SourceDebeziumConnectorMapperTest {
 
-    private final SourceDebeziumConnectorMapper mapper = new SourceDebeziumConnectorMapper();
+    private final SourceDebeziumConnectorMapper mapper =
+            new SourceDebeziumConnectorMapper("localhost:9092");
     private static final String NS = "platform-kafka";
     private static final String CLUSTER = "platform-connect";
 
@@ -63,7 +64,11 @@ class SourceDebeziumConnectorMapperTest {
                 .isEqualTo(SourceDebeziumConnectorMapper.MARIADB_CLASS);
         Map<String, Object> config = cr.getSpec().getConfig();
         assertThat(config).containsKey("database.server.id");
-        assertThat(config).containsEntry("database.include.list", "public");
+        // database.include.list = dbName (단일 DB 범위로 좁힘, schema 아님)
+        assertThat(config).containsEntry("database.include.list", "shop");
+        assertThat(config).containsKey("schema.history.internal.kafka.bootstrap.servers");
+        assertThat(config).containsKey("schema.history.internal.kafka.topic");
+        assertThat(config).containsEntry("snapshot.mode", "initial");
         assertThat(config).doesNotContainKey("plugin.name");
     }
 }

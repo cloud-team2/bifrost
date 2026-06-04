@@ -6,6 +6,7 @@ import com.bifrost.ops.provisioning.naming.ConnectorNaming;
 import com.bifrost.ops.secret.DbCredential;
 import io.strimzi.api.kafka.model.connector.KafkaConnector;
 import io.strimzi.api.kafka.model.connector.KafkaConnectorBuilder;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.UUID;
@@ -33,6 +34,15 @@ public class SourceDebeziumConnectorMapper {
     public static final String CLUSTER_LABEL = "strimzi.io/cluster";
     public static final String POSTGRES_CLASS = "io.debezium.connector.postgresql.PostgresConnector";
     public static final String MARIADB_CLASS = "io.debezium.connector.mariadb.MariaDbConnector";
+
+    /** MariaDB schema history를 저장할 Kafka bootstrap. Connect 내부 접근이므로 plain 9092 사용. */
+    private final String kafkaBootstrapServers;
+
+    public SourceDebeziumConnectorMapper(
+            @Value("${spring.kafka.bootstrap-servers:platform-kafka-kafka-bootstrap.platform-kafka.svc.cluster.local:9092}")
+            String kafkaBootstrapServers) {
+        this.kafkaBootstrapServers = kafkaBootstrapServers;
+    }
 
     /**
      * source KafkaConnector CR을 만든다.
@@ -91,13 +101,18 @@ public class SourceDebeziumConnectorMapper {
                     .addToConfig("slot.name", slotName(projectKey, pipelineId))
                     .addToConfig("publication.name", publicationName(projectKey, pipelineId))
                     .endSpec();
-            // MariaDB(Debezium binlog)는 server id가 클러스터 내 유일해야 한다.
-            // 단일 테이블만 캡처하므로 database.include.list = schema(=db 이름)로 좁힌다.
+            // MariaDB(Debezium binlog): server id는 클러스터 내 유일해야 하므로 pipelineId 해시 사용.
+            // 단일 테이블만 캡처하므로 database.include.list = dbName으로 좁힌다.
+            // schema.history는 Connect 내부 Kafka 토픽에 저장하며 pipeline별로 격리한다.
             case MARIADB -> builder.editSpec()
                     .addToConfig("database.server.id", String.valueOf(serverId(pipelineId)))
-                    .addToConfig("database.include.list", src.schema())
-                    // TODO(#12 real 마감): schema history 토픽/Kafka 접속 override(producer/consumer
-                    //  sasl)와 snapshot.mode 등 운영 튜닝은 real 연동 시 확정한다.
+                    .addToConfig("database.include.list", src.dbName())
+                    // schema history: pipeline별 토픽으로 격리, Connect 내부 Kafka 접속
+                    .addToConfig("schema.history.internal.kafka.bootstrap.servers", kafkaBootstrapServers)
+                    .addToConfig("schema.history.internal.kafka.topic",
+                            schemaHistoryTopic(projectKey, pipelineId))
+                    // snapshot.mode: initial(첫 기동 시 전체 스냅샷 후 CDC). 이미 기동된 적 있으면 schema_only.
+                    .addToConfig("snapshot.mode", "initial")
                     .endSpec();
             default -> throw new IllegalArgumentException("unsupported engine: " + src.engine());
         }
@@ -124,5 +139,11 @@ public class SourceDebeziumConnectorMapper {
     private int serverId(UUID pipelineId) {
         int h = pipelineId.hashCode() & 0x7fffffff;
         return h == 0 ? 1 : h;
+    }
+
+    /** MariaDB schema history 토픽 이름: pipeline별 격리. */
+    private String schemaHistoryTopic(String projectKey, UUID pipelineId) {
+        String pid = pipelineId.toString().replace("-", "").substring(0, 8);
+        return "schema-history." + projectKey + "." + pid;
     }
 }

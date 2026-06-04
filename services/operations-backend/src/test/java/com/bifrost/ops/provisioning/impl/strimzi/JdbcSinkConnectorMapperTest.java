@@ -47,5 +47,11 @@ class JdbcSinkConnectorMapperTest {
         assertThat(config).containsEntry("connection.user", "sinker");
         assertThat(config).containsEntry("insert.mode", "upsert");
         assertThat(config).containsEntry("pk.mode", "record_key");
+        // Debezium envelope 평탄화 SMT
+        assertThat(config).containsEntry("transforms", "unwrap");
+        assertThat(config).containsEntry("transforms.unwrap.type",
+                "io.debezium.transforms.ExtractNewRecordState");
+        assertThat(config).containsEntry("transforms.unwrap.delete.handling.mode", "none");
+        assertThat(config).containsEntry("transforms.unwrap.drop.tombstones", "true");
     }
 }
