@@ -11,8 +11,10 @@ import com.bifrost.ops.provisioning.persistence.repository.ConnectorRepository;
 import com.bifrost.ops.secret.DbCredential;
 import com.bifrost.ops.secret.SecretStore;
 import com.bifrost.ops.secret.SecretStoreException;
+import io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinitionBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.server.mock.EnableKubernetesMockClient;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
@@ -37,7 +39,32 @@ class StrimziKafkaPipelineProvisionerTest {
     private static final String NS = "platform-kafka";
     private static final String CLUSTER = "platform-connect";
 
-    private final SourceDebeziumConnectorMapper sourceMapper = new SourceDebeziumConnectorMapper();
+    @BeforeEach
+    void registerKafkaConnectorCrd() {
+        // mock 서버에 kafka.strimzi.io/v1 KafkaConnector CRD 등록
+        // applyConnector()가 v1 apiVersion으로 CR을 apply하므로 mock이 이를 인식해야 한다.
+        client.apiextensions().v1().customResourceDefinitions().resource(
+                new CustomResourceDefinitionBuilder()
+                        .withNewMetadata().withName("kafkaconnectors.kafka.strimzi.io").endMetadata()
+                        .withNewSpec()
+                            .withGroup("kafka.strimzi.io")
+                            .withScope("Namespaced")
+                            .withNewNames()
+                                .withPlural("kafkaconnectors")
+                                .withSingular("kafkaconnector")
+                                .withKind("KafkaConnector")
+                            .endNames()
+                            .addNewVersion().withName("v1").withServed(true).withStorage(true)
+                                .withNewSchema().withNewOpenAPIV3Schema().withType("object")
+                                .endOpenAPIV3Schema().endSchema()
+                            .endVersion()
+                        .endSpec()
+                        .build()
+        ).create();
+    }
+
+    private final SourceDebeziumConnectorMapper sourceMapper =
+            new SourceDebeziumConnectorMapper("localhost:9092");
     private final JdbcSinkConnectorMapper sinkMapper = new JdbcSinkConnectorMapper();
 
     private PipelineProvisionCommand.Endpoint pgEndpoint(String table) {

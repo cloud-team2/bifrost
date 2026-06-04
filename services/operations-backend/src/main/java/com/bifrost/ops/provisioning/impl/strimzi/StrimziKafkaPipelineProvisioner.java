@@ -132,11 +132,9 @@ public class StrimziKafkaPipelineProvisioner implements KafkaPipelineProvisioner
 
     @Override
     public PipelineProvisionStatus getConnectorStatus(String projectId, String connectorName) {
-        // genericKubernetesResources로 v1 명시 — typed API는 v1beta2로 조회해 404 반환
-        GenericKubernetesResource generic = k8s.genericKubernetesResources("kafka.strimzi.io/v1", "KafkaConnector")
-                .inNamespace(namespace)
-                .withName(connectorName)
-                .get();
+        // typed API는 v1beta2 URL로 조회해 클러스터가 404를 반환하므로 generic resource로 v1 명시
+        GenericKubernetesResource template = buildConnectorTemplate(connectorName);
+        GenericKubernetesResource generic = k8s.resource(template).inNamespace(namespace).get();
         if (generic == null) {
             return new PipelineProvisionStatus(connectorName, "UNKNOWN", List.of());
         }
@@ -148,10 +146,21 @@ public class StrimziKafkaPipelineProvisioner implements KafkaPipelineProvisioner
     public void deletePipelineResources(PipelineResourceRef resourceRef) {
         String ns = resourceRef.namespace() != null ? resourceRef.namespace() : namespace;
         for (String name : resourceRef.connectorNames()) {
-            k8s.genericKubernetesResources("kafka.strimzi.io/v1", "KafkaConnector")
-                    .inNamespace(ns).withName(name).delete();
+            k8s.resource(buildConnectorTemplate(name)).inNamespace(ns).delete();
             log.info("connector 삭제 요청: namespace={}, name={}", ns, name);
         }
+    }
+
+    /** 이름만 있는 v1 KafkaConnector GenericKubernetesResource(get/delete용 key 객체). */
+    private GenericKubernetesResource buildConnectorTemplate(String name) {
+        GenericKubernetesResource template = new GenericKubernetesResource();
+        template.setApiVersion("kafka.strimzi.io/v1");
+        template.setKind("KafkaConnector");
+        io.fabric8.kubernetes.api.model.ObjectMeta meta = new io.fabric8.kubernetes.api.model.ObjectMeta();
+        meta.setName(name);
+        meta.setNamespace(namespace);
+        template.setMetadata(meta);
+        return template;
     }
 
     /**
@@ -164,10 +173,11 @@ public class StrimziKafkaPipelineProvisioner implements KafkaPipelineProvisioner
     private void applyConnector(KafkaConnector cr) {
         GenericKubernetesResource generic = Serialization.unmarshal(
                 Serialization.asJson(cr), GenericKubernetesResource.class);
-        k8s.genericKubernetesResources("kafka.strimzi.io/v1", "KafkaConnector")
-                .inNamespace(namespace)
-                .resource(generic)
-                .createOr(NonDeletingOperation::update);
+        // Strimzi 1.0.0 클러스터는 v1만 지원하므로 apiVersion을 명시적으로 v1로 교체한다.
+        // k8s.resource(HasMetadata) 는 resource의 apiVersion 필드를 URL 결정에 사용하므로
+        // genericKubernetesResources 와 달리 Fabric8 mock 서버에서도 동작한다.
+        generic.setApiVersion("kafka.strimzi.io/v1");
+        k8s.resource(generic).inNamespace(namespace).createOr(NonDeletingOperation::update);
     }
 
     /**

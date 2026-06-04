@@ -67,10 +67,13 @@ public class JdbcSinkConnectorMapper {
                     .addToConfig("pk.mode", "record_key")
                     .addToConfig("auto.create", "true")
                     .addToConfig("auto.evolve", "true")
-                    // Debezium envelope을 평탄화해 sink 테이블 컬럼과 매핑
+                    // Debezium envelope 평탄화: after-image 필드만 sink 테이블에 적재
                     .addToConfig("transforms", "unwrap")
                     .addToConfig("transforms.unwrap.type",
                             "io.debezium.transforms.ExtractNewRecordState")
+                    // DELETE 이벤트는 sink에 전달하지 않음 (tombstone만 drop)
+                    .addToConfig("transforms.unwrap.delete.handling.mode", "none")
+                    .addToConfig("transforms.unwrap.drop.tombstones", "true")
                 .endSpec()
                 .build();
     }
