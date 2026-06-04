@@ -135,7 +135,7 @@ post_pipeline() {
     -H 'Content-Type: application/json' -d "${body}" 2>/dev/null || echo -e '{}\n000')
   http_code=$(echo "${resp}" | tail -1)
   local json
-  json=$(echo "${resp}" | head -n -1)
+  json=$(echo "${resp}" | sed '$d')
 
   if [[ "${http_code}" == "202" ]]; then
     echo "${json}"
