@@ -18,6 +18,10 @@ public class WorkspaceEntity {
     @Column(nullable = false, length = 63, unique = true)
     private String namespace;
 
+    /** 워크스페이스 소유자(생성자) user id. 소유 기반 다중 워크스페이스 scope의 기준(#72). */
+    @Column(name = "owner_user_id")
+    private UUID ownerUserId;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private Status status;
@@ -54,6 +58,8 @@ public class WorkspaceEntity {
     public void setName(String name) { this.name = name; }
     public String getNamespace() { return namespace; }
     public void setNamespace(String namespace) { this.namespace = namespace; }
+    public UUID getOwnerUserId() { return ownerUserId; }
+    public void setOwnerUserId(UUID ownerUserId) { this.ownerUserId = ownerUserId; }
     public Status getStatus() { return status; }
     public void setStatus(Status status) { this.status = status; }
     public Instant getCreatedAt() { return createdAt; }
