@@ -11,6 +11,7 @@ import com.bifrost.ops.database.persistence.repository.DatasourceRepository;
 import com.bifrost.ops.global.common.datasource.DbType;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
+import com.bifrost.ops.global.common.log.OpsLog;
 import com.bifrost.ops.secret.DbCredential;
 import com.bifrost.ops.secret.SecretContext;
 import com.bifrost.ops.secret.SecretStore;
@@ -47,13 +48,22 @@ public class DatabaseService {
     /** 연결 테스트(FR-014). 실패도 200 본문으로 분류 반환. */
     public ConnectionTestResponse testConnection(DbType engine, String host, int port,
                                                  String dbName, String user, String password) {
-        return connectionTester.test(engine, host, port, dbName, user, password);
+        ConnectionTestResponse resp = connectionTester.test(engine, host, port, dbName, user, password);
+        if (resp.success()) {
+            OpsLog.ok("Database", "연결 테스트 성공",
+                    "engine=" + engine.name().toLowerCase() + ", host=" + host + ":" + port);
+        } else {
+            OpsLog.fail("Database", "연결 테스트 실패",
+                    "host=" + host + ":" + port + ", reason=" + resp.reason());
+        }
+        return resp;
     }
 
     /** 등록(FR-014). 이름 중복·연결 실패 시 예외, 성공 시 secretRef 보관 후 마스킹 응답. */
     @Transactional
     public DatabaseResponse register(UUID tenantId, DatabaseRegisterRequest req) {
         if (repo.existsByTenantIdAndName(tenantId, req.name())) {
+            OpsLog.fail("Database", "DB 등록 실패", "name=" + req.name() + ", reason=이미 사용 중인 이름");
             throw new ApiException(ErrorCode.DATABASE_NAME_CONFLICT,
                     "이미 사용 중인 이름입니다: " + req.name());
         }
@@ -63,6 +73,8 @@ public class DatabaseService {
         ConnectionTestResponse test = connectionTester.test(
                 engine, req.host(), req.port(), req.dbName(), req.username(), req.password());
         if (!test.success()) {
+            OpsLog.fail("Database", "DB 등록 실패",
+                    "name=" + req.name() + ", reason=연결 검증 실패(" + test.reason() + ")");
             throw new ApiException(ErrorCode.DATABASE_CONNECTION_FAILED,
                     "연결 검증 실패: " + test.reason());
         }
@@ -83,6 +95,9 @@ public class DatabaseService {
         e.setSecretRef(secretRef);
         repo.save(e);
 
+        OpsLog.ok("Database", "DB 등록",
+                "name=" + e.getName() + ", engine=" + engine.name().toLowerCase()
+                        + ", host=" + e.getHost() + ":" + e.getPort());
         // 신규 등록 — 아직 파이프라인에서 쓰이지 않으므로 파생 역할 없음.
         return DatabaseResponse.of(e, List.of());
     }

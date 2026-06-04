@@ -3,6 +3,7 @@ package com.bifrost.ops.workspace.service;
 import com.bifrost.ops.auth.jwt.AuthenticatedUser;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
+import com.bifrost.ops.global.common.log.OpsLog;
 import com.bifrost.ops.provisioning.dto.TenantProvisionRequest;
 import com.bifrost.ops.provisioning.port.TenantProvisionerPort;
 import com.bifrost.ops.workspace.NamespaceSlug;
@@ -63,6 +64,7 @@ public class WorkspaceService {
     @Transactional
     public WorkspaceResponse create(AuthenticatedUser principal, WorkspaceCreateRequest req) {
         if (workspaceRepository.existsByName(req.name())) {
+            OpsLog.fail("Project", "신규 프로젝트 생성 실패", "name=" + req.name() + ", reason=이미 사용 중인 이름");
             throw new ApiException(ErrorCode.WORKSPACE_NAME_CONFLICT, "이미 사용 중인 워크스페이스 이름");
         }
 
@@ -77,10 +79,15 @@ public class WorkspaceService {
         try {
             workspace = workspaceRepository.saveAndFlush(workspace);
         } catch (DataIntegrityViolationException e) {
-            throw mapConflict(e);
+            ApiException mapped = mapConflict(e);
+            OpsLog.fail("Project", "신규 프로젝트 생성 실패", "name=" + req.name() + ", reason=" + mapped.getMessage());
+            throw mapped;
         }
 
         triggerProvisioning(workspace);
+        OpsLog.ok("Project", "신규 프로젝트 생성",
+                "name=" + workspace.getName() + ", namespace=" + workspace.getNamespace()
+                        + ", wsId=" + workspace.getId());
         return WorkspaceResponse.from(workspace);
     }
 

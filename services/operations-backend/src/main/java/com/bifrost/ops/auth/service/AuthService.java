@@ -2,6 +2,7 @@ package com.bifrost.ops.auth.service;
 
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
+import com.bifrost.ops.global.common.log.OpsLog;
 import com.bifrost.ops.auth.dto.AuthTokensResponse;
 import com.bifrost.ops.auth.dto.LoginRequest;
 import com.bifrost.ops.auth.dto.MeResponse;
@@ -81,6 +82,8 @@ public class AuthService {
 
         triggerProvisioning(workspace);
 
+        OpsLog.ok("User", "회원가입", "email=" + user.getEmail()
+                + ", workspace=" + workspace.getName() + " (" + workspace.getNamespace() + ")");
         String token = jwtService.issue(user.getId(), workspace.getId(), user.getEmail());
         return new AuthTokensResponse(
             token, "Bearer", jwtService.ttl().toSeconds(), user.getId(), workspace.getId());
@@ -103,14 +106,14 @@ public class AuthService {
     }
 
     public AuthTokensResponse login(LoginRequest req) {
-        UserEntity user = userRepository.findByEmail(req.email())
-            .orElseThrow(() -> new ApiException(ErrorCode.INVALID_CREDENTIALS, "이메일 또는 비밀번호가 올바르지 않습니다"));
-
-        if (!passwordEncoder.matches(req.password(), user.getPasswordHash())) {
+        UserEntity user = userRepository.findByEmail(req.email()).orElse(null);
+        if (user == null || !passwordEncoder.matches(req.password(), user.getPasswordHash())) {
+            OpsLog.fail("User", "로그인 실패", "email=" + req.email() + ", reason=이메일 또는 비밀번호 불일치");
             throw new ApiException(ErrorCode.INVALID_CREDENTIALS, "이메일 또는 비밀번호가 올바르지 않습니다");
         }
 
         String token = jwtService.issue(user.getId(), user.getTenantId(), user.getEmail());
+        OpsLog.ok("User", "로그인 성공", "email=" + req.email());
         return new AuthTokensResponse(
             token, "Bearer", jwtService.ttl().toSeconds(), user.getId(), user.getTenantId());
     }

@@ -85,6 +85,7 @@ logging:
   level:
     root: INFO
     com.bifrost: DEBUG
+    bifrost.ops: INFO          # 비즈니스 이벤트 가독 로그(#93, [도메인] 작업)
     org.springframework.web: INFO
     org.hibernate.SQL: DEBUG
     io.fabric8.kubernetes.client: INFO

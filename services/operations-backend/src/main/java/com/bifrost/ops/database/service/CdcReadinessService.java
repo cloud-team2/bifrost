@@ -10,6 +10,7 @@ import com.bifrost.ops.database.persistence.entity.DatasourceEntity;
 import com.bifrost.ops.database.persistence.repository.DatasourceRepository;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
+import com.bifrost.ops.global.common.log.OpsLog;
 import com.bifrost.ops.secret.DbCredential;
 import com.bifrost.ops.secret.SecretStore;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -69,6 +70,7 @@ public class CdcReadinessService {
         CdcReadinessResponse response = new CdcReadinessResponse(overall, checks);
 
         persist(e, response);
+        OpsLog.ok("Database", "CDC 준비도 점검", "db=" + e.getName() + ", overall=" + overall.name());
         return response;
     }
 
