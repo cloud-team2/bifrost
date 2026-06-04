@@ -1,0 +1,5 @@
+apiVersion: v2
+name: infra
+description: Bifrost 인프라 스택 — Jenkins / ArgoCD / Harbor
+type: application
+version: 0.1.0

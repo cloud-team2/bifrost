@@ -1,0 +1,24 @@
+{{- if .Values.argocd.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argocd-alb
+  namespace: {{ .Values.argocd.namespace }}
+  annotations:
+    {{- include "infra.albAnnotations" . | nindent 4 }}
+    alb.ingress.kubernetes.io/group.order: {{ .Values.argocd.ingress.groupOrder | quote }}
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":{{ .Values.argocd.ingress.listenPort }}}]'
+    alb.ingress.kubernetes.io/healthcheck-path: {{ .Values.argocd.ingress.healthcheckPath }}
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: argocd-server
+                port:
+                  number: 80
+{{- end }}

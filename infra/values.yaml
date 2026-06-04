@@ -1,0 +1,53 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Bifrost infra Helm values  (Jenkins / ArgoCD / Harbor)
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ALB 공통 설정
+alb:
+  loadBalancerName: cicd-shared-alb
+  groupName: cicd-shared
+  scheme: internet-facing
+  targetType: ip
+  # PUBLIC_SUBNETS (ap-northeast-2)
+  subnets: subnet-0d8a1dcc1e064b04d,subnet-05e64cd452e9a3c55
+
+harbor:
+  namespace: harbor
+  enabled: true
+  # Helm: helm.goharbor.io / harbor / 1.18.0
+  chartVersion: "1.18.0"
+  externalURL: http://harbor.local
+  adminPassword: "admin!"
+  ingress:
+    groupOrder: "10"
+    listenPort: 80
+    healthcheckPath: /api/v2.0/health
+    idleTimeout: "600"
+  persistence:
+    registry: 50Gi
+    jobservice: 5Gi
+    database: 10Gi
+    redis: 5Gi
+    trivy: 10Gi
+
+jenkins:
+  namespace: jenkins
+  enabled: true
+  # Helm: charts.jenkins.io / jenkins / 5.9.22
+  chartVersion: "5.9.22"
+  adminUser: admin
+  adminPassword: "admin"
+  ingress:
+    groupOrder: "20"
+    listenPort: 8080
+    healthcheckPath: /login
+
+argocd:
+  namespace: argocd
+  enabled: true
+  # Helm: argoproj.github.io/argo-helm / argo-cd / 9.5.17
+  chartVersion: "9.5.17"
+  ingress:
+    groupOrder: "30"
+    listenPort: 8081
+    healthcheckPath: /healthz
