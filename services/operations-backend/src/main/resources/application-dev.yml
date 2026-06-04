@@ -89,5 +89,5 @@ logging:
     com.bifrost: DEBUG
     bifrost.ops: INFO          # 비즈니스 이벤트 가독 로그(#93, [도메인] 작업)
     org.springframework.web: INFO
-    org.hibernate.SQL: DEBUG
+    org.hibernate.SQL: INFO    # SQL 끔 — [도메인] 흐름 로그만 보이게(#99)
     io.fabric8.kubernetes.client: INFO
