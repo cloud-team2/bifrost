@@ -10,7 +10,25 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
+import type { ComponentProps } from 'react'
 import type { Point } from '../data/types'
+
+/**
+ * recharts ResponsiveContainer 공용 래퍼(#99).
+ *
+ * recharts 3.x ResponsiveContainer는 {@code initialDimension} 기본값이 -1이라, ResizeObserver
+ * 측정 전 첫 렌더에서 "The width(-1) and height(-1) of chart should be greater than 0" 경고를 낸다
+ * (StrictMode 이중 렌더로 더 잘 노출). 양수 기본값을 주면 첫 렌더부터 크기가 양수라 경고가 사라지고,
+ * ResizeObserver가 즉시 실제 크기로 보정하므로 반응형 동작은 그대로다.
+ *
+ * **모든 차트는 raw ResponsiveContainer 대신 이 래퍼를 사용한다** — 페이지마다 경고가 재발하지 않게.
+ */
+export function ResponsiveChart({
+  initialDimension,
+  ...rest
+}: ComponentProps<typeof ResponsiveContainer>) {
+  return <ResponsiveContainer initialDimension={initialDimension ?? { width: 300, height: 200 }} {...rest} />
+}
 
 /* chart series colors — chroma eased down slightly from the raw neon values */
 export const CHART_COLORS = {
@@ -45,8 +63,7 @@ export function TrendChart({
 
   return (
     <div style={{ height }}>
-      {/* initialDimension: ResizeObserver 측정 전 첫 렌더의 -1 → recharts "width(-1) height(-1)" 경고 방지 */}
-      <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 300, height }}>
+      <ResponsiveChart width="100%" height="100%" initialDimension={{ width: 300, height }}>
         {type === 'area' ? (
           <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
             <defs>
@@ -98,7 +115,7 @@ export function TrendChart({
             ))}
           </LineChart>
         )}
-      </ResponsiveContainer>
+      </ResponsiveChart>
     </div>
   )
 }
