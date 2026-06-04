@@ -10,7 +10,9 @@ spring:
   jpa:
     hibernate:
       ddl-auto: validate
-    show-sql: true
+    # show-sql(raw stdout)과 org.hibernate.SQL 로거가 둘 다 켜지면 같은 SQL이 중복 출력된다.
+    # 로거(org.hibernate.SQL=DEBUG)로 한 번만 남기고 raw 출력은 끈다(#99).
+    show-sql: false
     properties:
       hibernate:
         format_sql: true
