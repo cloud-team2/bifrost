@@ -2,6 +2,7 @@ controller:
   serviceType: ClusterIP
   servicePort: 8080
 
+  # Ingress는 infra/k8s/ingress/jenkins-ingress.yaml 에서 별도 관리
   ingress:
     enabled: false
 
