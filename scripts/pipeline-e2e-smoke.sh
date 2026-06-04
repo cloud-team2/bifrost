@@ -35,17 +35,17 @@ TIMEOUT_SEC="${TIMEOUT_SEC:-90}"
 POLL_SEC="${POLL_SEC:-3}"
 
 SRC_ENGINE="${SRC_ENGINE:-POSTGRESQL}"
-SRC_HOST="${SRC_HOST:-userdb-postgres.userdb.svc.cluster.local}"
+SRC_HOST="${SRC_HOST:-user-postgres-service.userdb.svc.cluster.local}"
 SRC_PORT="${SRC_PORT:-5432}"
-SRC_DB="${SRC_DB:-shop}"
+SRC_DB="${SRC_DB:-testdb}"
 SRC_SCHEMA="${SRC_SCHEMA:-public}"
 SRC_TABLE="${SRC_TABLE:-orders}"
 SRC_SECRET_REF="${SRC_SECRET_REF:-secret://smoke-src}"
 
 SINK_ENGINE="${SINK_ENGINE:-MARIADB}"
-SINK_HOST="${SINK_HOST:-userdb-mariadb.userdb.svc.cluster.local}"
+SINK_HOST="${SINK_HOST:-user-mariadb-service.userdb.svc.cluster.local}"
 SINK_PORT="${SINK_PORT:-3306}"
-SINK_DB="${SINK_DB:-warehouse}"
+SINK_DB="${SINK_DB:-testdb}"
 SINK_SECRET_REF="${SINK_SECRET_REF:-secret://smoke-sink}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; NC='\033[0m'
