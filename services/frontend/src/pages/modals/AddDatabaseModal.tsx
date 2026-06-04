@@ -6,21 +6,13 @@ import { useToast } from '../../components/Toast'
 import { useApp } from '../../store/AppStore'
 import type { CapabilityCheck, DbTech } from '../../data/types'
 import { cn } from '../../lib/format'
+import { ApiError, api, type CdcStatus } from '../../lib/api'
+import { cdcChecksToCapability, datasourceToNode, techToEngine } from '../../lib/mappers'
 
-function buildChecks(tech: DbTech): CapabilityCheck[] {
-  if (tech === 'postgres')
-    return [
-      { label: 'wal_level = logical', state: 'pass', detail: 'Logical decoding is enabled.' },
-      { label: 'REPLICATION privilege', state: 'pass', detail: 'The user can create replication slots.' },
-      { label: 'Replication slot capacity', state: 'pass', detail: '2 of 10 slots in use.' },
-      { label: 'REPLICA IDENTITY FULL', state: 'warn', detail: '3 tables still use DEFAULT — updates ship keys only.' },
-    ]
-  return [
-    { label: 'binlog_format = ROW', state: 'pass', detail: 'Row-based binary logging is enabled.' },
-    { label: 'REPLICATION privilege', state: 'pass', detail: 'The user has REPLICATION SLAVE.' },
-    { label: 'GTID mode', state: 'warn', detail: 'GTID is not enabled — failover repositioning will be manual.' },
-    { label: 'binlog retention', state: 'pass', detail: 'Retention is 7 days.' },
-  ]
+const READINESS_LABEL: Record<CdcStatus, string> = {
+  OK: 'CDC 준비 완료 — 소스로 사용 가능',
+  WARNING: '일부 경고 — 소스로 사용 가능(주의)',
+  BLOCKED: '차단됨 — 소스로 선택 불가',
 }
 
 export function AddDatabaseModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -34,7 +26,13 @@ export function AddDatabaseModal({ open, onClose }: { open: boolean; onClose: ()
   const [database, setDatabase] = useState('')
   const [user, setUser] = useState('')
   const [password, setPassword] = useState('')
-  const [tested, setTested] = useState(false)
+
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [checks, setChecks] = useState<CapabilityCheck[]>([])
+  const [overall, setOverall] = useState<CdcStatus | null>(null)
 
   const steps = ['Type', 'Connection', 'Capability']
 
@@ -47,35 +45,114 @@ export function AddDatabaseModal({ open, onClose }: { open: boolean; onClose: ()
     setDatabase('')
     setUser('')
     setPassword('')
-    setTested(false)
+    setTesting(false)
+    setTestResult(null)
+    setBusy(false)
+    setError('')
+    setChecks([])
+    setOverall(null)
   }
   function close() {
     onClose()
     setTimeout(reset, 200)
   }
 
-  const canNext = step === 0 ? !!tech : step === 1 ? !!(alias && host && database && user) : true
+  const wsId = app.currentProject?.id ?? null
+  const canNext = step === 0 ? !!tech : !!(alias && host && database && user)
 
-  function register() {
-    if (!tech) return
-    app.addDatabase({
-      label: database || alias.toLowerCase().replace(/\s+/g, '-'),
-      alias,
-      tech,
-      techLabel: `${tech} ${tech === 'postgres' ? '16.0' : '11.2'}`,
-      host: `${host}:${port}`,
-      schema: { tables: 0, rows: '0', size: '0 MB' },
-      cdc: {
-        wal_level: tech === 'postgres' ? 'logical' : 'binlog/ROW',
-        replication: 'granted',
-        slots: tech === 'postgres' ? '0 / 10' : '—',
-        wal_senders: tech === 'postgres' ? '0 / 10' : '0',
-      },
-      metrics: { tps: 0, lag_ms: 0 },
-      checks: buildChecks(tech),
-    })
-    toast(`Database "${alias}" registered`)
-    close()
+  async function testConnection() {
+    if (!tech || testing) return
+    setTesting(true)
+    setTestResult(null)
+    setError('')
+    try {
+      const res = await api.testConnection(wsId!, {
+        engine: techToEngine(tech),
+        host,
+        port: Number(port),
+        dbName: database,
+        user,
+        password,
+      })
+      setTestResult({ success: res.success, message: res.message })
+    } catch (e) {
+      setTestResult({ success: false, message: e instanceof ApiError ? e.message : '연결 테스트 실패' })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  /** 등록 + CDC 준비도 점검(시나리오 2.2). 성공 시 Capability 단계로 진행. */
+  async function registerAndCheck() {
+    if (!tech || !wsId || busy) return
+    setBusy(true)
+    setError('')
+    try {
+      const db = await api.registerDatabase(wsId, {
+        name: alias,
+        engine: techToEngine(tech),
+        host,
+        port: Number(port),
+        dbName: database,
+        username: user,
+        password,
+      })
+      app.addDatabaseNode(datasourceToNode(db, app.nodes.length))
+      try {
+        const readiness = await api.cdcReadiness(wsId, db.id)
+        setChecks(cdcChecksToCapability(readiness))
+        setOverall(readiness.overallStatus)
+      } catch {
+        setChecks([])
+        setOverall(null)
+      }
+      setStep(2)
+      toast(`Database "${db.name}" registered`)
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : '데이터베이스 등록에 실패했습니다')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function footer() {
+    if (step === 2) {
+      return (
+        <button
+          onClick={close}
+          className="rounded-md bg-brand-600 px-4 py-1.5 text-[13px] font-semibold text-white hover:bg-brand-700"
+        >
+          Done
+        </button>
+      )
+    }
+    return (
+      <>
+        <button
+          onClick={step === 0 ? close : () => setStep((s) => s - 1)}
+          className="rounded-md border border-gray-200 px-3 py-1.5 text-[13px] font-medium text-gray-600 hover:bg-gray-50"
+        >
+          {step === 0 ? 'Cancel' : 'Back'}
+        </button>
+        {step === 0 ? (
+          <button
+            disabled={!canNext}
+            onClick={() => setStep(1)}
+            className="rounded-md bg-brand-600 px-4 py-1.5 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:bg-brand-300"
+          >
+            Next
+          </button>
+        ) : (
+          <button
+            disabled={!canNext || busy}
+            onClick={registerAndCheck}
+            className="rounded-md bg-brand-600 px-4 py-1.5 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:bg-brand-300"
+          >
+            {busy ? 'Registering…' : 'Register & Check'}
+          </button>
+        )}
+      </>
+    )
   }
 
   return (
@@ -85,32 +162,7 @@ export function AddDatabaseModal({ open, onClose }: { open: boolean; onClose: ()
       title="Register a Database"
       subtitle="Connect a PostgreSQL or MariaDB instance to this project"
       width={500}
-      footer={
-        <>
-          <button
-            onClick={step === 0 ? close : () => setStep((s) => s - 1)}
-            className="rounded-md border border-gray-200 px-3 py-1.5 text-[13px] font-medium text-gray-600 hover:bg-gray-50"
-          >
-            {step === 0 ? 'Cancel' : 'Back'}
-          </button>
-          {step < 2 ? (
-            <button
-              disabled={!canNext}
-              onClick={() => setStep((s) => s + 1)}
-              className="rounded-md bg-brand-600 px-4 py-1.5 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:bg-brand-300"
-            >
-              Next
-            </button>
-          ) : (
-            <button
-              onClick={register}
-              className="rounded-md bg-brand-600 px-4 py-1.5 text-[13px] font-semibold text-white hover:bg-brand-700"
-            >
-              Register Database
-            </button>
-          )}
-        </>
-      }
+      footer={footer()}
     >
       <div className="mb-4 flex items-center gap-1.5">
         {steps.map((s, i) => (
@@ -165,30 +217,53 @@ export function AddDatabaseModal({ open, onClose }: { open: boolean; onClose: ()
             <Field label="Password" value={password} onChange={setPassword} type="password" />
           </div>
           <button
-            onClick={() => setTested(true)}
-            className="rounded-md border border-gray-300 px-3 py-1.5 text-[12.5px] font-medium text-gray-700 hover:bg-gray-50"
+            onClick={testConnection}
+            disabled={testing || !(host && database && user)}
+            className="rounded-md border border-gray-300 px-3 py-1.5 text-[12.5px] font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
           >
-            Test Connection
+            {testing ? 'Testing…' : 'Test Connection'}
           </button>
-          {tested && (
-            <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-emerald-600">
-              <Icon name="check" size={14} strokeWidth={3} />
-              Connection successful — server reachable
+          {testResult && (
+            <div
+              className={cn(
+                'flex items-center gap-1.5 text-[12.5px] font-medium',
+                testResult.success ? 'text-emerald-600' : 'text-rose-600',
+              )}
+            >
+              <Icon name={testResult.success ? 'check' : 'x'} size={14} strokeWidth={3} />
+              {testResult.message}
+            </div>
+          )}
+          {error && (
+            <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-rose-600">
+              <Icon name="x" size={14} strokeWidth={3} />
+              {error}
             </div>
           )}
         </div>
       )}
 
-      {step === 2 && tech && (
+      {step === 2 && (
         <div className="space-y-4">
-          <CheckGroup title="Source role — CDC readiness" checks={buildChecks(tech)} />
-          <CheckGroup
-            title="Sink role — write access"
-            checks={[
-              { label: 'CREATE / INSERT privilege', state: 'pass', detail: 'The user can create and write to tables.' },
-              { label: 'Schema write access', state: 'pass', detail: 'public schema is writable.' },
-            ]}
-          />
+          {overall && (
+            <div
+              className={cn(
+                'rounded-lg border px-3 py-2 text-[12.5px] font-semibold',
+                overall === 'OK'
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                  : overall === 'WARNING'
+                    ? 'border-amber-200 bg-amber-50 text-amber-700'
+                    : 'border-rose-200 bg-rose-50 text-rose-700',
+              )}
+            >
+              {READINESS_LABEL[overall]}
+            </div>
+          )}
+          {checks.length > 0 ? (
+            <CheckGroup title="CDC readiness" checks={checks} />
+          ) : (
+            <div className="text-[12.5px] text-gray-500">CDC 준비도 정보를 가져오지 못했습니다.</div>
+          )}
         </div>
       )}
     </Modal>

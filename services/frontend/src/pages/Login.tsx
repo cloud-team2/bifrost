@@ -9,9 +9,14 @@ export function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
 
-  function submit() {
-    if (!app.login(email.trim(), password)) {
+  async function submit() {
+    if (loading) return
+    setLoading(true)
+    const ok = await app.login(email.trim(), password)
+    setLoading(false)
+    if (!ok) {
       setError('Invalid email or password. Try a demo account below.')
     }
   }
@@ -61,9 +66,10 @@ export function Login() {
 
           <button
             onClick={submit}
-            className="mt-4 h-10 w-full rounded-md bg-brand-600 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-700"
+            disabled={loading}
+            className="mt-4 h-10 w-full rounded-md bg-brand-600 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-700 disabled:bg-brand-300"
           >
-            Sign In
+            {loading ? 'Signing in…' : 'Sign In'}
           </button>
 
           <div className="mt-6 border-t border-gray-100 pt-4">
