@@ -65,7 +65,11 @@ Bifrost API가 반환하는 에러 코드의 단일 출처. 코드 추가/변경
 
 ### 파이프라인 / 커넥터 (40000~40999)
 
-(추후 추가)
+| 코드 | HTTP | 이름 | 트리거 | 클라이언트 권장 처리 |
+|---|---|---|---|---|
+| 40001 | 404 | `PIPELINE_NOT_FOUND` | `id`가 없거나 해당 워크스페이스 소유가 아님(상세·pause·resume·delete) | "파이프라인을 찾을 수 없습니다" 안내, 목록으로 복귀 |
+
+> 생성 마법사 검증 실패(pattern↔sink 정합성·source/sink ownership·CDC readiness BLOCKED·중복 이름·동일 source+테이블+패턴)는 도메인 코드를 따로 두지 않고 `VALIDATION_FAILED`(90001)로 응답한다([pipeline.md §2](../design/backend-springboot/pipeline.md)). provisioner 부분 실패는 예외가 아니라 pipeline 상태를 `error`로 두고 `status_message`에 stage/errorCode를 남긴다.
 
 ### 서버 / 인프라 / 내부 오류 (50000~50999)
 

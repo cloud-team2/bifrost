@@ -260,7 +260,13 @@ State/audit가 참조하는 evidence 메타데이터만 둔다. 원문은 Eviden
 6. **Unique 제약**: `workspace(project_key)`, `database(workspace_id, alias)`, `pipeline(workspace_id, name)`은 유일(중복 이름 검증의 근거). `project_member`는 (`workspace_id`, `app_user_id`) 복합 PK.
 7. **인시던트↔이벤트는 단일 링크**(`event.incident_id`)로만 관리하고 별도 배열로 중복 저장하지 않는다(§3.7).
 
-> **설계 ERD ↔ 실제 스캐폴드 divergence(공존, [#14] 결정)**: 위 개념 스키마는 설계 용어 기준이다. 실제 코드/마이그레이션은 `workspace=tenant`, `app_user=user`, `database=datasource`로 쓰고, 멤버십은 현재 `users.tenant_id`(1:N)이며 `pipelines.tables`는 JSONB(복수)·`type` 컬럼을 쓴다. 신규 도메인(`project_member`/`event`/`incident`/`connector` 등)은 V4부터 add-only로 도입한다. 즉 이 ERD는 **목표 모델**이고, 코드 정합은 마이그레이션으로 점진 반영한다(이 문서는 코드와 1:1이 아님).
+> **설계 ERD ↔ 실제 스캐폴드 divergence(공존, [#14] 결정)**: 위 개념 스키마는 설계 용어 기준이다. 실제 코드/마이그레이션은 `workspace=tenant`, `app_user=user`, `database=datasource`로 쓴다. 즉 이 ERD는 **목표 모델**이고, 코드 정합은 마이그레이션으로 점진 반영한다(이 문서는 코드와 1:1이 아님).
+>
+> **현재 스캐폴드 반영 현황(W1 기준, V5~V7 add-only):**
+> - **멤버십/소유**: `users.tenant_id`(가입 시 만들어지는 home 워크스페이스, 1:N)에 더해 **`tenants.owner_user_id`(V5)로 소유 기반 다중 워크스페이스**를 지원한다 — 한 사용자가 `POST /api/v1/workspaces`로 여러 워크스페이스를 생성·소유·운영할 수 있다. scope 인가는 `WorkspaceAccessGuard` 한 곳에서 판정한다(home fast-path `wsId == users.tenant_id` 또는 소유 `tenants.owner_user_id == userId`). 목표인 `project_member` N:M(임의 멤버 초대·역할)은 [#41]로 별도 진행하며, 그때까지 `owner_user_id`가 멤버십의 interim 출처다.
+> - **pipeline**: `pipelines`에 `pattern`(`FAN_OUT`/`DIRECT`)·`sink_datasource_id`·`schema_name`·`table_name`·`sink_connector_name`을 V6로 추가했다. `tables`는 JSONB(`["schema.table"]`)·legacy `type`(CDC/SYNC) 컬럼도 공존한다. 단일 topic·table 원칙은 `(tenant_id, source_datasource_id, schema_name, table_name, pattern)` unique 인덱스로 이중 방어한다.
+> - **event/audit**: 설계의 `event`/`audit_event` 최소 버전을 `events`·`audit_events`(V7, append-only)로 도입했다. 현재는 파이프라인 생성/상태전이/실패/사용자 액션 기록과 `GET .../events` 목록·SSE 발행에 쓰며, `incident`/`evidence_ref` 연계 컬럼(`incident_id`/`category` 등)은 후속(W2) add-only로 확장한다.
+> - **connector**: `connectors`(V4)는 위 §3.5와 동일하며 mock/real provisioner가 행을 만들고 watcher/simulator가 `state`를 갱신한다.
 
 ### 5. API Reference
 
