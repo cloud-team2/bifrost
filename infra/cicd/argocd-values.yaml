@@ -6,7 +6,6 @@ server:
   service:
     type: ClusterIP
 
-  # Ingress는 infra/k8s/ingress/argocd-ingress.yaml 에서 별도 관리
   ingress:
     enabled: false
 
