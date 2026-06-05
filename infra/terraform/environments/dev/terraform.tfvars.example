@@ -16,14 +16,14 @@ public_subnet_ids  = ["subnet-cccccccc", "subnet-dddddddd"]
 node_groups = {
   app = {
     instance_types = ["t3.xlarge"]
-    desired_size   = 4
+    desired_size   = 3
     min_size       = 2
     max_size       = 6
     labels         = { tier = "app" }
   }
   data = {
     instance_types = ["t3.xlarge"]
-    desired_size   = 4
+    desired_size   = 3
     min_size       = 3
     max_size       = 6
     labels         = { tier = "data" }

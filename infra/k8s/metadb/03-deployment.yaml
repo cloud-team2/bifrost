@@ -18,14 +18,7 @@ spec:
       labels:
         app: metadb
     spec:
-      # #119: metadb를 전용 data 노드풀(tier=data, taint)에 배치
-      nodeSelector:
-        tier: data
-      tolerations:
-        - key: tier
-          operator: Equal
-          value: data
-          effect: NoSchedule
+      # #119: metadb는 부하가 작아 격리 불필요 → app 풀(기본)에 배치. data 풀은 Kafka 전용.
       containers:
         - name: postgres
           image: postgres:15-alpine

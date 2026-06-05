@@ -344,19 +344,21 @@ arn:aws:eks:ap-northeast-2:881490135253:cluster/skala3-cloud1-finalproj-team2
 
 | 항목 | 현재 상태 |
 | --- | --- |
-| worker node | **8개 Ready** (t3.xlarge, 4vCPU/16Gi) — 구 3× t3.large에서 스펙업 |
-| 노드풀 `app` | t3.xlarge ×4 (desired 4/min 2/max 6), taint 없음. 우리 서비스·모니터링·CI/CD·userdb |
-| 노드풀 `data` | t3.xlarge ×4 (desired 4/min 3/max 6), **taint `tier=data:NoSchedule`**. Kafka·metadb 전용 |
-| AZ 분포 | 각 풀 ap-northeast-2a ×2 / 2b ×2 (Kafka broker PVC AZ 매칭) |
+| worker node | **6개 Ready** (t3.xlarge, 4vCPU/16Gi) — 구 3× t3.large에서 스펙업 |
+| 노드풀 `app` | t3.xlarge ×3 (desired 3/min 2/max 6), taint 없음. 우리 서비스·**DB(metadb·userdb)**·모니터링·CI/CD |
+| 노드풀 `data` | t3.xlarge ×3 (desired 3/min 3/max 6), **taint `tier=data:NoSchedule`**. **Kafka 전용**(브로커+entity-operator) |
+| AZ 분포 | 2 AZ(2a/2b)에 분산. data=3은 EKS AZ 밸런싱상 2a×1+2b×2로 떨어짐(아래 HA 주의) |
 | Kubernetes version | v1.35 |
 | OS | Amazon Linux 2023 |
 | container runtime | containerd |
 
-> **노드풀 토폴로지 결정 (#119)**: 단일 노드풀에 전 워크로드가 혼재해 CPU requests가 82%까지 포화 → ① **Kafka+metadb를 전용 `data` 풀로 물리 분리**(노이지 네이버 차단·anti-affinity), ② 고객사 DB(userdb)는 in-cluster라 물리분리 실익이 낮아 **namespace 논리분리만**(app 풀 배치), ③ t3.large→t3.xlarge 스펙업. terraform `module.eks`는 `var.node_groups` map + `for_each`로 멀티 노드풀 지원. 마이그레이션은 신규 풀 추가 → Kafka/metadb를 toleration+nodeAffinity로 data 풀 이동(무중단 롤링) → 구 풀 drain·제거 순으로 무중단 수행.
+> **노드풀 토폴로지 결정 (#119)**: 단일 노드풀에 전 워크로드가 혼재해 CPU requests가 82%까지 포화 → ① **무거운 Kafka만 전용 `data` 풀로 물리 분리**(노이지 네이버 차단·anti-affinity), ② **DB(metadb·userdb)는 부하가 작아 격리 불필요 → `app` 풀**(고객사 DB도 in-cluster라 namespace 논리분리만), ③ 우리 서비스·모니터링·CI/CD도 `app` 풀, ④ t3.large→t3.xlarge 스펙업. terraform `module.eks`는 `var.node_groups` map + `for_each`로 멀티 노드풀 지원. 마이그레이션은 신규 풀 추가 → Kafka를 toleration+nodeAffinity로 data 풀 이동(무중단 롤링) → 구 풀 drain·제거 순으로 무중단 수행.
 
 > **AZ 주의**: 클러스터는 **처음부터 2 AZ**(ap-northeast-2a/2b)다. `private_subnet_ids`("변경 금지")에 서브넷이 2개(2a·2b) 들어있고, EKS 노드그룹이 그 AZ로 자동 분산한다. #119는 AZ를 추가한 게 아니라 기존 2개 서브넷을 그대로 사용한다. (단일 AZ는 그 AZ 장애 시 전체 다운 + Kafka RF3 AZ 분산 손실 → 멀티 AZ 유지 권장)
 
-> **사이징 메모**: 현재 클러스터 총 requests ≈ 5.7 vCPU(우리 monolith는 아직 미배포, 부하 대부분이 CI/CD·Kafka). 8노드(allocatable ~31 vCPU)는 넉넉한 편이며, **논리 최소치는 data≥3(Kafka 브로커 anti-affinity·AZ)·app 2~3(모니터링 포함)** = 5~6노드. `desired_size` 조정은 무중단 in-place 축소 가능.
+> **⚠️ Kafka broker HA 주의 (data=3 트레이드오프)**: 브로커 PVC가 2a·2a·2b(AZ 고정 EBS)인데 data=3이 2a×1+2b×2로 떨어져, **2a 브로커 2개(kafka-0·kafka-2)가 단일 2a 노드에 soft anti-affinity로 겹친다**. 그 노드 1대 장애 시 브로커 2/3 동시 다운 → `min.insync.replicas=2`라 다수 파티션 **쓰기 불가**. dev/캡스톤이라 감수하는 의식적 트레이드오프이며, **프로덕션은 `data` 풀 desired를 4로**(2a×2+2b×2 보장, 브로커 1노드/대) 올리면 해결(tfvars 한 줄).
+
+> **사이징 메모**: 현재 클러스터 총 requests ≈ 5.7 vCPU(우리 monolith는 아직 미배포, 부하 대부분이 CI/CD·Kafka). **6노드**(app3+data3, allocatable ~23 vCPU)로 right-size 완료 — 모니터링 스택(~3~6 vCPU)까지 여유. `desired_size` 조정은 무중단 in-place.
 
 **검증 명령어 (#119 노드풀)** — `AWS_PROFILE=skala_student AWS_REGION=ap-northeast-2`, `C=skala3-cloud1-finalproj-team2`:
 
