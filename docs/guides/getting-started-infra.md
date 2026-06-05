@@ -48,7 +48,7 @@ kubectl get pod -A
 | 클러스터 이름 | `skala3-cloud1-finalproj-team2` |
 | 리전 | `ap-northeast-2` (서울) |
 | K8s 버전 | 1.35 |
-| 노드 | t3.large × 3 |
+| 노드 | **t3.xlarge × 5** (단일 노드풀, #119) |
 
 ---
 
@@ -230,12 +230,23 @@ EKS (ap-northeast-2)
     │   └── debezium-mariadb         # MariaDB CDC 커넥터 (예정, 현재 미생성)
 
 metadb
-└── metadb                           # PostgreSQL 15 (플랫폼 메타DB)
+└── metadb                           # PostgreSQL 15 (Spring 플랫폼 메타DB)
+
+agentdb                              # FastAPI 전용 (#120)
+└── agentdb                          # pgvector/pgvector:pg16 (Agent Run Store + Knowledge Vector Store)
+                                     #   ※ pgvector 확장만 프로비저닝, 테이블 스키마는 앱 마이그레이션 소유
 
 tenantdb
-├── tenant-postgres                    # PostgreSQL 15 (CDC 소스, wal_level=logical)
-└── tenant-mariadb                     # MariaDB 10.11 (CDC 소스, binlog ROW)
+├── tenant-postgres                    # PostgreSQL 15 (고객 source, wal_level=logical)
+└── tenant-mariadb                     # MariaDB 10.11 (고객 sink, binlog ROW)
+
+bifrost-system                       # 앱 (배포는 CICD #123 대기)
+├── ai-service                       # FastAPI (helm: services/ai-service/helm, 이미지 Harbor)
+├── operations-backend               # Spring Boot (예정)
+└── frontend                         # (예정)
 ```
+
+> **앱 이미지 레지스트리 = Harbor (in-cluster)**. push: Jenkins CI(Kaniko/buildah)→Harbor. pull: `harbor.harbor.svc.cluster.local/library/<image>` + `harbor-push-secret`. Docker Hub 아님.
 
 ---
 
@@ -250,6 +261,9 @@ kubectl logs -n platform-kafka -l strimzi.io/cluster=platform-connect -f
 
 # MetaDB 직접 접속
 kubectl exec -it -n metadb deployment/metadb -- psql -U platform -d metadb
+
+# AgentDB(FastAPI) 접속 + pgvector 확장 확인 (#120)
+kubectl exec -it -n agentdb deployment/agentdb -- psql -U agent -d agentdb -c "\dx vector"
 
 # UserDB PostgreSQL 접속
 kubectl exec -it -n tenantdb deployment/tenant-postgres -- psql -U debezium -d testdb
