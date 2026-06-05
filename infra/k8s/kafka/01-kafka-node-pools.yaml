@@ -27,3 +27,29 @@ spec:
     limits:
       memory: 4Gi
       cpu: 2000m
+  # #119: 브로커를 전용 data 노드풀(tier=data, taint)에 배치
+  template:
+    pod:
+      tolerations:
+        - key: tier
+          operator: Equal
+          value: data
+          effect: NoSchedule
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: tier
+                    operator: In
+                    values:
+                      - data
+        # 브로커는 가능한 한 서로 다른 노드에 분산(soft)
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    strimzi.io/cluster: platform-kafka

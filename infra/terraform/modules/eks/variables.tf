@@ -24,28 +24,20 @@ variable "public_subnet_ids" {
   type        = list(string)
 }
 
-variable "node_instance_type" {
-  description = "EKS 워커 노드 EC2 인스턴스 타입"
-  type        = string
-  default     = "t3.large"
-}
-
-variable "node_desired_size" {
-  description = "워커 노드 Desired 수"
-  type        = number
-  default     = 3
-}
-
-variable "node_min_size" {
-  description = "워커 노드 최소 수"
-  type        = number
-  default     = 2
-}
-
-variable "node_max_size" {
-  description = "워커 노드 최대 수"
-  type        = number
-  default     = 5
+variable "node_groups" {
+  description = "티어별 EKS 관리형 노드풀 정의 (키 = 풀 이름, 노드그룹명은 <cluster>-ng-<key>)"
+  type = map(object({
+    instance_types = list(string)
+    desired_size   = number
+    min_size       = number
+    max_size       = number
+    labels         = optional(map(string), {})
+    taints = optional(list(object({
+      key    = string
+      value  = string
+      effect = string # NO_SCHEDULE | NO_EXECUTE | PREFER_NO_SCHEDULE
+    })), [])
+  }))
 }
 
 variable "node_disk_size_gb" {

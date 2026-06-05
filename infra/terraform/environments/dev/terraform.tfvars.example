@@ -1,0 +1,34 @@
+# dev 환경 변수 예시. 실제 값은 terraform.tfvars 로 복사해 사용한다 (terraform.tfvars 는 gitignore).
+#   cp terraform.tfvars.example terraform.tfvars
+
+aws_region         = "ap-northeast-2"
+cluster_name       = "skala3-cloud1-finalproj-team2"
+kubernetes_version = "1.35"
+
+# 기존 VPC / 서브넷 (변경 금지)
+vpc_id             = "vpc-xxxxxxxxxxxxxxxxx"
+private_subnet_ids = ["subnet-aaaaaaaa", "subnet-bbbbbbbb"] # ap-northeast-2a, 2b
+public_subnet_ids  = ["subnet-cccccccc", "subnet-dddddddd"]
+
+# 노드풀 (#119 — 티어별 분리 + 스펙업)
+#  app  : 우리 서비스 + 모니터링 + CI/CD + userdb (고객DB는 namespace 분리만)
+#  data : Kafka + metadb 전용 (taint tier=data). desired 4 = AZ 2a/2b 2+2 (브로커 2a×2 수용)
+node_groups = {
+  app = {
+    instance_types = ["t3.xlarge"]
+    desired_size   = 4
+    min_size       = 2
+    max_size       = 6
+    labels         = { tier = "app" }
+  }
+  data = {
+    instance_types = ["t3.xlarge"]
+    desired_size   = 4
+    min_size       = 3
+    max_size       = 6
+    labels         = { tier = "data" }
+    taints = [
+      { key = "tier", value = "data", effect = "NO_SCHEDULE" }
+    ]
+  }
+}

@@ -340,14 +340,19 @@ Kafka는 현재 3-node KRaft 기반 MVP 구조까지 진행되어 있다. 다음
 arn:aws:eks:ap-northeast-2:881490135253:cluster/skala3-cloud1-finalproj-team2
 ```
 
-노드:
+노드 (#119 — 티어별 노드풀 분리 + 스펙업, 2026-06-05):
 
 | 항목 | 현재 상태 |
 | --- | --- |
-| worker node | 3개 Ready |
-| Kubernetes version | v1.35.4-eks-7fcd7ec |
+| worker node | **8개 Ready** (t3.xlarge, 4vCPU/16Gi) — 구 3× t3.large에서 스펙업 |
+| 노드풀 `app` | t3.xlarge ×4 (desired 4/min 2/max 6), taint 없음. 우리 서비스·모니터링·CI/CD·userdb |
+| 노드풀 `data` | t3.xlarge ×4 (desired 4/min 3/max 6), **taint `tier=data:NoSchedule`**. Kafka·metadb 전용 |
+| AZ 분포 | 각 풀 ap-northeast-2a ×2 / 2b ×2 (Kafka broker PVC AZ 매칭) |
+| Kubernetes version | v1.35 |
 | OS | Amazon Linux 2023 |
 | container runtime | containerd |
+
+> **노드풀 토폴로지 결정 (#119)**: 단일 노드풀에 전 워크로드가 혼재해 CPU requests가 82%까지 포화 → ① **Kafka+metadb를 전용 `data` 풀로 물리 분리**(노이지 네이버 차단·anti-affinity), ② 고객사 DB(userdb)는 in-cluster라 물리분리 실익이 낮아 **namespace 논리분리만**(app 풀 배치), ③ t3.large→t3.xlarge 스펙업. terraform `module.eks`는 `var.node_groups` map + `for_each`로 멀티 노드풀 지원. 마이그레이션은 신규 풀 추가 → Kafka/metadb를 toleration+nodeAffinity로 data 풀 이동(무중단 롤링) → 구 풀 drain·제거 순으로 무중단 수행.
 
 Namespace:
 

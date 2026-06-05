@@ -7,6 +7,9 @@ metadata:
     app: metadb
 spec:
   replicas: 1
+  # 단일 복제 + RWO PVC → 롤링 시 Multi-Attach 데드락 방지 (구 파드 종료 후 신규 기동)
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: metadb
@@ -15,6 +18,14 @@ spec:
       labels:
         app: metadb
     spec:
+      # #119: metadb를 전용 data 노드풀(tier=data, taint)에 배치
+      nodeSelector:
+        tier: data
+      tolerations:
+        - key: tier
+          operator: Equal
+          value: data
+          effect: NoSchedule
       containers:
         - name: postgres
           image: postgres:15-alpine

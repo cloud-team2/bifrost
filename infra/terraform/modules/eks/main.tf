@@ -46,6 +46,13 @@ resource "aws_security_group" "nodes" {
   }
 
   tags = merge(var.tags, { Name = "${var.cluster_name}-nodes-sg" })
+
+  # AWS Load Balancer Controller가 TargetGroupBinding용 ingress 규칙(예: ALB→노드 8080)을
+  # 클러스터 외부에서 추가/관리한다. inline 규칙만 선언하면 terraform이 매번 이를 되돌려
+  # ALB→파드 라우팅이 끊긴다. 컨트롤러 관리 규칙을 보존하기 위해 rule 변경은 무시한다.
+  lifecycle {
+    ignore_changes = [ingress, egress]
+  }
 }
 
 # 노드 → 컨트롤 플레인 (443)
@@ -114,22 +121,37 @@ resource "aws_launch_template" "nodes" {
   tags = var.tags
 }
 
-resource "aws_eks_node_group" "main" {
+# 티어별 멀티 노드풀 (#119). 풀별 instance_type·sizes·labels·taints는 var.node_groups로 정의.
+# 기존 단일 노드그룹(aws_eks_node_group.main)은 아래 moved 블록으로 this["main"]에 무중단 이전한다.
+resource "aws_eks_node_group" "this" {
+  for_each = var.node_groups
+
   cluster_name    = aws_eks_cluster.main.name
-  node_group_name = "${var.cluster_name}-ng-main"
+  node_group_name = "${var.cluster_name}-ng-${each.key}"
   node_role_arn   = aws_iam_role.nodes.arn
   subnet_ids      = var.private_subnet_ids
 
-  instance_types = [var.node_instance_type]
+  instance_types = each.value.instance_types
 
   scaling_config {
-    desired_size = var.node_desired_size
-    min_size     = var.node_min_size
-    max_size     = var.node_max_size
+    desired_size = each.value.desired_size
+    min_size     = each.value.min_size
+    max_size     = each.value.max_size
   }
 
   update_config {
     max_unavailable = 1
+  }
+
+  labels = each.value.labels
+
+  dynamic "taint" {
+    for_each = each.value.taints
+    content {
+      key    = taint.value.key
+      value  = taint.value.value
+      effect = taint.value.effect
+    }
   }
 
   launch_template {
@@ -146,6 +168,12 @@ resource "aws_eks_node_group" "main" {
   tags = var.tags
 }
 
+# 기존 ng-main을 for_each 키 "main"으로 주소만 이전(리소스 교체 없음).
+moved {
+  from = aws_eks_node_group.main
+  to   = aws_eks_node_group.this["main"]
+}
+
 ################################################################################
 # EKS Add-ons
 ################################################################################
@@ -154,21 +182,21 @@ resource "aws_eks_addon" "vpc_cni" {
   cluster_name = aws_eks_cluster.main.name
   addon_name   = "vpc-cni"
 
-  depends_on = [aws_eks_node_group.main]
+  depends_on = [aws_eks_node_group.this]
 }
 
 resource "aws_eks_addon" "coredns" {
   cluster_name = aws_eks_cluster.main.name
   addon_name   = "coredns"
 
-  depends_on = [aws_eks_node_group.main]
+  depends_on = [aws_eks_node_group.this]
 }
 
 resource "aws_eks_addon" "kube_proxy" {
   cluster_name = aws_eks_cluster.main.name
   addon_name   = "kube-proxy"
 
-  depends_on = [aws_eks_node_group.main]
+  depends_on = [aws_eks_node_group.this]
 }
 
 resource "aws_eks_addon" "ebs_csi_driver" {
@@ -176,7 +204,7 @@ resource "aws_eks_addon" "ebs_csi_driver" {
   addon_name               = "aws-ebs-csi-driver"
   service_account_role_arn = aws_iam_role.ebs_csi_driver.arn
 
-  depends_on = [aws_eks_node_group.main]
+  depends_on = [aws_eks_node_group.this]
 }
 
 ################################################################################
