@@ -240,13 +240,14 @@ tenantdb
 ├── tenant-postgres                    # PostgreSQL 15 (고객 source, wal_level=logical)
 └── tenant-mariadb                     # MariaDB 10.11 (고객 sink, binlog ROW)
 
-bifrost-system                       # 앱 (배포는 CICD #123 대기)
-├── ai-service                       # FastAPI (helm: services/ai-service/helm, 이미지 Harbor)
-├── operations-backend               # Spring Boot (예정)
-└── frontend                         # (예정)
+bifrost-system                       # 앱 (helm 차트 준비 완료, 실배포는 CICD #123 대기)
+├── ai-service                       # FastAPI  (helm: services/ai-service/helm, ClusterIP 내부)
+├── operations-backend               # Spring Boot (helm: services/operations-backend/helm) — ALB /api·/ws
+└── frontend                         # React/nginx (helm: services/frontend/helm) — ALB / (사용자 진입점)
 ```
 
-> **앱 이미지 레지스트리 = Harbor (in-cluster)**. push: Jenkins CI(Kaniko/buildah)→Harbor. pull: `harbor.harbor.svc.cluster.local/library/<image>` + `harbor-push-secret`. Docker Hub 아님.
+> **앱 이미지 레지스트리 = Harbor (in-cluster)**. push: Jenkins CI(Kaniko/buildah)→Harbor. pull: `harbor.harbor.svc.cluster.local/library/bifrost-<svc>` + `harbor-push-secret`. Docker Hub 아님.
+> **외부 노출**: `bifrost-app` ALB 그룹 path 라우팅 — `/api`·`/ws`→operations-backend, `/`→frontend. ai-service는 내부 전용.
 
 ---
 

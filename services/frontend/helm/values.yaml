@@ -1,0 +1,32 @@
+replicaCount: 1
+
+image:
+  # in-cluster Harbor (library 프로젝트). 빌드/배포는 CICD(#123, Jenkins→Harbor→ArgoCD).
+  repository: harbor.harbor.svc.cluster.local/library/bifrost-frontend
+  pullPolicy: IfNotPresent
+  tag: latest
+
+imagePullSecrets:
+  - name: harbor-push-secret
+
+service:
+  type: ClusterIP
+  port: 80
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+# 사용자 진입점. bifrost-app ALB 그룹의 `/` catch-all (operations-backend /api·/ws 보다 나중 평가).
+ingress:
+  enabled: true
+  className: alb
+  groupName: bifrost-app
+  groupOrder: "20"
+  subnets: subnet-0d8a1dcc1e064b04d,subnet-05e64cd452e9a3c55
+  healthcheckPath: /
+  path: /
