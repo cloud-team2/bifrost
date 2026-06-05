@@ -137,6 +137,23 @@ public class DatabaseService {
         return DatabaseMetricsResponse.placeholder();
     }
 
+    /** DB 삭제. 파이프라인에서 사용 중이면 거부. */
+    @Transactional
+    public void delete(UUID tenantId, UUID dbId) {
+        DatasourceEntity e = repo.findByIdAndTenantId(dbId, tenantId)
+                .orElseThrow(() -> new ApiException(ErrorCode.DATABASE_NOT_FOUND,
+                        "데이터베이스를 찾을 수 없습니다"));
+        boolean usedAsSource = repo.findSourceDatasourceIds(tenantId).contains(dbId);
+        boolean usedAsSink = repo.findSinkDatasourceIds(tenantId).contains(dbId);
+        if (usedAsSource || usedAsSink) {
+            throw new ApiException(ErrorCode.VALIDATION_FAILED,
+                    "이 DB를 사용하는 파이프라인이 있습니다. 파이프라인을 먼저 삭제하세요.");
+        }
+        secretStore.delete(e.getSecretRef());
+        repo.delete(e);
+        OpsLog.ok("Database", "DB 삭제", "name=" + e.getName());
+    }
+
     /** 이 DB를 source로 쓰는 파이프라인 목록(FR-018). */
     @Transactional(readOnly = true)
     public List<DatabasePipelineSummary> listPipelines(UUID tenantId, UUID dbId) {

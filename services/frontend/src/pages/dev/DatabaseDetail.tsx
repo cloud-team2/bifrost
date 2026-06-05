@@ -66,6 +66,20 @@ export function DatabaseDetail() {
           <Icon name="refresh" size={13} />
           Re-scan
         </button>
+        <button
+          onClick={async () => {
+            if (pipelines.length > 0) {
+              toast('파이프라인을 먼저 삭제하세요.')
+              return
+            }
+            if (!confirm(`"${nodeName(node)}" DB를 삭제하시겠습니까?`)) return
+            await app.deleteDatabase(node.id)
+          }}
+          className="flex items-center gap-1.5 rounded-md border border-red-200 px-2.5 py-1.5 text-[12.5px] font-medium text-red-600 hover:bg-red-50"
+        >
+          <Icon name="trash" size={13} />
+          삭제
+        </button>
       </div>
 
       <div className="mt-4 flex gap-1 border-b border-gray-200">

@@ -101,6 +101,7 @@ interface Store {
   createProject: (name: string) => Promise<Project | null>
   reloadProjectData: () => void
   addDatabaseNode: (n: Node) => void
+  deleteDatabase: (id: string) => Promise<void>
   createPipeline: (input: PipelineCreateInput) => Promise<Edge | null>
   pausePipeline: (id: string) => Promise<void>
   resumePipeline: (id: string) => Promise<void>
@@ -425,6 +426,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
         )
         setCurrentProject((w) => (w ? { ...w, dbIds: [...w.dbIds, node.id] } : w))
       }
+    },
+
+    async deleteDatabase(id) {
+      if (!currentProject) return
+      try {
+        await api.deleteDatabase(currentProject.id, id)
+      } catch {
+        return
+      }
+      setNodes((p) => p.filter((n) => n.id !== id))
+      setProjects((p) =>
+        p.map((w) => ({ ...w, dbIds: w.dbIds.filter((x) => x !== id) })),
+      )
+      setCurrentProject((w) => (w ? { ...w, dbIds: w.dbIds.filter((x) => x !== id) } : w))
+      setSelectedDatabaseId(null)
+      setViewRaw('databases')
     },
 
     async createPipeline(input) {

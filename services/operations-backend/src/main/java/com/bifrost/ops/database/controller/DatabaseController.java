@@ -17,6 +17,7 @@ import com.bifrost.ops.workspace.WorkspaceAccessGuard;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -128,6 +129,16 @@ public class DatabaseController {
                                            @AuthenticationPrincipal AuthenticatedUser principal) {
         accessGuard.requireAccess(wsId, principal);
         return databaseService.getMetrics(wsId, dbId);
+    }
+
+    /** DB 삭제. 파이프라인에서 사용 중이면 400. */
+    @DeleteMapping("/{dbId}")
+    public ResponseEntity<Void> delete(@PathVariable UUID wsId,
+                                       @PathVariable UUID dbId,
+                                       @AuthenticationPrincipal AuthenticatedUser principal) {
+        accessGuard.requireAccess(wsId, principal);
+        databaseService.delete(wsId, dbId);
+        return ResponseEntity.noContent().build();
     }
 
     /** 이 DB를 쓰는 파이프라인 목록(FR-018). */

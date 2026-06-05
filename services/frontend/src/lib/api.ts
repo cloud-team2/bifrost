@@ -210,8 +210,12 @@ export const api = {
     request<DatabaseResponse>('POST', `/api/v1/workspaces/${wsId}/databases`, body),
   getDatabase: (wsId: string, dbId: string) =>
     request<DatabaseResponse>('GET', `/api/v1/workspaces/${wsId}/databases/${dbId}`),
+  deleteDatabase: (wsId: string, dbId: string) =>
+    request<void>('DELETE', `/api/v1/workspaces/${wsId}/databases/${dbId}`),
   cdcReadiness: (wsId: string, dbId: string) =>
     request<CdcReadinessResponse>('GET', `/api/v1/workspaces/${wsId}/databases/${dbId}/cdc-readiness`),
+  sinkReadiness: (wsId: string, dbId: string) =>
+    request<CdcReadinessResponse>('GET', `/api/v1/workspaces/${wsId}/databases/${dbId}/sink-readiness`),
   databaseSchema: (wsId: string, dbId: string) =>
     request<DatabaseSchemaResponse>('GET', `/api/v1/workspaces/${wsId}/databases/${dbId}/schema`),
 
