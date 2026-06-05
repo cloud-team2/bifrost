@@ -4,8 +4,12 @@ import com.bifrost.ops.auth.jwt.AuthenticatedUser;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
 import com.bifrost.ops.pipeline.dto.ConsumerGroupInfo;
+import com.bifrost.ops.pipeline.dto.EventDistPoint;
+import com.bifrost.ops.pipeline.dto.MetricPoint;
 import com.bifrost.ops.pipeline.dto.PipelineMetricsResponse;
 import com.bifrost.ops.pipeline.dto.TopicInfoResponse;
+import com.bifrost.ops.pipeline.dto.ThroughputPoint;
+import com.bifrost.ops.monitoring.query.KafkaMetricsQuery;
 import com.bifrost.ops.pipeline.kafka.OffsetSnapshotStore;
 import com.bifrost.ops.pipeline.kafka.RateResult;
 import com.bifrost.ops.pipeline.persistence.entity.PipelineEntity;
@@ -54,17 +58,20 @@ public class PipelineTopicService {
     private final WorkspaceAccessGuard accessGuard;
     private final AdminClient adminClient;
     private final OffsetSnapshotStore snapshotStore;
+    private final KafkaMetricsQuery kafkaMetricsQuery;
 
     public PipelineTopicService(PipelineRepository pipelineRepository,
                                 ConnectorRepository connectorRepository,
                                 WorkspaceAccessGuard accessGuard,
                                 AdminClient adminClient,
-                                OffsetSnapshotStore snapshotStore) {
+                                OffsetSnapshotStore snapshotStore,
+                                KafkaMetricsQuery kafkaMetricsQuery) {
         this.pipelineRepository = pipelineRepository;
         this.connectorRepository = connectorRepository;
         this.accessGuard = accessGuard;
         this.adminClient = adminClient;
         this.snapshotStore = snapshotStore;
+        this.kafkaMetricsQuery = kafkaMetricsQuery;
     }
 
     public TopicInfoResponse topicInfo(UUID wsId, AuthenticatedUser principal, UUID id) {
@@ -106,9 +113,19 @@ public class PipelineTopicService {
             errorPct = (double) failed / connectors.size() * 100.0;
         }
 
-        // produce/consume rate + lag: 스냅샷 스토어에서 즉시 반환 (블로킹 없음)
+        // produce/consume rate + lag: Prometheus 우선, 실패 시 OffsetSnapshot fallback
         String topic = p.getTopicName();
         if (topic != null && !topic.isBlank()) {
+            if (kafkaMetricsQuery.isEnabled()) {
+                try {
+                    double produceRate = kafkaMetricsQuery.produceRate(topic);
+                    double consumeRate = kafkaMetricsQuery.consumeRate(topic);
+                    long lag = kafkaMetricsQuery.totalLag(topic);
+                    return new PipelineMetricsResponse(produceRate, consumeRate, lag, errorPct);
+                } catch (Exception e) {
+                    log.warn("Prometheus 조회 실패, 스냅샷 fallback: topic={}, cause={}", topic, e.getMessage());
+                }
+            }
             RateResult rates = snapshotStore.getRates(topic);
             return new PipelineMetricsResponse(
                     rates.produceRate(), rates.consumeRate(), rates.lagMessages(), errorPct);
@@ -117,7 +134,121 @@ public class PipelineTopicService {
         return new PipelineMetricsResponse(0.0, 0.0, 0L, errorPct);
     }
 
+    /**
+     * 처리량 추이(#126). Prometheus range query로 produce/consume rate 시계열을 만든다.
+     * Prometheus 비활성·실패·토픽 없음이면 빈 목록(프론트가 적절히 처리).
+     */
+    public List<ThroughputPoint> throughput(UUID wsId, AuthenticatedUser principal, UUID id, int minutes) {
+        PipelineEntity p = loadPipeline(wsId, principal, id);
+        String topic = p.getTopicName();
+        if (topic == null || topic.isBlank() || !kafkaMetricsQuery.isEnabled()) return List.of();
+
+        long endSec = System.currentTimeMillis() / 1000L;
+        long startSec = endSec - Math.max(1, minutes) * 60L;
+        long stepSec = 60L;
+        try {
+            Map<Long, Double> produce = kafkaMetricsQuery.produceSeries(topic, startSec, endSec, stepSec);
+            Map<Long, Double> consume = kafkaMetricsQuery.consumeSeries(topic, startSec, endSec, stepSec);
+            // produce 타임스탬프 기준으로 정렬·병합 (둘 다 동일 step이라 키 정렬됨)
+            java.util.TreeSet<Long> stamps = new java.util.TreeSet<>();
+            stamps.addAll(produce.keySet());
+            stamps.addAll(consume.keySet());
+            List<ThroughputPoint> out = new ArrayList<>(stamps.size());
+            for (Long ts : stamps) {
+                out.add(new ThroughputPoint(
+                        ts * 1000L,
+                        produce.getOrDefault(ts, 0.0),
+                        consume.getOrDefault(ts, 0.0)));
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("처리량 추이 조회 실패: topic={}, cause={}", topic, e.getMessage());
+            return List.of();
+        }
+    }
+
+    /** 소스 지연(ms) 추이(#126, Sync 탭). Debezium MilliSecondsBehindSource. */
+    public List<MetricPoint> sourceDelay(UUID wsId, AuthenticatedUser principal, UUID id, int minutes) {
+        PipelineEntity p = loadPipeline(wsId, principal, id);
+        String server = debeziumServer(p);
+        if (server == null || !kafkaMetricsQuery.isEnabled()) return List.of();
+        long[] win = window(minutes);
+        try {
+            return toPoints(kafkaMetricsQuery.sourceDelaySeries(server, win[0], win[1], win[2]));
+        } catch (Exception e) {
+            log.warn("소스 지연 추이 조회 실패: server={}, cause={}", server, e.getMessage());
+            return List.of();
+        }
+    }
+
+    /** 미동기화 row 추이(#126, Sync 탭). consumer lag proxy. */
+    public List<MetricPoint> unsynced(UUID wsId, AuthenticatedUser principal, UUID id, int minutes) {
+        PipelineEntity p = loadPipeline(wsId, principal, id);
+        String topic = p.getTopicName();
+        if (topic == null || topic.isBlank() || !kafkaMetricsQuery.isEnabled()) return List.of();
+        long[] win = window(minutes);
+        try {
+            return toPoints(kafkaMetricsQuery.unsyncedSeries(topic, win[0], win[1], win[2]));
+        } catch (Exception e) {
+            log.warn("미동기화 추이 조회 실패: topic={}, cause={}", topic, e.getMessage());
+            return List.of();
+        }
+    }
+
+    /** 이벤트 타입 분포 추이(#126, Sync 탭). Debezium create/update/delete 증가분. */
+    public List<EventDistPoint> eventDistribution(UUID wsId, AuthenticatedUser principal, UUID id, int minutes) {
+        PipelineEntity p = loadPipeline(wsId, principal, id);
+        String server = debeziumServer(p);
+        if (server == null || !kafkaMetricsQuery.isEnabled()) return List.of();
+        long[] win = window(minutes);
+        try {
+            Map<Long, Double> ins = kafkaMetricsQuery.eventCountSeries(server, "create", win[0], win[1], win[2]);
+            Map<Long, Double> upd = kafkaMetricsQuery.eventCountSeries(server, "update", win[0], win[1], win[2]);
+            Map<Long, Double> del = kafkaMetricsQuery.eventCountSeries(server, "delete", win[0], win[1], win[2]);
+            java.util.TreeSet<Long> stamps = new java.util.TreeSet<>();
+            stamps.addAll(ins.keySet());
+            stamps.addAll(upd.keySet());
+            stamps.addAll(del.keySet());
+            List<EventDistPoint> out = new ArrayList<>(stamps.size());
+            for (Long ts : stamps) {
+                out.add(new EventDistPoint(
+                        ts * 1000L,
+                        Math.round(ins.getOrDefault(ts, 0.0)),
+                        Math.round(upd.getOrDefault(ts, 0.0)),
+                        Math.round(del.getOrDefault(ts, 0.0))));
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("이벤트 분포 조회 실패: server={}, cause={}", server, e.getMessage());
+            return List.of();
+        }
+    }
+
     // ---- private ----
+
+    /** [startSec, endSec, stepSec] 윈도우 (step 60s). */
+    private long[] window(int minutes) {
+        long endSec = System.currentTimeMillis() / 1000L;
+        long startSec = endSec - Math.max(1, minutes) * 60L;
+        return new long[]{startSec, endSec, 60L};
+    }
+
+    /** Map<ts초,값> → 시간순 MetricPoint(ms). */
+    private List<MetricPoint> toPoints(Map<Long, Double> series) {
+        List<MetricPoint> out = new ArrayList<>(series.size());
+        new java.util.TreeMap<>(series).forEach((ts, v) -> out.add(new MetricPoint(ts * 1000L, v)));
+        return out;
+    }
+
+    /** Debezium server 이름 = topic에서 ".schema.table" 접미를 제거(= topic.prefix). */
+    private String debeziumServer(PipelineEntity p) {
+        String topic = p.getTopicName();
+        if (topic == null || topic.isBlank()) return null;
+        String suffix = "." + p.getSchemaName() + "." + p.getTableName();
+        return topic.endsWith(suffix)
+                ? topic.substring(0, topic.length() - suffix.length())
+                : topic;
+    }
 
     private TopicInfoResponse fetchTopicInfo(String topic) throws Exception {
         // 1) describe topic → partitions, replicas, isr

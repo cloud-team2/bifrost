@@ -175,6 +175,24 @@ export interface PipelineMetricsResponse {
   lagMessages: number
   errorPct: number
 }
+/** 처리량 추이 한 점(#126, Prometheus range query). */
+export interface ThroughputPoint {
+  timestamp: number
+  produceRate: number
+  consumeRate: number
+}
+/** 단일 값 시계열 한 점(#126). 소스 지연(ms)·미동기화 row 추이 공용. */
+export interface MetricPoint {
+  timestamp: number
+  value: number
+}
+/** 이벤트 타입 분포 시계열 한 점(#126). */
+export interface EventDistPoint {
+  timestamp: number
+  insert: number
+  update: number
+  delete: number
+}
 /** 파이프라인 커넥터(#107). state/lastError/updatedAt는 watcher가 갱신(미반영 시 null). */
 export interface ConnectorInfo {
   name: string
@@ -272,6 +290,14 @@ export const api = {
     request<KafkaMessageRecord[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/messages?limit=${limit}`),
   pipelineMetrics: (wsId: string, id: string) =>
     request<PipelineMetricsResponse>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/metrics`),
+  pipelineThroughput: (wsId: string, id: string, minutes = 30) =>
+    request<ThroughputPoint[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/metrics/throughput?minutes=${minutes}`),
+  pipelineSourceDelay: (wsId: string, id: string, minutes = 120) =>
+    request<MetricPoint[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/metrics/source-delay?minutes=${minutes}`),
+  pipelineUnsynced: (wsId: string, id: string, minutes = 120) =>
+    request<MetricPoint[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/metrics/unsynced?minutes=${minutes}`),
+  pipelineEventDist: (wsId: string, id: string, minutes = 60) =>
+    request<EventDistPoint[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/metrics/event-distribution?minutes=${minutes}`),
   pausePipeline: (wsId: string, id: string) =>
     request<PipelineResponse>('POST', `/api/v1/workspaces/${wsId}/pipelines/${id}/pause`),
   resumePipeline: (wsId: string, id: string) =>

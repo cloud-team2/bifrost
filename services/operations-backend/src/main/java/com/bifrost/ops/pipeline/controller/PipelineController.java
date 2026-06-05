@@ -7,7 +7,10 @@ import com.bifrost.ops.pipeline.dto.KafkaMessageRecord;
 import com.bifrost.ops.pipeline.dto.PipelineCreateRequest;
 import com.bifrost.ops.pipeline.dto.PipelineMetricsResponse;
 import com.bifrost.ops.pipeline.dto.PipelineResponse;
+import com.bifrost.ops.pipeline.dto.EventDistPoint;
+import com.bifrost.ops.pipeline.dto.MetricPoint;
 import com.bifrost.ops.pipeline.dto.SyncStatusResponse;
+import com.bifrost.ops.pipeline.dto.ThroughputPoint;
 import com.bifrost.ops.pipeline.dto.TopicInfoResponse;
 import com.bifrost.ops.pipeline.service.PipelineMessageService;
 import com.bifrost.ops.pipeline.service.PipelineService;
@@ -124,6 +127,42 @@ public class PipelineController {
                                            @PathVariable UUID id,
                                            @AuthenticationPrincipal AuthenticatedUser principal) {
         return pipelineTopicService.metrics(wsId, principal, id);
+    }
+
+    /** 처리량 추이(#126, Overview 처리량 차트). Prometheus range query 기반 produce/consume rate 시계열. */
+    @GetMapping("/{id}/metrics/throughput")
+    public List<ThroughputPoint> throughput(@PathVariable UUID wsId,
+                                            @PathVariable UUID id,
+                                            @AuthenticationPrincipal AuthenticatedUser principal,
+                                            @RequestParam(defaultValue = "30") int minutes) {
+        return pipelineTopicService.throughput(wsId, principal, id, minutes);
+    }
+
+    /** 소스 지연 추이(#126, Sync 탭). Debezium MilliSecondsBehindSource 시계열(ms). */
+    @GetMapping("/{id}/metrics/source-delay")
+    public List<MetricPoint> sourceDelay(@PathVariable UUID wsId,
+                                         @PathVariable UUID id,
+                                         @AuthenticationPrincipal AuthenticatedUser principal,
+                                         @RequestParam(defaultValue = "120") int minutes) {
+        return pipelineTopicService.sourceDelay(wsId, principal, id, minutes);
+    }
+
+    /** 미동기화 row 추이(#126, Sync 탭). consumer lag 시계열. */
+    @GetMapping("/{id}/metrics/unsynced")
+    public List<MetricPoint> unsynced(@PathVariable UUID wsId,
+                                      @PathVariable UUID id,
+                                      @AuthenticationPrincipal AuthenticatedUser principal,
+                                      @RequestParam(defaultValue = "120") int minutes) {
+        return pipelineTopicService.unsynced(wsId, principal, id, minutes);
+    }
+
+    /** 이벤트 타입 분포 추이(#126, Sync 탭). Debezium create/update/delete 증가분 시계열. */
+    @GetMapping("/{id}/metrics/event-distribution")
+    public List<EventDistPoint> eventDistribution(@PathVariable UUID wsId,
+                                                  @PathVariable UUID id,
+                                                  @AuthenticationPrincipal AuthenticatedUser principal,
+                                                  @RequestParam(defaultValue = "60") int minutes) {
+        return pipelineTopicService.eventDistribution(wsId, principal, id, minutes);
     }
 
     /** 일시중지(FR-005). creating 중에는 불가. */

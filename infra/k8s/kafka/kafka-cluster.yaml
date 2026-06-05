@@ -30,6 +30,18 @@ spec:
       default.replication.factor: 3
       min.insync.replicas: 2
       auto.create.topics.enable: true
+    # JMX Prometheus Exporter — 브로커 포트 9404로 메트릭 노출
+    metricsConfig:
+      type: jmxPrometheusExporter
+      valueFrom:
+        configMapKeyRef:
+          name: kafka-metrics-config
+          key: kafka-metrics-config.yml
+  # Kafka Exporter — consumer group lag 메트릭 (포트 9308)
+  kafkaExporter:
+    topicRegex: ".*"
+    groupRegex: ".*"
+    enableSaramaLogging: false
   entityOperator:
     topicOperator: {}
     userOperator: {}

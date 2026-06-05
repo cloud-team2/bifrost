@@ -51,6 +51,13 @@ secret-store:
 # 파이프라인 provisioner는 Strimzi(K8s) 단일 경로 — 파이프라인 생성에는 kind+Strimzi가 필요하다.
 # (KafkaConnector CR apply + KafkaConnectorWatcher 상태 반영). KUBECONFIG로 대상 클러스터를 지정한다.
 
+# Prometheus (Kafka 메트릭 조회)
+# enabled=true로 바꾸면 OffsetSnapshot 대신 Prometheus에서 produce/consume rate·lag를 읽는다.
+# 포트포워드: kubectl port-forward svc/prometheus 9090:9090 -n platform-kafka
+prometheus:
+  url: ${PROMETHEUS_URL:http://localhost:9090}
+  enabled: ${PROMETHEUS_ENABLED:false}
+
 # 외부 서비스 (Agent는 별도 FastAPI)
 ai-service:
   url: ${AI_SERVICE_URL:http://localhost:8082}

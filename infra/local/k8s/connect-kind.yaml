@@ -26,6 +26,14 @@ spec:
     value.converter: org.apache.kafka.connect.json.JsonConverter
     key.converter.schemas.enable: false
     value.converter.schemas.enable: false
+  # JMX Prometheus Exporter — 포트 9404로 Debezium/Connect 메트릭 노출 (소스 지연 등).
+  # ConfigMap connect-metrics-config는 infra/k8s/monitoring/03-connect-metrics-configmap.yaml로 적용.
+  metricsConfig:
+    type: jmxPrometheusExporter
+    valueFrom:
+      configMapKeyRef:
+        name: connect-metrics-config
+        key: connect-metrics-config.yml
   resources:
     requests:
       memory: 768Mi
@@ -33,3 +41,15 @@ spec:
     limits:
       memory: 1280Mi
       cpu: "1"
+  # 기동/리밸런스 중 /health 응답이 느려 기본 probe(60s 후·5s 타임아웃·3회)가 Connect를
+  # 기동 도중 kill → 크래시루프에 빠지는 문제를 막는다. 한 번 완주하면 안정화된다.
+  livenessProbe:
+    initialDelaySeconds: 120
+    timeoutSeconds: 15
+    periodSeconds: 15
+    failureThreshold: 6
+  readinessProbe:
+    initialDelaySeconds: 90
+    timeoutSeconds: 15
+    periodSeconds: 15
+    failureThreshold: 6

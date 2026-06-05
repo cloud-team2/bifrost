@@ -13,10 +13,13 @@ import {
   api,
   type ConnectorInfo,
   type ConsumerGroupInfo,
+  type EventDistPoint,
   type KafkaMessageRecord,
+  type MetricPoint,
   type PipelineMetricsResponse,
   type SchemaColumn,
   type SyncStatusResponse,
+  type ThroughputPoint,
   type TopicInfoResponse,
 } from '../../lib/api'
 import { cn, formatNum } from '../../lib/format'
@@ -129,12 +132,14 @@ function OverviewTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
   const [topicInfo, setTopicInfo] = useState<TopicInfoResponse | null>(null)
   const [metrics, setMetrics] = useState<PipelineMetricsResponse | null>(null)
   const [groups, setGroups] = useState<ConsumerGroupInfo[]>([])
+  const [throughput, setThroughput] = useState<ThroughputPoint[]>([])
 
   useEffect(() => {
     if (!wsId) return
     let cancelled = false
     api.pipelineTopicInfo(wsId, edge.id).then((t) => { if (!cancelled) setTopicInfo(t) }).catch(() => {})
     api.pipelineMetrics(wsId, edge.id).then((m) => { if (!cancelled) setMetrics(m) }).catch(() => {})
+    api.pipelineThroughput(wsId, edge.id, 30).then((t) => { if (!cancelled) setThroughput(t) }).catch(() => {})
     if (isEda) {
       api.pipelineConsumerGroups(wsId, edge.id).then((g) => { if (!cancelled) setGroups(g) }).catch(() => {})
     }
@@ -158,10 +163,20 @@ function OverviewTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
 
   const maxLagGroup = groups.length > 0 ? groups.reduce((a, b) => b.totalLag > a.totalLag ? b : a) : null
 
-  const throughputData = useMemo(() => genSeries([
-    { key: 'produced', base: m.produce_rate, vary: Math.max(10, m.produce_rate * 0.15) },
-    { key: 'consumed', base: m.consume_rate, vary: Math.max(10, m.consume_rate * 0.12) },
-  ], 24), [m.produce_rate, m.consume_rate])
+  // 실데이터(Prometheus range) 우선. 비어있으면(미연결/비활성) genSeries fallback.
+  const throughputData = useMemo(() => {
+    if (throughput.length > 0) {
+      return throughput.map((p) => ({
+        t: new Date(p.timestamp).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
+        produced: Math.round(p.produceRate * 100) / 100,
+        consumed: Math.round(p.consumeRate * 100) / 100,
+      }))
+    }
+    return genSeries([
+      { key: 'produced', base: m.produce_rate, vary: Math.max(10, m.produce_rate * 0.15) },
+      { key: 'consumed', base: m.consume_rate, vary: Math.max(10, m.consume_rate * 0.12) },
+    ], 24)
+  }, [throughput, m.produce_rate, m.consume_rate])
 
   return (
     <div className="space-y-4">
@@ -571,6 +586,10 @@ function SyncTab({ edge }: { edge: Edge }) {
   // 실제 source/sink 행수(#107). -1은 접속 실패/테이블 미존재(생성 중).
   const [sync, setSync]       = useState<SyncStatusResponse | null>(null)
   const [syncErr, setSyncErr] = useState(false)
+  // 추세 차트 실데이터(#126, Prometheus range): 소스지연·미동기화·이벤트분포.
+  const [delaySeries, setDelaySeries] = useState<MetricPoint[]>([])
+  const [unsyncedSeries, setUnsyncedSeries] = useState<MetricPoint[]>([])
+  const [eventSeries, setEventSeries] = useState<EventDistPoint[]>([])
   useEffect(() => {
     if (!wsId) return
     let cancelled = false
@@ -580,8 +599,13 @@ function SyncTab({ edge }: { edge: Edge }) {
       .pipelineSyncStatus(wsId, edge.id)
       .then((s) => { if (!cancelled) setSync(s) })
       .catch(() => { if (!cancelled) setSyncErr(true) })
+    api.pipelineSourceDelay(wsId, edge.id).then((d) => { if (!cancelled) setDelaySeries(d) }).catch(() => {})
+    api.pipelineUnsynced(wsId, edge.id).then((d) => { if (!cancelled) setUnsyncedSeries(d) }).catch(() => {})
+    api.pipelineEventDist(wsId, edge.id).then((d) => { if (!cancelled) setEventSeries(d) }).catch(() => {})
     return () => { cancelled = true }
   }, [wsId, edge.id])
+
+  const hhmm = (ts: number) => new Date(ts).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
 
   const tableName  = edge.table ? `${edge.table.schema}.${edge.table.name}` : '—'
   const sinkReady  = !!sync && sync.sourceRows >= 0 && sync.sinkRows >= 0
@@ -592,16 +616,35 @@ function SyncTab({ edge }: { edge: Edge }) {
   const barColor   = isHealthy ? 'bg-emerald-400' : syncPct >= 99.0 ? 'bg-amber-400' : 'bg-rose-400'
   const pctColor   = isHealthy ? 'text-emerald-600' : syncPct >= 99.0 ? 'text-amber-600' : 'text-rose-600'
 
-  const sourceDelay = useMemo(() => genSeries([{ key: 'delay', base: 3, vary: 9 }], 24), [])
+  // 실데이터(Prometheus) 우선, 비어있으면 genSeries fallback.
+  const sourceDelay = useMemo(() => {
+    if (delaySeries.length > 0) {
+      return delaySeries.map((p) => ({ t: hhmm(p.timestamp), delay: Math.round(p.value) }))
+    }
+    return genSeries([{ key: 'delay', base: 3, vary: 9 }], 24)
+  }, [delaySeries])
   const deltaBase   = sync && sync.delta >= 0 ? sync.delta : 0
-  const deltaTrend  = useMemo(() => genSeries([
-    { key: 'delta', base: deltaBase, vary: deltaBase * 0.2 + 1, drift: -deltaBase / 48 },
-  ], 24), [deltaBase])
-  const eventDist   = useMemo(() => genSeries([
-    { key: 'insert', base: 420, vary: 80 },
-    { key: 'update', base: 210, vary: 40 },
-    { key: 'delete', base: 35,  vary: 15 },
-  ], 12), [])
+  const deltaTrend  = useMemo(() => {
+    if (unsyncedSeries.length > 0) {
+      return unsyncedSeries.map((p) => ({ t: hhmm(p.timestamp), delta: Math.round(p.value) }))
+    }
+    return genSeries([
+      { key: 'delta', base: deltaBase, vary: deltaBase * 0.2 + 1, drift: -deltaBase / 48 },
+    ], 24)
+  }, [unsyncedSeries, deltaBase])
+  const eventDist   = useMemo(() => {
+    if (eventSeries.length > 0) {
+      return eventSeries.map((p) => {
+        const ts = hhmm(p.timestamp)
+        return { t: ts, ts, insert: p.insert, update: p.update, delete: p.delete }
+      })
+    }
+    return genSeries([
+      { key: 'insert', base: 420, vary: 80 },
+      { key: 'update', base: 210, vary: 40 },
+      { key: 'delete', base: 35,  vary: 15 },
+    ], 12).map((p) => ({ ...p, ts: p.t }))
+  }, [eventSeries])
   const axis = { fontSize: 10, fill: '#94a3b8' }
 
   return (
