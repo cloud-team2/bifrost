@@ -4,6 +4,8 @@ import com.bifrost.ops.auth.jwt.AuthenticatedUser;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
 import com.bifrost.ops.global.common.log.OpsLog;
+import com.bifrost.ops.pipeline.PipelineLifecycle;
+import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
 import com.bifrost.ops.provisioning.dto.TenantProvisionRequest;
 import com.bifrost.ops.provisioning.port.TenantProvisionerPort;
 import com.bifrost.ops.workspace.NamespaceSlug;
@@ -34,21 +36,24 @@ public class WorkspaceService {
     private static final Logger log = LoggerFactory.getLogger(WorkspaceService.class);
 
     private final WorkspaceRepository workspaceRepository;
+    private final PipelineRepository pipelineRepository;
     private final TenantProvisionerPort tenantProvisioner;
     private final WorkspaceAccessGuard accessGuard;
 
     public WorkspaceService(WorkspaceRepository workspaceRepository,
+                            PipelineRepository pipelineRepository,
                             TenantProvisionerPort tenantProvisioner,
                             WorkspaceAccessGuard accessGuard) {
         this.workspaceRepository = workspaceRepository;
+        this.pipelineRepository = pipelineRepository;
         this.tenantProvisioner = tenantProvisioner;
         this.accessGuard = accessGuard;
     }
 
-    /** 로그인 사용자가 소유한 워크스페이스 목록(생성순). */
+    /** 로그인 사용자가 소유한 워크스페이스 목록(생성순). 카드 요약용 파이프라인 카운트 포함(#105). */
     public List<WorkspaceResponse> list(AuthenticatedUser principal) {
         return workspaceRepository.findByOwnerUserIdOrderByCreatedAt(principal.userId()).stream()
-                .map(WorkspaceResponse::from)
+                .map(this::withCounts)
                 .toList();
     }
 
@@ -57,7 +62,14 @@ public class WorkspaceService {
         accessGuard.requireAccess(wsId, principal);
         WorkspaceEntity w = workspaceRepository.findById(wsId)
                 .orElseThrow(() -> new ApiException(ErrorCode.WORKSPACE_NOT_FOUND, "워크스페이스를 찾을 수 없습니다"));
-        return WorkspaceResponse.from(w);
+        return withCounts(w);
+    }
+
+    /** 워크스페이스 엔티티에 파이프라인 전체/active 카운트를 채워 응답으로 변환한다(#105). */
+    private WorkspaceResponse withCounts(WorkspaceEntity w) {
+        long total = pipelineRepository.countByTenantId(w.getId());
+        long active = pipelineRepository.countByTenantIdAndStatus(w.getId(), PipelineLifecycle.ACTIVE);
+        return WorkspaceResponse.from(w, total, active);
     }
 
     /** 워크스페이스 생성: 슬러그 생성 → 소유자 연결 → 저장 → KafkaUser/ACL 프로비저닝 트리거. */

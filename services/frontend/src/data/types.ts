@@ -62,6 +62,9 @@ export interface Project {
   dbIds: string[]
   memberCount: number
   createdAt: string
+  /** 프로젝트 목록 카드 요약(백엔드 workspace 응답 기준, #105). 상세 진입 시 실제 edges로 재동기화. */
+  pipelineCount: number
+  activeCount: number
 }
 
 export type Role = 'developer' | 'admin' | 'operator'
