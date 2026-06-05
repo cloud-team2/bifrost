@@ -11,6 +11,7 @@ import com.bifrost.ops.global.common.log.OpsLog;
 import com.bifrost.ops.governance.audit.AuditService;
 import com.bifrost.ops.pipeline.PipelineLifecycle;
 import com.bifrost.ops.pipeline.PipelinePatternCodec;
+import com.bifrost.ops.pipeline.dto.ConnectorResponse;
 import com.bifrost.ops.pipeline.dto.PipelineCreateRequest;
 import com.bifrost.ops.pipeline.dto.PipelineResponse;
 import com.bifrost.ops.pipeline.persistence.entity.PipelineEntity;
@@ -90,6 +91,15 @@ public class PipelineService {
     public PipelineResponse get(UUID wsId, AuthenticatedUser principal, UUID id) {
         accessGuard.requireAccess(wsId, principal);
         return PipelineResponse.from(load(wsId, id));
+    }
+
+    /** 파이프라인의 커넥터 목록(#107, 상세 Connector 탭). state/lastError는 watcher가 갱신한 값. */
+    public List<ConnectorResponse> listConnectors(UUID wsId, AuthenticatedUser principal, UUID id) {
+        accessGuard.requireAccess(wsId, principal);
+        load(wsId, id); // 파이프라인이 해당 워크스페이스 소속인지 검증(아니면 404)
+        return connectorRepository.findByPipelineId(id).stream()
+                .map(ConnectorResponse::from)
+                .toList();
     }
 
     // ---------- 생성 ----------

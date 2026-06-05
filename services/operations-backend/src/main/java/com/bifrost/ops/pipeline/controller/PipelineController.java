@@ -1,6 +1,7 @@
 package com.bifrost.ops.pipeline.controller;
 
 import com.bifrost.ops.auth.jwt.AuthenticatedUser;
+import com.bifrost.ops.pipeline.dto.ConnectorResponse;
 import com.bifrost.ops.pipeline.dto.PipelineCreateRequest;
 import com.bifrost.ops.pipeline.dto.PipelineResponse;
 import com.bifrost.ops.pipeline.service.PipelineService;
@@ -57,6 +58,14 @@ public class PipelineController {
                                 @PathVariable UUID id,
                                 @AuthenticationPrincipal AuthenticatedUser principal) {
         return pipelineService.get(wsId, principal, id);
+    }
+
+    /** 커넥터 목록(#107, 상세 Connector 탭). source/sink 커넥터의 state/lastError 등. */
+    @GetMapping("/{id}/connectors")
+    public List<ConnectorResponse> connectors(@PathVariable UUID wsId,
+                                              @PathVariable UUID id,
+                                              @AuthenticationPrincipal AuthenticatedUser principal) {
+        return pipelineService.listConnectors(wsId, principal, id);
     }
 
     /** 일시중지(FR-005). creating 중에는 불가. */

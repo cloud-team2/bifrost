@@ -140,6 +140,16 @@ export interface PipelineResponse {
   sinkConnector: string | null
   createdAt: string
 }
+/** 파이프라인 커넥터(#107). state/lastError/updatedAt는 watcher가 갱신(미반영 시 null). */
+export interface ConnectorInfo {
+  name: string
+  kind: 'source' | 'sink'
+  connectorClass: string
+  state: string | null
+  tasksMax: number
+  lastError: string | null
+  updatedAt: string | null
+}
 export interface EventResponse {
   id: string
   pipelineId: string | null
@@ -204,6 +214,8 @@ export const api = {
     request<PipelineResponse>('POST', `/api/v1/workspaces/${wsId}/pipelines`, body),
   getPipeline: (wsId: string, id: string) =>
     request<PipelineResponse>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}`),
+  listPipelineConnectors: (wsId: string, id: string) =>
+    request<ConnectorInfo[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/connectors`),
   pausePipeline: (wsId: string, id: string) =>
     request<PipelineResponse>('POST', `/api/v1/workspaces/${wsId}/pipelines/${id}/pause`),
   resumePipeline: (wsId: string, id: string) =>
