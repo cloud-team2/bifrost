@@ -4,6 +4,7 @@ import com.bifrost.ops.auth.jwt.AuthenticatedUser;
 import com.bifrost.ops.pipeline.dto.PipelineCreateRequest;
 import com.bifrost.ops.pipeline.dto.PipelineResponse;
 import com.bifrost.ops.pipeline.service.PipelineService;
+import com.bifrost.ops.pipeline.service.PipelineSyncService;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.ResponseEntity;
 
@@ -21,7 +22,8 @@ import static org.mockito.Mockito.when;
 class PipelineControllerTest {
 
     private final PipelineService service = mock(PipelineService.class);
-    private final PipelineController controller = new PipelineController(service);
+    private final PipelineSyncService syncService = mock(PipelineSyncService.class);
+    private final PipelineController controller = new PipelineController(service, syncService);
 
     private final UUID wsId = UUID.randomUUID();
     private final AuthenticatedUser principal = new AuthenticatedUser(UUID.randomUUID(), wsId, "u@bifrost.io");

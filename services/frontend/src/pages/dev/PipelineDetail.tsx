@@ -9,6 +9,7 @@ import { useApp, CLUSTER } from '../../store/AppStore'
 import { genSeries, pipelineConsumers, pipelineLabel } from '../../data/helpers'
 import { BOOTSTRAP_SERVER, CONSUMER_GROUPS, LAG_THRESHOLD } from '../../data/mock'
 import type { Edge, Node } from '../../data/types'
+import { api, type ConnectorInfo, type SchemaColumn, type SyncStatusResponse } from '../../lib/api'
 import { cn, formatNum } from '../../lib/format'
 
 /* ---------------------------------------------------------------- topic partition data */
@@ -99,85 +100,6 @@ const PARTITION_OFFSETS: Record<string, Array<{
     { partition: 5, member: 'risk-1', committed: 309900, endOffset: 311200 },
     { partition: 6, member: 'risk-2', committed: 309850, endOffset: 311400 },
     { partition: 7, member: 'risk-3', committed: 309750, endOffset: 311300 },
-  ],
-}
-
-/* ---------------------------------------------------------------- connector task / restart data */
-
-const CONNECTOR_TASKS: Record<string, Array<{
-  id: number; state: 'RUNNING' | 'FAILED' | 'PAUSED'; worker: string; since: string
-}>> = {
-  'orders-source': [
-    { id: 0, state: 'RUNNING', worker: '10.20.1.10:8083', since: '07:45:03' },
-    { id: 1, state: 'RUNNING', worker: '10.20.1.11:8083', since: '07:45:05' },
-  ],
-  'users-source': [
-    { id: 0, state: 'RUNNING', worker: '10.20.1.10:8083', since: '08:00:12' },
-  ],
-  'users-sink': [
-    { id: 0, state: 'RUNNING', worker: '10.20.1.11:8083', since: '08:00:14' },
-  ],
-  'audit-source': [
-    { id: 0, state: 'RUNNING', worker: '10.20.1.10:8083', since: '08:00:12' },
-    { id: 1, state: 'PAUSED',  worker: '10.20.1.12:8083', since: '08:11:22' },
-  ],
-  'txn-source': [
-    { id: 0, state: 'RUNNING', worker: '10.20.1.10:8083', since: '07:30:00' },
-    { id: 1, state: 'RUNNING', worker: '10.20.1.11:8083', since: '07:30:02' },
-    { id: 2, state: 'RUNNING', worker: '10.20.1.12:8083', since: '07:30:04' },
-  ],
-  'events-source': [
-    { id: 0, state: 'RUNNING', worker: '10.20.1.10:8083', since: '08:05:00' },
-    { id: 1, state: 'RUNNING', worker: '10.20.1.11:8083', since: '08:05:02' },
-  ],
-}
-
-const CONNECTOR_METRICS: Record<string, {
-  totalRecords: number; errorRate: number; uptimeHours: number; lastErrorAt: string | null
-  pollBatchAvgMs: number; pollBatchMaxMs: number; offsetCommitAvgMs: number
-  totalRetries: number
-}> = {
-  'orders-source': {
-    totalRecords: 14820000, errorRate: 0, uptimeHours: 720, lastErrorAt: null,
-    pollBatchAvgMs: 14, pollBatchMaxMs: 42, offsetCommitAvgMs: 0,
-    totalRetries: 3,
-  },
-  'users-source': {
-    totalRecords: 2100420, errorRate: 0, uptimeHours: 720, lastErrorAt: null,
-    pollBatchAvgMs: 8, pollBatchMaxMs: 28, offsetCommitAvgMs: 0,
-    totalRetries: 0,
-  },
-  'users-sink': {
-    totalRecords: 2099800, errorRate: 0, uptimeHours: 720, lastErrorAt: null,
-    pollBatchAvgMs: 0, pollBatchMaxMs: 0, offsetCommitAvgMs: 38,
-    totalRetries: 2,
-  },
-  'audit-source': {
-    totalRecords: 8820000, errorRate: 0.3, uptimeHours: 14, lastErrorAt: '08:11',
-    pollBatchAvgMs: 21, pollBatchMaxMs: 180, offsetCommitAvgMs: 0,
-    totalRetries: 47,
-  },
-  'txn-source': {
-    totalRecords: 52100000, errorRate: 0, uptimeHours: 720, lastErrorAt: null,
-    pollBatchAvgMs: 10, pollBatchMaxMs: 35, offsetCommitAvgMs: 0,
-    totalRetries: 5,
-  },
-  'events-source': {
-    totalRecords: 98000000, errorRate: 0, uptimeHours: 720, lastErrorAt: null,
-    pollBatchAvgMs: 13, pollBatchMaxMs: 52, offsetCommitAvgMs: 0,
-    totalRetries: 1,
-  },
-}
-
-const CONNECTOR_RESTARTS: Record<string, Array<{
-  ts: string; reason: string; auto: boolean
-}>> = {
-  'audit-source': [
-    { ts: '2026-05-26 08:11', reason: '일시적 연결 오류 (Connection timeout)', auto: true },
-    { ts: '2026-05-24 22:14', reason: '스키마 변경 감지 (public.audit_log)', auto: false },
-  ],
-  'txn-source': [
-    { ts: '2026-05-25 14:30', reason: 'MariaDB binlog position mismatch', auto: true },
   ],
 }
 
@@ -321,10 +243,10 @@ export function PipelineDetail() {
   const toast = useToast()
   const edge = app.edges.find((e) => e.id === app.selectedPipelineId)
   const isEda = edge?.pattern === 'fan-out'
-  const connectors = CLUSTER.CLUSTER_CONNECTORS.filter((c) => c.pipeline === (edge?.name ?? ''))
 
+  // Connector 탭은 EDA/CDC 모두 표시(실제 커넥터는 ConnectorTab이 백엔드에서 조회, #107)
   const tabs = isEda
-    ? ['Overview', 'Consumers', ...(connectors.length > 0 ? ['Connector'] : []), 'Messages', 'Connection Guide']
+    ? ['Overview', 'Consumers', 'Connector', 'Messages', 'Connection Guide']
     : ['Overview', 'Connector', 'Sync', 'Messages', 'Table Mapping']
 
   const [tab, setTab] = useState(tabs[0])
@@ -694,144 +616,99 @@ function ConsumersTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
 
 /* ---------------------------------------------------------------- Connector tab */
 
-type ConnectorRow = typeof CLUSTER.CLUSTER_CONNECTORS[number]
+function connectorStateClass(state: string | null): string {
+  switch (state) {
+    case 'RUNNING':    return 'bg-emerald-100 text-emerald-700'
+    case 'FAILED':     return 'bg-rose-100 text-rose-700'
+    case 'PAUSED':     return 'bg-amber-100 text-amber-700'
+    default:           return 'bg-gray-100 text-gray-500'   // UNASSIGNED / null(대기)
+  }
+}
 
-function ConnectorCard({ connector, topic }: { connector: ConnectorRow; topic: string }) {
-  const tasks        = CONNECTOR_TASKS[connector.name] ?? Array.from({ length: connector.tasks }, (_, i) => ({
-    id: i, state: 'RUNNING' as const, worker: `10.20.1.${10 + i}:8083`, since: '—',
-  }))
-  const runningCount = tasks.filter((t) => t.state === 'RUNNING').length
-  const metrics      = CONNECTOR_METRICS[connector.name]
-  const recordsTrend = useMemo(() => genSeries([
-    { key: 'records', base: connector.recordsPerSec, vary: Math.max(5, connector.recordsPerSec * 0.18) },
-  ], 24), [connector.recordsPerSec])
-  const errorTrend = useMemo(() => genSeries([
-    { key: 'errors', base: metrics?.errorRate ?? 0, vary: (metrics?.errorRate ?? 0) * 0.5 + 0.01 },
-  ], 24), [metrics?.errorRate])
-
-  const kindColor = connector.kind === 'Source' ? 'border-sky-200 bg-sky-50' : 'border-violet-200 bg-violet-50'
-  const kindText  = connector.kind === 'Source' ? 'text-sky-700' : 'text-violet-700'
+function ConnectorCard({ c, topic }: { c: ConnectorInfo; topic: string }) {
+  const isSource  = c.kind === 'source'
+  const kindColor = isSource ? 'border-sky-200 bg-sky-50' : 'border-violet-200 bg-violet-50'
+  const kindText  = isSource ? 'text-sky-700' : 'text-violet-700'
 
   return (
     <div className={cn('rounded-xl border-2', kindColor)}>
       {/* ── connector header ─────────────────────── */}
       <div className={cn('flex items-center gap-3 border-b px-5 py-3', kindColor)}>
         <div className={cn('flex h-7 w-7 items-center justify-center rounded-lg',
-          connector.kind === 'Source' ? 'bg-sky-100' : 'bg-violet-100')}>
-          <Icon name={connector.kind === 'Source' ? 'database' : 'layers'} size={14} className={kindText} />
+          isSource ? 'bg-sky-100' : 'bg-violet-100')}>
+          <Icon name={isSource ? 'database' : 'layers'} size={14} className={kindText} />
         </div>
-        <div className="flex-1">
-          <div className="text-[13px] font-bold text-gray-900">{connector.name}</div>
-          <div className="text-[11px] text-gray-500 font-mono">{topic}</div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[13px] font-bold text-gray-900">{c.name}</div>
+          <div className="truncate font-mono text-[11px] text-gray-500">{c.connectorClass}</div>
         </div>
         <span className={cn('rounded-full px-2.5 py-0.5 text-[10.5px] font-bold uppercase', kindText,
-          connector.kind === 'Source' ? 'bg-sky-100' : 'bg-violet-100')}>
-          {connector.kind}
+          isSource ? 'bg-sky-100' : 'bg-violet-100')}>
+          {c.kind}
         </span>
       </div>
 
-      <div className="space-y-3 bg-white rounded-b-xl p-4">
-        {connector.status !== 'RUNNING' && (
-          <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[12px] text-amber-700">
-            <Icon name="alert" size={13} className="shrink-0" />
-            일부 Task가 중단 상태입니다
+      <div className="space-y-3 rounded-b-xl bg-white p-4">
+        {c.lastError && (
+          <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-rose-700">
+            <Icon name="alert" size={13} className="mt-0.5 shrink-0" />
+            <span className="break-all font-mono text-[11px] leading-relaxed">{c.lastError}</span>
           </div>
         )}
 
-        {/* row 1: operational status */}
-        <div className="grid grid-cols-4 divide-x divide-gray-100 rounded-lg border border-gray-100 bg-gray-50">
-          <SyncStat label="Status"    value={connector.status}
-            tone={connector.status === 'RUNNING' ? 'good' : 'warn'} />
-          <SyncStat label="Tasks"     value={`${runningCount} / ${tasks.length} running`}
-            tone={runningCount < tasks.length ? 'warn' : 'good'} />
-          <SyncStat label="Records/s" value={formatNum(connector.recordsPerSec)} />
-          <SyncStat label="Pipeline"  value={connector.pipeline} />
+        <div className="grid grid-cols-3 divide-x divide-gray-100 rounded-lg border border-gray-100 bg-gray-50">
+          <div className="px-4 py-3">
+            <div className="text-[10.5px] uppercase tracking-wide text-gray-400">State</div>
+            <span className={cn('mt-1 inline-block rounded px-1.5 py-0.5 text-[11px] font-semibold',
+              connectorStateClass(c.state))}>
+              {c.state ?? '대기중'}
+            </span>
+          </div>
+          <SyncStat label="Max Tasks" value={String(c.tasksMax)} />
+          <SyncStat label="구독 토픽" value={topic} />
         </div>
 
-        {/* row 2: performance metrics */}
-        {metrics && (
-          <div className="grid grid-cols-4 divide-x divide-gray-100 rounded-lg border border-gray-100 bg-gray-50">
-            <SyncStat label="총 처리 레코드" value={formatNum(metrics.totalRecords)} />
-            <SyncStat label="에러율"          value={`${(metrics.errorRate * 100).toFixed(1)}%`}
-              tone={metrics.errorRate > 0.001 ? 'warn' : 'good'} />
-            <SyncStat label="마지막 오류"     value={metrics.lastErrorAt ?? '—'}
-              tone={metrics.lastErrorAt ? 'warn' : 'good'} />
-            <SyncStat label="Uptime"          value={`${metrics.uptimeHours}h`} />
-          </div>
-        )}
-
-        {/* task timing metrics */}
-        {metrics && (
-          <div className="grid grid-cols-3 divide-x divide-gray-100 rounded-lg border border-gray-100 bg-gray-50">
-            {connector.kind === 'Source'
-              ? <SyncStat label="Poll Batch avg" value={`${metrics.pollBatchAvgMs} ms`}
-                  tone={metrics.pollBatchAvgMs > 500 ? 'warn' : 'good'} />
-              : <SyncStat label="Offset Commit avg" value={`${metrics.offsetCommitAvgMs} ms`}
-                  tone={metrics.offsetCommitAvgMs > 100 ? 'warn' : 'good'} />
-            }
-            <SyncStat label="Poll Batch max" value={`${metrics.pollBatchMaxMs} ms`}
-              tone={metrics.pollBatchMaxMs > 500 ? 'warn' : 'good'} />
-            <SyncStat label="재시도 누적" value={String(metrics.totalRetries)}
-              tone={metrics.totalRetries > 50 ? 'warn' : 'good'} />
-          </div>
-        )}
-
-        {/* charts: records/sec + error rate */}
-        <div className="grid grid-cols-2 gap-3">
-          <Panel title="Records/sec 추이" right={<span className="text-[12px] text-gray-400">최근 2시간</span>}>
-            <div className="px-3 py-3">
-              <TrendChart data={recordsTrend} type="area" height={120}
-                series={[{ key: 'records', label: 'Records/s', color: CHART_COLORS.brand }]} />
-            </div>
-          </Panel>
-          <Panel title="에러율 추이" right={<span className="text-[12px] text-gray-400">최근 2시간</span>}>
-            <div className="px-3 py-3">
-              <TrendChart data={errorTrend} type="area" height={120}
-                series={[{ key: 'errors', label: 'Errors/min', color: CHART_COLORS.red }]} />
-            </div>
-          </Panel>
+        <div className="px-1 text-[11px] text-gray-400">
+          마지막 상태 갱신: {c.updatedAt ? new Date(c.updatedAt).toLocaleString('ko-KR') : '—'}
         </div>
-
-        {/* tasks table */}
-        <Panel title="Tasks">
-          <table className="w-full text-[12.5px]">
-            <thead>
-              <tr className="border-b border-gray-100 text-left text-[10.5px] uppercase tracking-wide text-gray-400">
-                <th className="px-5 py-2 font-semibold">Task ID</th>
-                <th className="px-4 py-2 font-semibold">State</th>
-                <th className="px-4 py-2 font-semibold">Worker</th>
-                <th className="px-5 py-2 font-semibold">Since</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tasks.map((t) => (
-                <tr key={t.id} className="border-b border-gray-50 last:border-0">
-                  <td className="px-5 py-2.5">
-                    <span className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-gray-600">task-{t.id}</span>
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <span className={cn('rounded px-1.5 py-0.5 text-[10.5px] font-semibold',
-                      t.state === 'RUNNING' ? 'bg-emerald-100 text-emerald-700'
-                      : t.state === 'FAILED' ? 'bg-rose-100 text-rose-700'
-                      : 'bg-amber-100 text-amber-700')}>
-                      {t.state}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 font-mono text-[11.5px] text-gray-500">{t.worker}</td>
-                  <td className="px-5 py-2.5 font-mono text-[11.5px] text-gray-500">{t.since}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Panel>
       </div>
     </div>
   )
 }
 
 function ConnectorTab({ edge }: { edge: Edge }) {
-  const connectors = CLUSTER.CLUSTER_CONNECTORS.filter((c) => c.pipeline === edge.name)
+  const app = useApp()
+  const wsId = app.currentProject?.id
+  const [connectors, setConnectors] = useState<ConnectorInfo[] | null>(null)
+  const [error, setError] = useState(false)
 
+  useEffect(() => {
+    if (!wsId) return
+    let cancelled = false
+    setConnectors(null)
+    setError(false)
+    api
+      .listPipelineConnectors(wsId, edge.id)
+      .then((cs) => { if (!cancelled) setConnectors(cs) })
+      .catch(() => { if (!cancelled) setError(true) })
+    return () => { cancelled = true }
+  }, [wsId, edge.id])
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white py-16">
+        <Icon name="alert" size={24} className="mb-2 text-rose-300" />
+        <p className="text-[13px] text-gray-400">커넥터 정보를 불러오지 못했습니다</p>
+      </div>
+    )
+  }
+  if (connectors === null) {
+    return (
+      <div className="flex items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white py-16 text-[13px] text-gray-400">
+        불러오는 중…
+      </div>
+    )
+  }
   if (connectors.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white py-16">
@@ -841,37 +718,11 @@ function ConnectorTab({ edge }: { edge: Edge }) {
     )
   }
 
-  const allRestarts = connectors.flatMap((c) => (CONNECTOR_RESTARTS[c.name] ?? []).map((r) => ({ ...r, connector: c.name })))
-  allRestarts.sort((a, b) => b.ts.localeCompare(a.ts))
-
   return (
     <div className="space-y-4">
-      {connectors.map((connector) => (
-        <ConnectorCard key={connector.name} connector={connector} topic={edge.topic} />
+      {connectors.map((c) => (
+        <ConnectorCard key={c.name} c={c} topic={edge.topic} />
       ))}
-
-      {/* shared restart history */}
-      {allRestarts.length > 0 && (
-        <Panel title="재시작 이력"
-          right={<span className="text-[11.5px] text-amber-600">{allRestarts.length}건</span>}>
-          <div className="divide-y divide-gray-50">
-            {allRestarts.map((r, i) => (
-              <div key={i} className="flex items-center gap-3 px-5 py-3">
-                <Icon name={r.auto ? 'refresh' : 'alert'} size={14}
-                  className={r.auto ? 'shrink-0 text-gray-400' : 'shrink-0 text-amber-500'} />
-                <div className="flex-1">
-                  <div className="text-[12.5px] font-medium text-gray-700">{r.reason}</div>
-                  <div className="text-[11px] text-gray-400">{r.ts} · {r.connector}</div>
-                </div>
-                <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-semibold',
-                  r.auto ? 'bg-gray-100 text-gray-500' : 'bg-amber-100 text-amber-600')}>
-                  {r.auto ? '자동 복구' : '수동 조치 필요'}
-                </span>
-              </div>
-            ))}
-          </div>
-        </Panel>
-      )}
     </div>
   )
 }
@@ -880,20 +731,39 @@ function ConnectorTab({ edge }: { edge: Edge }) {
 
 function SyncTab({ edge }: { edge: Edge }) {
   const app        = useApp()
+  const wsId       = app.currentProject?.id
   const sourceNode = app.nodes.find((n) => n.id === edge.source) ?? null
   const sinkNode   = edge.sink ? app.nodes.find((n) => n.id === edge.sink) ?? null : null
-  const sync       = edge.syncStatus
+
+  // 실제 source/sink 행수(#107). -1은 접속 실패/테이블 미존재(생성 중).
+  const [sync, setSync]       = useState<SyncStatusResponse | null>(null)
+  const [syncErr, setSyncErr] = useState(false)
+  useEffect(() => {
+    if (!wsId) return
+    let cancelled = false
+    setSync(null)
+    setSyncErr(false)
+    api
+      .pipelineSyncStatus(wsId, edge.id)
+      .then((s) => { if (!cancelled) setSync(s) })
+      .catch(() => { if (!cancelled) setSyncErr(true) })
+    return () => { cancelled = true }
+  }, [wsId, edge.id])
 
   const tableName  = edge.table ? `${edge.table.schema}.${edge.table.name}` : '—'
-  const syncPct    = sync && sync.sourceRows > 0 ? (sync.sinkRows / sync.sourceRows) * 100 : 100
-  const isHealthy  = syncPct >= 99.9
+  const sinkReady  = !!sync && sync.sourceRows >= 0 && sync.sinkRows >= 0
+  const syncPct    = sinkReady
+    ? (sync!.sourceRows > 0 ? (sync!.sinkRows / sync!.sourceRows) * 100 : 100)
+    : 0
+  const isHealthy  = sinkReady && syncPct >= 99.9
   const barColor   = isHealthy ? 'bg-emerald-400' : syncPct >= 99.0 ? 'bg-amber-400' : 'bg-rose-400'
   const pctColor   = isHealthy ? 'text-emerald-600' : syncPct >= 99.0 ? 'text-amber-600' : 'text-rose-600'
 
   const sourceDelay = useMemo(() => genSeries([{ key: 'delay', base: 3, vary: 9 }], 24), [])
+  const deltaBase   = sync && sync.delta >= 0 ? sync.delta : 0
   const deltaTrend  = useMemo(() => genSeries([
-    { key: 'delta', base: sync?.delta ?? 500, vary: (sync?.delta ?? 500) * 0.2, drift: -(sync?.delta ?? 500) / 48 },
-  ], 24), [sync?.delta])
+    { key: 'delta', base: deltaBase, vary: deltaBase * 0.2 + 1, drift: -deltaBase / 48 },
+  ], 24), [deltaBase])
   const eventDist   = useMemo(() => genSeries([
     { key: 'insert', base: 420, vary: 80 },
     { key: 'update', base: 210, vary: 40 },
@@ -937,9 +807,11 @@ function SyncTab({ edge }: { edge: Edge }) {
               </div>
 
               <span className={cn('text-[11.5px] font-medium', isHealthy ? 'text-emerald-600' : 'text-amber-600')}>
-                {isHealthy
-                  ? '동기화 완료'
-                  : `Δ +${formatNum(sync?.delta ?? 0)} rows`}
+                {!sinkReady
+                  ? 'sink 준비중'
+                  : isHealthy
+                    ? '동기화 완료'
+                    : `Δ +${formatNum(Math.max(0, sync?.delta ?? 0))} rows`}
               </span>
             </div>
 
@@ -948,21 +820,26 @@ function SyncTab({ edge }: { edge: Edge }) {
           </div>
         </div>
 
-        {/* ── 메트릭 수치 ─────────────────────────────────────────── */}
-        {sync ? (
-          <div className="grid grid-cols-4 divide-x divide-gray-100 border-t border-gray-100">
-            <SyncStat label="Source rows"  value={formatNum(sync.sourceRows)} />
-            <SyncStat label="Sink rows"    value={formatNum(sync.sinkRows)} />
-            <SyncStat
-              label="미동기화 Δ"
-              value={sync.delta > 0 ? `+${formatNum(sync.delta)}` : '0 ✓'}
-              tone={sync.delta > 5000 ? 'warn' : 'good'}
-            />
-            <SyncStat label="Last synced" value={sync.lastSynced} />
+        {/* ── 메트릭 수치(실제 행수, #107) ───────────────────────────── */}
+        {syncErr ? (
+          <div className="border-t border-gray-100 px-6 py-4 text-center text-[12.5px] text-gray-400">
+            동기화 상태를 불러오지 못했습니다
+          </div>
+        ) : sync === null ? (
+          <div className="border-t border-gray-100 px-6 py-4 text-center text-[12.5px] text-gray-400">
+            불러오는 중…
           </div>
         ) : (
-          <div className="border-t border-gray-100 px-6 py-4 text-center text-[12.5px] text-gray-400">
-            동기화 데이터 없음
+          <div className="grid grid-cols-4 divide-x divide-gray-100 border-t border-gray-100">
+            <SyncStat label="Source rows"  value={sync.sourceRows < 0 ? '—' : formatNum(sync.sourceRows)} />
+            <SyncStat label="Sink rows"    value={sync.sinkRows < 0 ? '준비중' : formatNum(sync.sinkRows)}
+              tone={sync.sinkRows < 0 ? 'warn' : undefined} />
+            <SyncStat
+              label="미동기화 Δ"
+              value={sync.delta < 0 ? '—' : sync.delta > 0 ? `+${formatNum(sync.delta)}` : '0 ✓'}
+              tone={sync.delta > 5000 ? 'warn' : 'good'}
+            />
+            <SyncStat label="조회 시각" value={new Date(sync.checkedAt).toLocaleTimeString('ko-KR')} />
           </div>
         )}
       </Panel>
@@ -1332,45 +1209,67 @@ function Row({ label, value, onCopy }: { label: string; value: string; onCopy: (
 
 /* ---------------------------------------------------------------- Table Mapping tab (CDC) */
 
-const MAPPING_COLS = [
-  { src: 'id',             dst: 'id',             type: 'bigint',        pk: true,  excluded: false },
-  { src: 'status',         dst: 'status',         type: 'varchar(32)',   pk: false, excluded: false },
-  { src: 'amount',         dst: 'amount',         type: 'numeric(12,2)', pk: false, excluded: false },
-  { src: 'customer_id',    dst: 'customer_id',    type: 'bigint',        pk: false, excluded: false },
-  { src: 'internal_notes', dst: '—',              type: 'text',          pk: false, excluded: true  },
-  { src: 'created_at',     dst: 'created_at',     type: 'timestamptz',   pk: false, excluded: false },
-]
-
 function MappingTab({ edge }: { edge: Edge }) {
+  const app = useApp()
+  const wsId = app.currentProject?.id
+  const [cols, setCols] = useState<SchemaColumn[] | null>(null)
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    if (!wsId) return
+    let cancelled = false
+    setCols(null)
+    setError(false)
+    api
+      .databaseSchema(wsId, edge.source)
+      .then((res) => {
+        if (cancelled) return
+        const t = res.tables.find(
+          (tb) => tb.name === edge.table?.name && (!edge.table?.schema || tb.schema === edge.table?.schema),
+        )
+        setCols(t?.columns ?? [])
+      })
+      .catch(() => { if (!cancelled) setError(true) })
+    return () => { cancelled = true }
+  }, [wsId, edge.source, edge.table?.name, edge.table?.schema])
+
   return (
     <Panel title={`Table mapping · ${edge.table?.schema}.${edge.table?.name}`}>
-      <table className="w-full text-[12.5px]">
-        <thead>
-          <tr className="border-b border-gray-100 text-left text-[11px] uppercase tracking-wide text-gray-400">
-            <th className="px-4 py-2 font-semibold">Source column</th>
-            <th className="px-4 py-2 font-semibold">Destination column</th>
-            <th className="px-4 py-2 font-semibold">Type</th>
-            <th className="px-4 py-2 font-semibold">Flags</th>
-          </tr>
-        </thead>
-        <tbody>
-          {MAPPING_COLS.map((c) => (
-            <tr key={c.src} className={cn('border-b border-gray-50', c.excluded && 'opacity-50')}>
-              <td className="px-4 py-2.5 font-mono font-medium text-gray-800">{c.src}</td>
-              <td className="px-4 py-2.5 font-mono text-gray-600">
-                {c.excluded ? <span className="text-gray-400">excluded</span> : c.dst}
-              </td>
-              <td className="px-4 py-2.5 font-mono text-gray-500">{c.type}</td>
-              <td className="px-4 py-2.5">
-                <div className="flex gap-1.5">
-                  {c.pk       && <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">PK</span>}
-                  {c.excluded && <span className="rounded bg-gray-100  px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">EXCLUDED</span>}
-                </div>
-              </td>
+      {error ? (
+        <div className="px-4 py-10 text-center text-[13px] text-gray-400">스키마를 불러오지 못했습니다</div>
+      ) : cols === null ? (
+        <div className="px-4 py-10 text-center text-[13px] text-gray-400">불러오는 중…</div>
+      ) : cols.length === 0 ? (
+        <div className="px-4 py-10 text-center text-[13px] text-gray-400">컬럼 정보를 찾을 수 없습니다</div>
+      ) : (
+        <table className="w-full text-[12.5px]">
+          <thead>
+            <tr className="border-b border-gray-100 text-left text-[11px] uppercase tracking-wide text-gray-400">
+              <th className="px-4 py-2 font-semibold">Source column</th>
+              <th className="px-4 py-2 font-semibold">Destination column</th>
+              <th className="px-4 py-2 font-semibold">Type</th>
+              <th className="px-4 py-2 font-semibold">Flags</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {cols.map((c) => (
+              <tr key={c.name} className="border-b border-gray-50">
+                <td className="px-4 py-2.5 font-mono font-medium text-gray-800">{c.name}</td>
+                {/* CDC(direct)는 동일 컬럼명으로 복제 → 대상 컬럼명 동일 */}
+                <td className="px-4 py-2.5 font-mono text-gray-600">{c.name}</td>
+                <td className="px-4 py-2.5 font-mono text-gray-500">{c.type}</td>
+                <td className="px-4 py-2.5">
+                  <div className="flex gap-1.5">
+                    {c.primaryKey && <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">PK</span>}
+                    {!c.nullable && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">NOT NULL</span>}
+                    {c.indexed && <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">INDEX</span>}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </Panel>
   )
 }
