@@ -6,6 +6,8 @@ import com.bifrost.ops.global.common.error.ErrorCode;
 import com.bifrost.ops.pipeline.dto.ConsumerGroupInfo;
 import com.bifrost.ops.pipeline.dto.PipelineMetricsResponse;
 import com.bifrost.ops.pipeline.dto.TopicInfoResponse;
+import com.bifrost.ops.pipeline.kafka.OffsetSnapshotStore;
+import com.bifrost.ops.pipeline.kafka.RateResult;
 import com.bifrost.ops.pipeline.persistence.entity.PipelineEntity;
 import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
 import com.bifrost.ops.provisioning.persistence.entity.ConnectorEntity;
@@ -51,15 +53,18 @@ public class PipelineTopicService {
     private final ConnectorRepository connectorRepository;
     private final WorkspaceAccessGuard accessGuard;
     private final AdminClient adminClient;
+    private final OffsetSnapshotStore snapshotStore;
 
     public PipelineTopicService(PipelineRepository pipelineRepository,
                                 ConnectorRepository connectorRepository,
                                 WorkspaceAccessGuard accessGuard,
-                                AdminClient adminClient) {
+                                AdminClient adminClient,
+                                OffsetSnapshotStore snapshotStore) {
         this.pipelineRepository = pipelineRepository;
         this.connectorRepository = connectorRepository;
         this.accessGuard = accessGuard;
         this.adminClient = adminClient;
+        this.snapshotStore = snapshotStore;
     }
 
     public TopicInfoResponse topicInfo(UUID wsId, AuthenticatedUser principal, UUID id) {
@@ -91,7 +96,7 @@ public class PipelineTopicService {
     public PipelineMetricsResponse metrics(UUID wsId, AuthenticatedUser principal, UUID id) {
         PipelineEntity p = loadPipeline(wsId, principal, id);
 
-        // error_pct: connectors 테이블 기반 (Kafka 불필요)
+        // error_pct: connectors 테이블 기반 (Kafka 불필요, 즉시)
         List<ConnectorEntity> connectors = connectorRepository.findByPipelineId(id);
         double errorPct = 0.0;
         if (!connectors.isEmpty()) {
@@ -101,20 +106,15 @@ public class PipelineTopicService {
             errorPct = (double) failed / connectors.size() * 100.0;
         }
 
-        // lag: consumer group 전체 lag
-        long lagMessages = 0L;
+        // produce/consume rate + lag: 스냅샷 스토어에서 즉시 반환 (블로킹 없음)
         String topic = p.getTopicName();
         if (topic != null && !topic.isBlank()) {
-            try {
-                lagMessages = fetchConsumerGroups(topic).stream()
-                        .mapToLong(ConsumerGroupInfo::totalLag)
-                        .sum();
-            } catch (Exception e) {
-                log.debug("메트릭 lag 조회 실패: {}", e.getMessage());
-            }
+            RateResult rates = snapshotStore.getRates(topic);
+            return new PipelineMetricsResponse(
+                    rates.produceRate(), rates.consumeRate(), rates.lagMessages(), errorPct);
         }
 
-        return new PipelineMetricsResponse(0.0, 0.0, lagMessages, errorPct);
+        return new PipelineMetricsResponse(0.0, 0.0, 0L, errorPct);
     }
 
     // ---- private ----
