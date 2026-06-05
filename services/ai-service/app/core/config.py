@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     llm_default_model: str = "gpt-4o-mini"
 
     # Agent run 안전장치 (DETAILS §15.5 루프 방지)
-    max_steps_per_run: int = 40
+    max_steps_per_run: int = 24
     max_revisions: int = 2
 
 
