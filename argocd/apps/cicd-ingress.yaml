@@ -1,0 +1,16 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cicd-ingress
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/cloud-team2/bifrost.git
+    targetRevision: gitops
+    path: infra
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default      # ingress 템플릿이 자체 namespace 지정
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }

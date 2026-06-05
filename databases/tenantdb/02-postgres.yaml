@@ -2,8 +2,8 @@
 apiVersion: v1
 kind: Secret
 metadata:
-  name: user-postgres-credentials
-  namespace: userdb
+  name: tenant-postgres-credentials
+  namespace: tenantdb
 type: Opaque
 stringData:
   POSTGRES_USER: debezium
@@ -13,8 +13,8 @@ stringData:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: user-postgres-pvc
-  namespace: userdb
+  name: tenant-postgres-pvc
+  namespace: tenantdb
 spec:
   accessModes:
     - ReadWriteOnce
@@ -26,19 +26,19 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: user-postgres
-  namespace: userdb
+  name: tenant-postgres
+  namespace: tenantdb
   labels:
-    app: user-postgres
+    app: tenant-postgres
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: user-postgres
+      app: tenant-postgres
   template:
     metadata:
       labels:
-        app: user-postgres
+        app: tenant-postgres
     spec:
       containers:
         - name: postgres
@@ -51,7 +51,7 @@ spec:
             - containerPort: 5432
           envFrom:
             - secretRef:
-                name: user-postgres-credentials
+                name: tenant-postgres-credentials
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
@@ -74,23 +74,21 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim:
-            claimName: user-postgres-pvc
+            claimName: tenant-postgres-pvc
         - name: config
           configMap:
-            name: user-postgres-config
+            name: tenant-postgres-config
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: user-postgres-service
-  namespace: userdb
+  name: tenant-postgres-service
+  namespace: tenantdb
 spec:
   selector:
-    app: user-postgres
+    app: tenant-postgres
   ports:
     - port: 5432
       targetPort: 5432
-  type: LoadBalancer
-  loadBalancerSourceRanges:
-    - 13.228.214.171/32
-    - 52.77.50.136/32
+  # 내부 통신만 사용(커넥터는 cluster DNS 직통, 로컬 백엔드는 port-forward). 외부 LB 미사용.
+  type: ClusterIP

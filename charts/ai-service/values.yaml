@@ -1,0 +1,38 @@
+replicaCount: 1
+
+image:
+  # in-cluster Harbor (library 프로젝트). 빌드 후 Harbor로 push, 노드는 내부 DNS로 pull.
+  repository: harbor.harbor.svc.cluster.local/library/bifrost-ai-service
+  pullPolicy: IfNotPresent
+  tag: latest
+
+# Harbor pull 인증 (harbor-push-secret을 배포 네임스페이스에 복제)
+imagePullSecrets:
+  - name: harbor-push-secret
+
+service:
+  type: ClusterIP
+  port: 8082
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+
+env:
+  # Agent의 모든 운영 조회/조치 위임 대상 (Spring 모놀리스 /internal/ops)
+  AI_SPRING_OPS_BASE_URL: http://operations-backend.bifrost-system.svc.cluster.local:8080
+  AI_LLM_PROVIDER: openai
+  AI_LLM_DEFAULT_MODEL: gpt-4o-mini
+  # Agent Run Store / Knowledge Vector Store (pgvector). #134 persistence 배선용 (현재 골격은 미사용).
+  AI_AGENTDB_DSN: postgresql://agent:agent@agentdb-service.agentdb.svc.cluster.local:5432/agentdb
+
+secrets:
+  llmApiKey: ""   # K8s Secret 'ai-llm-secret'의 api-key 참조 (선택)
+
+# Agent는 내부 서비스 — 외부 노출은 별도 게이트웨이/operations-backend 경유로 결정
+ingress:
+  enabled: false

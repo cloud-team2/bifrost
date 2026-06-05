@@ -16,6 +16,10 @@ spec:
         {{- include "bifrost.selectorLabels" . | nindent 8 }}
     spec:
       serviceAccountName: operations-backend
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: operations-backend
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
