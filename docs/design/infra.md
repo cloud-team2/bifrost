@@ -354,6 +354,26 @@ arn:aws:eks:ap-northeast-2:881490135253:cluster/skala3-cloud1-finalproj-team2
 
 > **노드풀 토폴로지 결정 (#119)**: 단일 노드풀에 전 워크로드가 혼재해 CPU requests가 82%까지 포화 → ① **Kafka+metadb를 전용 `data` 풀로 물리 분리**(노이지 네이버 차단·anti-affinity), ② 고객사 DB(userdb)는 in-cluster라 물리분리 실익이 낮아 **namespace 논리분리만**(app 풀 배치), ③ t3.large→t3.xlarge 스펙업. terraform `module.eks`는 `var.node_groups` map + `for_each`로 멀티 노드풀 지원. 마이그레이션은 신규 풀 추가 → Kafka/metadb를 toleration+nodeAffinity로 data 풀 이동(무중단 롤링) → 구 풀 drain·제거 순으로 무중단 수행.
 
+> **AZ 주의**: 클러스터는 **처음부터 2 AZ**(ap-northeast-2a/2b)다. `private_subnet_ids`("변경 금지")에 서브넷이 2개(2a·2b) 들어있고, EKS 노드그룹이 그 AZ로 자동 분산한다. #119는 AZ를 추가한 게 아니라 기존 2개 서브넷을 그대로 사용한다. (단일 AZ는 그 AZ 장애 시 전체 다운 + Kafka RF3 AZ 분산 손실 → 멀티 AZ 유지 권장)
+
+> **사이징 메모**: 현재 클러스터 총 requests ≈ 5.7 vCPU(우리 monolith는 아직 미배포, 부하 대부분이 CI/CD·Kafka). 8노드(allocatable ~31 vCPU)는 넉넉한 편이며, **논리 최소치는 data≥3(Kafka 브로커 anti-affinity·AZ)·app 2~3(모니터링 포함)** = 5~6노드. `desired_size` 조정은 무중단 in-place 축소 가능.
+
+**검증 명령어 (#119 노드풀)** — `AWS_PROFILE=skala_student AWS_REGION=ap-northeast-2`, `C=skala3-cloud1-finalproj-team2`:
+
+```bash
+# 노드풀/노드 (app·data만, ng-main 없음, 전부 t3.xlarge)
+aws eks list-nodegroups --cluster-name $C
+kubectl get nodes -L tier,topology.kubernetes.io/zone,node.kubernetes.io/instance-type
+# 풀별 스펙(타입·스케일·label·taint)
+aws eks describe-nodegroup --cluster-name $C --nodegroup-name $C-ng-data \
+  --query 'nodegroup.{type:instanceTypes,scaling:scalingConfig,labels:labels,taints:taints}'
+# data 풀 배치 검증 (Kafka 브로커 + metadb만, 서로 다른 노드)
+kubectl -n platform-kafka get pods -o wide
+kubectl -n metadb get pods -o wide
+# 용량 여유(노드별 requests 할당률)
+kubectl describe nodes | sed -n '/Allocated resources/,/Events/p' | grep -E 'cpu|memory'
+```
+
 Namespace:
 
 | Namespace | 상태 | 용도 추정 |
@@ -639,18 +659,23 @@ FastAPI Agent는 Kubernetes/Kafka credential을 갖지 않는다. Spring Boot Op
 
 #### 6.7 Observability
 
-| 리소스 | Namespace | 목적 |
-| --- | --- | --- |
-| Prometheus | `monitoring` | metric 수집 |
-| Alertmanager | `monitoring` | alert routing |
-| Grafana | `monitoring` | dashboard |
-| Loki | `monitoring` | log store |
-| Promtail 또는 agent | `monitoring` | pod log 수집 |
-| Tempo | `monitoring` | distributed trace와 connector task trace summary |
-| Kafka exporter | `monitoring` | consumer lag/topic metric |
-| JMX exporter | `platform-kafka` 또는 sidecar | broker/connect JVM metric |
+> 배치: 전부 `monitoring` namespace, **`app` 노드풀**(taint 없음)에 스케줄. DaemonSet(node-exporter·Promtail)은 data 풀 taint를 toleration 처리해 전 노드에 배치.
+> **모니터링은 Spring Boot만이 아니라 클러스터 전체를 관측한다** — 노드·k8s 오브젝트·컨테이너·Kafka·DB·Spring·FastAPI·frontend가 모두 수집 대상이다.
 
-Agent RCA를 위해 최소한 Prometheus, pod log store, Tempo trace summary, Kafka lag metric은 필요하다.
+| 리소스 | 권장 replica | 수집(scrape) 대상 |
+| --- | --- | --- |
+| Prometheus | 1 (HA 2) | node-exporter·kube-state-metrics·kubelet/cAdvisor·Spring `/actuator/prometheus`·FastAPI `/metrics`·kafka-exporter·JMX exporter·postgres-exporter |
+| Alertmanager | 1 (HA 2) | Prometheus 룰 기반 alert routing |
+| Grafana | 1 | Prometheus/Loki/Tempo 데이터소스 시각화 |
+| Loki | 1 (single-binary) | 로그 저장 |
+| Promtail/Alloy | **노드당 1 (DaemonSet)** | 전 노드의 pod stdout 수집 → Loki |
+| node-exporter | **노드당 1 (DaemonSet)** | 노드 자원 metric |
+| Tempo | 1 | distributed trace, connector task trace summary (앱이 OTLP 전송) |
+| kafka-exporter | 1 | consumer lag/topic metric |
+| JMX exporter | broker/connect sidecar | broker/connect JVM metric |
+| kube-state-metrics | 1 | k8s 오브젝트 상태 metric |
+
+→ 코어 단일 파드 6개(Prometheus·Alertmanager·Grafana·Loki·Tempo·kube-state-metrics) + DaemonSet 2종(노드당). Agent RCA(ai-service)를 위해 최소한 Prometheus·Loki·Tempo trace summary·Kafka lag metric은 필요하다.
 
 ### 7. Kafka 운영 구조 권장안
 
