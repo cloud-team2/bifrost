@@ -249,6 +249,13 @@ Argo CD는 다음 애플리케이션을 관리한다.
 
 Kafka cluster 자체와 Strimzi Operator는 bootstrap 단계에서는 수동 적용될 수 있지만, 안정화 후에는 GitOps 관리 대상으로 전환한다.
 
+> **#123 구현 (브랜치 전략)**:
+> - **빌드/프로비저닝 = 코드라인, 배포 = gitops.** terraform은 클러스터 프로비저닝이라 코드라인(`terraform apply`), helm/manifest는 배포물이라 gitops. (※ "infra"가 클러스터 프로비저닝(terraform)과 in-cluster 리소스(helm/manifest) 두 종류라 구분.)
+> - **CI 트리거 = `main` 머지**(릴리스). `develop`은 개발 통합이라 배포 트리거 아님 — Jenkinsfile은 `when { branch 'main' }`로 게이트(파일은 develop에도 존재, 무해).
+> - **CI**(`Jenkinsfile`, repo 루트): **직전 성공 빌드 대비 변경 감지 → 바뀐 서비스만** Kaniko 빌드(docker 미사용; Dockerfile은 Kaniko 입력이라 유지) → Harbor `.../library/bifrost-<svc>:<git-sha>` push(HTTP `--insecure`) → 그 서비스의 gitops `charts/<svc>/values.yaml` `image.tag`만 commit.
+> - **CD = `gitops` 브랜치**(long-lived, **merge 금지**). ArgoCD가 **polling/reconcile로 감지(webhook 미사용)** → auto-sync. gitops 구조: `charts/`(operations-backend·ai-service·frontend helm) · `databases/`(metadb·agentdb·tenantdb raw, directory app·prune off) · `infra/`(CI/CD ALB ingress helm) · `argocd/`(app-of-apps).
+> - **라이브 배선(후속)**: Jenkins job·Kaniko agent·`harbor-push-secret`(jenkins ns)·`github-pat` cred·main webhook·ArgoCD repo connect(GitHub PAT)·`kubectl apply -f argocd/root.yaml`(부트스트랩)·secret(jwt-secret 등). 그리고 develop의 중복 차트(`services/<svc>/helm`) → gitops 일원화 정리.
+
 ### 8. Observability와 Evidence
 
 장애 대응 Agent가 의미 있게 동작하려면 다음 관측 계층이 필요하다.
