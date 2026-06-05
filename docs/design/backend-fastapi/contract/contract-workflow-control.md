@@ -105,6 +105,33 @@ flowchart TD
 | verifier fail | Planner 또는 Report |
 | verifier needs_revision | responsible Agent로 되돌림 |
 
+Action 실행 상태는 FE의 단일 Run 버튼과 Executor 진입 조건을 맞추기 위해 최소 enum만 사용한다.
+
+| Status | 의미 | 다음 처리 |
+| --- | --- | --- |
+| `pending_approval` | 승인 또는 change ticket 필요 | Approval/Change Gate 대기 |
+| `ready` | 실행 조건 충족 | 사용자가 Run을 누르면 Executor 진입 |
+| `running` | 실행 중 | 중복 실행 차단 |
+| `completed` | 실행 성공 | Verifier -> Report |
+| `failed` | 실행 실패 | Verifier -> Report |
+| `blocked` | 정책 또는 Spring 검증 실패 | Verifier -> Report |
+
+기본 전이:
+
+```text
+Policy Guard
+  -> pending_approval / ready / blocked
+Approval or Change Gate
+  -> ready / blocked
+Executor
+  -> running
+  -> completed / failed / blocked
+```
+
+세부 실패 원인은 status enum을 늘리지 않고 `reason_code`와 사용자 표시용 `summary`로 기록한다. Mutation timeout은 자동 재시도하지 않고 after-check를 수행하며, after-check 실패도 `failed`와 reason code로 종료한다.
+
+아래 분기와 의사코드에서 `action.is_executable`은 action status가 `ready`라는 뜻이다.
+
 #### 4.1 의도별 최소 실행 단계
 
 대부분의 채팅 turn은 전체 chain이 아니라 의도에 맞는 최소 단계만 실행한다. 후속 turn은 기존 run State를 재사용한다.
@@ -177,7 +204,7 @@ workflow에는 순환 경로가 있다(`Verifier → 책임 Agent → … → Ve
 **진행성(monotonic progress) 규칙** — 카운터만으로 부족한 경우를 막는다.
 
 - **새 evidence 없으면 루프 금지**: Retrieval이 직전 대비 새 `evidence_id`를 하나도 추가하지 못하면 그 가설은 "수집 가능한 근거 없음"으로 보고 재시도하지 않는다(Stop 조건 [§10](#10-stop-조건)).
-- **retrieval plan dedup**: 이미 실행한 plan과 동일한(tool+params hash 동일) plan은 재실행하지 않는다. Planner가 같은 plan만 반복 생성하면 evidence_gap 루프로 카운트한다.
+- **retrieval plan dedup**: 이미 실행한 plan과 동일한 `plan_hash`는 재실행하지 않는다. `plan_hash`는 `tool_name`, normalized `params`, project scope를 canonical JSON으로 정규화해 계산하며, `purpose` 같은 설명 텍스트는 hash 대상에서 제외한다. Planner가 같은 plan만 반복 생성하면 evidence_gap 루프로 카운트한다.
 - **needs_revision은 사유가 직전과 달라야 진짜 진행**: 같은 target에 동일 사유의 `needs_revision`이 반복되면 즉시 revision 상한으로 간주한다.
 - **mutation 비재시도**: mutation timeout/실패는 자동 재실행하지 않는다([§4](../tool-catalog.md#4-tool-catalog) Tool Catalog [§15](contract-workflow-control.md#15-contract-workflow-control)) — 실행 루프 자체가 생기지 않는다.
 
@@ -192,7 +219,7 @@ Approval gate는 Policy Guard 산출물이 아니라 별도 사용자 결정 단
 1. Policy Guard가 `require_approval` decision을 만든다.
 2. Supervisor가 approval request를 생성한다.
 3. 사용자가 승인 또는 거절한다.
-4. 승인 결과가 State의 `approved_actions`에 기록된다.
+4. 승인 결과가 State의 `approved_actions`에 기록되고 action status가 `ready` 또는 `blocked`로 바뀐다.
 5. Executor가 approval id와 params hash를 확인한다.
 6. Spring Boot가 다시 검증한다.
 
@@ -209,6 +236,8 @@ Approval gate는 Policy Guard 산출물이 아니라 별도 사용자 결정 단
 - verifier plan
 
 조건을 만족하지 않으면 Executor로 가지 않는다.
+
+Change Management Gate가 유효하면 action status를 `ready`로, 유효하지 않으면 `blocked`로 기록한다.
 
 ### 8. Deny 처리
 
@@ -319,4 +348,3 @@ run(report)
 > 위 분기는 매 step 진입 시 **전역 가드**(`run.step_count`·LLM/token 예산·wall-clock)를 먼저 검사한다. 어느 하나라도 초과하면 즉시 `finalize(report, reason=...)`로 수렴한다([§5.1](contract-workflow-control.md#51-루프-방지와-종료-보장)). 모든 `finalize`는 종료 사유를 timeline·audit에 남긴다. 위 의사코드는 대표 분기만 보이며, `scope_unclear`(scope_loops)·`revise_action`(revise_action_loops) 분기도 [§5.1](contract-workflow-control.md#51-루프-방지와-종료-보장)의 상한을 동일하게 따른다.
 
 ---
-

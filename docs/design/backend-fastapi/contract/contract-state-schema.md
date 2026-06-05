@@ -143,7 +143,9 @@ State에는 raw evidence를 넣지 않는다.
 
 `approved_actions`는 Policy Guard 산출물이 아니다. 승인 gate 또는 change management gate의 결과다.
 
-권장 구조:
+FastAPI State는 approval/change record의 정본이 아니다. 정본은 Spring Boot이며, FastAPI는 run 안에서 어떤 action이 어떤 approval 또는 change ticket과 연결되었는지 최소 정보만 mirror한다. Executor는 State의 `approval_id`/`change_ticket_id`와 `params_hash`를 확인한 뒤, 실행 직전에 Spring Boot에 최종 검증을 다시 요청한다.
+
+최소 구조:
 
 ```json
 {
@@ -152,6 +154,7 @@ State에는 raw evidence를 넣지 않는다.
       {
         "approval_id": "appr_001",
         "action_id": "act_001",
+        "params_hash": "sha256:9f0b...",
         "status": "pending"
       }
     ],
@@ -159,15 +162,31 @@ State에는 raw evidence를 넣지 않는다.
       {
         "approval_id": "appr_001",
         "action_id": "act_001",
-        "approved_by": "user_001",
-        "approved_at": "2026-06-01T00:20:00Z"
+        "params_hash": "sha256:9f0b..."
+      }
+    ],
+    "change_management_records": [
+      {
+        "change_ticket_id": "chg_001",
+        "action_id": "act_002",
+        "status": "linked"
       }
     ]
   }
 }
 ```
 
-Executor는 `approved_actions` 또는 유효한 change ticket을 확인한 뒤 실행한다.
+필수 필드:
+
+| 위치 | 필드 | 이유 |
+| --- | --- | --- |
+| `approval_requests[]` | `approval_id`, `action_id`, `params_hash`, `status` | 승인 요청과 action parameter를 묶어 UI와 실행 전 precheck에 사용 |
+| `approved_actions[]` | `approval_id`, `action_id`, `params_hash` | 승인된 action과 실행 parameter가 바뀌지 않았는지 확인 |
+| `change_management_records[]` | `change_ticket_id`, `action_id`, `status` | 변경관리 ticket과 action 연결 상태 표시 |
+
+`status`는 Spring 응답을 반영한 캐시이며, 최종 실행 가능 여부는 Spring Boot Approval/Change Management API가 다시 검증한다. 만료 시각, 승인자, 실행 window, rollback plan 같은 상세 정보는 Spring이 보유하며 FastAPI State의 필수 필드로 중복 저장하지 않는다.
+
+Executor는 `approved_actions` 또는 연결된 change ticket을 확인한 뒤 실행한다.
 
 #### 7.1 Severity
 
@@ -219,4 +238,3 @@ LLM 호출 시 전체 State를 넣지 않는다. Agent별로 필요한 namespace
 ```
 
 ---
-
