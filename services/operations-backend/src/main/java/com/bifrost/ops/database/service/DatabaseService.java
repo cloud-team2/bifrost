@@ -106,6 +106,7 @@ public class DatabaseService {
     @Transactional(readOnly = true)
     public List<DatabaseResponse> list(UUID tenantId, String role, String engine, String q) {
         Set<UUID> sourceIds = new HashSet<>(repo.findSourceDatasourceIds(tenantId));
+        Set<UUID> sinkIds = new HashSet<>(repo.findSinkDatasourceIds(tenantId));
         DbType engineFilter = (engine == null || engine.isBlank()) ? null : parseEngine(engine);
         String qLower = (q == null || q.isBlank()) ? null : q.trim().toLowerCase();
         String roleFilter = (role == null || role.isBlank()) ? null : role.trim().toLowerCase();
@@ -113,7 +114,7 @@ public class DatabaseService {
         return repo.findByTenantIdOrderByCreatedAtDesc(tenantId).stream()
                 .filter(e -> engineFilter == null || e.getDbType() == engineFilter)
                 .filter(e -> qLower == null || e.getName().toLowerCase().contains(qLower))
-                .map(e -> DatabaseResponse.of(e, rolesOf(e, sourceIds)))
+                .map(e -> DatabaseResponse.of(e, rolesOf(e, sourceIds, sinkIds)))
                 .filter(r -> roleFilter == null || r.roles().contains(roleFilter))
                 .toList();
     }
@@ -125,7 +126,8 @@ public class DatabaseService {
                 .orElseThrow(() -> new ApiException(ErrorCode.DATABASE_NOT_FOUND,
                         "데이터베이스를 찾을 수 없습니다"));
         Set<UUID> sourceIds = new HashSet<>(repo.findSourceDatasourceIds(tenantId));
-        return DatabaseResponse.of(e, rolesOf(e, sourceIds));
+        Set<UUID> sinkIds = new HashSet<>(repo.findSinkDatasourceIds(tenantId));
+        return DatabaseResponse.of(e, rolesOf(e, sourceIds, sinkIds));
     }
 
     /** 지표(FR-017). 이번 주는 계약용 stub — 실수집은 monitoring.collector 연동(후속). */
@@ -151,9 +153,11 @@ public class DatabaseService {
         }
     }
 
-    /** 파생 역할: 파이프라인 source로 쓰이면 {@code source}. sink는 아직 미모델링(빈 리스트). */
-    private static List<String> rolesOf(DatasourceEntity e, Set<UUID> sourceIds) {
-        return sourceIds.contains(e.getId()) ? List.of("source") : List.of();
+    private static List<String> rolesOf(DatasourceEntity e, Set<UUID> sourceIds, Set<UUID> sinkIds) {
+        List<String> roles = new java.util.ArrayList<>();
+        if (sourceIds.contains(e.getId())) roles.add("source");
+        if (sinkIds.contains(e.getId())) roles.add("sink");
+        return roles;
     }
 
     /** engine 문자열 → DbType(대소문자 무시). 미지원이면 VALIDATION_FAILED. */
