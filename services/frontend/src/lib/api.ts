@@ -150,6 +150,13 @@ export interface ConnectorInfo {
   lastError: string | null
   updatedAt: string | null
 }
+/** 파이프라인 동기화 상태(#107). source/sink 실제 행수. 미존재/실패 시 -1. */
+export interface SyncStatusResponse {
+  sourceRows: number
+  sinkRows: number
+  delta: number
+  checkedAt: string
+}
 export interface EventResponse {
   id: string
   pipelineId: string | null
@@ -216,6 +223,8 @@ export const api = {
     request<PipelineResponse>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}`),
   listPipelineConnectors: (wsId: string, id: string) =>
     request<ConnectorInfo[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/connectors`),
+  pipelineSyncStatus: (wsId: string, id: string) =>
+    request<SyncStatusResponse>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/sync-status`),
   pausePipeline: (wsId: string, id: string) =>
     request<PipelineResponse>('POST', `/api/v1/workspaces/${wsId}/pipelines/${id}/pause`),
   resumePipeline: (wsId: string, id: string) =>

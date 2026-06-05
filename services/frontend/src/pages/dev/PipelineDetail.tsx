@@ -9,7 +9,7 @@ import { useApp, CLUSTER } from '../../store/AppStore'
 import { genSeries, pipelineConsumers, pipelineLabel } from '../../data/helpers'
 import { BOOTSTRAP_SERVER, CONSUMER_GROUPS, LAG_THRESHOLD } from '../../data/mock'
 import type { Edge, Node } from '../../data/types'
-import { api, type ConnectorInfo } from '../../lib/api'
+import { api, type ConnectorInfo, type SchemaColumn, type SyncStatusResponse } from '../../lib/api'
 import { cn, formatNum } from '../../lib/format'
 
 /* ---------------------------------------------------------------- topic partition data */
@@ -731,20 +731,39 @@ function ConnectorTab({ edge }: { edge: Edge }) {
 
 function SyncTab({ edge }: { edge: Edge }) {
   const app        = useApp()
+  const wsId       = app.currentProject?.id
   const sourceNode = app.nodes.find((n) => n.id === edge.source) ?? null
   const sinkNode   = edge.sink ? app.nodes.find((n) => n.id === edge.sink) ?? null : null
-  const sync       = edge.syncStatus
+
+  // 실제 source/sink 행수(#107). -1은 접속 실패/테이블 미존재(생성 중).
+  const [sync, setSync]       = useState<SyncStatusResponse | null>(null)
+  const [syncErr, setSyncErr] = useState(false)
+  useEffect(() => {
+    if (!wsId) return
+    let cancelled = false
+    setSync(null)
+    setSyncErr(false)
+    api
+      .pipelineSyncStatus(wsId, edge.id)
+      .then((s) => { if (!cancelled) setSync(s) })
+      .catch(() => { if (!cancelled) setSyncErr(true) })
+    return () => { cancelled = true }
+  }, [wsId, edge.id])
 
   const tableName  = edge.table ? `${edge.table.schema}.${edge.table.name}` : '—'
-  const syncPct    = sync && sync.sourceRows > 0 ? (sync.sinkRows / sync.sourceRows) * 100 : 100
-  const isHealthy  = syncPct >= 99.9
+  const sinkReady  = !!sync && sync.sourceRows >= 0 && sync.sinkRows >= 0
+  const syncPct    = sinkReady
+    ? (sync!.sourceRows > 0 ? (sync!.sinkRows / sync!.sourceRows) * 100 : 100)
+    : 0
+  const isHealthy  = sinkReady && syncPct >= 99.9
   const barColor   = isHealthy ? 'bg-emerald-400' : syncPct >= 99.0 ? 'bg-amber-400' : 'bg-rose-400'
   const pctColor   = isHealthy ? 'text-emerald-600' : syncPct >= 99.0 ? 'text-amber-600' : 'text-rose-600'
 
   const sourceDelay = useMemo(() => genSeries([{ key: 'delay', base: 3, vary: 9 }], 24), [])
+  const deltaBase   = sync && sync.delta >= 0 ? sync.delta : 0
   const deltaTrend  = useMemo(() => genSeries([
-    { key: 'delta', base: sync?.delta ?? 500, vary: (sync?.delta ?? 500) * 0.2, drift: -(sync?.delta ?? 500) / 48 },
-  ], 24), [sync?.delta])
+    { key: 'delta', base: deltaBase, vary: deltaBase * 0.2 + 1, drift: -deltaBase / 48 },
+  ], 24), [deltaBase])
   const eventDist   = useMemo(() => genSeries([
     { key: 'insert', base: 420, vary: 80 },
     { key: 'update', base: 210, vary: 40 },
@@ -788,9 +807,11 @@ function SyncTab({ edge }: { edge: Edge }) {
               </div>
 
               <span className={cn('text-[11.5px] font-medium', isHealthy ? 'text-emerald-600' : 'text-amber-600')}>
-                {isHealthy
-                  ? '동기화 완료'
-                  : `Δ +${formatNum(sync?.delta ?? 0)} rows`}
+                {!sinkReady
+                  ? 'sink 준비중'
+                  : isHealthy
+                    ? '동기화 완료'
+                    : `Δ +${formatNum(Math.max(0, sync?.delta ?? 0))} rows`}
               </span>
             </div>
 
@@ -799,21 +820,26 @@ function SyncTab({ edge }: { edge: Edge }) {
           </div>
         </div>
 
-        {/* ── 메트릭 수치 ─────────────────────────────────────────── */}
-        {sync ? (
-          <div className="grid grid-cols-4 divide-x divide-gray-100 border-t border-gray-100">
-            <SyncStat label="Source rows"  value={formatNum(sync.sourceRows)} />
-            <SyncStat label="Sink rows"    value={formatNum(sync.sinkRows)} />
-            <SyncStat
-              label="미동기화 Δ"
-              value={sync.delta > 0 ? `+${formatNum(sync.delta)}` : '0 ✓'}
-              tone={sync.delta > 5000 ? 'warn' : 'good'}
-            />
-            <SyncStat label="Last synced" value={sync.lastSynced} />
+        {/* ── 메트릭 수치(실제 행수, #107) ───────────────────────────── */}
+        {syncErr ? (
+          <div className="border-t border-gray-100 px-6 py-4 text-center text-[12.5px] text-gray-400">
+            동기화 상태를 불러오지 못했습니다
+          </div>
+        ) : sync === null ? (
+          <div className="border-t border-gray-100 px-6 py-4 text-center text-[12.5px] text-gray-400">
+            불러오는 중…
           </div>
         ) : (
-          <div className="border-t border-gray-100 px-6 py-4 text-center text-[12.5px] text-gray-400">
-            동기화 데이터 없음
+          <div className="grid grid-cols-4 divide-x divide-gray-100 border-t border-gray-100">
+            <SyncStat label="Source rows"  value={sync.sourceRows < 0 ? '—' : formatNum(sync.sourceRows)} />
+            <SyncStat label="Sink rows"    value={sync.sinkRows < 0 ? '준비중' : formatNum(sync.sinkRows)}
+              tone={sync.sinkRows < 0 ? 'warn' : undefined} />
+            <SyncStat
+              label="미동기화 Δ"
+              value={sync.delta < 0 ? '—' : sync.delta > 0 ? `+${formatNum(sync.delta)}` : '0 ✓'}
+              tone={sync.delta > 5000 ? 'warn' : 'good'}
+            />
+            <SyncStat label="조회 시각" value={new Date(sync.checkedAt).toLocaleTimeString('ko-KR')} />
           </div>
         )}
       </Panel>
@@ -1183,45 +1209,67 @@ function Row({ label, value, onCopy }: { label: string; value: string; onCopy: (
 
 /* ---------------------------------------------------------------- Table Mapping tab (CDC) */
 
-const MAPPING_COLS = [
-  { src: 'id',             dst: 'id',             type: 'bigint',        pk: true,  excluded: false },
-  { src: 'status',         dst: 'status',         type: 'varchar(32)',   pk: false, excluded: false },
-  { src: 'amount',         dst: 'amount',         type: 'numeric(12,2)', pk: false, excluded: false },
-  { src: 'customer_id',    dst: 'customer_id',    type: 'bigint',        pk: false, excluded: false },
-  { src: 'internal_notes', dst: '—',              type: 'text',          pk: false, excluded: true  },
-  { src: 'created_at',     dst: 'created_at',     type: 'timestamptz',   pk: false, excluded: false },
-]
-
 function MappingTab({ edge }: { edge: Edge }) {
+  const app = useApp()
+  const wsId = app.currentProject?.id
+  const [cols, setCols] = useState<SchemaColumn[] | null>(null)
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    if (!wsId) return
+    let cancelled = false
+    setCols(null)
+    setError(false)
+    api
+      .databaseSchema(wsId, edge.source)
+      .then((res) => {
+        if (cancelled) return
+        const t = res.tables.find(
+          (tb) => tb.name === edge.table?.name && (!edge.table?.schema || tb.schema === edge.table?.schema),
+        )
+        setCols(t?.columns ?? [])
+      })
+      .catch(() => { if (!cancelled) setError(true) })
+    return () => { cancelled = true }
+  }, [wsId, edge.source, edge.table?.name, edge.table?.schema])
+
   return (
     <Panel title={`Table mapping · ${edge.table?.schema}.${edge.table?.name}`}>
-      <table className="w-full text-[12.5px]">
-        <thead>
-          <tr className="border-b border-gray-100 text-left text-[11px] uppercase tracking-wide text-gray-400">
-            <th className="px-4 py-2 font-semibold">Source column</th>
-            <th className="px-4 py-2 font-semibold">Destination column</th>
-            <th className="px-4 py-2 font-semibold">Type</th>
-            <th className="px-4 py-2 font-semibold">Flags</th>
-          </tr>
-        </thead>
-        <tbody>
-          {MAPPING_COLS.map((c) => (
-            <tr key={c.src} className={cn('border-b border-gray-50', c.excluded && 'opacity-50')}>
-              <td className="px-4 py-2.5 font-mono font-medium text-gray-800">{c.src}</td>
-              <td className="px-4 py-2.5 font-mono text-gray-600">
-                {c.excluded ? <span className="text-gray-400">excluded</span> : c.dst}
-              </td>
-              <td className="px-4 py-2.5 font-mono text-gray-500">{c.type}</td>
-              <td className="px-4 py-2.5">
-                <div className="flex gap-1.5">
-                  {c.pk       && <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">PK</span>}
-                  {c.excluded && <span className="rounded bg-gray-100  px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">EXCLUDED</span>}
-                </div>
-              </td>
+      {error ? (
+        <div className="px-4 py-10 text-center text-[13px] text-gray-400">스키마를 불러오지 못했습니다</div>
+      ) : cols === null ? (
+        <div className="px-4 py-10 text-center text-[13px] text-gray-400">불러오는 중…</div>
+      ) : cols.length === 0 ? (
+        <div className="px-4 py-10 text-center text-[13px] text-gray-400">컬럼 정보를 찾을 수 없습니다</div>
+      ) : (
+        <table className="w-full text-[12.5px]">
+          <thead>
+            <tr className="border-b border-gray-100 text-left text-[11px] uppercase tracking-wide text-gray-400">
+              <th className="px-4 py-2 font-semibold">Source column</th>
+              <th className="px-4 py-2 font-semibold">Destination column</th>
+              <th className="px-4 py-2 font-semibold">Type</th>
+              <th className="px-4 py-2 font-semibold">Flags</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {cols.map((c) => (
+              <tr key={c.name} className="border-b border-gray-50">
+                <td className="px-4 py-2.5 font-mono font-medium text-gray-800">{c.name}</td>
+                {/* CDC(direct)는 동일 컬럼명으로 복제 → 대상 컬럼명 동일 */}
+                <td className="px-4 py-2.5 font-mono text-gray-600">{c.name}</td>
+                <td className="px-4 py-2.5 font-mono text-gray-500">{c.type}</td>
+                <td className="px-4 py-2.5">
+                  <div className="flex gap-1.5">
+                    {c.primaryKey && <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">PK</span>}
+                    {!c.nullable && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">NOT NULL</span>}
+                    {c.indexed && <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">INDEX</span>}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </Panel>
   )
 }

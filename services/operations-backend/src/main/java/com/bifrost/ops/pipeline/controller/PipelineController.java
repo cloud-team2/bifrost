@@ -4,7 +4,9 @@ import com.bifrost.ops.auth.jwt.AuthenticatedUser;
 import com.bifrost.ops.pipeline.dto.ConnectorResponse;
 import com.bifrost.ops.pipeline.dto.PipelineCreateRequest;
 import com.bifrost.ops.pipeline.dto.PipelineResponse;
+import com.bifrost.ops.pipeline.dto.SyncStatusResponse;
 import com.bifrost.ops.pipeline.service.PipelineService;
+import com.bifrost.ops.pipeline.service.PipelineSyncService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -31,9 +33,11 @@ import java.util.UUID;
 public class PipelineController {
 
     private final PipelineService pipelineService;
+    private final PipelineSyncService pipelineSyncService;
 
-    public PipelineController(PipelineService pipelineService) {
+    public PipelineController(PipelineService pipelineService, PipelineSyncService pipelineSyncService) {
         this.pipelineService = pipelineService;
+        this.pipelineSyncService = pipelineSyncService;
     }
 
     /** 목록(FR-003). status 필터(creating/active/lag/error/paused). */
@@ -66,6 +70,14 @@ public class PipelineController {
                                               @PathVariable UUID id,
                                               @AuthenticationPrincipal AuthenticatedUser principal) {
         return pipelineService.listConnectors(wsId, principal, id);
+    }
+
+    /** 동기화 상태(#107, 상세 Sync 탭). source/sink 실제 행수 비교(CDC direct 전용). */
+    @GetMapping("/{id}/sync-status")
+    public SyncStatusResponse syncStatus(@PathVariable UUID wsId,
+                                         @PathVariable UUID id,
+                                         @AuthenticationPrincipal AuthenticatedUser principal) {
+        return pipelineSyncService.syncStatus(wsId, principal, id);
     }
 
     /** 일시중지(FR-005). creating 중에는 불가. */
