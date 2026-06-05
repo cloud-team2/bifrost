@@ -100,7 +100,10 @@ function ProjectCard({
 }) {
   const pEdges = edges.filter((e) => project.pipelineIds.includes(e.id))
   const issueEdges = pEdges.filter((e) => e.status === 'lag' || e.status === 'error')
-  const activeEdges = pEdges.filter((e) => e.status === 'active')
+  // Pipelines·Active는 백엔드 workspace 응답의 카운트를 쓴다(#105). 목록 화면에서는 edges가
+  // 로드되지 않아 전역 edges 기반 계산이 0이 되던 문제를 해소.
+  const pipelineCount = project.pipelineCount
+  const activeCount = project.activeCount
   const openInc = incidents.filter(
     (i) => i.status !== 'resolved' && i.affectedPipelines.some((pid) => project.pipelineIds.includes(pid)),
   )
@@ -125,8 +128,8 @@ function ProjectCard({
         <HealthBadge health={health} />
       </div>
       <div className="mt-4 grid grid-cols-4 gap-2 border-t border-gray-100 pt-3">
-        <HealthStat label="Pipelines" value={pEdges.length} />
-        <HealthStat label="Active" value={activeEdges.length} tone="good" />
+        <HealthStat label="Pipelines" value={pipelineCount} />
+        <HealthStat label="Active" value={activeCount} tone="good" />
         <HealthStat label="Issues" value={issueEdges.length} tone={issueEdges.length > 0 ? 'warn' : undefined} />
         <HealthStat label="Incidents" value={openInc.length} tone={openInc.length > 0 ? 'bad' : undefined} />
       </div>

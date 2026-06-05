@@ -62,6 +62,6 @@ class WorkspaceControllerTest {
 
     private static WorkspaceResponse sample(UUID id, String name) {
         return new WorkspaceResponse(id, name, name.toLowerCase().replace(' ', '-'),
-                WorkspaceEntity.Status.PROVISIONING, Instant.now());
+                WorkspaceEntity.Status.PROVISIONING, Instant.now(), 0L, 0L);
     }
 }

@@ -42,6 +42,8 @@ export function workspaceToProject(
     dbIds: opts.dbIds ?? [],
     memberCount: 1,
     createdAt: (ws.createdAt ?? '').slice(0, 10),
+    pipelineCount: ws.pipelineCount ?? 0,
+    activeCount: ws.activePipelineCount ?? 0,
   }
 }
 

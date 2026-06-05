@@ -22,6 +22,11 @@ public interface PipelineRepository extends JpaRepository<PipelineEntity, UUID> 
 
     List<PipelineEntity> findByTenantIdAndStatusOrderByCreatedAtDesc(UUID tenantId, PipelineLifecycle status);
 
+    /** 워크스페이스 요약 카운트(프로젝트 목록 카드용, #105). */
+    long countByTenantId(UUID tenantId);
+
+    long countByTenantIdAndStatus(UUID tenantId, PipelineLifecycle status);
+
     /** 하나의 pipeline = 하나의 topic/table: 동일 source+schema+table+pattern 중복 차단용. */
     boolean existsByTenantIdAndSourceDatasourceIdAndSchemaNameAndTableNameAndPattern(
             UUID tenantId, UUID sourceDatasourceId, String schemaName, String tableName, PipelinePattern pattern);

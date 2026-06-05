@@ -3,6 +3,8 @@ package com.bifrost.ops.workspace.service;
 import com.bifrost.ops.auth.jwt.AuthenticatedUser;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
+import com.bifrost.ops.pipeline.PipelineLifecycle;
+import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
 import com.bifrost.ops.provisioning.dto.TenantProvisionRequest;
 import com.bifrost.ops.provisioning.port.TenantProvisionerPort;
 import com.bifrost.ops.workspace.WorkspaceAccessGuard;
@@ -30,26 +32,32 @@ import static org.mockito.Mockito.when;
 class WorkspaceServiceTest {
 
     @Mock private WorkspaceRepository workspaceRepository;
+    @Mock private PipelineRepository pipelineRepository;
     @Mock private TenantProvisionerPort tenantProvisioner;
     @Mock private WorkspaceAccessGuard accessGuard;
 
     private WorkspaceService service() {
-        return new WorkspaceService(workspaceRepository, tenantProvisioner, accessGuard);
+        return new WorkspaceService(workspaceRepository, pipelineRepository, tenantProvisioner, accessGuard);
     }
 
     private final UUID userId = UUID.randomUUID();
     private final AuthenticatedUser principal = new AuthenticatedUser(userId, UUID.randomUUID(), "u@bifrost.io");
 
     @Test
-    void listReturnsOwnedWorkspaces() {
+    void listReturnsOwnedWorkspacesWithPipelineCounts() {
+        UUID wsId = UUID.randomUUID();
         when(workspaceRepository.findByOwnerUserIdOrderByCreatedAt(userId))
-                .thenReturn(List.of(entity(UUID.randomUUID(), "Team A", "team-a")));
+                .thenReturn(List.of(entity(wsId, "Team A", "team-a")));
+        when(pipelineRepository.countByTenantId(wsId)).thenReturn(5L);
+        when(pipelineRepository.countByTenantIdAndStatus(wsId, PipelineLifecycle.ACTIVE)).thenReturn(3L);
 
         List<WorkspaceResponse> out = service().list(principal);
 
         assertThat(out).hasSize(1);
         assertThat(out.get(0).name()).isEqualTo("Team A");
         assertThat(out.get(0).projectKey()).isEqualTo("team-a");
+        assertThat(out.get(0).pipelineCount()).isEqualTo(5L);
+        assertThat(out.get(0).activePipelineCount()).isEqualTo(3L);
     }
 
     @Test

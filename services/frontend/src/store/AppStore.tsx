@@ -266,10 +266,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setEdges(nextEdges)
       const dbIds = nextNodes.map((n) => n.id)
       const pipelineIds = nextEdges.map((e) => e.id)
+      // 카드 요약 카운트를 방금 로드한 edges로 재동기화(목록 복귀 시 최신 반영, #105)
+      const pipelineCount = nextEdges.length
+      const activeCount = nextEdges.filter((e) => e.status === 'active').length
       setProjects((prev) =>
-        prev.map((w) => (w.id === wsId ? { ...w, dbIds, pipelineIds } : w)),
+        prev.map((w) => (w.id === wsId ? { ...w, dbIds, pipelineIds, pipelineCount, activeCount } : w)),
       )
-      setCurrentProject((w) => (w && w.id === wsId ? { ...w, dbIds, pipelineIds } : w))
+      setCurrentProject((w) =>
+        w && w.id === wsId ? { ...w, dbIds, pipelineIds, pipelineCount, activeCount } : w,
+      )
     } catch {
       setNodes([])
       setEdges([])
@@ -428,12 +433,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const created = await api.createPipeline(currentProject.id, input)
         const edge = pipelineToEdge(created)
         setEdges((p) => [...p, edge])
+        const addActive = edge.status === 'active' ? 1 : 0
         setProjects((p) =>
           p.map((w) =>
-            w.id === currentProject.id ? { ...w, pipelineIds: [...w.pipelineIds, edge.id] } : w,
+            w.id === currentProject.id
+              ? {
+                  ...w,
+                  pipelineIds: [...w.pipelineIds, edge.id],
+                  pipelineCount: w.pipelineCount + 1,
+                  activeCount: w.activeCount + addActive,
+                }
+              : w,
           ),
         )
-        setCurrentProject((w) => (w ? { ...w, pipelineIds: [...w.pipelineIds, edge.id] } : w))
+        setCurrentProject((w) =>
+          w
+            ? {
+                ...w,
+                pipelineIds: [...w.pipelineIds, edge.id],
+                pipelineCount: w.pipelineCount + 1,
+                activeCount: w.activeCount + addActive,
+              }
+            : w,
+        )
         return edge
       } catch {
         return null
@@ -463,13 +485,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
           return
         }
       }
+      const removed = edges.find((e) => e.id === id)
+      const delActive = removed?.status === 'active' ? 1 : 0
       setEdges((p) => p.filter((e) => e.id !== id))
-      setProjects((p) =>
-        p.map((w) => ({ ...w, pipelineIds: w.pipelineIds.filter((x) => x !== id) })),
-      )
-      setCurrentProject((w) =>
-        w ? { ...w, pipelineIds: w.pipelineIds.filter((x) => x !== id) } : w,
-      )
+      const adjust = (w: Project): Project =>
+        w.pipelineIds.includes(id)
+          ? {
+              ...w,
+              pipelineIds: w.pipelineIds.filter((x) => x !== id),
+              pipelineCount: Math.max(0, w.pipelineCount - 1),
+              activeCount: Math.max(0, w.activeCount - delActive),
+            }
+          : w
+      setProjects((p) => p.map(adjust))
+      setCurrentProject((w) => (w ? adjust(w) : w))
     },
 
     runIncidentAction(incidentId, actionId) {

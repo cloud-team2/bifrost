@@ -76,6 +76,8 @@ export interface WorkspaceResponse {
   projectKey: string
   status: string
   createdAt: string
+  pipelineCount: number
+  activePipelineCount: number
 }
 export type FailureReason =
   | 'CONNECTION_REFUSED' | 'AUTH_FAILED' | 'DB_NOT_FOUND' | 'TIMEOUT' | 'UNKNOWN' | null
