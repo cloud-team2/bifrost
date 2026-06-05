@@ -79,6 +79,9 @@ public class PipelineMessageService {
         props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
         props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, limit);
+        // 로컬: K8s advertised address resolve 실패 시 빠르게 실패하도록 타임아웃 단축
+        props.put(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG, 5_000);
+        props.put(ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, 5_000);
 
         try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
             List<PartitionInfo> partInfos = consumer.partitionsFor(topic);

@@ -88,3 +88,7 @@ logging:
     org.springframework.web: INFO
     org.hibernate.SQL: INFO    # SQL 끔 — [도메인] 흐름 로그만 보이게(#99)
     io.fabric8.kubernetes.client: INFO
+    # Kafka 클라이언트: K8s 내부 advertised address(platform-kafka-kafka-0.*.svc)를 호스트에서
+    # 직접 resolve할 수 없을 때 발생하는 연결 실패 WARN을 억제한다.
+    # 이는 port-forward 로컬 개발 환경의 known limitation이며 앱 기능에 영향 없음.
+    org.apache.kafka.clients.NetworkClient: ERROR

@@ -13,9 +13,9 @@
 
 ## 0. 사전 준비
 
-- Docker Desktop, **JDK 21**, Node 18+
-- JDK 경로 예: `export JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home`
-- 트랙 B 추가: [kind](https://kind.sigs.k8s.io/), `kubectl`
+- Docker Desktop (K8s 활성화 권장), **JDK 21 (Temurin)**, Node 20+
+- JDK 경로: `export JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home`
+- 트랙 B 추가: `kubectl`, `helm` (kind 없이 Docker Desktop K8s 사용 가능)
 
 ---
 
@@ -39,13 +39,14 @@ docker compose up -d meta-db tenant-postgres tenant-mariadb
 ### A2. 백엔드 기동 (operations-backend)
 
 ```bash
-export JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home
+export JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home
 ./gradlew :services:operations-backend:bootRun
 ```
 
-- 기본 프로파일 `dev`, `secret-store.provider=mock`(in-memory) — 추가 env 불필요.
-- 기동 시 **Flyway V1~V7 적용 + JPA `validate`** 후 `:8080`.
-- **dev 데모 계정 자동 seed**: `ta@bifrost.io` / `ta123456` (워크스페이스 `Demo Team`). 끄려면 `dev.seed.enabled=false`.
+- 기본 프로파일 `dev`, `secret-store.provider=db`(metadb `secrets` 테이블 영속) — 추가 env 불필요.
+- 기동 시 **Flyway 자동 적용 + JPA `validate`** 후 `:8080`.
+- **dev 데모 계정 자동 seed**: `ta@bifrost.io` / `ta123456` (워크스페이스 `Demo Team`).
+- AdminClient(`localhost:9092`)가 연결 실패 WARN 로그를 출력하지만 앱은 정상 기동한다. Kafka 기능(topic-info, consumer-groups, messages, metrics rate)은 Kafka 접근 시에만 동작.
 - K8s가 없으면 워크스페이스 프로비저닝(`TenantProvisioner`)·**파이프라인 생성은 실패**한다(워크스페이스는 PROVISIONING으로 남음). UI·DB 등록·스키마 조회는 영향 없음. 파이프라인까지 보려면 **트랙 B**로.
 
 ### A3. 프론트엔드 기동
@@ -72,16 +73,31 @@ npm run dev      # http://localhost:5173, /api → localhost:8080 프록시(vite
 > 결과: source(Postgres)에 넣은 변경이 Debezium→Kafka→JDBC sink를 거쳐 **sink(MariaDB)에 실제로 복제**된다.
 > 매니페스트·스크립트는 [`infra/local/k8s/`](../../infra/local/k8s/)에 있다(EKS용 `infra/k8s/kafka/*`의 축소판).
 
-### B1. kind 클러스터 + Strimzi 1.0.0
+### B1. K8s 준비 + Strimzi 1.0.0 설치
 
+**Docker Desktop K8s** (권장, kind 불필요):
 ```bash
-kind create cluster --name bifrost
-
-# Strimzi 1.0.0 오퍼레이터 (매니페스트가 kafka.strimzi.io/v1 → 반드시 1.0.0)
+# Docker Desktop → Settings → Kubernetes → Enable Kubernetes
 kubectl create namespace platform-kafka
-kubectl create -f 'https://strimzi.io/install/1.0.0?namespace=platform-kafka' -n platform-kafka
+
+helm repo add strimzi https://strimzi.io/charts/ && helm repo update
+helm install strimzi-operator strimzi/strimzi-kafka-operator \
+  --namespace platform-kafka --version 1.0.0 \
+  --set watchNamespaces="{platform-kafka}"
 kubectl -n platform-kafka rollout status deploy/strimzi-cluster-operator
 ```
+
+**kind 사용 시** (대안):
+```bash
+kind create cluster --name bifrost
+kubectl create namespace platform-kafka
+helm repo add strimzi https://strimzi.io/charts/ && helm repo update
+helm install strimzi-operator strimzi/strimzi-kafka-operator \
+  --namespace platform-kafka --version 1.0.0 \
+  --set watchNamespaces="{platform-kafka}"
+```
+
+> Strimzi 1.0.0 URL 설치(`strimzi.io/install/1.0.0?...`)는 404 오류 발생 — Helm 사용 필수.
 
 ### B2. Kafka(축소판) 기동
 
@@ -93,11 +109,12 @@ kubectl -n platform-kafka wait kafka/platform-kafka --for=condition=Ready --time
 ### B3. Kafka Connect 이미지 빌드 + 적재 + 기동
 
 Connect 이미지엔 Debezium(PostgreSQL/MariaDB) + Confluent JDBC sink + JDBC 드라이버가 들어간다.
-EKS는 `KafkaConnect.spec.build`(Kaniko→Harbor)로 만들지만, kind는 로컬 빌드 후 `kind load`한다.
 
 ```bash
 docker build -f infra/local/k8s/Dockerfile.connect-kind -t bifrost/kafka-connect-kind:v1 infra/local/k8s
-kind load docker-image bifrost/kafka-connect-kind:v1 --name bifrost
+
+# Docker Desktop: kind load 불필요 (로컬 이미지 직접 참조)
+# kind 사용 시: kind load docker-image bifrost/kafka-connect-kind:v1 --name bifrost
 
 kubectl apply -f infra/local/k8s/connect-kind.yaml
 kubectl -n platform-kafka wait kafkaconnect/platform-connect --for=condition=Ready --timeout=300s
