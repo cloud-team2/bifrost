@@ -126,7 +126,7 @@ Host: metadb-service.metadb.svc.cluster.local
 Port: 5432
 Database: metadb
 User: platform
-Password: (infra/k8s/metadb/01-secret.yaml 참고)
+Password: (gitops 브랜치 databases/metadb/01-secret.yaml 참고)
 ```
 
 ### 포트포워딩으로 로컬 접속
@@ -241,9 +241,9 @@ tenantdb
 └── tenant-mariadb                     # MariaDB 10.11 (고객 sink, binlog ROW)
 
 bifrost-system                       # 앱 (helm 차트 준비 완료, 실배포는 CICD #123 대기)
-├── ai-service                       # FastAPI  (helm: services/ai-service/helm, ClusterIP 내부)
-├── operations-backend               # Spring Boot (helm: services/operations-backend/helm) — ALB /api·/ws
-└── frontend                         # React/nginx (helm: services/frontend/helm) — ALB / (사용자 진입점)
+├── ai-service                       # FastAPI  (helm: gitops branch charts/ai-service, ClusterIP 내부)
+├── operations-backend               # Spring Boot (helm: gitops charts/operations-backend) — ALB /api·/ws
+└── frontend                         # React/nginx (helm: gitops charts/frontend) — ALB / (사용자 진입점)
 ```
 
 > **앱 이미지 레지스트리 = Harbor (in-cluster)**. push: Jenkins CI(Kaniko/buildah)→Harbor. pull: `harbor.harbor.svc.cluster.local/library/bifrost-<svc>` + `harbor-push-secret`. Docker Hub 아님.
