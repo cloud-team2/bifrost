@@ -1,6 +1,0 @@
-apiVersion: v2
-name: frontend
-description: Bifrost Frontend (React SPA, nginx 정적 서빙) — ALB로 외부 노출, /api·/ws는 ALB가 operations-backend로 라우팅
-type: application
-version: 0.1.0
-appVersion: "0.1.0"

@@ -1,7 +1,7 @@
 .PHONY: help \
         tf-init tf-plan tf-apply tf-destroy \
         kubeconfig \
-        setup-strimzi setup-metadb setup-userdb setup-infra \
+        setup-strimzi setup-infra \
         build-connect \
         local-up local-down
 
@@ -41,13 +41,10 @@ kubeconfig: ## EKS kubeconfig 업데이트
 setup-strimzi: ## Strimzi Operator + Kafka 클러스터 설치
 	./scripts/setup-strimzi.sh
 
-setup-metadb: ## MetaDB (플랫폼 내부 PostgreSQL on EBS) 설치
-	./scripts/setup-metadb.sh
+# DB(metadb·agentdb·tenantdb)는 GitOps로 이관됨 — ArgoCD `databases/` 앱이 배포(gitops 브랜치).
+# 수동 setup-metadb/setup-userdb 타겟은 폐기(#139).
 
-setup-userdb: ## 소스/싱크 DB 시뮬레이션 설치 (PostgreSQL CDC + MariaDB binlog)
-	./scripts/setup-userdb.sh
-
-setup-infra: kubeconfig setup-strimzi setup-metadb setup-userdb ## 전체 K8s 인프라 설치
+setup-infra: kubeconfig setup-strimzi ## 전체 K8s 인프라 설치 (DB는 ArgoCD가 배포)
 	@echo ""
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "K8s 인프라 설치 완료"

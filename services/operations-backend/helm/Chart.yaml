@@ -1,6 +1,0 @@
-apiVersion: v2
-name: operations-backend
-description: Bifrost Operations Backend (Spring Boot 모놀리스 — 플랫폼 API + /internal/ops)
-type: application
-version: 0.1.0
-appVersion: "0.1.0"
