@@ -63,7 +63,7 @@ ApplicationRunner seedSecrets(SecretStore store) {
 # EDA smoke
 BASE_URL=http://localhost:8080 \
 PROJECT_KEY=smoke \
-SRC_HOST=userdb-postgres.userdb.svc.cluster.local \
+SRC_HOST=tenantdb-postgres.tenantdb.svc.cluster.local \
 SRC_DB=shop SRC_SCHEMA=public SRC_TABLE=orders \
 SRC_SECRET_REF=<앱 기동 시 출력된 srcRef> \
 ./scripts/pipeline-e2e-smoke.sh eda

@@ -172,7 +172,7 @@ curl -X POST http://localhost:8083/connectors \
     "config": {
       "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
       "topic.prefix": "cdc.postgres",
-      "database.hostname": "user-postgres",
+      "database.hostname": "tenant-postgres",
       "database.port": "5432",
       "database.user": "debezium",
       "database.password": "debezium",
@@ -193,7 +193,7 @@ curl -X POST http://localhost:8083/connectors \
     "config": {
       "connector.class": "io.debezium.connector.mariadb.MariaDbConnector",
       "topic.prefix": "cdc.mariadb",
-      "database.hostname": "user-mariadb",
+      "database.hostname": "tenant-mariadb",
       "database.port": "3306",
       "database.user": "debezium",
       "database.password": "debezium",
@@ -232,9 +232,9 @@ EKS (ap-northeast-2)
 metadb
 └── metadb                           # PostgreSQL 15 (플랫폼 메타DB)
 
-userdb
-├── user-postgres                    # PostgreSQL 15 (CDC 소스, wal_level=logical)
-└── user-mariadb                     # MariaDB 10.11 (CDC 소스, binlog ROW)
+tenantdb
+├── tenant-postgres                    # PostgreSQL 15 (CDC 소스, wal_level=logical)
+└── tenant-mariadb                     # MariaDB 10.11 (CDC 소스, binlog ROW)
 ```
 
 ---
@@ -252,8 +252,8 @@ kubectl logs -n platform-kafka -l strimzi.io/cluster=platform-connect -f
 kubectl exec -it -n metadb deployment/metadb -- psql -U platform -d metadb
 
 # UserDB PostgreSQL 접속
-kubectl exec -it -n userdb deployment/user-postgres -- psql -U debezium -d testdb
+kubectl exec -it -n tenantdb deployment/tenant-postgres -- psql -U debezium -d testdb
 
 # UserDB MariaDB 접속
-kubectl exec -it -n userdb deployment/user-mariadb -- mariadb -u debezium -pdebezium testdb
+kubectl exec -it -n tenantdb deployment/tenant-mariadb -- mariadb -u debezium -pdebezium testdb
 ```

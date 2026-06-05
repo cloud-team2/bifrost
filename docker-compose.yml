@@ -18,9 +18,9 @@ services:
       retries: 5
 
   # ─────────────── 사용자 DB (시뮬레이션) ───────────────
-  user-postgres:
+  tenant-postgres:
     image: postgres:15
-    container_name: user-postgres
+    container_name: tenant-postgres
     command: ["postgres", "-c", "wal_level=logical", "-c", "max_wal_senders=10", "-c", "max_replication_slots=10"]
     ports:
       - "5434:5432"
@@ -29,13 +29,13 @@ services:
       POSTGRES_PASSWORD: debezium
       POSTGRES_DB: testdb
     volumes:
-      - user-postgres-data:/var/lib/postgresql/data
+      - tenant-postgres-data:/var/lib/postgresql/data
       # 최초 기동 시 샘플 스키마 주입(파이프라인 테이블 선택/CDC 데모용, #90)
-      - ./infra/local/userdb-init/postgres:/docker-entrypoint-initdb.d:ro
+      - ./infra/local/tenantdb-init/postgres:/docker-entrypoint-initdb.d:ro
 
-  user-mariadb:
+  tenant-mariadb:
     image: mariadb:10.11
-    container_name: user-mariadb
+    container_name: tenant-mariadb
     command:
       - "--log-bin=binlog"
       - "--binlog-format=ROW"
@@ -50,9 +50,9 @@ services:
       MARIADB_PASSWORD: debezium
       MARIADB_DATABASE: testdb
     volumes:
-      - user-mariadb-data:/var/lib/mysql
+      - tenant-mariadb-data:/var/lib/mysql
       # 최초 기동 시 샘플 스키마 주입(#90)
-      - ./infra/local/userdb-init/mariadb:/docker-entrypoint-initdb.d:ro
+      - ./infra/local/tenantdb-init/mariadb:/docker-entrypoint-initdb.d:ro
 
   # ─────────────── Kafka (KRaft) ───────────────
   kafka:
@@ -123,6 +123,6 @@ services:
 
 volumes:
   meta-db-data:
-  user-postgres-data:
-  user-mariadb-data:
+  tenant-postgres-data:
+  tenant-mariadb-data:
   kafka-data:
