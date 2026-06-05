@@ -42,18 +42,39 @@ Router는 매 사용자 메시지마다 mode를 재판정한다. `incident_analy
     {
       "step_id": "plan_001",
       "tool_name": "get_pipeline_logs",
+      "params": {
+        "pipeline_id": "daily_user_sync",
+        "time_range": "last_30m"
+      },
       "purpose": "extract task timeout evidence",
-      "required": true
+      "required": true,
+      "depends_on": [],
+      "plan_hash": "sha256:1b7c..."
     },
     {
       "step_id": "plan_002",
       "tool_name": "get_metrics",
+      "params": {
+        "metric": "pipeline_source_connection_timeout_total",
+        "pipeline_id": "daily_user_sync",
+        "time_range": "last_30m"
+      },
       "purpose": "source connection timeout metric",
-      "required": true
+      "required": true,
+      "depends_on": [],
+      "plan_hash": "sha256:94aa..."
     }
   ]
 }
 ```
+
+Planner output은 Retrieval이 바로 실행할 수 있는 최소 plan이어야 한다.
+
+| 필드 | 설명 |
+| --- | --- |
+| `params` | Tool Client Registry가 검증할 tool parameter. secret 원문은 넣지 않는다. |
+| `depends_on` | 먼저 완료되어야 하는 `step_id` 목록. 빈 배열이면 독립 실행 가능하다. |
+| `plan_hash` | 동일 조회 중복 실행을 막기 위한 hash. 계산 기준은 [§15 Workflow Control](./contract-workflow-control.md#51-루프-방지와-종료-보장)을 따른다. |
 
 ### 4. Retrieval Output
 
@@ -141,6 +162,19 @@ Retrieval output에는 raw `content`를 넣지 않는다.
 | `notification` | 운영자 알림 | 선택 |
 | `escalation` | 고객사/플랫폼/운영자에게 evidence 전달 | 선택 |
 
+Action 후보의 실행 상태는 Policy Guard 이후부터 다음 enum 중 하나로 표시한다.
+
+| Status | 의미 | FE Run 버튼 |
+| --- | --- | --- |
+| `pending_approval` | 사람 승인 또는 change ticket이 필요함 | 비활성 |
+| `ready` | 실행 조건을 충족함 | 활성 |
+| `running` | 실행 중 | 비활성 |
+| `completed` | 실행 성공 | 비활성 |
+| `failed` | 실행 실패 | 비활성 |
+| `blocked` | 정책 또는 Spring 검증으로 실행 차단 | 비활성 |
+
+세부 실패 원인은 status enum을 늘리지 않고 `reason_code`와 `summary`로 표현한다.
+
 ### 8. Policy Guard Output
 
 ```json
@@ -152,6 +186,7 @@ Retrieval output에는 raw `content`를 넣지 않는다.
       "tool_name": "restart_connector_task",
       "risk": "medium",
       "decision": "require_approval",
+      "status": "pending_approval",
       "reason": "connector task restart changes runtime state",
       "required_approver": "project_operator"
     }
@@ -161,6 +196,15 @@ Retrieval output에는 raw `content`를 넣지 않는다.
 
 Policy Guard는 승인 완료를 기록하지 않는다. 승인 결과는 approval gate가 State에 기록한다.
 
+Policy decision과 action status의 기본 매핑:
+
+| Policy decision | Action status |
+| --- | --- |
+| `allow` | `ready` |
+| `require_approval` | `pending_approval` |
+| `require_change_management` | `pending_approval` |
+| `deny` | `blocked` |
+
 ### 9. Executor Output
 
 ```json
@@ -169,15 +213,18 @@ Policy Guard는 승인 완료를 기록하지 않는다. 승인 결과는 approv
     {
       "action_id": "act_001",
       "tool_name": "restart_connector_task",
-      "status": "accepted",
+      "status": "completed",
       "audit_event_id": "audit_001",
       "before_evidence_id": "ev_before_001",
       "after_evidence_id": "ev_after_001",
+      "reason_code": null,
       "summary": "connector task restart requested"
     }
   ]
 }
 ```
+
+Executor는 실행 시작 시 action status를 `running`으로 기록하고, Spring Boot 응답과 after-check 결과를 기준으로 `completed`, `failed`, `blocked` 중 하나로 종료한다. Mutation timeout은 자동 재시도하지 않으며, after-check 실패는 `status="failed"`와 구체적인 `reason_code`로 표현한다.
 
 ### 10. Verifier Output
 
@@ -221,7 +268,7 @@ Status enum:
         "action_id": "act_001",
         "risk": "medium",
         "estimated_duration": "약 30초",
-        "status": "approval_required"
+        "status": "pending_approval"
       }
     ],
     "limitations": [
@@ -241,3 +288,5 @@ Status enum:
 | `workflow_action`/`composite_action`/`notification`/`escalation`인데 action catalog에 없음 | Remediation output reject |
 | raw evidence inline 포함 | Retrieval output reject |
 | verifier approval 없는 report | Report reject |
+| Planner step에 `params`, `depends_on`, `plan_hash` 누락 | Planner output reject |
+| 허용되지 않은 action status | Output reject |
