@@ -77,9 +77,11 @@ public class JdbcSinkConnectorMapper {
                     .addToConfig("transforms", "unwrap,route")
                     .addToConfig("transforms.unwrap.type",
                             "io.debezium.transforms.ExtractNewRecordState")
-                    // DELETE 이벤트는 sink에 전달하지 않음 (tombstone만 drop)
-                    .addToConfig("transforms.unwrap.delete.handling.mode", "none")
-                    .addToConfig("transforms.unwrap.drop.tombstones", "true")
+                    // DELETE 이벤트는 sink에 전달하지 않음 (Debezium 3.x).
+                    // delete.tombstone.handling.mode=drop: delete 레코드와 tombstone을 모두 제거한다.
+                    // (구 delete.handling.mode/drop.tombstones는 Debezium 2.5+에서 이 옵션으로 통합·제거됨.
+                    //  none이면 값이 null인 delete 레코드가 흘러가 delete.enabled=false인 JDBC sink를 죽인다.)
+                    .addToConfig("transforms.unwrap.delete.tombstone.handling.mode", "drop")
                     // 토픽명 `cdc.table.{project}.{db}.{schema}.{table}`을 마지막 세그먼트(테이블명)로
                     // 축약한다. JDBC sink는 기본적으로 토픽명을 테이블 식별자로 쓰는데, 점(.)이 들어가면
                     // MariaDB/MySQL이 `cdc`.`table`처럼 catalog.table로 오해해 적재가 깨진다.
