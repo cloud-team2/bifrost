@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_default_model: str = "gpt-4o-mini"
 
+    # Agent Run Store (agentdb — PostgreSQL)
+    database_url: str = "postgresql+asyncpg://agent:agent@localhost:5432/agentdb"
+
     # Agent run 안전장치 (DETAILS §15.5 루프 방지)
     max_steps_per_run: int = 24
     max_revisions: int = 2

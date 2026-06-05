@@ -4,10 +4,20 @@
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from app.api import routes_agent, routes_events, routes_health
 from app.core.config import settings
+from app.core.db import close_pool, init_pool
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_pool(settings.database_url)
+    yield
+    await close_pool()
 
 
 def create_app() -> FastAPI:
@@ -15,6 +25,7 @@ def create_app() -> FastAPI:
         title="Bifrost AI Agent Server",
         version=settings.version,
         description="AI 장애대응 (FastAPI). 운영 조회/조치는 Spring /internal/ops로 위임.",
+        lifespan=lifespan,
     )
 
     # 설계 API 표면: /api/v1
