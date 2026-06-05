@@ -24,13 +24,17 @@ resources:
     memory: 1Gi
 
 env:
-  SPRING_PROFILES_ACTIVE: prod
+  # application-prod.yml 미존재 → dev 프로파일 유지, 접속정보는 env 주입 (#126)
+  SPRING_PROFILES_ACTIVE: dev
   META_DB_URL: jdbc:postgresql://metadb-service.metadb.svc.cluster.local:5432/metadb
   META_DB_USER: platform
   KAFKA_BOOTSTRAP: platform-kafka-kafka-bootstrap.platform-kafka.svc.cluster.local:9092
   KAFKA_CLUSTER_NAME: platform-kafka
   KAFKA_CLUSTER_NAMESPACE: platform-kafka
   KAFKA_CONNECT_CLUSTER: platform-connect
+  # Prometheus 메트릭 수집 (#126)
+  PROMETHEUS_URL: http://prometheus.platform-kafka.svc.cluster.local:9090
+  PROMETHEUS_ENABLED: "true"
   PROVISIONING_MODE: real
   AI_SERVICE_URL: http://ai-service.bifrost-system.svc.cluster.local:8082
 
