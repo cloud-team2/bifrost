@@ -24,16 +24,16 @@
 ### A1. 인프라 기동 (metadb + 등록 대상 user DB)
 
 ```bash
-docker compose up -d meta-db user-postgres user-mariadb
+docker compose up -d meta-db tenant-postgres tenant-mariadb
 ```
 
 | 컨테이너 | 호스트 포트 | 계정 / DB | 용도 |
 | --- | --- | --- | --- |
 | `meta-db` | `5433` | platform / platform / `metadb` | 백엔드 메타DB(Flyway) |
-| `user-postgres` | `5434` | debezium / debezium / `testdb` | 등록할 소스 DB(`wal_level=logical`) |
-| `user-mariadb` | `3307` | debezium / debezium / `testdb` | CDC sink/소스(`binlog ROW`) |
+| `tenant-postgres` | `5434` | debezium / debezium / `testdb` | 등록할 소스 DB(`wal_level=logical`) |
+| `tenant-mariadb` | `3307` | debezium / debezium / `testdb` | CDC sink/소스(`binlog ROW`) |
 
-- 최초 기동 시 `infra/local/userdb-init/`의 샘플 스키마(`public.orders`, `public.customers` 등)가 주입된다 → 테이블 선택/스키마 조회가 바로 동작.
+- 최초 기동 시 `infra/local/tenantdb-init/`의 샘플 스키마(`public.orders`, `public.customers` 등)가 주입된다 → 테이블 선택/스키마 조회가 바로 동작.
 - 샘플 테이블이 안 보이면 볼륨이 남아있는 것: `docker compose down -v` 후 다시 `up`.
 
 ### A2. 백엔드 기동 (operations-backend)
@@ -63,7 +63,7 @@ npm run dev      # http://localhost:5173, /api → localhost:8080 프록시(vite
 3. **Databases → Register a Database** → PostgreSQL host `localhost`, port `5434`, db `testdb`, user/pw `debezium` → **Test Connection** → **Register & Check**(CDC readiness)
 4. DB 상세 → **Tables** 탭에서 실제 스키마 조회
 
-> connection-test / CDC readiness / 스키마 조회는 **실제 대상 DB에 접속**하므로 user-postgres/mariadb가 떠 있어야 한다.
+> connection-test / CDC readiness / 스키마 조회는 **실제 대상 DB에 접속**하므로 tenant-postgres/mariadb가 떠 있어야 한다.
 
 ---
 
@@ -162,10 +162,10 @@ KUBECONFIG=/tmp/kind-bifrost.kubeconfig ./infra/local/k8s/cdc-smoke-test.sh
 
 ```bash
 # source(Postgres)에 INSERT
-docker exec -i user-postgres psql -U debezium -d testdb \
+docker exec -i tenant-postgres psql -U debezium -d testdb \
   -c "INSERT INTO orders(customer,amount,status) VALUES('test',1,'paid');"
 # sink(MariaDB)에서 1~2초 뒤 확인
-docker exec -i user-mariadb mariadb -udebezium -pdebezium testdb -e "SELECT * FROM orders ORDER BY id;"
+docker exec -i tenant-mariadb mariadb -udebezium -pdebezium testdb -e "SELECT * FROM orders ORDER BY id;"
 ```
 
 커넥터 내부 상태:

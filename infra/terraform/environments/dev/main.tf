@@ -52,11 +52,8 @@ module "eks" {
   private_subnet_ids = var.private_subnet_ids
   public_subnet_ids  = var.public_subnet_ids
 
-  node_instance_type = var.node_instance_type
-  node_desired_size  = var.node_desired_size
-  node_min_size      = var.node_min_size
-  node_max_size      = var.node_max_size
-  node_disk_size_gb  = 50
+  node_groups       = var.node_groups
+  node_disk_size_gb = 50
 
   cluster_admin_arns = [
     "arn:aws:iam::881490135253:user/skala-student",

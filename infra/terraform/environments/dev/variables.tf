@@ -28,22 +28,18 @@ variable "public_subnet_ids" {
   type        = list(string)
 }
 
-variable "node_instance_type" {
-  type    = string
-  default = "t3.large"
-}
-
-variable "node_desired_size" {
-  type    = number
-  default = 3
-}
-
-variable "node_min_size" {
-  type    = number
-  default = 2
-}
-
-variable "node_max_size" {
-  type    = number
-  default = 5
+variable "node_groups" {
+  description = "티어별 EKS 노드풀 (app/data 등)"
+  type = map(object({
+    instance_types = list(string)
+    desired_size   = number
+    min_size       = number
+    max_size       = number
+    labels         = optional(map(string), {})
+    taints = optional(list(object({
+      key    = string
+      value  = string
+      effect = string
+    })), [])
+  }))
 }

@@ -15,7 +15,7 @@ flowchart TB
       AR[argocd]
       MON[monitoring<br/>Prom·Grafana·Loki·Tempo]
       MDB[(metadb)]
-      UDB[(userdb)]
+      UDB[(tenantdb)]
     end
     BF --> PK
     BF --> MDB
@@ -36,13 +36,13 @@ flowchart TB
 
 ## Namespace
 
-`platform-kafka`(Kafka·Connect·CR) · `bifrost-system`(FE·FastAPI·SpringBoot) · `registry`(Harbor) · `cicd`(Jenkins) · `argocd` · `monitoring`(Prometheus·Alertmanager·Grafana·Loki·Tempo·exporters) · `metadb` · `userdb`
+`platform-kafka`(Kafka·Connect·CR) · `bifrost-system`(FE·FastAPI·SpringBoot) · `registry`(Harbor) · `cicd`(Jenkins) · `argocd` · `monitoring`(Prometheus·Alertmanager·Grafana·Loki·Tempo·exporters) · `metadb` · `tenantdb`
 
 ## 현재 상태 (2026-06-02)
 
 | 완료 | 미구성 |
 | --- | --- |
-| EKS 3노드, Strimzi Operator, `platform-kafka` Ready(3 broker/controller, PVC 3), 내부 topic 3, **Kafka Connect `platform-connect`(1 replica)**, **Harbor**(8 pod), **Jenkins**, **Argo CD**(앱 0개), gp3 default, metadb/userdb | Monitoring(Prometheus/Grafana/Loki/Tempo·exporter), 앱(FastAPI/Spring/Frontend, `bifrost-system`), Evidence/Audit Store, KafkaConnector/KafkaUser, metrics-server, IngressClass |
+| EKS 3노드, Strimzi Operator, `platform-kafka` Ready(3 broker/controller, PVC 3), 내부 topic 3, **Kafka Connect `platform-connect`(1 replica)**, **Harbor**(8 pod), **Jenkins**, **Argo CD**(앱 0개), gp3 default, metadb/tenantdb | Monitoring(Prometheus/Grafana/Loki/Tempo·exporter), 앱(FastAPI/Spring/Frontend, `bifrost-system`), Evidence/Audit Store, KafkaConnector/KafkaUser, metrics-server, IngressClass |
 
 > ⚠️ Harbor·Jenkins·Argo CD·Kafka Connect는 **수동 배포**되어 있고 **manifest가 repo에 YAML로 미반영**이다(Argo CD Application 0개 = GitOps 미연동). manifest 역추출·GitOps 연동은 후속 작업. 상세 스냅샷은 [§2 추가 배포 현황](#35-추가-배포-현황-2026-06-02-스냅샷-수동-배포).
 
@@ -52,7 +52,7 @@ flowchart TB
 
 ## 점검 필요 (운영 전)
 
-`auto.create.topics.enable=true` 끄기 · plain listener 제한(scram 표준화) · userdb LoadBalancer 노출 재검토 · PDB/anti-affinity · gp3 Retain(orphan PV) 정책 · **클러스터 용량: 3×t3.large CPU 요청 ~81%로 포화 임박, 남은 스택(monitoring·앱) 수용 불가 → 노드 확장/인스턴스 상향 필요([§2 §11 용량 분석](#11-클러스터-용량-분석-및-대응안-2026-06-02))**.
+`auto.create.topics.enable=true` 끄기 · plain listener 제한(scram 표준화) · tenantdb LoadBalancer 노출 재검토 · PDB/anti-affinity · gp3 Retain(orphan PV) 정책 · **클러스터 용량: 3×t3.large CPU 요청 ~81%로 포화 임박, 남은 스택(monitoring·앱) 수용 불가 → 노드 확장/인스턴스 상향 필요([§2 §11 용량 분석](#11-클러스터-용량-분석-및-대응안-2026-06-02))**.
 
 ## 더 읽기 → [DETAILS.md](#)
 
@@ -129,7 +129,7 @@ Single EKS Cluster
   ├─ metadb
   │   └─ metadata / audit / evidence DB
   │
-  └─ userdb
+  └─ tenantdb
 ```
 
 Namespace 이름은 실제 배포 과정에서 조정할 수 있지만, 역할별 경계는 유지한다.
@@ -340,14 +340,40 @@ Kafka는 현재 3-node KRaft 기반 MVP 구조까지 진행되어 있다. 다음
 arn:aws:eks:ap-northeast-2:881490135253:cluster/skala3-cloud1-finalproj-team2
 ```
 
-노드:
+노드 (#119 — 단일 노드풀로 통합, 2026-06-05):
 
 | 항목 | 현재 상태 |
 | --- | --- |
-| worker node | 3개 Ready |
-| Kubernetes version | v1.35.4-eks-7fcd7ec |
+| worker node | **5개 Ready** (t3.xlarge, 4vCPU/16Gi) — 구 3× t3.large에서 스펙업 |
+| 노드풀 | **단일 풀** t3.xlarge ×5 (desired 5/min 3/max 7), taint 없음. 전 워크로드 공용 |
+| Kafka 배치 | pod **anti-affinity로 broker 노드 분산**(HA). 노드 풀 격리는 안 함 |
+| AZ 분포 | 2 AZ(2a×3 / 2b×2). 5노드라 2a 노드 3개 → 2a broker(kafka-0·2)가 서로 다른 노드로 분산됨 |
+| AWS 노드그룹명 | `...-ng-data` (단일 풀이지만 재생성 churn 회피로 기존 키 유지) |
+| Kubernetes version | v1.35 |
 | OS | Amazon Linux 2023 |
 | container runtime | containerd |
+
+> **노드풀 토폴로지 결정 (#119)**: 처음엔 Kafka 격리를 위해 data/app 2풀로 나눴으나, **부하가 작아(총 requests ~5.7 vCPU) 물리 분리 실익이 적고 복잡도만 늘어** → **단일 풀로 통합**. 핵심은 "노드 풀 격리"가 아니라 **"Kafka broker를 서로 다른 노드에 분산(anti-affinity)"** — 이것만으로 단일 노드 장애 시 broker 1개만 영향(HA). DB(metadb·tenantdb)·우리 서비스·모니터링·CI/CD는 전부 같은 풀에서 공용. terraform `module.eks`는 `var.node_groups` map + `for_each`라 풀 추가/축소가 한 줄.
+
+> **AZ 주의**: 클러스터는 **처음부터 2 AZ**(ap-northeast-2a/2b)다. `private_subnet_ids`("변경 금지")에 서브넷이 2개(2a·2b) 들어있고, EKS 노드그룹이 그 AZ로 자동 분산한다. #119는 AZ를 추가한 게 아니라 기존 2개 서브넷을 그대로 사용한다. (단일 AZ는 그 AZ 장애 시 전체 다운 + Kafka RF3 AZ 분산 손실 → 멀티 AZ 유지 권장)
+
+> **Kafka broker HA**: broker PVC는 AZ 고정(2a·2a·2b). 단일 풀 5노드는 2a 노드가 3개라 **2a broker 2개가 서로 다른 노드에 배치**되어, 노드 1대 장애 시 broker 1개만 영향(정상 HA). 풀을 3노드 이하로 줄이면 2a broker가 한 노드에 겹칠 수 있으니 주의(`min_size=3` 유지).
+
+> **사이징 메모**: 총 requests ≈ 5.7 vCPU(우리 monolith는 아직 미배포, 부하 대부분이 CI/CD·Kafka). **5노드**(allocatable ~19.5 vCPU)로 운영 — 모니터링 스택(~3~6 vCPU)까지 여유. CI/CD(Harbor·Jenkins·ArgoCD)가 무거우니 빡빡하면 `desired_size` 한 줄로 증설(무중단 in-place).
+
+**검증 명령어 (#119 노드풀)** — `AWS_PROFILE=skala_student AWS_REGION=ap-northeast-2`, `C=skala3-cloud1-finalproj-team2`:
+
+```bash
+# 노드풀/노드 (단일 풀 ng-data, 전부 t3.xlarge 5대)
+aws eks list-nodegroups --cluster-name $C
+kubectl get nodes -L topology.kubernetes.io/zone,node.kubernetes.io/instance-type
+aws eks describe-nodegroup --cluster-name $C --nodegroup-name $C-ng-data \
+  --query 'nodegroup.{type:instanceTypes,scaling:scalingConfig}'
+# Kafka broker가 서로 다른 노드에 분산됐는지 (HA 핵심)
+kubectl -n platform-kafka get pods -l strimzi.io/pool-name=kafka -o wide
+# 용량 여유(노드별 requests 할당률)
+kubectl describe nodes | sed -n '/Allocated resources/,/Events/p' | grep -E 'cpu|memory'
+```
 
 Namespace:
 
@@ -360,7 +386,7 @@ Namespace:
 | `strimzi-system` | Active | Strimzi operator |
 | `platform-kafka` | Active | Kafka cluster + Kafka Connect |
 | `metadb` | Active | metadata / audit / evidence DB |
-| `userdb` | Active | demo/source/sink DB |
+| `tenantdb` | Active | demo/source/sink DB |
 | `harbor` | Active | Harbor registry (수동 배포, 25h) |
 | `jenkins` | Active | Jenkins (수동 배포, 25h) |
 | `argocd` | Active | Argo CD (수동 배포, 25h, App 0개) |
@@ -484,7 +510,7 @@ MVP로는 적절하다. 다만 리소스 여유가 생기면 controller와 broke
 
 #### 4.4 DB LoadBalancer 노출
 
-현재 `userdb` namespace의 MariaDB/Postgres service가 LoadBalancer로 노출되어 있다.
+현재 `tenantdb` namespace의 MariaDB/Postgres service가 LoadBalancer로 노출되어 있다.
 
 데모 또는 외부 접속 목적이면 유지할 수 있지만, 운영 기준으로는 ClusterIP 전환 또는 접근 제한을 검토한다.
 
@@ -518,7 +544,7 @@ Spring Boot adapter([server.md §11](./backend-springboot/server.md#11-resource-
 | `argocd` | Argo CD | 존재(수동, App 0개) |
 | `monitoring` | Prometheus, Grafana, Loki, exporters | 필요 |
 | `metadb` | metadata / audit / evidence DB | 존재 |
-| `userdb` | demo/source/sink DB | 존재 |
+| `tenantdb` | demo/source/sink DB | 존재 |
 
 ### 6. Target Resource Plan
 
@@ -634,18 +660,23 @@ FastAPI Agent는 Kubernetes/Kafka credential을 갖지 않는다. Spring Boot Op
 
 #### 6.7 Observability
 
-| 리소스 | Namespace | 목적 |
-| --- | --- | --- |
-| Prometheus | `monitoring` | metric 수집 |
-| Alertmanager | `monitoring` | alert routing |
-| Grafana | `monitoring` | dashboard |
-| Loki | `monitoring` | log store |
-| Promtail 또는 agent | `monitoring` | pod log 수집 |
-| Tempo | `monitoring` | distributed trace와 connector task trace summary |
-| Kafka exporter | `monitoring` | consumer lag/topic metric |
-| JMX exporter | `platform-kafka` 또는 sidecar | broker/connect JVM metric |
+> 배치: 전부 `monitoring` namespace, **`app` 노드풀**(taint 없음)에 스케줄. DaemonSet(node-exporter·Promtail)은 data 풀 taint를 toleration 처리해 전 노드에 배치.
+> **모니터링은 Spring Boot만이 아니라 클러스터 전체를 관측한다** — 노드·k8s 오브젝트·컨테이너·Kafka·DB·Spring·FastAPI·frontend가 모두 수집 대상이다.
 
-Agent RCA를 위해 최소한 Prometheus, pod log store, Tempo trace summary, Kafka lag metric은 필요하다.
+| 리소스 | 권장 replica | 수집(scrape) 대상 |
+| --- | --- | --- |
+| Prometheus | 1 (HA 2) | node-exporter·kube-state-metrics·kubelet/cAdvisor·Spring `/actuator/prometheus`·FastAPI `/metrics`·kafka-exporter·JMX exporter·postgres-exporter |
+| Alertmanager | 1 (HA 2) | Prometheus 룰 기반 alert routing |
+| Grafana | 1 | Prometheus/Loki/Tempo 데이터소스 시각화 |
+| Loki | 1 (single-binary) | 로그 저장 |
+| Promtail/Alloy | **노드당 1 (DaemonSet)** | 전 노드의 pod stdout 수집 → Loki |
+| node-exporter | **노드당 1 (DaemonSet)** | 노드 자원 metric |
+| Tempo | 1 | distributed trace, connector task trace summary (앱이 OTLP 전송) |
+| kafka-exporter | 1 | consumer lag/topic metric |
+| JMX exporter | broker/connect sidecar | broker/connect JVM metric |
+| kube-state-metrics | 1 | k8s 오브젝트 상태 metric |
+
+→ 코어 단일 파드 6개(Prometheus·Alertmanager·Grafana·Loki·Tempo·kube-state-metrics) + DaemonSet 2종(노드당). Agent RCA(ai-service)를 위해 최소한 Prometheus·Loki·Tempo trace summary·Kafka lag metric은 필요하다.
 
 ### 7. Kafka 운영 구조 권장안
 
@@ -706,7 +737,7 @@ KafkaNodePool brokers
 - Kafka broker/controller 3개 Running
 - Kafka broker PVC 3개 Bound
 - 내부 KafkaTopic 3개 Ready
-- metadb/userdb workload Running
+- metadb/tenantdb workload Running
 - Kafka Connect `platform-connect`(KafkaConnect CR, replicas 1) Ready — 2026-06-02 (수동)
 - Harbor 8 pod Running — 2026-06-02 (수동, manifest 미반영)
 - Jenkins `jenkins-0` Running — 2026-06-02 (수동)
@@ -716,7 +747,7 @@ KafkaNodePool brokers
 
 - `auto.create.topics.enable: true` 운영 전 전환 검토
 - `plain` listener 제거 또는 사용 범위 제한
-- `userdb` LoadBalancer 노출 필요성 재검토
+- `tenantdb` LoadBalancer 노출 필요성 재검토
 - Kafka PDB/anti-affinity 명시 여부 확인
 - Kafka Connect plugin image를 Harbor 기반으로 재정의
 - 기존 DB workload가 운영용인지 데모용인지 구분

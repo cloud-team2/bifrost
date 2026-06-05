@@ -1,6 +1,6 @@
 ---
 # Debezium PostgreSQL CDC Connector
-# 전제: userdb 네임스페이스에 user-postgres-service 실행 중
+# 전제: tenantdb 네임스페이스에 tenant-postgres-service 실행 중
 apiVersion: kafka.strimzi.io/v1
 kind: KafkaConnector
 metadata:
@@ -13,7 +13,7 @@ spec:
   tasksMax: 1
   config:
     topic.prefix: cdc.postgres
-    database.hostname: user-postgres-service.userdb.svc.cluster.local
+    database.hostname: tenant-postgres-service.tenantdb.svc.cluster.local
     database.port: "5432"
     database.user: debezium
     database.password: debezium
@@ -30,7 +30,7 @@ spec:
     snapshot.mode: initial
 ---
 # Debezium MariaDB CDC Connector
-# 전제: userdb 네임스페이스에 user-mariadb-service 실행 중
+# 전제: tenantdb 네임스페이스에 tenant-mariadb-service 실행 중
 apiVersion: kafka.strimzi.io/v1
 kind: KafkaConnector
 metadata:
@@ -43,7 +43,7 @@ spec:
   tasksMax: 1
   config:
     topic.prefix: cdc.mariadb
-    database.hostname: user-mariadb-service.userdb.svc.cluster.local
+    database.hostname: tenant-mariadb-service.tenantdb.svc.cluster.local
     database.port: "3306"
     database.user: debezium
     database.password: debezium
