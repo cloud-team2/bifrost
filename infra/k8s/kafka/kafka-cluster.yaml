@@ -33,20 +33,3 @@ spec:
   entityOperator:
     topicOperator: {}
     userOperator: {}
-    # #119: entity-operator도 data 노드풀에 배치 (platform-kafka 일관 배치)
-    template:
-      pod:
-        tolerations:
-          - key: tier
-            operator: Equal
-            value: data
-            effect: NoSchedule
-        affinity:
-          nodeAffinity:
-            requiredDuringSchedulingIgnoredDuringExecution:
-              nodeSelectorTerms:
-                - matchExpressions:
-                    - key: tier
-                      operator: In
-                      values:
-                        - data

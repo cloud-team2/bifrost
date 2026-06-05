@@ -10,25 +10,14 @@ vpc_id             = "vpc-xxxxxxxxxxxxxxxxx"
 private_subnet_ids = ["subnet-aaaaaaaa", "subnet-bbbbbbbb"] # ap-northeast-2a, 2b
 public_subnet_ids  = ["subnet-cccccccc", "subnet-dddddddd"]
 
-# 노드풀 (#119 — 티어별 분리 + 스펙업)
-#  app  : 우리 서비스 + 모니터링 + CI/CD + userdb (고객DB는 namespace 분리만)
-#  data : Kafka + metadb 전용 (taint tier=data). desired 4 = AZ 2a/2b 2+2 (브로커 2a×2 수용)
+# 노드풀 (#119 — 단일 풀)
+#  부하가 작아 data/app 물리 분리 실익이 적어 단일 풀로 운영. Kafka broker만 anti-affinity로
+#  노드 분산(HA). (AWS 노드그룹명은 ng-data 유지 — 재생성 churn 회피)
 node_groups = {
-  app = {
-    instance_types = ["t3.xlarge"]
-    desired_size   = 3
-    min_size       = 2
-    max_size       = 6
-    labels         = { tier = "app" }
-  }
   data = {
     instance_types = ["t3.xlarge"]
-    desired_size   = 3
+    desired_size   = 5
     min_size       = 3
-    max_size       = 6
-    labels         = { tier = "data" }
-    taints = [
-      { key = "tier", value = "data", effect = "NO_SCHEDULE" }
-    ]
+    max_size       = 7
   }
 }

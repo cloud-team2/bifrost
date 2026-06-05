@@ -340,38 +340,37 @@ Kafka는 현재 3-node KRaft 기반 MVP 구조까지 진행되어 있다. 다음
 arn:aws:eks:ap-northeast-2:881490135253:cluster/skala3-cloud1-finalproj-team2
 ```
 
-노드 (#119 — 티어별 노드풀 분리 + 스펙업, 2026-06-05):
+노드 (#119 — 단일 노드풀로 통합, 2026-06-05):
 
 | 항목 | 현재 상태 |
 | --- | --- |
-| worker node | **6개 Ready** (t3.xlarge, 4vCPU/16Gi) — 구 3× t3.large에서 스펙업 |
-| 노드풀 `app` | t3.xlarge ×3 (desired 3/min 2/max 6), taint 없음. 우리 서비스·**DB(metadb·userdb)**·모니터링·CI/CD |
-| 노드풀 `data` | t3.xlarge ×3 (desired 3/min 3/max 6), **taint `tier=data:NoSchedule`**. **Kafka 전용**(브로커+entity-operator) |
-| AZ 분포 | 2 AZ(2a/2b)에 분산. data=3은 EKS AZ 밸런싱상 2a×1+2b×2로 떨어짐(아래 HA 주의) |
+| worker node | **5개 Ready** (t3.xlarge, 4vCPU/16Gi) — 구 3× t3.large에서 스펙업 |
+| 노드풀 | **단일 풀** t3.xlarge ×5 (desired 5/min 3/max 7), taint 없음. 전 워크로드 공용 |
+| Kafka 배치 | pod **anti-affinity로 broker 노드 분산**(HA). 노드 풀 격리는 안 함 |
+| AZ 분포 | 2 AZ(2a×3 / 2b×2). 5노드라 2a 노드 3개 → 2a broker(kafka-0·2)가 서로 다른 노드로 분산됨 |
+| AWS 노드그룹명 | `...-ng-data` (단일 풀이지만 재생성 churn 회피로 기존 키 유지) |
 | Kubernetes version | v1.35 |
 | OS | Amazon Linux 2023 |
 | container runtime | containerd |
 
-> **노드풀 토폴로지 결정 (#119)**: 단일 노드풀에 전 워크로드가 혼재해 CPU requests가 82%까지 포화 → ① **무거운 Kafka만 전용 `data` 풀로 물리 분리**(노이지 네이버 차단·anti-affinity), ② **DB(metadb·userdb)는 부하가 작아 격리 불필요 → `app` 풀**(고객사 DB도 in-cluster라 namespace 논리분리만), ③ 우리 서비스·모니터링·CI/CD도 `app` 풀, ④ t3.large→t3.xlarge 스펙업. terraform `module.eks`는 `var.node_groups` map + `for_each`로 멀티 노드풀 지원. 마이그레이션은 신규 풀 추가 → Kafka를 toleration+nodeAffinity로 data 풀 이동(무중단 롤링) → 구 풀 drain·제거 순으로 무중단 수행.
+> **노드풀 토폴로지 결정 (#119)**: 처음엔 Kafka 격리를 위해 data/app 2풀로 나눴으나, **부하가 작아(총 requests ~5.7 vCPU) 물리 분리 실익이 적고 복잡도만 늘어** → **단일 풀로 통합**. 핵심은 "노드 풀 격리"가 아니라 **"Kafka broker를 서로 다른 노드에 분산(anti-affinity)"** — 이것만으로 단일 노드 장애 시 broker 1개만 영향(HA). DB(metadb·userdb)·우리 서비스·모니터링·CI/CD는 전부 같은 풀에서 공용. terraform `module.eks`는 `var.node_groups` map + `for_each`라 풀 추가/축소가 한 줄.
 
 > **AZ 주의**: 클러스터는 **처음부터 2 AZ**(ap-northeast-2a/2b)다. `private_subnet_ids`("변경 금지")에 서브넷이 2개(2a·2b) 들어있고, EKS 노드그룹이 그 AZ로 자동 분산한다. #119는 AZ를 추가한 게 아니라 기존 2개 서브넷을 그대로 사용한다. (단일 AZ는 그 AZ 장애 시 전체 다운 + Kafka RF3 AZ 분산 손실 → 멀티 AZ 유지 권장)
 
-> **⚠️ Kafka broker HA 주의 (data=3 트레이드오프)**: 브로커 PVC가 2a·2a·2b(AZ 고정 EBS)인데 data=3이 2a×1+2b×2로 떨어져, **2a 브로커 2개(kafka-0·kafka-2)가 단일 2a 노드에 soft anti-affinity로 겹친다**. 그 노드 1대 장애 시 브로커 2/3 동시 다운 → `min.insync.replicas=2`라 다수 파티션 **쓰기 불가**. dev/캡스톤이라 감수하는 의식적 트레이드오프이며, **프로덕션은 `data` 풀 desired를 4로**(2a×2+2b×2 보장, 브로커 1노드/대) 올리면 해결(tfvars 한 줄).
+> **Kafka broker HA**: broker PVC는 AZ 고정(2a·2a·2b). 단일 풀 5노드는 2a 노드가 3개라 **2a broker 2개가 서로 다른 노드에 배치**되어, 노드 1대 장애 시 broker 1개만 영향(정상 HA). 풀을 3노드 이하로 줄이면 2a broker가 한 노드에 겹칠 수 있으니 주의(`min_size=3` 유지).
 
-> **사이징 메모**: 현재 클러스터 총 requests ≈ 5.7 vCPU(우리 monolith는 아직 미배포, 부하 대부분이 CI/CD·Kafka). **6노드**(app3+data3, allocatable ~23 vCPU)로 right-size 완료 — 모니터링 스택(~3~6 vCPU)까지 여유. `desired_size` 조정은 무중단 in-place.
+> **사이징 메모**: 총 requests ≈ 5.7 vCPU(우리 monolith는 아직 미배포, 부하 대부분이 CI/CD·Kafka). **5노드**(allocatable ~19.5 vCPU)로 운영 — 모니터링 스택(~3~6 vCPU)까지 여유. CI/CD(Harbor·Jenkins·ArgoCD)가 무거우니 빡빡하면 `desired_size` 한 줄로 증설(무중단 in-place).
 
 **검증 명령어 (#119 노드풀)** — `AWS_PROFILE=skala_student AWS_REGION=ap-northeast-2`, `C=skala3-cloud1-finalproj-team2`:
 
 ```bash
-# 노드풀/노드 (app·data만, ng-main 없음, 전부 t3.xlarge)
+# 노드풀/노드 (단일 풀 ng-data, 전부 t3.xlarge 5대)
 aws eks list-nodegroups --cluster-name $C
-kubectl get nodes -L tier,topology.kubernetes.io/zone,node.kubernetes.io/instance-type
-# 풀별 스펙(타입·스케일·label·taint)
+kubectl get nodes -L topology.kubernetes.io/zone,node.kubernetes.io/instance-type
 aws eks describe-nodegroup --cluster-name $C --nodegroup-name $C-ng-data \
-  --query 'nodegroup.{type:instanceTypes,scaling:scalingConfig,labels:labels,taints:taints}'
-# data 풀 배치 검증 (Kafka 브로커 + metadb만, 서로 다른 노드)
-kubectl -n platform-kafka get pods -o wide
-kubectl -n metadb get pods -o wide
+  --query 'nodegroup.{type:instanceTypes,scaling:scalingConfig}'
+# Kafka broker가 서로 다른 노드에 분산됐는지 (HA 핵심)
+kubectl -n platform-kafka get pods -l strimzi.io/pool-name=kafka -o wide
 # 용량 여유(노드별 requests 할당률)
 kubectl describe nodes | sed -n '/Allocated resources/,/Events/p' | grep -E 'cpu|memory'
 ```
