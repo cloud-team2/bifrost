@@ -1,0 +1,46 @@
+# Strimzi JMX Prometheus Exporter 규칙 — Kafka 브로커 메트릭
+# kafka-cluster.yaml의 metricsConfig.valueFrom.configMapKeyRef가 이 ConfigMap을 참조한다.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-metrics-config
+  namespace: platform-kafka
+data:
+  kafka-metrics-config.yml: |
+    lowercaseOutputName: true
+    rules:
+      # ── produce / consume rate (topic별) ──────────────────────────────
+      - pattern: 'kafka.server<type=BrokerTopicMetrics, name=MessagesInPerSec, topic=(.+)><>Count'
+        name: kafka_server_brokertopicmetrics_messagesin_total
+        type: COUNTER
+        labels:
+          topic: "$1"
+
+      - pattern: 'kafka.server<type=BrokerTopicMetrics, name=MessagesOutPerSec, topic=(.+)><>Count'
+        name: kafka_server_brokertopicmetrics_messagesout_total
+        type: COUNTER
+        labels:
+          topic: "$1"
+
+      # ── bytes (topic별) ───────────────────────────────────────────────
+      - pattern: 'kafka.server<type=BrokerTopicMetrics, name=BytesInPerSec, topic=(.+)><>Count'
+        name: kafka_server_brokertopicmetrics_bytesin_total
+        type: COUNTER
+        labels:
+          topic: "$1"
+
+      - pattern: 'kafka.server<type=BrokerTopicMetrics, name=BytesOutPerSec, topic=(.+)><>Count'
+        name: kafka_server_brokertopicmetrics_bytesout_total
+        type: COUNTER
+        labels:
+          topic: "$1"
+
+      # ── 파티션 언더 레플리케이션 (ISR 이상 감지용) ─────────────────────
+      - pattern: 'kafka.server<type=ReplicaManager, name=UnderReplicatedPartitions><>Value'
+        name: kafka_server_replicamanager_underreplicatedpartitions
+        type: GAUGE
+
+      # ── 전체 브로커 메시지 in/out (topic 라벨 없는 합계) ────────────────
+      - pattern: 'kafka.server<type=BrokerTopicMetrics, name=MessagesInPerSec><>Count'
+        name: kafka_server_brokertopicmetrics_messagesin_total
+        type: COUNTER

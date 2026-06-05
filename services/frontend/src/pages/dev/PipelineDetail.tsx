@@ -7,229 +7,22 @@ import { TechIcon, nodeKind } from '../../components/TechIcon'
 import { useToast } from '../../components/Toast'
 import { useApp, CLUSTER } from '../../store/AppStore'
 import { genSeries, pipelineConsumers, pipelineLabel } from '../../data/helpers'
-import { BOOTSTRAP_SERVER, CONSUMER_GROUPS, LAG_THRESHOLD } from '../../data/mock'
+import { BOOTSTRAP_SERVER, LAG_THRESHOLD } from '../../data/mock'
 import type { Edge, Node } from '../../data/types'
-import { api, type ConnectorInfo, type SchemaColumn, type SyncStatusResponse } from '../../lib/api'
+import {
+  api,
+  type ConnectorInfo,
+  type ConsumerGroupInfo,
+  type EventDistPoint,
+  type KafkaMessageRecord,
+  type MetricPoint,
+  type PipelineMetricsResponse,
+  type SchemaColumn,
+  type SyncStatusResponse,
+  type ThroughputPoint,
+  type TopicInfoResponse,
+} from '../../lib/api'
 import { cn, formatNum } from '../../lib/format'
-
-/* ---------------------------------------------------------------- topic partition data */
-
-const TOPIC_PARTITIONS: Record<string, Array<{
-  id: number; leader: string; beginOffset: number; endOffset: number
-}>> = {
-  'eda.orders.events': [
-    { id: 0, leader: 'broker-1', beginOffset: 14000,  endOffset: 184200 },
-    { id: 1, leader: 'broker-2', beginOffset: 16000,  endOffset: 184300 },
-    { id: 2, leader: 'broker-3', beginOffset: 15200,  endOffset: 184400 },
-    { id: 3, leader: 'broker-1', beginOffset: 14800,  endOffset: 184310 },
-    { id: 4, leader: 'broker-2', beginOffset: 15600,  endOffset: 184220 },
-    { id: 5, leader: 'broker-3', beginOffset: 14400,  endOffset: 184350 },
-  ],
-  'cdc.users.cdc': [
-    { id: 0, leader: 'broker-1', beginOffset: 8000,   endOffset: 42100 },
-    { id: 1, leader: 'broker-2', beginOffset: 9000,   endOffset: 42150 },
-    { id: 2, leader: 'broker-3', beginOffset: 8500,   endOffset: 42200 },
-  ],
-  'eda.audit_log.events': [
-    { id: 0, leader: 'broker-1', beginOffset: 3000,   endOffset: 91400 },
-    { id: 1, leader: 'broker-2', beginOffset: 3800,   endOffset: 91600 },
-    { id: 2, leader: 'broker-3', beginOffset: 3400,   endOffset: 91800 },
-    { id: 3, leader: 'broker-1', beginOffset: 3200,   endOffset: 92000 },
-  ],
-  'eda.transactions.events': [
-    { id: 0, leader: 'broker-1', beginOffset: 20000,  endOffset: 310000 },
-    { id: 1, leader: 'broker-2', beginOffset: 23000,  endOffset: 310400 },
-    { id: 2, leader: 'broker-3', beginOffset: 21000,  endOffset: 310800 },
-    { id: 3, leader: 'broker-1', beginOffset: 26000,  endOffset: 310200 },
-    { id: 4, leader: 'broker-2', beginOffset: 22000,  endOffset: 311600 },
-    { id: 5, leader: 'broker-3', beginOffset: 25000,  endOffset: 311200 },
-    { id: 6, leader: 'broker-1', beginOffset: 24000,  endOffset: 311400 },
-    { id: 7, leader: 'broker-2', beginOffset: 23000,  endOffset: 311300 },
-  ],
-  'cdc.events.cdc': [
-    { id: 0, leader: 'broker-1', beginOffset: 50000,  endOffset: 980000 },
-    { id: 1, leader: 'broker-2', beginOffset: 55000,  endOffset: 980300 },
-    { id: 2, leader: 'broker-3', beginOffset: 52000,  endOffset: 980600 },
-    { id: 3, leader: 'broker-1', beginOffset: 58000,  endOffset: 980900 },
-    { id: 4, leader: 'broker-2', beginOffset: 54000,  endOffset: 981200 },
-    { id: 5, leader: 'broker-3', beginOffset: 56000,  endOffset: 981500 },
-  ],
-}
-
-const TOPIC_RETENTION: Record<string, string> = {
-  'eda.orders.events':       '7일',
-  'cdc.users.cdc':           '3일',
-  'eda.audit_log.events':    '30일',
-  'eda.transactions.events': '7일',
-  'cdc.events.cdc':          '14일',
-}
-
-/* ---------------------------------------------------------------- consumer group offset data */
-
-const PARTITION_OFFSETS: Record<string, Array<{
-  partition: number; member: string | null; committed: number; endOffset: number
-}>> = {
-  'cg-notification': [
-    { partition: 0, member: 'notification-0', committed: 184100, endOffset: 184200 },
-    { partition: 1, member: 'notification-1', committed: 184280, endOffset: 184300 },
-    { partition: 2, member: 'notification-2', committed: 184050, endOffset: 184400 },
-    { partition: 3, member: 'notification-0', committed: 184090, endOffset: 184310 },
-    { partition: 4, member: 'notification-1', committed: 184100, endOffset: 184220 },
-    { partition: 5, member: 'notification-2', committed: 184280, endOffset: 184350 },
-  ],
-  'cg-search': [
-    { partition: 2, member: 'search-0', committed: 184050, endOffset: 184400 },
-    { partition: 3, member: 'search-0', committed: 184090, endOffset: 184310 },
-    { partition: 4, member: 'search-1', committed: 184100, endOffset: 184200 },
-    { partition: 5, member: 'search-1', committed: 184280, endOffset: 184300 },
-  ],
-  'cg-audit': [
-    { partition: 0, member: 'audit-0', committed: 84000,  endOffset: 91400 },
-    { partition: 1, member: 'audit-0', committed: 85200,  endOffset: 91600 },
-    { partition: 2, member: 'audit-1', committed: 85800,  endOffset: 91800 },
-    { partition: 3, member: 'audit-1', committed: 84500,  endOffset: 92000 },
-  ],
-  'cg-fraud-detector': [
-    { partition: 0, member: null, committed: 291600, endOffset: 310000 },
-    { partition: 1, member: null, committed: 290200, endOffset: 310400 },
-    { partition: 2, member: null, committed: 291800, endOffset: 310800 },
-    { partition: 3, member: null, committed: 290100, endOffset: 310200 },
-  ],
-  'cg-risk-scorer': [
-    { partition: 4, member: 'risk-0', committed: 309800, endOffset: 311600 },
-    { partition: 5, member: 'risk-1', committed: 309900, endOffset: 311200 },
-    { partition: 6, member: 'risk-2', committed: 309850, endOffset: 311400 },
-    { partition: 7, member: 'risk-3', committed: 309750, endOffset: 311300 },
-  ],
-}
-
-/* ---------------------------------------------------------------- CDC sync / replication data */
-
-const TABLE_SYNC_STATUS: Record<string, Array<{
-  table: string; sourceRows: number; sinkRows: number; lastSynced: string; status: 'synced' | 'lag' | 'error'
-}>> = {
-  'cdc.users.cdc': [
-    { table: 'public.users',         sourceRows: 2100000,  sinkRows: 2099850,  lastSynced: '09:31:22', status: 'synced' },
-    { table: 'public.user_profiles', sourceRows: 1850000,  sinkRows: 1847200,  lastSynced: '09:29:18', status: 'lag'    },
-    { table: 'public.sessions',      sourceRows: 8200000,  sinkRows: 8200000,  lastSynced: '09:31:25', status: 'synced' },
-    { table: 'public.oauth_tokens',  sourceRows: 430000,   sinkRows: 430000,   lastSynced: '09:31:10', status: 'synced' },
-  ],
-  'cdc.events.cdc': [
-    { table: 'public.events',        sourceRows: 12400000, sinkRows: 12396000, lastSynced: '09:30:55', status: 'lag'    },
-    { table: 'public.event_types',   sourceRows: 48,       sinkRows: 48,       lastSynced: '09:31:00', status: 'synced' },
-    { table: 'public.event_tags',    sourceRows: 312000,   sinkRows: 312000,   lastSynced: '09:31:10', status: 'synced' },
-    { table: 'public.aggregates',    sourceRows: 780000,   sinkRows: 778400,   lastSynced: '09:30:40', status: 'lag'    },
-  ],
-}
-
-const REPLICATION_SLOTS: Record<string, {
-  slot: string; plugin: string; lsn: string; lagBytes: number; retainedWal: string
-}> = {
-  'cdc.users.cdc':  { slot: 'bifrost_users_slot',  plugin: 'pgoutput', lsn: '0/1A4F820', lagBytes: 14200,  retainedWal: '14 KB'  },
-  'cdc.events.cdc': { slot: 'bifrost_events_slot', plugin: 'pgoutput', lsn: '0/3C8A140', lagBytes: 248000, retainedWal: '242 KB' },
-}
-
-const CDC_ERROR_EVENTS: Record<string, Array<{
-  ts: string; table: string; reason: string; skipped: boolean
-}>> = {
-  'cdc.users.cdc': [
-    { ts: '09:28:14', table: 'public.users',         reason: 'TOASTed column skipped (bio)',           skipped: true  },
-    { ts: '09:15:02', table: 'public.user_profiles', reason: '스키마 변경: avatar_url 컬럼 추가',       skipped: false },
-  ],
-  'cdc.events.cdc': [
-    { ts: '09:22:31', table: 'public.events',        reason: '메시지 크기 1MB 초과 — 스킵 처리됨',      skipped: true  },
-    { ts: '08:47:10', table: 'public.aggregates',    reason: 'NULL constraint 위반 (category_id)',     skipped: true  },
-  ],
-}
-
-/* ---------------------------------------------------------------- sample messages */
-
-/* ---- Kafka message browser data ---- */
-
-interface KafkaMsg {
-  partition: number
-  offset: number
-  tsMs: number
-  tsLabel: string
-  key: string | null
-  valueSize: number
-  op: 'c' | 'u' | 'd' | 'r'
-  headers: Record<string, string>
-  before: Record<string, unknown> | null
-  after:  Record<string, unknown> | null
-}
-
-const BASE_TS = 1748227800000 // 2026-05-26 09:30:00 (epoch ms)
-
-const EDA_MESSAGES: KafkaMsg[] = [
-  { partition:2, offset:184217, tsMs:BASE_TS+9334,  tsLabel:'09:30:09.334', key:'order:88422', valueSize:312, op:'c', headers:{'debezium.connector':'orders-source'}, before:null, after:{id:88422,customer_id:3021,status:'PLACED',amount:12500,created_at:'2026-05-26T09:30:09Z'} },
-  { partition:1, offset:184216, tsMs:BASE_TS+8011,  tsLabel:'09:30:08.011', key:'order:80012', valueSize:298, op:'d', headers:{'debezium.connector':'orders-source'}, before:{id:80012,customer_id:1844,status:'CANCELLED',amount:88000}, after:null },
-  { partition:5, offset:184215, tsMs:BASE_TS+6442,  tsLabel:'09:30:06.442', key:'order:88419', valueSize:344, op:'u', headers:{'debezium.connector':'orders-source'}, before:{id:88419,status:'PAID',amount:54900}, after:{id:88419,status:'SHIPPED',amount:54900,shipped_at:'2026-05-26T09:30:06Z'} },
-  { partition:0, offset:184214, tsMs:BASE_TS+5104,  tsLabel:'09:30:05.104', key:'order:88420', valueSize:332, op:'u', headers:{'debezium.connector':'orders-source'}, before:{id:88420,status:'PLACED',amount:42990}, after:{id:88420,status:'PAID',amount:42990,paid_at:'2026-05-26T09:30:05Z'} },
-  { partition:2, offset:184213, tsMs:BASE_TS+4823,  tsLabel:'09:30:04.823', key:'order:88421', valueSize:318, op:'c', headers:{'debezium.connector':'orders-source'}, before:null, after:{id:88421,customer_id:2990,status:'PLACED',amount:42990,created_at:'2026-05-26T09:30:04Z'} },
-  { partition:3, offset:184212, tsMs:BASE_TS+3201,  tsLabel:'09:30:03.201', key:'order:88418', valueSize:301, op:'u', headers:{'debezium.connector':'orders-source'}, before:{id:88418,status:'PLACED'}, after:{id:88418,status:'PAID'} },
-  { partition:4, offset:184211, tsMs:BASE_TS+2088,  tsLabel:'09:30:02.088', key:'order:88417', valueSize:288, op:'c', headers:{'debezium.connector':'orders-source'}, before:null, after:{id:88417,customer_id:1200,status:'PLACED',amount:9800} },
-  { partition:1, offset:184210, tsMs:BASE_TS+1540,  tsLabel:'09:30:01.540', key:'order:88416', valueSize:310, op:'u', headers:{'debezium.connector':'orders-source'}, before:{id:88416,status:'SHIPPED'}, after:{id:88416,status:'DELIVERED'} },
-  { partition:0, offset:184209, tsMs:BASE_TS+980,   tsLabel:'09:30:00.980', key:'order:88415', valueSize:322, op:'d', headers:{'debezium.connector':'orders-source'}, before:{id:88415,status:'CANCELLED',amount:15000}, after:null },
-  { partition:5, offset:184208, tsMs:BASE_TS+210,   tsLabel:'09:30:00.210', key:'order:88414', valueSize:296, op:'c', headers:{'debezium.connector':'orders-source'}, before:null, after:{id:88414,customer_id:4410,status:'PLACED',amount:67500} },
-]
-
-let _edaCounter = 0
-function nextEdaMsg(): KafkaMsg {
-  _edaCounter++
-  const now = Date.now()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  const d = new Date(now)
-  const tsLabel = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3,'0')}`
-  const ops: KafkaMsg['op'][] = ['c','u','u','d']
-  const op = ops[_edaCounter % ops.length]
-  const id = 88422 + _edaCounter
-  return {
-    partition: _edaCounter % 6,
-    offset: 184217 + _edaCounter,
-    tsMs: now,
-    tsLabel,
-    key: `order:${id}`,
-    valueSize: 280 + Math.floor(Math.random() * 80),
-    op,
-    headers: { 'debezium.connector': 'orders-source' },
-    before: op !== 'c' ? { id, status: 'PLACED' } : null,
-    after:  op !== 'd' ? { id, status: op === 'c' ? 'PLACED' : 'PAID', amount: 10000 + _edaCounter * 500 } : null,
-  }
-}
-
-const CDC_MESSAGES: KafkaMsg[] = [
-  { partition:1, offset:42105, tsMs:BASE_TS+22000, tsLabel:'09:30:22.000', key:'users:5201', valueSize:412, op:'u', headers:{'debezium.connector':'users-source','debezium.db':'users_prod'}, before:{id:5201,email:'kim@example.com',status:'ACTIVE',updated_at:'2026-05-26T09:20:00Z'}, after:{id:5201,email:'kim@newdomain.com',status:'ACTIVE',updated_at:'2026-05-26T09:30:22Z'} },
-  { partition:0, offset:42104, tsMs:BASE_TS+18000, tsLabel:'09:30:18.000', key:'users:5202', valueSize:388, op:'c', headers:{'debezium.connector':'users-source','debezium.db':'users_prod'}, before:null, after:{id:5202,email:'lee@example.com',status:'ACTIVE',created_at:'2026-05-26T09:30:18Z'} },
-  { partition:2, offset:42103, tsMs:BASE_TS+15000, tsLabel:'09:30:15.000', key:'users:5200', valueSize:394, op:'u', headers:{'debezium.connector':'users-source','debezium.db':'users_prod'}, before:{id:5200,status:'ACTIVE'}, after:{id:5200,status:'DORMANT',updated_at:'2026-05-26T09:30:15Z'} },
-  { partition:1, offset:42102, tsMs:BASE_TS+10000, tsLabel:'09:30:10.000', key:'users:5198', valueSize:366, op:'d', headers:{'debezium.connector':'users-source','debezium.db':'users_prod'}, before:{id:5198,email:'deleted@example.com',status:'INACTIVE'}, after:null },
-  { partition:0, offset:42101, tsMs:BASE_TS-2000,  tsLabel:'09:29:58.000', key:'users:5197', valueSize:378, op:'u', headers:{'debezium.connector':'users-source','debezium.db':'users_prod'}, before:{id:5197,status:'ACTIVE'}, after:{id:5197,status:'SUSPENDED',updated_at:'2026-05-26T09:29:58Z'} },
-  { partition:2, offset:42100, tsMs:BASE_TS-8000,  tsLabel:'09:29:52.000', key:'users:5196', valueSize:352, op:'c', headers:{'debezium.connector':'users-source','debezium.db':'users_prod'}, before:null, after:{id:5196,email:'park@example.com',status:'ACTIVE',created_at:'2026-05-26T09:29:52Z'} },
-  { partition:0, offset:42099, tsMs:BASE_TS-15000, tsLabel:'09:29:45.000', key:'users:5195', valueSize:370, op:'u', headers:{'debezium.connector':'users-source','debezium.db':'users_prod'}, before:{id:5195,status:'SUSPENDED'}, after:{id:5195,status:'INACTIVE'} },
-]
-
-let _cdcCounter = 0
-function nextCdcMsg(): KafkaMsg {
-  _cdcCounter++
-  const now = Date.now()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  const d = new Date(now)
-  const tsLabel = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3,'0')}`
-  const id = 5202 + _cdcCounter
-  const op: KafkaMsg['op'] = _cdcCounter % 3 === 0 ? 'd' : _cdcCounter % 3 === 1 ? 'c' : 'u'
-  return {
-    partition: _cdcCounter % 3,
-    offset: 42105 + _cdcCounter,
-    tsMs: now,
-    tsLabel,
-    key: `users:${id}`,
-    valueSize: 350 + Math.floor(Math.random() * 60),
-    op,
-    headers: { 'debezium.connector': 'users-source', 'debezium.db': 'users_prod' },
-    before: op !== 'c' ? { id, status: 'ACTIVE' } : null,
-    after:  op !== 'd' ? { id, email: `user${id}@example.com`, status: op === 'c' ? 'ACTIVE' : 'DORMANT' } : null,
-  }
-}
 
 const tooltipStyle = {
   borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 12,
@@ -304,7 +97,7 @@ export function PipelineDetail() {
 
       <div className="mt-4">
         {tab === 'Overview'          && <OverviewTab edge={edge} consumers={consumers} />}
-        {tab === 'Consumers'         && <ConsumersTab edge={edge} consumers={consumers} />}
+        {tab === 'Consumers'         && <ConsumersTab edge={edge} />}
         {tab === 'Connector'         && <ConnectorTab edge={edge} />}
         {tab === 'Sync'              && <SyncTab edge={edge} />}
         {tab === 'Messages'          && <MessagesTab edge={edge} />}
@@ -332,22 +125,58 @@ function ActBtn({ icon, label, onClick, danger }: {
 /* ---------------------------------------------------------------- Overview tab */
 
 function OverviewTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
-  const m = edge.metrics!
+  const app = useApp()
+  const wsId = app.currentProject?.id
   const isEda = edge.pattern === 'fan-out'
 
-  const topicMeta  = CLUSTER.CLUSTER_TOPICS.find((t) => t.name === edge.topic)
-  const partitions = TOPIC_PARTITIONS[edge.topic] ?? []
-  const retention  = TOPIC_RETENTION[edge.topic] ?? '7일'
-  const replicaPct = topicMeta?.replicaPct ?? 100
-  const isrOk      = replicaPct === 100
+  const [topicInfo, setTopicInfo] = useState<TopicInfoResponse | null>(null)
+  const [metrics, setMetrics] = useState<PipelineMetricsResponse | null>(null)
+  const [groups, setGroups] = useState<ConsumerGroupInfo[]>([])
+  const [throughput, setThroughput] = useState<ThroughputPoint[]>([])
 
-  const groups     = CONSUMER_GROUPS.filter((g) => consumers.some((c) => c.consumerGroup === g.name))
+  useEffect(() => {
+    if (!wsId) return
+    let cancelled = false
+    api.pipelineTopicInfo(wsId, edge.id).then((t) => { if (!cancelled) setTopicInfo(t) }).catch(() => {})
+    api.pipelineMetrics(wsId, edge.id).then((m) => { if (!cancelled) setMetrics(m) }).catch(() => {})
+    api.pipelineThroughput(wsId, edge.id, 30).then((t) => { if (!cancelled) setThroughput(t) }).catch(() => {})
+    if (isEda) {
+      api.pipelineConsumerGroups(wsId, edge.id).then((g) => { if (!cancelled) setGroups(g) }).catch(() => {})
+    }
+    return () => { cancelled = true }
+  }, [wsId, edge.id, isEda])
+
+  const m = {
+    produce_rate: metrics?.produceRate ?? 0,
+    consume_rate: metrics?.consumeRate ?? 0,
+    lag: metrics?.lagMessages ?? 0,
+    error_pct: metrics?.errorPct ?? 0,
+  }
+
+  const partitions = topicInfo?.partitions ?? []
+  const retentionMs = topicInfo?.retentionMs ?? -1
+  const retention = retentionMs > 0
+    ? retentionMs >= 86400000 ? `${Math.round(retentionMs / 86400000)}일` : `${Math.round(retentionMs / 3600000)}시간`
+    : '—'
+  const isrPct = topicInfo?.isrPct ?? 100
+  const isrOk = isrPct >= 100
+
   const maxLagGroup = groups.length > 0 ? groups.reduce((a, b) => b.totalLag > a.totalLag ? b : a) : null
 
-  const throughputData = useMemo(() => genSeries([
-    { key: 'produced', base: m.produce_rate, vary: Math.max(10, m.produce_rate * 0.15) },
-    { key: 'consumed', base: m.consume_rate, vary: Math.max(10, m.consume_rate * 0.12) },
-  ], 24), [m.produce_rate, m.consume_rate])
+  // 실데이터(Prometheus range) 우선. 비어있으면(미연결/비활성) genSeries fallback.
+  const throughputData = useMemo(() => {
+    if (throughput.length > 0) {
+      return throughput.map((p) => ({
+        t: new Date(p.timestamp).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
+        produced: Math.round(p.produceRate * 100) / 100,
+        consumed: Math.round(p.consumeRate * 100) / 100,
+      }))
+    }
+    return genSeries([
+      { key: 'produced', base: m.produce_rate, vary: Math.max(10, m.produce_rate * 0.15) },
+      { key: 'consumed', base: m.consume_rate, vary: Math.max(10, m.consume_rate * 0.12) },
+    ], 24)
+  }, [throughput, m.produce_rate, m.consume_rate])
 
   return (
     <div className="space-y-4">
@@ -364,7 +193,7 @@ function OverviewTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
             tone={maxLagGroup && maxLagGroup.totalLag >= LAG_THRESHOLD ? 'warn' : 'good'}
           />
         ) : (
-          <MetricCard label="소스 지연" value={`${m.lag}초`} sub="source.ts_ms 기준" tone={m.lag > 10 ? 'warn' : 'good'} />
+          <MetricCard label="Consumer lag" value={formatNum(m.lag)} sub="messages" tone={m.lag > 1000 ? 'warn' : 'good'} />
         )}
         <MetricCard label="Error rate"  value={`${m.error_pct}%`} tone={m.error_pct > 0.5 ? 'bad' : 'good'} />
       </div>
@@ -395,11 +224,11 @@ function OverviewTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
         {/* header row */}
         <div className="flex items-center gap-3 border-b border-gray-100 px-5 py-3.5">
           <span className="font-mono text-[13.5px] font-semibold text-gray-900">{edge.topic}</span>
-          <StatusBadge status={topicMeta?.status ?? 'active'} />
+          <StatusBadge status="active" />
           <div className="ml-auto flex items-center gap-4 text-[12px] text-gray-500">
             <span><span className="font-semibold text-gray-700">{partitions.length}</span> 파티션</span>
             <span className={cn('font-semibold', isrOk ? 'text-emerald-600' : 'text-amber-600')}>
-              ISR {isrOk ? '정상' : `${Math.round(replicaPct)}%`}
+              ISR {isrOk ? '정상' : `${Math.round(isrPct)}%`}
             </span>
             <span>Retention <span className="font-semibold text-gray-700">{retention}</span></span>
           </div>
@@ -464,9 +293,24 @@ function OverviewTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
 
 /* ---------------------------------------------------------------- Consumers tab (EDA) */
 
-function ConsumersTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
-  const groups = CONSUMER_GROUPS.filter((g) => consumers.some((c) => c.consumerGroup === g.name))
-  const [openGroup, setOpenGroup] = useState<string | null>(groups[0]?.name ?? null)
+function ConsumersTab({ edge }: { edge: Edge }) {
+  const app = useApp()
+  const wsId = app.currentProject?.id
+  const [groups, setGroups] = useState<ConsumerGroupInfo[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!wsId) return
+    let cancelled = false
+    setLoading(true)
+    api.pipelineConsumerGroups(wsId, edge.id)
+      .then((g) => { if (!cancelled) setGroups(g) })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [wsId, edge.id])
+
+  const [openGroup, setOpenGroup] = useState<string | null>(null)
 
   const lagChartData = groups.map((g) => ({ name: g.name, lag: g.totalLag }))
   const axis = { fontSize: 10, fill: '#94a3b8' }
@@ -481,7 +325,9 @@ function ConsumersTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
             임계값 <span className="font-semibold text-amber-600">{formatNum(LAG_THRESHOLD)}</span>
           </span>
         }>
-        {groups.length === 0 ? (
+        {loading ? (
+          <div className="px-5 py-10 text-center text-[12.5px] text-gray-400">불러오는 중…</div>
+        ) : groups.length === 0 ? (
           <div className="px-5 py-10 text-center text-[12.5px] text-gray-400">Consumer group 없음</div>
         ) : (
           <>
@@ -536,7 +382,7 @@ function ConsumersTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
           </thead>
           <tbody>
             {groups.map((g) => {
-              const offsets  = PARTITION_OFFSETS[g.name] ?? []
+              const offsets  = g.partitionOffsets ?? []
               const isOpen   = openGroup === g.name
               return (
                 <Fragment key={g.name}>
@@ -548,7 +394,9 @@ function ConsumersTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
                       g.totalLag >= LAG_THRESHOLD ? 'text-amber-600' : 'text-gray-700')}>
                       {formatNum(g.totalLag)}
                     </td>
-                    <td className="px-4 py-2.5 text-gray-500">{g.lastCommit}</td>
+                    <td className="px-4 py-2.5 text-gray-500">
+                      {g.lastCommit > 0 ? new Date(g.lastCommit).toLocaleTimeString('ko-KR') : '—'}
+                    </td>
                     <td className="px-5 py-2.5 text-right">
                       <button
                         onClick={() => setOpenGroup(isOpen ? null : g.name)}
@@ -738,6 +586,10 @@ function SyncTab({ edge }: { edge: Edge }) {
   // 실제 source/sink 행수(#107). -1은 접속 실패/테이블 미존재(생성 중).
   const [sync, setSync]       = useState<SyncStatusResponse | null>(null)
   const [syncErr, setSyncErr] = useState(false)
+  // 추세 차트 실데이터(#126, Prometheus range): 소스지연·미동기화·이벤트분포.
+  const [delaySeries, setDelaySeries] = useState<MetricPoint[]>([])
+  const [unsyncedSeries, setUnsyncedSeries] = useState<MetricPoint[]>([])
+  const [eventSeries, setEventSeries] = useState<EventDistPoint[]>([])
   useEffect(() => {
     if (!wsId) return
     let cancelled = false
@@ -747,8 +599,13 @@ function SyncTab({ edge }: { edge: Edge }) {
       .pipelineSyncStatus(wsId, edge.id)
       .then((s) => { if (!cancelled) setSync(s) })
       .catch(() => { if (!cancelled) setSyncErr(true) })
+    api.pipelineSourceDelay(wsId, edge.id).then((d) => { if (!cancelled) setDelaySeries(d) }).catch(() => {})
+    api.pipelineUnsynced(wsId, edge.id).then((d) => { if (!cancelled) setUnsyncedSeries(d) }).catch(() => {})
+    api.pipelineEventDist(wsId, edge.id).then((d) => { if (!cancelled) setEventSeries(d) }).catch(() => {})
     return () => { cancelled = true }
   }, [wsId, edge.id])
+
+  const hhmm = (ts: number) => new Date(ts).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
 
   const tableName  = edge.table ? `${edge.table.schema}.${edge.table.name}` : '—'
   const sinkReady  = !!sync && sync.sourceRows >= 0 && sync.sinkRows >= 0
@@ -759,16 +616,35 @@ function SyncTab({ edge }: { edge: Edge }) {
   const barColor   = isHealthy ? 'bg-emerald-400' : syncPct >= 99.0 ? 'bg-amber-400' : 'bg-rose-400'
   const pctColor   = isHealthy ? 'text-emerald-600' : syncPct >= 99.0 ? 'text-amber-600' : 'text-rose-600'
 
-  const sourceDelay = useMemo(() => genSeries([{ key: 'delay', base: 3, vary: 9 }], 24), [])
+  // 실데이터(Prometheus) 우선, 비어있으면 genSeries fallback.
+  const sourceDelay = useMemo(() => {
+    if (delaySeries.length > 0) {
+      return delaySeries.map((p) => ({ t: hhmm(p.timestamp), delay: Math.round(p.value) }))
+    }
+    return genSeries([{ key: 'delay', base: 3, vary: 9 }], 24)
+  }, [delaySeries])
   const deltaBase   = sync && sync.delta >= 0 ? sync.delta : 0
-  const deltaTrend  = useMemo(() => genSeries([
-    { key: 'delta', base: deltaBase, vary: deltaBase * 0.2 + 1, drift: -deltaBase / 48 },
-  ], 24), [deltaBase])
-  const eventDist   = useMemo(() => genSeries([
-    { key: 'insert', base: 420, vary: 80 },
-    { key: 'update', base: 210, vary: 40 },
-    { key: 'delete', base: 35,  vary: 15 },
-  ], 12), [])
+  const deltaTrend  = useMemo(() => {
+    if (unsyncedSeries.length > 0) {
+      return unsyncedSeries.map((p) => ({ t: hhmm(p.timestamp), delta: Math.round(p.value) }))
+    }
+    return genSeries([
+      { key: 'delta', base: deltaBase, vary: deltaBase * 0.2 + 1, drift: -deltaBase / 48 },
+    ], 24)
+  }, [unsyncedSeries, deltaBase])
+  const eventDist   = useMemo(() => {
+    if (eventSeries.length > 0) {
+      return eventSeries.map((p) => {
+        const ts = hhmm(p.timestamp)
+        return { t: ts, ts, insert: p.insert, update: p.update, delete: p.delete }
+      })
+    }
+    return genSeries([
+      { key: 'insert', base: 420, vary: 80 },
+      { key: 'update', base: 210, vary: 40 },
+      { key: 'delete', base: 35,  vary: 15 },
+    ], 12).map((p) => ({ ...p, ts: p.t }))
+  }, [eventSeries])
   const axis = { fontSize: 10, fill: '#94a3b8' }
 
   return (
@@ -923,7 +799,7 @@ function DBNodeCard({ node, role }: { node: Node | null; role: 'Source' | 'Sink'
 
 /* ---------------------------------------------------------------- Messages tab */
 
-const OP_META: Record<KafkaMsg['op'], { label: string; cls: string }> = {
+const OP_META: Record<string, { label: string; cls: string }> = {
   c: { label: 'INSERT', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
   u: { label: 'UPDATE', cls: 'bg-amber-50  text-amber-700  border-amber-200'  },
   d: { label: 'DELETE', cls: 'bg-rose-50   text-rose-700   border-rose-200'   },
@@ -931,28 +807,40 @@ const OP_META: Record<KafkaMsg['op'], { label: string; cls: string }> = {
 }
 
 function MessagesTab({ edge }: { edge: Edge }) {
+  const app = useApp()
+  const wsId = app.currentProject?.id
   const isEda = edge.pattern === 'fan-out'
-  const seedData = isEda ? EDA_MESSAGES : CDC_MESSAGES
   const maxPartitions = isEda ? 6 : 3
 
-  const [msgs, setMsgs] = useState<KafkaMsg[]>(seedData)
+  const [msgs, setMsgs] = useState<KafkaMessageRecord[]>([])
+  const [msgLoading, setMsgLoading] = useState(true)
+
+  useEffect(() => {
+    if (!wsId) return
+    let cancelled = false
+    setMsgLoading(true)
+    api.pipelineMessages(wsId, edge.id, 50)
+      .then((m) => { if (!cancelled) setMsgs(m) })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setMsgLoading(false) })
+    return () => { cancelled = true }
+  }, [wsId, edge.id])
   const [partition, setPartition] = useState<'all' | number>('all')
   const [live, setLive] = useState(false)
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<number | null>(null)
   const [rawView, setRawView] = useState(false)
-  const liveRef = useRef(live)
-  liveRef.current = live
 
+  // live 모드: 3초마다 새로고침
   useEffect(() => {
-    if (!live) return
+    if (!live || !wsId) return
     const id = setInterval(() => {
-      if (!liveRef.current) return
-      const next = isEda ? nextEdaMsg() : nextCdcMsg()
-      setMsgs((prev) => [next, ...prev].slice(0, 100))
-    }, 1800)
+      api.pipelineMessages(wsId, edge.id, 50)
+        .then((m) => setMsgs(m))
+        .catch(() => {})
+    }, 3000)
     return () => clearInterval(id)
-  }, [live, isEda])
+  }, [live, wsId, edge.id])
 
   const visible = msgs.filter((m) => {
     if (partition !== 'all' && m.partition !== partition) return false
@@ -963,13 +851,11 @@ function MessagesTab({ edge }: { edge: Edge }) {
 
   const selectedMsg = selected !== null ? msgs.find((m) => m.offset === selected) ?? null : null
 
-  function buildRawEnvelope(m: KafkaMsg) {
+  function buildRawEnvelope(m: KafkaMessageRecord) {
     return {
       op: m.op,
       ts_ms: m.tsMs,
       source: {
-        connector: m.headers['debezium.connector'] ?? 'unknown',
-        db: m.headers['debezium.db'] ?? edge.table?.schema ?? 'db',
         table: edge.table?.name ?? 'table',
         lsn: `0/${m.offset.toString(16).toUpperCase()}`,
       },
@@ -1051,12 +937,15 @@ function MessagesTab({ edge }: { edge: Edge }) {
         </div>
 
         <div className="divide-y divide-gray-50">
-          {visible.length === 0 && (
+          {msgLoading ? (
+            <div className="py-12 text-center text-[13px] text-gray-400">불러오는 중…</div>
+          ) : visible.length === 0 ? (
             <div className="py-12 text-center text-[13px] text-gray-400">메시지가 없습니다.</div>
-          )}
+          ) : null}
           {visible.map((m) => {
             const isOpen = selected === m.offset
-            const meta = OP_META[m.op]
+            const meta = OP_META[m.op ?? ''] ?? { label: 'MSG', cls: 'bg-gray-50 text-gray-700 border-gray-200' }
+            const tsLabel = new Date(m.tsMs).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 })
             return (
               <div key={`${m.partition}-${m.offset}`}>
                 <button
@@ -1068,14 +957,14 @@ function MessagesTab({ edge }: { edge: Edge }) {
                 >
                   <span className="font-mono text-gray-400">P{m.partition}</span>
                   <span className="font-mono text-gray-600">{formatNum(m.offset)}</span>
-                  <span className="font-mono text-gray-500">{m.tsLabel}</span>
+                  <span className="font-mono text-gray-500">{tsLabel}</span>
                   <span className="truncate font-mono font-medium text-gray-800">{m.key ?? '(null)'}</span>
                   <span>
                     <span className={cn('rounded border px-1.5 py-0.5 text-[10px] font-bold', meta.cls)}>
                       {meta.label}
                     </span>
                   </span>
-                  <span className="font-mono text-[11px] text-gray-400">{m.valueSize} B</span>
+                  <span className="font-mono text-[11px] text-gray-400">—</span>
                 </button>
 
                 {isOpen && selectedMsg && (
@@ -1086,12 +975,7 @@ function MessagesTab({ edge }: { edge: Edge }) {
                       <span>·</span>
                       <span className="font-mono">Offset <strong className="text-gray-600">{formatNum(m.offset)}</strong></span>
                       <span>·</span>
-                      <span className="font-mono">{m.tsLabel}</span>
-                      {Object.entries(m.headers).map(([k, v]) => (
-                        <span key={k} className="rounded bg-gray-200 px-1.5 py-0.5 font-mono text-gray-500">
-                          {k}: {v}
-                        </span>
-                      ))}
+                      <span className="font-mono">{tsLabel}</span>
                     </div>
 
                     {rawView ? (

@@ -51,6 +51,13 @@ secret-store:
 # 파이프라인 provisioner는 Strimzi(K8s) 단일 경로 — 파이프라인 생성에는 kind+Strimzi가 필요하다.
 # (KafkaConnector CR apply + KafkaConnectorWatcher 상태 반영). KUBECONFIG로 대상 클러스터를 지정한다.
 
+# Prometheus (Kafka 메트릭 조회)
+# enabled=true로 바꾸면 OffsetSnapshot 대신 Prometheus에서 produce/consume rate·lag를 읽는다.
+# 포트포워드: kubectl port-forward svc/prometheus 9090:9090 -n platform-kafka
+prometheus:
+  url: ${PROMETHEUS_URL:http://localhost:9090}
+  enabled: ${PROMETHEUS_ENABLED:false}
+
 # 외부 서비스 (Agent는 별도 FastAPI)
 ai-service:
   url: ${AI_SERVICE_URL:http://localhost:8082}
@@ -88,3 +95,7 @@ logging:
     org.springframework.web: INFO
     org.hibernate.SQL: INFO    # SQL 끔 — [도메인] 흐름 로그만 보이게(#99)
     io.fabric8.kubernetes.client: INFO
+    # Kafka 클라이언트: K8s 내부 advertised address(platform-kafka-kafka-0.*.svc)를 호스트에서
+    # 직접 resolve할 수 없을 때 발생하는 연결 실패 WARN을 억제한다.
+    # 이는 port-forward 로컬 개발 환경의 known limitation이며 앱 기능에 영향 없음.
+    org.apache.kafka.clients.NetworkClient: ERROR

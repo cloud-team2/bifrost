@@ -37,17 +37,19 @@ try (HikariDataSource ds = new HikariDataSource(config)) {
 
 연결 성공 시 password를 **외부 Secret 저장소(K8s Secret 또는 Secrets Manager)** 에 저장하고, `database` 테이블에는 그 **참조(`secret_ref`)만** 저장한다. 자격증명 평문·암호문을 메타DB에 두지 않는다.
 
-- secretRef 추상화: MVP는 local/mock secret store, 이후 K8s Secret/Secrets Manager로 교체(인터페이스 동일).
+- secretRef 추상화: `SecretStore` 인터페이스 → 현재 구현체는 `DbSecretStore`(metadb `secrets` 테이블 영속). 추후 K8s Secret/Secrets Manager로 교체 가능(인터페이스 동일).
 - API 응답에서 password는 항상 `****`로 마스킹(secretRef도 노출하지 않음).
-- Connector CR 생성 시 secretRef가 가리키는 Secret을 참조하거나 그 시점에만 값을 읽어 `spec.config.database.password`에 주입한다.
+- Connector CR 생성 시 `SecretStore.resolve(secretRef)` 호출 → 값을 `spec.config.database.password`에 주입.
+- `DbSecretStore` 사용 시 재시작 후 DB 재등록 불필요(metadb에 영속).
 
 ```text
 SecretStore
-  put(credential) -> secret_ref          // 등록 시 1회
-  resolve(secret_ref) -> credential       // provisioning 시점에만 호출
+  put(context, credential) -> secret_ref   // 등록 시 1회
+  resolve(secret_ref) -> credential        // provisioning 시점에만 호출
+  delete(secret_ref)                       // DB 삭제 시 정리
 ```
 
-이렇게 하면 자격증명 노출면이 좁아지고(앱 DB에 비밀값 없음) 로테이션·키 관리를 Secret 저장소에 위임할 수 있다.
+`secret-store.provider=db`(기본값)이면 `DbSecretStore`, `=mock`이면 `InMemorySecretStore`(재시작 시 휘발).
 
 ### 4. Step 3 — CDC 준비도 점검 (FR-015)
 
@@ -55,19 +57,22 @@ DB 등록 직후 자동 실행하며, Database 상세 화면에서 수동 재점
 
 #### 4.1 인터페이스
 
+모든 DB 조작(연결 테스트·스키마 조회·Source 준비도·Sink 준비도)은 `DatabaseInspector` 단일 인터페이스로 통합된다.
+
 ```java
-interface CdcReadinessChecker {
-    List<CheckItem> check(DatabaseConfig db);
+// try-with-resources 패턴
+try (DatabaseInspector inspector = factory.create(datasource, password)) {
+    CdcReadinessResponse r = inspector.checkSourceReadiness();  // Source 준비도
+    CdcReadinessResponse s = inspector.checkSinkReadiness();    // Sink 준비도
+    List<TableInfo> tables = inspector.listTables();            // 스키마
 }
-
-class PostgresCdcChecker implements CdcReadinessChecker { ... }
-class MariadbCdcChecker  implements CdcReadinessChecker { ... }
-
-// 엔진 → 구현체 선택 (예: 팩토리/스프링 빈 맵)
-CdcReadinessChecker checker = checkerRegistry.forEngine(db.getEngine());
 ```
 
-각 구현체는 동적 DataSource로 대상 DB에 직접 질의해 항목별 결과를 모은다.
+엔진별 구현체:
+- `PostgresInspector` — HikariCP + JDBC, WAL/slot/publication/권한 쿼리
+- `MariaDBInspector`  — HikariCP + JDBC, binlog/server_id/GRANT 쿼리
+
+`DatabaseInspectorFactory.create(datasource, password)`가 엔진 타입에 따라 구현체를 선택한다.
 
 #### 4.2 결과 스키마
 

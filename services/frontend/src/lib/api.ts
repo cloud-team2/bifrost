@@ -142,6 +142,57 @@ export interface PipelineResponse {
   sinkConnector: string | null
   createdAt: string
 }
+/** 토픽 파티션 정보(#126). */
+export interface TopicInfoResponse {
+  name: string
+  isrPct: number
+  retentionMs: number
+  partitions: { id: number; leader: string; beginOffset: number; endOffset: number }[]
+}
+/** Consumer group 상세(#126). */
+export interface ConsumerGroupInfo {
+  name: string
+  state: string
+  members: number
+  totalLag: number
+  lastCommit: number
+  partitionOffsets: { partition: number; member: string | null; committed: number; endOffset: number }[]
+}
+/** Kafka 메시지 레코드(#126). */
+export interface KafkaMessageRecord {
+  partition: number
+  offset: number
+  tsMs: number
+  key: string | null
+  op: 'c' | 'u' | 'd' | 'r' | null
+  before: Record<string, unknown> | null
+  after: Record<string, unknown> | null
+}
+/** 파이프라인 메트릭(#126). */
+export interface PipelineMetricsResponse {
+  produceRate: number
+  consumeRate: number
+  lagMessages: number
+  errorPct: number
+}
+/** 처리량 추이 한 점(#126, Prometheus range query). */
+export interface ThroughputPoint {
+  timestamp: number
+  produceRate: number
+  consumeRate: number
+}
+/** 단일 값 시계열 한 점(#126). 소스 지연(ms)·미동기화 row 추이 공용. */
+export interface MetricPoint {
+  timestamp: number
+  value: number
+}
+/** 이벤트 타입 분포 시계열 한 점(#126). */
+export interface EventDistPoint {
+  timestamp: number
+  insert: number
+  update: number
+  delete: number
+}
 /** 파이프라인 커넥터(#107). state/lastError/updatedAt는 watcher가 갱신(미반영 시 null). */
 export interface ConnectorInfo {
   name: string
@@ -231,6 +282,22 @@ export const api = {
     request<ConnectorInfo[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/connectors`),
   pipelineSyncStatus: (wsId: string, id: string) =>
     request<SyncStatusResponse>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/sync-status`),
+  pipelineTopicInfo: (wsId: string, id: string) =>
+    request<TopicInfoResponse>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/topic-info`),
+  pipelineConsumerGroups: (wsId: string, id: string) =>
+    request<ConsumerGroupInfo[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/consumer-groups`),
+  pipelineMessages: (wsId: string, id: string, limit = 20) =>
+    request<KafkaMessageRecord[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/messages?limit=${limit}`),
+  pipelineMetrics: (wsId: string, id: string) =>
+    request<PipelineMetricsResponse>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/metrics`),
+  pipelineThroughput: (wsId: string, id: string, minutes = 30) =>
+    request<ThroughputPoint[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/metrics/throughput?minutes=${minutes}`),
+  pipelineSourceDelay: (wsId: string, id: string, minutes = 120) =>
+    request<MetricPoint[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/metrics/source-delay?minutes=${minutes}`),
+  pipelineUnsynced: (wsId: string, id: string, minutes = 120) =>
+    request<MetricPoint[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/metrics/unsynced?minutes=${minutes}`),
+  pipelineEventDist: (wsId: string, id: string, minutes = 60) =>
+    request<EventDistPoint[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/metrics/event-distribution?minutes=${minutes}`),
   pausePipeline: (wsId: string, id: string) =>
     request<PipelineResponse>('POST', `/api/v1/workspaces/${wsId}/pipelines/${id}/pause`),
   resumePipeline: (wsId: string, id: string) =>
