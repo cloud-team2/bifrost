@@ -2,11 +2,17 @@ package com.bifrost.ops.pipeline.controller;
 
 import com.bifrost.ops.auth.jwt.AuthenticatedUser;
 import com.bifrost.ops.pipeline.dto.ConnectorResponse;
+import com.bifrost.ops.pipeline.dto.ConsumerGroupInfo;
+import com.bifrost.ops.pipeline.dto.KafkaMessageRecord;
 import com.bifrost.ops.pipeline.dto.PipelineCreateRequest;
+import com.bifrost.ops.pipeline.dto.PipelineMetricsResponse;
 import com.bifrost.ops.pipeline.dto.PipelineResponse;
 import com.bifrost.ops.pipeline.dto.SyncStatusResponse;
+import com.bifrost.ops.pipeline.dto.TopicInfoResponse;
+import com.bifrost.ops.pipeline.service.PipelineMessageService;
 import com.bifrost.ops.pipeline.service.PipelineService;
 import com.bifrost.ops.pipeline.service.PipelineSyncService;
+import com.bifrost.ops.pipeline.service.PipelineTopicService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -34,10 +40,17 @@ public class PipelineController {
 
     private final PipelineService pipelineService;
     private final PipelineSyncService pipelineSyncService;
+    private final PipelineTopicService pipelineTopicService;
+    private final PipelineMessageService pipelineMessageService;
 
-    public PipelineController(PipelineService pipelineService, PipelineSyncService pipelineSyncService) {
+    public PipelineController(PipelineService pipelineService,
+                              PipelineSyncService pipelineSyncService,
+                              PipelineTopicService pipelineTopicService,
+                              PipelineMessageService pipelineMessageService) {
         this.pipelineService = pipelineService;
         this.pipelineSyncService = pipelineSyncService;
+        this.pipelineTopicService = pipelineTopicService;
+        this.pipelineMessageService = pipelineMessageService;
     }
 
     /** 목록(FR-003). status 필터(creating/active/lag/error/paused). */
@@ -78,6 +91,39 @@ public class PipelineController {
                                          @PathVariable UUID id,
                                          @AuthenticationPrincipal AuthenticatedUser principal) {
         return pipelineSyncService.syncStatus(wsId, principal, id);
+    }
+
+    /** 토픽 정보(#126, Overview 탭). 파티션별 offset·ISR. Kafka 미연결 시 빈 파티션 목록 반환. */
+    @GetMapping("/{id}/topic-info")
+    public TopicInfoResponse topicInfo(@PathVariable UUID wsId,
+                                       @PathVariable UUID id,
+                                       @AuthenticationPrincipal AuthenticatedUser principal) {
+        return pipelineTopicService.topicInfo(wsId, principal, id);
+    }
+
+    /** Consumer group 목록(#126, Consumers 탭). Kafka 미연결 시 빈 목록 반환. */
+    @GetMapping("/{id}/consumer-groups")
+    public List<ConsumerGroupInfo> consumerGroups(@PathVariable UUID wsId,
+                                                  @PathVariable UUID id,
+                                                  @AuthenticationPrincipal AuthenticatedUser principal) {
+        return pipelineTopicService.consumerGroups(wsId, principal, id);
+    }
+
+    /** 토픽 최신 메시지(#126, Messages 탭). Kafka 미연결 시 빈 목록 반환. */
+    @GetMapping("/{id}/messages")
+    public List<KafkaMessageRecord> messages(@PathVariable UUID wsId,
+                                             @PathVariable UUID id,
+                                             @AuthenticationPrincipal AuthenticatedUser principal,
+                                             @RequestParam(defaultValue = "20") int limit) {
+        return pipelineMessageService.messages(wsId, principal, id, limit);
+    }
+
+    /** 파이프라인 메트릭(#126, Overview 메트릭 카드). Kafka lag + connector 에러율. */
+    @GetMapping("/{id}/metrics")
+    public PipelineMetricsResponse metrics(@PathVariable UUID wsId,
+                                           @PathVariable UUID id,
+                                           @AuthenticationPrincipal AuthenticatedUser principal) {
+        return pipelineTopicService.metrics(wsId, principal, id);
     }
 
     /** 일시중지(FR-005). creating 중에는 불가. */

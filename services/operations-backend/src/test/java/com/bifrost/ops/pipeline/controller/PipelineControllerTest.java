@@ -23,7 +23,12 @@ class PipelineControllerTest {
 
     private final PipelineService service = mock(PipelineService.class);
     private final PipelineSyncService syncService = mock(PipelineSyncService.class);
-    private final PipelineController controller = new PipelineController(service, syncService);
+    private final com.bifrost.ops.pipeline.service.PipelineTopicService topicService =
+            mock(com.bifrost.ops.pipeline.service.PipelineTopicService.class);
+    private final com.bifrost.ops.pipeline.service.PipelineMessageService messageService =
+            mock(com.bifrost.ops.pipeline.service.PipelineMessageService.class);
+    private final PipelineController controller =
+            new PipelineController(service, syncService, topicService, messageService);
 
     private final UUID wsId = UUID.randomUUID();
     private final AuthenticatedUser principal = new AuthenticatedUser(UUID.randomUUID(), wsId, "u@bifrost.io");
