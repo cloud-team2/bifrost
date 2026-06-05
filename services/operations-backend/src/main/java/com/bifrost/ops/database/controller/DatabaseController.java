@@ -17,6 +17,7 @@ import com.bifrost.ops.workspace.WorkspaceAccessGuard;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -103,13 +104,22 @@ public class DatabaseController {
         return schemaService.getSchema(wsId, dbId);
     }
 
-    /** CDC 준비도 점검(FR-015). {overallStatus, checks[name·status·actual·expected·hint]}. */
+    /** CDC Source 준비도 점검(FR-015). */
     @GetMapping("/{dbId}/cdc-readiness")
     public CdcReadinessResponse cdcReadiness(@PathVariable UUID wsId,
                                              @PathVariable UUID dbId,
                                              @AuthenticationPrincipal AuthenticatedUser principal) {
         accessGuard.requireAccess(wsId, principal);
         return cdcReadinessService.check(wsId, dbId);
+    }
+
+    /** CDC Sink 준비도 점검. INSERT/UPDATE/DELETE/CREATE 권한 확인. */
+    @GetMapping("/{dbId}/sink-readiness")
+    public CdcReadinessResponse sinkReadiness(@PathVariable UUID wsId,
+                                              @PathVariable UUID dbId,
+                                              @AuthenticationPrincipal AuthenticatedUser principal) {
+        accessGuard.requireAccess(wsId, principal);
+        return cdcReadinessService.checkSink(wsId, dbId);
     }
 
     /** 지표(FR-017). 이번 주는 계약용 stub 응답. */
@@ -119,6 +129,16 @@ public class DatabaseController {
                                            @AuthenticationPrincipal AuthenticatedUser principal) {
         accessGuard.requireAccess(wsId, principal);
         return databaseService.getMetrics(wsId, dbId);
+    }
+
+    /** DB 삭제. 파이프라인에서 사용 중이면 400. */
+    @DeleteMapping("/{dbId}")
+    public ResponseEntity<Void> delete(@PathVariable UUID wsId,
+                                       @PathVariable UUID dbId,
+                                       @AuthenticationPrincipal AuthenticatedUser principal) {
+        accessGuard.requireAccess(wsId, principal);
+        databaseService.delete(wsId, dbId);
+        return ResponseEntity.noContent().build();
     }
 
     /** 이 DB를 쓰는 파이프라인 목록(FR-018). */

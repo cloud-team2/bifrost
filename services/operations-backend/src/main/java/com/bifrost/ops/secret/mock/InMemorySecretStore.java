@@ -24,7 +24,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * 남기고 user/password는 절대 남기지 않는다.
  */
 @Component
-@ConditionalOnProperty(prefix = "secret-store", name = "provider", havingValue = "mock", matchIfMissing = true)
+@ConditionalOnProperty(prefix = "secret-store", name = "provider", havingValue = "mock")
 public class InMemorySecretStore implements SecretStore {
 
     private static final Logger log = LoggerFactory.getLogger(InMemorySecretStore.class);

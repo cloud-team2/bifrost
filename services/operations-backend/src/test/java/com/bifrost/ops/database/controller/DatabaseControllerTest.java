@@ -180,6 +180,6 @@ class DatabaseControllerTest {
 
     private static DatabaseResponse sample(String name) {
         return new DatabaseResponse(UUID.randomUUID().toString(), name, "postgresql",
-                "h", 5432, "app", "u", "****", null, List.of(), Instant.now());
+                "h", 5432, "app", "u", "****", null, null, List.of(), Instant.now());
     }
 }

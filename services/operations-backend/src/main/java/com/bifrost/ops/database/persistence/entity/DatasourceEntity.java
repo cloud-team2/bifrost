@@ -48,6 +48,13 @@ public class DatasourceEntity {
     @Column(name = "cdc_readiness_report", columnDefinition = "jsonb")
     private String cdcReadinessReport;
 
+    @Column(name = "sink_readiness_status", length = 20)
+    private String sinkReadinessStatus;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "sink_readiness_report", columnDefinition = "jsonb")
+    private String sinkReadinessReport;
+
     @Column(name = "last_inspected_at")
     private Instant lastInspectedAt;
 
@@ -83,6 +90,10 @@ public class DatasourceEntity {
     public void setCdcReadinessStatus(String cdcReadinessStatus) { this.cdcReadinessStatus = cdcReadinessStatus; }
     public String getCdcReadinessReport() { return cdcReadinessReport; }
     public void setCdcReadinessReport(String cdcReadinessReport) { this.cdcReadinessReport = cdcReadinessReport; }
+    public String getSinkReadinessStatus() { return sinkReadinessStatus; }
+    public void setSinkReadinessStatus(String sinkReadinessStatus) { this.sinkReadinessStatus = sinkReadinessStatus; }
+    public String getSinkReadinessReport() { return sinkReadinessReport; }
+    public void setSinkReadinessReport(String sinkReadinessReport) { this.sinkReadinessReport = sinkReadinessReport; }
     public Instant getLastInspectedAt() { return lastInspectedAt; }
     public void setLastInspectedAt(Instant lastInspectedAt) { this.lastInspectedAt = lastInspectedAt; }
     public Instant getCreatedAt() { return createdAt; }
