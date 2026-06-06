@@ -49,3 +49,7 @@ def check_revise_action_loops(state: AgentState, max_revise_action_loops: int) -
 
 def check_all_global(state: AgentState, policy: RetryPolicy) -> None:
     check_step_budget(state, policy.max_steps)
+    check_gap_loops(state, policy.max_gap_loops)
+    check_fail_loops(state, policy.max_fail_loops)
+    check_scope_loops(state, policy.max_scope_loops)
+    check_revise_action_loops(state, policy.max_revise_action_loops)

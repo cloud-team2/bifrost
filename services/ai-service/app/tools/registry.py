@@ -12,11 +12,10 @@ from app.schemas.state import RiskLevel
 from app.schemas.tools import (
     ConnectorStatusData,
     ConsumerLagData,
-    IncidentSummaryData,
-    ListProjectPipelinesData,
+    DeploymentsData,
     LogSearchData,
     LogSearchRequest,
-    PipelineTopologyData,
+    MetricsData,
     SpringErrorCode,
     ToolContext,
     ToolResult,
@@ -30,12 +29,20 @@ class ToolParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ListProjectPipelinesParams(ToolParams):
-    status: str | None = None
+class GetPipelineLogsParams(ToolParams):
+    query: str
+    time_range: dict | None = None
+    pipeline_id: str | None = None
+    limit: int | None = None
 
 
-class PipelineTopologyParams(ToolParams):
-    pipeline_id: str
+class GetMetricsParams(ToolParams):
+    metric: str
+    time_range: str | None = None
+
+
+class GetDeploymentsParams(ToolParams):
+    pass
 
 
 class ConnectorStatusParams(ToolParams):
@@ -44,10 +51,6 @@ class ConnectorStatusParams(ToolParams):
 
 class ConsumerLagParams(ToolParams):
     consumer_group: str
-
-
-class IncidentSummaryParams(ToolParams):
-    incident_id: str
 
 
 @dataclass(frozen=True)
@@ -90,25 +93,37 @@ class ToolDefinition:
 
 def default_tool_definitions() -> dict[str, ToolDefinition]:
     definitions = [
+        # ── catalog §8.1 Observability ──────────────────────────────────────
         ToolDefinition(
-            name="list_project_pipelines",
-            operation="list_project_pipelines",
-            method="GET",
-            path_template="/internal/ops/projects/{project_id}/pipelines",
+            name="get_pipeline_logs",
+            operation="search_logs",
+            method="POST",
+            path_template="/internal/ops/projects/{project_id}/observability/logs/search",
             risk=RiskLevel.READ_ONLY,
-            params_model=ListProjectPipelinesParams,
-            result_model=ListProjectPipelinesData,
+            params_model=GetPipelineLogsParams,
+            result_model=LogSearchData,
+            sends_body=True,
         ),
         ToolDefinition(
-            name="get_pipeline_topology",
-            operation="get_pipeline_topology",
+            name="get_metrics",
+            operation="query_metrics",
             method="GET",
-            path_template="/internal/ops/projects/{project_id}/pipelines/{pipeline_id}",
+            path_template="/internal/ops/projects/{project_id}/observability/metrics",
             risk=RiskLevel.READ_ONLY,
-            params_model=PipelineTopologyParams,
-            result_model=PipelineTopologyData,
-            path_params=("pipeline_id",),
+            params_model=GetMetricsParams,
+            result_model=MetricsData,
         ),
+        # ── catalog §8.2 Pipeline / Change ──────────────────────────────────
+        ToolDefinition(
+            name="get_deployments",
+            operation="get_recent_changes",
+            method="GET",
+            path_template="/internal/ops/projects/{project_id}/pipelines/changes",
+            risk=RiskLevel.READ_ONLY,
+            params_model=GetDeploymentsParams,
+            result_model=DeploymentsData,
+        ),
+        # ── catalog §8.3 Kafka / Kafka Connect ──────────────────────────────
         ToolDefinition(
             name="get_connector_status",
             operation="get_connector_status",
@@ -130,26 +145,6 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
             path_params=("consumer_group",),
         ),
         ToolDefinition(
-            name="search_logs",
-            operation="search_logs",
-            method="POST",
-            path_template="/internal/ops/projects/{project_id}/observability/logs/search",
-            risk=RiskLevel.READ_ONLY,
-            params_model=LogSearchRequest,
-            result_model=LogSearchData,
-            sends_body=True,
-        ),
-        ToolDefinition(
-            name="get_incident_summary",
-            operation="get_incident_summary",
-            method="GET",
-            path_template="/internal/ops/projects/{project_id}/incidents/{incident_id}/summary",
-            risk=RiskLevel.READ_ONLY,
-            params_model=IncidentSummaryParams,
-            result_model=IncidentSummaryData,
-            path_params=("incident_id",),
-        ),
-        ToolDefinition(
             name="get_kafka_lag",
             operation="get_consumer_lag",
             method="GET",
@@ -162,6 +157,16 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ),
     ]
     return {definition.name: definition for definition in definitions}
+
+
+_registry: "ToolClientRegistry | None" = None
+
+
+def get_tool_registry() -> "ToolClientRegistry":
+    global _registry
+    if _registry is None:
+        _registry = ToolClientRegistry()
+    return _registry
 
 
 class ToolClientRegistry:

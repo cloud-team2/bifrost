@@ -1,13 +1,11 @@
 """SSE wire-format helpers and event stream generator."""
 from __future__ import annotations
 
-from typing import AsyncGenerator, Union
+from typing import AsyncGenerator
 
-from app.persistence.event_repository import InMemoryEventRepository, PostgresEventRepository
+from app.persistence.event_repository import AnyEventRepo, InMemoryEventRepository
 from app.schemas.events import StreamingEvent
 from app.streaming.event_bus import EventBus
-
-AnyEventRepo = Union[InMemoryEventRepository, PostgresEventRepository]
 
 
 def format_sse(event: StreamingEvent) -> str:
@@ -30,8 +28,4 @@ async def stream_events(
         yield format_sse(event)
 
     async for event in bus.subscribe(run_id):
-        if isinstance(repo, InMemoryEventRepository):
-            repo.append(run_id, event)
-        else:
-            await repo.append(run_id, event)
         yield format_sse(event)

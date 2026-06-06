@@ -4,9 +4,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
-from app.persistence.event_repository import InMemoryEventRepository, get_event_repo
+from app.persistence.event_repository import get_event_repo
 from app.streaming.event_bus import EventBus, get_event_bus
-from app.streaming.sse import stream_events
+from app.streaming.sse import AnyEventRepo, stream_events
 
 router = APIRouter()
 
@@ -16,7 +16,7 @@ async def stream_run_events(
     run_id: str,
     request: Request,
     bus: EventBus = Depends(get_event_bus),
-    repo: InMemoryEventRepository = Depends(get_event_repo),
+    repo: AnyEventRepo = Depends(get_event_repo),
 ) -> StreamingResponse:
     last_event_id = request.headers.get("Last-Event-ID")
     return StreamingResponse(

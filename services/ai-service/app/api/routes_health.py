@@ -34,7 +34,8 @@ def ready() -> ApiResponse:
             "dependencies": {
                 "spring_operations": "unknown",
                 "llm_provider": "unknown",
-                "state_store": "unknown",
+                "agent_run_store": "unknown",
+                "vector_store": "unknown",
                 "evidence_store": "unknown",
             },
         },

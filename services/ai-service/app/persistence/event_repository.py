@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+from typing import Union
 
 import asyncpg
 
@@ -99,8 +100,14 @@ def _row_to_event(row: asyncpg.Record) -> StreamingEvent:
     )
 
 
-_repo = PostgresEventRepository()
+AnyEventRepo = Union[InMemoryEventRepository, PostgresEventRepository]
+
+_postgres_repo = PostgresEventRepository()
+_memory_repo = InMemoryEventRepository()
 
 
-def get_event_repo() -> PostgresEventRepository:
-    return _repo
+def get_event_repo() -> AnyEventRepo:
+    from app.core.db import _pool
+    if _pool is None:
+        return _memory_repo
+    return _postgres_repo

@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -12,10 +13,15 @@ from app.api import routes_agent, routes_events, routes_health
 from app.core.config import settings
 from app.core.db import close_pool, init_pool
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_pool(settings.database_url)
+    try:
+        await init_pool(settings.database_url)
+    except Exception as exc:
+        logger.warning("agentdb unavailable — running without persistence: %s", exc)
     yield
     await close_pool()
 

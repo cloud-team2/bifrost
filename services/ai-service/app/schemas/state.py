@@ -126,6 +126,7 @@ class RunPlanState(StrictModel):
 
 class RunState(StrictModel):
     run_id: str
+    mode: AgentMode = AgentMode.SIMPLE_QUERY
     status: RunStatus = RunStatus.RUNNING
     current_agent: str | None = None
     retry_count: int = 0

@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Union
 
 import asyncpg
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.db import get_pool
 from app.core.config import settings
@@ -93,3 +93,53 @@ class PostgresRunRepository:
                 """,
                 run_id, status,
             )
+
+
+class InMemoryRunRecord(BaseModel):
+    run_id: str
+    project_id: str | None = None
+    mode: str = "simple_query"
+    status: str = "running"
+    current_agent: str | None = None
+    user_message: str | None = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class InMemoryRunRepository:
+    def __init__(self) -> None:
+        self._store: dict[str, InMemoryRunRecord] = {}
+
+    def create(
+        self,
+        run_id: str,
+        mode: str,
+        *,
+        project_id: str | None = None,
+        user_message: str | None = None,
+    ) -> InMemoryRunRecord:
+        rec = InMemoryRunRecord(
+            run_id=run_id,
+            project_id=project_id,
+            mode=mode,
+            user_message=user_message,
+        )
+        self._store[run_id] = rec
+        return rec
+
+    def get(self, run_id: str) -> InMemoryRunRecord | None:
+        return self._store.get(run_id)
+
+    def update_status(self, run_id: str, status: str, current_agent: str | None = None) -> None:
+        rec = self._store.get(run_id)
+        if rec:
+            rec.status = status
+            rec.current_agent = current_agent
+
+
+AnyRunRepo = Union[InMemoryRunRepository, PostgresRunRepository]
+
+_memory_run_repo = InMemoryRunRepository()
+
+
+def get_run_repo() -> InMemoryRunRepository:
+    return _memory_run_repo

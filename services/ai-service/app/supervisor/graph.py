@@ -29,6 +29,9 @@ class Supervisor:
     ) -> AgentState:
         return self._store.create(run_id, mode, incident_id)
 
+    def get_state(self, run_id: str) -> AgentState | None:
+        return self._store.get(run_id)
+
     def advance(self, run_id: str) -> str | None:
         """Advance the run by one stage and return the next stage name.
 
@@ -61,10 +64,7 @@ class Supervisor:
 
 
 def _infer_mode(state: AgentState) -> AgentMode:
-    # Mode is stored on AgentState.run; for the skeleton we default to SIMPLE_QUERY
-    # when no explicit mode field exists yet. The full implementation tags mode at
-    # run creation time and reads it from state.
-    return AgentMode.SIMPLE_QUERY
+    return state.run.mode
 
 
 def _mark_failed(state: AgentState) -> AgentState:

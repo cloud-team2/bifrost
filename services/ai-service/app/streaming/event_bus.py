@@ -11,12 +11,15 @@ from app.schemas.events import StreamingEvent
 class EventBus:
     def __init__(self) -> None:
         self._subscribers: dict[str, list[asyncio.Queue[StreamingEvent | None]]] = defaultdict(list)
+        self._closed: set[str] = set()
 
     async def publish(self, run_id: str, event: StreamingEvent) -> None:
         for queue in list(self._subscribers[run_id]):
             await queue.put(event)
 
     async def subscribe(self, run_id: str) -> AsyncGenerator[StreamingEvent, None]:
+        if run_id in self._closed:
+            return  # run already finished — replay-only, no live subscription
         queue: asyncio.Queue[StreamingEvent | None] = asyncio.Queue()
         self._subscribers[run_id].append(queue)
         try:
@@ -32,6 +35,7 @@ class EventBus:
                 pass
 
     async def close_run(self, run_id: str) -> None:
+        self._closed.add(run_id)
         for queue in list(self._subscribers[run_id]):
             await queue.put(None)
 
