@@ -28,8 +28,4 @@ async def stream_events(
         yield format_sse(event)
 
     async for event in bus.subscribe(run_id):
-        if isinstance(repo, InMemoryEventRepository):
-            repo.append(run_id, event)
-        else:
-            await repo.append(run_id, event)
         yield format_sse(event)

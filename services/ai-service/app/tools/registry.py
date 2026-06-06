@@ -164,6 +164,16 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
     return {definition.name: definition for definition in definitions}
 
 
+_registry: "ToolClientRegistry | None" = None
+
+
+def get_tool_registry() -> "ToolClientRegistry":
+    global _registry
+    if _registry is None:
+        _registry = ToolClientRegistry()
+    return _registry
+
+
 class ToolClientRegistry:
     def __init__(
         self,

@@ -21,10 +21,9 @@ class InMemoryStateStore:
         incident_id: str | None = None,
     ) -> AgentState:
         state = AgentState(
-            run=RunState(run_id=run_id),
+            run=RunState(run_id=run_id, mode=mode),
             incident=IncidentState(incident_id=incident_id),
         )
-        state.run.current_agent = None
         self._store[run_id] = state
         return state
 

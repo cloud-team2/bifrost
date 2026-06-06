@@ -126,6 +126,7 @@ class RunPlanState(StrictModel):
 
 class RunState(StrictModel):
     run_id: str
+    mode: AgentMode = AgentMode.SIMPLE_QUERY
     status: RunStatus = RunStatus.RUNNING
     current_agent: str | None = None
     retry_count: int = 0
@@ -138,6 +139,7 @@ class IncidentState(StrictModel):
     incident_id: str | None = None
     scope: IncidentScope | None = None
     severity: Severity | None = None
+    user_message: str | None = None
 
 
 class CorrelationState(StrictModel):
