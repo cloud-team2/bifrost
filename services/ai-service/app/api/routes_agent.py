@@ -58,7 +58,7 @@ async def create_run(req: CreateRunRequest, background_tasks: BackgroundTasks) -
 
     return ApiResponse.success(request_id, {
         "run_id": run_id,
-        "stream_url": f"/api/v1/agent/runs/{run_id}/events",
+        "event_stream_url": f"/api/v1/agent/runs/{run_id}/events",
         "status": "running",
     })
 

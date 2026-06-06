@@ -1,4 +1,7 @@
-"""Planner agent — keyword-based tool selection (no LLM)."""
+"""Planner agent — keyword-based tool selection (no LLM).
+
+Tool names follow tool-catalog.md §8 Read-only Runtime Tool Catalog.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -6,14 +9,24 @@ import json
 
 from app.schemas.outputs import PlannerOutput, RetrievalPlanStep
 
+_LOG_PARAMS = {"query": "pipeline events", "time_range": {"from": "now-30m", "to": "now"}}
+_INCIDENT_LOG_PARAMS = {"query": "error exception failure", "time_range": {"from": "now-1h", "to": "now"}}
+
 _KEYWORD_TOOL_MAP: list[tuple[set[str], str, dict]] = [
-    ({"파이프라인", "pipeline"}, "list_project_pipelines", {}),
+    # catalog §8.1 Observability — get_pipeline_logs (operation: search_logs)
+    ({"파이프라인", "pipeline", "현황", "상태", "로그", "log"}, "get_pipeline_logs", _LOG_PARAMS),
+    # catalog §8.1 Observability — get_metrics (operation: query_metrics)
+    ({"메트릭", "metric", "지표", "수치", "성능"}, "get_metrics", {"metric": "pipeline_lag_seconds", "time_range": "last_30m"}),
+    # catalog §8.2 Pipeline / Change — get_deployments (operation: get_recent_changes)
+    ({"배포", "deploy", "변경", "change", "토폴로지", "topology"}, "get_deployments", {}),
+    # catalog §8.3 Kafka Connect — get_connector_status
     ({"커넥터", "connector"}, "get_connector_status", {"connector_name": "default-connector"}),
-    ({"lag", "컨슈머", "consumer"}, "get_consumer_lag", {"consumer_group": "default-group"}),
-    ({"인시던트", "incident"}, "get_incident_summary", {"incident_id": "latest"}),
-    ({"토폴로지", "topology"}, "get_pipeline_topology", {"pipeline_id": "default"}),
+    # catalog §8.3 Kafka Consumer — get_consumer_lag
+    ({"lag", "컨슈머", "consumer", "지연"}, "get_consumer_lag", {"consumer_group": "default-group"}),
+    # incident/장애 → log search for error evidence
+    ({"인시던트", "incident", "장애", "오류", "에러"}, "get_pipeline_logs", _INCIDENT_LOG_PARAMS),
 ]
-_DEFAULT_TOOL = ("list_project_pipelines", {})
+_DEFAULT_TOOL = ("get_pipeline_logs", _LOG_PARAMS)
 
 
 def _plan_hash(tool_name: str, params: dict) -> str:

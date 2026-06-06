@@ -225,3 +225,29 @@ class IncidentSummaryData(StrictModel):
     grouping_key: str
     affected_rows_estimate: int | None = None
     root_cause_summary: str | None = None
+
+
+# ── catalog §8.1 Observability ────────────────────────────────────────────────
+
+class MetricsDataPoint(StrictModel):
+    timestamp: str
+    value: float
+
+
+class MetricsData(StrictModel):
+    metric: str
+    summary: str
+    data_points: list[MetricsDataPoint] = Field(default_factory=list)
+
+
+# ── catalog §8.2 Pipeline / Change ───────────────────────────────────────────
+
+class DeploymentChangeSummary(StrictModel):
+    change_id: str
+    type: str
+    description: str
+    changed_at: datetime | None = None
+
+
+class DeploymentsData(StrictModel):
+    changes: list[DeploymentChangeSummary] = Field(default_factory=list)

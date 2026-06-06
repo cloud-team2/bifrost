@@ -139,7 +139,6 @@ class IncidentState(StrictModel):
     incident_id: str | None = None
     scope: IncidentScope | None = None
     severity: Severity | None = None
-    user_message: str | None = None
 
 
 class CorrelationState(StrictModel):
