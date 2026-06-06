@@ -15,7 +15,7 @@ from app.agents import router as router_agent
 from app.agents import verifier as verifier_agent
 from app.llm.provider import get_llm_provider
 from app.persistence.event_repository import AnyEventRepo, InMemoryEventRepository, get_event_repo
-from app.persistence.run_repository import InMemoryRunRepository
+from app.persistence.run_repository import AnyRunRepo
 from app.schemas.events import StreamingEvent, StreamingEventType
 from app.schemas.tools import ToolContext
 from app.streaming.event_bus import EventBus
@@ -50,7 +50,7 @@ async def run_workflow(
     user_message: str,
     project_id: str,
     bus: EventBus,
-    run_repo: InMemoryRunRepository,
+    run_repo: AnyRunRepo,
     registry: ToolClientRegistry,
 ) -> None:
     event_repo = get_event_repo()
@@ -58,21 +58,21 @@ async def run_workflow(
         await _publish(bus, event_repo, run_id, _evt(run_id, StreamingEventType.RUN_STARTED, None, "분석을 시작합니다"))
 
         # ── Router ────────────────────────────────────────────────────────────
-        run_repo.update_status(run_id, "running", "router")
+        await run_repo.update_status(run_id, "running", "router")
         await _publish(bus, event_repo, run_id, _evt(run_id, StreamingEventType.AGENT_STARTED, "router", "질문 유형을 파악합니다"))
         router_out = await router_agent.run_router(user_message)
         mode = router_out.route_decision.mode
         await _publish(bus, event_repo, run_id, _evt(run_id, StreamingEventType.AGENT_COMPLETED, "router", f"mode: {mode.value}"))
 
         # ── Planner ───────────────────────────────────────────────────────────
-        run_repo.update_status(run_id, "running", "planner")
+        await run_repo.update_status(run_id, "running", "planner")
         await _publish(bus, event_repo, run_id, _evt(run_id, StreamingEventType.AGENT_STARTED, "planner", "데이터 조회 계획을 수립합니다"))
         planner_out = await planner_agent.run_planner(user_message, project_id)
         tool_names = ", ".join(s.tool_name for s in planner_out.retrieval_plan)
         await _publish(bus, event_repo, run_id, _evt(run_id, StreamingEventType.AGENT_COMPLETED, "planner", f"조회 도구: {tool_names}"))
 
         # ── Retrieval ─────────────────────────────────────────────────────────
-        run_repo.update_status(run_id, "running", "retrieval")
+        await run_repo.update_status(run_id, "running", "retrieval")
         await _publish(bus, event_repo, run_id, _evt(run_id, StreamingEventType.AGENT_STARTED, "retrieval", "운영 데이터를 조회합니다"))
         context = ToolContext(
             run_id=run_id,
@@ -88,14 +88,14 @@ async def run_workflow(
         ))
 
         # ── Verifier ──────────────────────────────────────────────────────────
-        run_repo.update_status(run_id, "running", "verifier")
+        await run_repo.update_status(run_id, "running", "verifier")
         await _publish(bus, event_repo, run_id, _evt(run_id, StreamingEventType.AGENT_STARTED, "verifier", "결과를 검증합니다"))
         verifier_out = await verifier_agent.run_verifier(mode)
         v_status = verifier_out.verification_results[0].status.value if verifier_out.verification_results else "pass"
         await _publish(bus, event_repo, run_id, _evt(run_id, StreamingEventType.VERIFICATION_COMPLETED, "verifier", f"검증: {v_status}"))
 
         # ── Report ────────────────────────────────────────────────────────────
-        run_repo.update_status(run_id, "running", "report")
+        await run_repo.update_status(run_id, "running", "report")
         await _publish(bus, event_repo, run_id, _evt(run_id, StreamingEventType.AGENT_STARTED, "report", "답변을 생성합니다"))
         llm = get_llm_provider()
         answer = await report_agent.run_report(user_message, retrieval_out, mode, llm)
@@ -105,7 +105,7 @@ async def run_workflow(
             {"answer": answer},
         ))
 
-        run_repo.update_status(run_id, "completed", None)
+        await run_repo.update_status(run_id, "completed", None)
         await _publish(bus, event_repo, run_id, _evt(
             run_id, StreamingEventType.RUN_COMPLETED, "report",
             "분석이 완료되었습니다",
@@ -114,7 +114,7 @@ async def run_workflow(
 
     except Exception as exc:
         logger.exception("run_workflow failed: run_id=%s", run_id)
-        run_repo.update_status(run_id, "failed", None)
+        await run_repo.update_status(run_id, "failed", None)
         await _publish(bus, event_repo, run_id, _evt(
             run_id, StreamingEventType.RUN_COMPLETED, None,
             f"오류: {exc}",

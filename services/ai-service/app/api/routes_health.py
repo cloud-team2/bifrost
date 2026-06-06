@@ -22,11 +22,19 @@ def health() -> ApiResponse:
 
 
 @router.get("/ready")
-def ready() -> ApiResponse:
-    """의존성(LLM, Spring Boot, State/Evidence Store) 준비 상태.
+async def ready() -> ApiResponse:
+    """의존성(LLM, Spring Boot, State/Evidence Store) 준비 상태."""
+    from app.core.db import _pool
 
-    현재는 스캐폴드라 정적 ok를 반환한다. 실제 헬스 점검은 후속 구현.
-    """
+    db_status = "unknown"
+    if _pool is not None:
+        try:
+            async with _pool.acquire() as conn:
+                await conn.execute("SELECT 1")
+            db_status = "ok"
+        except Exception:
+            db_status = "unavailable"
+
     return ApiResponse.success(
         _request_id(),
         {
@@ -34,7 +42,7 @@ def ready() -> ApiResponse:
             "dependencies": {
                 "spring_operations": "unknown",
                 "llm_provider": "unknown",
-                "agent_run_store": "unknown",
+                "agent_run_store": db_status,
                 "vector_store": "unknown",
                 "evidence_store": "unknown",
             },
