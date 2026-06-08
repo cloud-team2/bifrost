@@ -216,10 +216,13 @@ public class PipelineTopicService {
         String server = debeziumServer(p);
         if (server == null || !kafkaMetricsQuery.isEnabled()) return List.of();
         long[] win = window(minutes);
+        // increase(metric[step])는 윈도우에 샘플이 2개 이상 있어야 계산된다. step이 scrape 간격(15s)과
+        // 같으면 샘플 1개라 빈 결과가 나오므로(예: 15분 범위), 이벤트 분포 step은 최소 30s(2 scrape)로 둔다.
+        long evStep = Math.max(30L, win[2]);
         try {
-            Map<Long, Double> ins = kafkaMetricsQuery.eventCountSeries(server, "create", win[0], win[1], win[2]);
-            Map<Long, Double> upd = kafkaMetricsQuery.eventCountSeries(server, "update", win[0], win[1], win[2]);
-            Map<Long, Double> del = kafkaMetricsQuery.eventCountSeries(server, "delete", win[0], win[1], win[2]);
+            Map<Long, Double> ins = kafkaMetricsQuery.eventCountSeries(server, "create", win[0], win[1], evStep);
+            Map<Long, Double> upd = kafkaMetricsQuery.eventCountSeries(server, "update", win[0], win[1], evStep);
+            Map<Long, Double> del = kafkaMetricsQuery.eventCountSeries(server, "delete", win[0], win[1], evStep);
             java.util.TreeSet<Long> stamps = new java.util.TreeSet<>();
             stamps.addAll(ins.keySet());
             stamps.addAll(upd.keySet());
