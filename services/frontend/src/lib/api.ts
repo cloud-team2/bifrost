@@ -74,10 +74,23 @@ export interface WorkspaceResponse {
   id: string
   name: string
   projectKey: string
+  /** 일반 설정 timezone(#145). 미설정 시 null. */
+  timezone: string | null
   status: string
   createdAt: string
   pipelineCount: number
   activePipelineCount: number
+}
+
+/** 워크스페이스 멤버 역할(#145). OWNER는 단일·강등/제거 불가. */
+export type WorkspaceMemberRole = 'OWNER' | 'ADMIN' | 'MEMBER'
+/** 프로젝트 멤버(#145). */
+export interface ProjectMemberResponse {
+  workspaceId: string
+  userId: string
+  email: string | null
+  role: WorkspaceMemberRole
+  joinedAt: string
 }
 export type FailureReason =
   | 'CONNECTION_REFUSED' | 'AUTH_FAILED' | 'DB_NOT_FOUND' | 'TIMEOUT' | 'UNKNOWN' | null
@@ -255,6 +268,19 @@ export const api = {
   createWorkspace: (name: string) =>
     request<WorkspaceResponse>('POST', '/api/v1/workspaces', { name }),
   getWorkspace: (wsId: string) => request<WorkspaceResponse>('GET', `/api/v1/workspaces/${wsId}`),
+  // 일반 설정(#145): name/timezone PATCH (OWNER/ADMIN)
+  updateWorkspace: (wsId: string, body: { name?: string; timezone?: string | null }) =>
+    request<WorkspaceResponse>('PATCH', `/api/v1/workspaces/${wsId}`, body),
+
+  // members (#145) — 멤버 작업은 OWNER/ADMIN만
+  listMembers: (wsId: string) =>
+    request<ProjectMemberResponse[]>('GET', `/api/v1/workspaces/${wsId}/members`),
+  addMember: (wsId: string, email: string, role: WorkspaceMemberRole) =>
+    request<ProjectMemberResponse>('POST', `/api/v1/workspaces/${wsId}/members`, { email, role }),
+  updateMemberRole: (wsId: string, userId: string, role: WorkspaceMemberRole) =>
+    request<ProjectMemberResponse>('PATCH', `/api/v1/workspaces/${wsId}/members/${userId}`, { role }),
+  removeMember: (wsId: string, userId: string) =>
+    request<void>('DELETE', `/api/v1/workspaces/${wsId}/members/${userId}`),
 
   // databases (FR-013~016)
   listDatabases: (wsId: string) =>
