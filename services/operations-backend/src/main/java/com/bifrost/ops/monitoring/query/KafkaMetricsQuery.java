@@ -53,10 +53,14 @@ public class KafkaMetricsQuery {
                 "sum(rate(kafka_consumergroup_current_offset{topic=\"" + topic + "\"}[2m]))");
     }
 
-    /** 토픽 전체 consumer group lag 합계 (Kafka Exporter 기반). */
-    public long totalLag(String topic) {
+    /**
+     * 해당 sink consumer group의 lag 합계 (Kafka Exporter 기반).
+     * topic이 아닌 consumergroup으로 필터한다 — 같은 토픽을 구독하는 삭제된 파이프라인의
+     * orphan group(예: connect-&lt;old-pid&gt;-sink)이 합산되어 미동기화가 과대 표시되는 것을 방지.
+     */
+    public long totalLag(String consumerGroup) {
         double val = client.queryScalar(
-                "sum(kafka_consumergroup_lag{topic=\"" + topic + "\"})");
+                "sum(kafka_consumergroup_lag{consumergroup=\"" + consumerGroup + "\"})");
         return Math.max(0L, (long) val);
     }
 
@@ -81,10 +85,13 @@ public class KafkaMetricsQuery {
                 startSec, endSec, stepSec);
     }
 
-    /** 미동기화 row 추이 — consumer lag(미소비 메시지 ≈ 미동기화 row). */
-    public java.util.Map<Long, Double> unsyncedSeries(String topic, long startSec, long endSec, long stepSec) {
+    /**
+     * 미동기화 row 추이 — sink consumer group의 lag(미소비 메시지 ≈ 미동기화 row).
+     * topic이 아닌 consumergroup으로 필터 — orphan group 합산 방지({@link #totalLag}).
+     */
+    public java.util.Map<Long, Double> unsyncedSeries(String consumerGroup, long startSec, long endSec, long stepSec) {
         return client.queryRange(
-                "sum(kafka_consumergroup_lag{topic=\"" + topic + "\"})",
+                "sum(kafka_consumergroup_lag{consumergroup=\"" + consumerGroup + "\"})",
                 startSec, endSec, stepSec);
     }
 

@@ -611,9 +611,10 @@ function SyncTab({ edge }: { edge: Edge }) {
   const pctColor   = isHealthy ? 'text-emerald-600' : syncPct >= 99.0 ? 'text-amber-600' : 'text-rose-600'
 
   // 실데이터(Prometheus)만 사용. 비어있으면 빈 차트(더미 위장 금지, #175).
-  // 소스지연은 Debezium이 idle일 때 -1을 주므로 음수는 0으로 클램프.
+  // 소스지연은 Debezium이 전달할 데이터가 없을 때(idle) -1을 준다. 이때는 "지연 0"이 아니라
+  // 측정값이 없는 것이므로 null로 두어 그래프를 끊는다(Prometheus처럼). 0으로 클램프하면 거짓 0.
   const sourceDelay = useMemo(() =>
-    delaySeries.map((p) => ({ t: hhmm(p.timestamp), delay: Math.max(0, Math.round(p.value)) })),
+    delaySeries.map((p) => ({ t: hhmm(p.timestamp), delay: p.value < 0 ? null : Math.round(p.value) })),
     [delaySeries])
   const deltaTrend  = useMemo(() =>
     unsyncedSeries.map((p) => ({ t: hhmm(p.timestamp), delta: Math.max(0, Math.round(p.value)) })),
@@ -650,7 +651,7 @@ function SyncTab({ edge }: { edge: Edge }) {
               </div>
 
               <span className={cn('text-[22px] font-bold tabular-nums leading-none', pctColor)}>
-                {syncPct.toFixed(3)}%
+                {syncPct.toFixed(1)}%
               </span>
 
               <div className="w-full overflow-hidden rounded-full bg-gray-100" style={{ height: 7 }}>
@@ -700,11 +701,11 @@ function SyncTab({ edge }: { edge: Edge }) {
 
       {/* ── 차트 패널 ─────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-3">
-        <Panel title="소스 지연 추이 (ms)" right={<span className="text-[12px] text-gray-400">최근 2시간</span>}>
+        <Panel title="데이터 전송 시간 (ms)" right={<span className="text-[12px] text-gray-400">최근 2시간</span>}>
           <div className="px-3 py-3">
             <TrendChart
               data={sourceDelay} type="area" height={130}
-              series={[{ key: 'delay', label: '지연 (ms)', color: CHART_COLORS.violet }]}
+              series={[{ key: 'delay', label: '전송 시간 (ms)', color: CHART_COLORS.violet }]}
             />
           </div>
         </Panel>

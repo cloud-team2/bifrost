@@ -120,7 +120,7 @@ public class PipelineTopicService {
                 try {
                     double produceRate = kafkaMetricsQuery.produceRate(topic);
                     double consumeRate = kafkaMetricsQuery.consumeRate(topic);
-                    long lag = kafkaMetricsQuery.totalLag(topic);
+                    long lag = kafkaMetricsQuery.totalLag(sinkConsumerGroup(id));
                     return new PipelineMetricsResponse(produceRate, consumeRate, lag, errorPct);
                 } catch (Exception e) {
                     log.warn("Prometheus 조회 실패, 스냅샷 fallback: topic={}, cause={}", topic, e.getMessage());
@@ -186,13 +186,28 @@ public class PipelineTopicService {
         PipelineEntity p = loadPipeline(wsId, principal, id);
         String topic = p.getTopicName();
         if (topic == null || topic.isBlank() || !kafkaMetricsQuery.isEnabled()) return List.of();
+        String group = sinkConsumerGroup(id);
         long[] win = window(minutes);
         try {
-            return toPoints(kafkaMetricsQuery.unsyncedSeries(topic, win[0], win[1], win[2]));
+            return toPoints(kafkaMetricsQuery.unsyncedSeries(group, win[0], win[1], win[2]));
         } catch (Exception e) {
-            log.warn("미동기화 추이 조회 실패: topic={}, cause={}", topic, e.getMessage());
+            log.warn("미동기화 추이 조회 실패: group={}, cause={}", group, e.getMessage());
             return List.of();
         }
+    }
+
+    /**
+     * 이 파이프라인 sink 커넥터의 Kafka Connect consumer group 이름.
+     * Connect는 sink 커넥터마다 {@code connect-<커넥터명>} 그룹을 쓴다. 커넥터명은 결정적
+     * {@code <pid>-sink}(#155)이며, 저장된 cr_name이 있으면 그것을 우선 사용한다.
+     */
+    private String sinkConsumerGroup(UUID pipelineId) {
+        String sinkName = connectorRepository.findByPipelineId(pipelineId).stream()
+                .filter(c -> c.getKind() == com.bifrost.ops.provisioning.dto.ConnectorKind.SINK)
+                .map(ConnectorEntity::getCrName)
+                .findFirst()
+                .orElse(pipelineId + "-sink");
+        return "connect-" + sinkName;
     }
 
     /** 이벤트 타입 분포 추이(#126, Sync 탭). Debezium create/update/delete 증가분. */

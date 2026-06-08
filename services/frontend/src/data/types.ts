@@ -213,5 +213,6 @@ export interface Account {
 
 export interface Point {
   t: string
-  [k: string]: number | string
+  // null은 측정값 없음(그래프 끊김) — recharts가 gap으로 렌더(connectNulls=false 기본).
+  [k: string]: number | string | null
 }
