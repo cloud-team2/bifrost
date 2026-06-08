@@ -57,6 +57,16 @@ spec:
             enabled: true
             storageClassName: gp3
             size: 5Gi
+          # Prometheus(기본) 외에 Loki(로그)·Tempo(trace) datasource 추가 (#124)
+          additionalDataSources:
+            - name: Loki
+              type: loki
+              access: proxy
+              url: http://loki.monitoring.svc.cluster.local:3100
+            - name: Tempo
+              type: tempo
+              access: proxy
+              url: http://tempo.monitoring.svc.cluster.local:3200
 
         prometheus-node-exporter:
           resources:
