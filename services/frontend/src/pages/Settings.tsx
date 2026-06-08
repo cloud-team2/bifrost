@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Icon, type IconName } from '../components/Icon'
 import { Panel, StatusBadge } from '../components/blocks'
 import { Gauge } from '../components/blocks'
@@ -8,6 +8,7 @@ import { useToast } from '../components/Toast'
 import { useApp } from '../store/AppStore'
 import { genSeries } from '../data/helpers'
 import type { Role } from '../data/types'
+import { api, ApiError, type ProjectMemberResponse, type WorkspaceMemberRole } from '../lib/api'
 import { cn } from '../lib/format'
 
 const SECTIONS: { id: string; label: string; icon: IconName }[] = [
@@ -123,10 +124,49 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
+const TZ_OPTIONS = ['Asia/Seoul', 'Asia/Singapore', 'UTC', 'US/Eastern']
+
 function GeneralSection() {
   const app = useApp()
   const toast = useToast()
+  const wsId = app.currentProject?.id
   const [name, setName] = useState(app.currentProject?.name ?? app.settings.projectName)
+  const [timezone, setTimezone] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  // 진입 시 워크스페이스 현재 설정(timezone) 로드 (#145)
+  useEffect(() => {
+    if (!wsId) return
+    let alive = true
+    api
+      .getWorkspace(wsId)
+      .then((w) => {
+        if (!alive) return
+        setName(w.name)
+        setTimezone(w.timezone ?? '')
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [wsId])
+
+  async function save() {
+    if (!wsId) return
+    setSaving(true)
+    try {
+      await api.updateWorkspace(wsId, { name: name.trim() || undefined, timezone: timezone || null })
+      toast('프로젝트 설정을 저장했습니다')
+    } catch (e) {
+      toast(e instanceof ApiError ? `저장 실패: ${e.message}` : '설정 저장에 실패했습니다', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // 로드된 timezone이 옵션에 없으면 함께 노출
+  const tzOptions = Array.from(new Set([timezone, ...TZ_OPTIONS].filter(Boolean)))
+
   return (
     <div>
       <Head title="일반" sub="프로젝트 단위 설정" />
@@ -148,12 +188,15 @@ function GeneralSection() {
           </Labeled>
           <Labeled label="시간대">
             <select
-              value={app.settings.timezone}
-              onChange={(e) => app.updateSettings({ timezone: e.target.value })}
+              value={timezone}
+              onChange={(e) => setTimezone(e.target.value)}
               className="h-9 w-full rounded-md border border-gray-300 px-3 text-[13px] outline-none focus:border-brand-600"
             >
-              {['Asia/Seoul (GMT+9)', 'Asia/Singapore (GMT+8)', 'UTC', 'US/Eastern (GMT-5)'].map((t) => (
-                <option key={t}>{t}</option>
+              <option value="">(미설정)</option>
+              {tzOptions.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
               ))}
             </select>
           </Labeled>
@@ -161,8 +204,9 @@ function GeneralSection() {
         </div>
         <div className="flex justify-end border-t border-gray-100 px-5 py-3">
           <button
-            onClick={() => toast('프로젝트 설정을 저장했습니다')}
-            className="rounded-md bg-brand-600 px-3.5 py-1.5 text-[13px] font-semibold text-white hover:bg-brand-700"
+            onClick={save}
+            disabled={saving || !wsId}
+            className="rounded-md bg-brand-600 px-3.5 py-1.5 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:bg-brand-300"
           >
             저장
           </button>
@@ -181,77 +225,179 @@ function Labeled({ label, children }: { label: string; children: React.ReactNode
   )
 }
 
+const MEMBER_ROLE_LABEL: Record<WorkspaceMemberRole, string> = {
+  OWNER: '소유자',
+  ADMIN: '관리자',
+  MEMBER: '멤버',
+}
+
 function MembersSection() {
   const app = useApp()
   const toast = useToast()
+  const wsId = app.currentProject?.id
+  const myEmail = app.currentUser?.email ?? ''
+
+  const [members, setMembers] = useState<ProjectMemberResponse[]>([])
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [email, setEmail] = useState('')
-  const [role, setRole] = useState<Role>('developer')
+  const [role, setRole] = useState<WorkspaceMemberRole>('MEMBER')
+  const [busy, setBusy] = useState(false)
+
+  async function reload(ws: string) {
+    setLoading(true)
+    setLoadError(null)
+    try {
+      setMembers(await api.listMembers(ws))
+    } catch (e) {
+      setMembers([])
+      setLoadError(e instanceof ApiError ? e.message : '멤버 목록을 불러오지 못했습니다')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (wsId) reload(wsId)
+  }, [wsId])
+
+  // 현재 사용자의 워크스페이스 역할로 관리 권한 판별 (OWNER/ADMIN만 변경·제거·초대)
+  const myRole = members.find((m) => m.email === myEmail)?.role
+  const canManage = myRole === 'OWNER' || myRole === 'ADMIN'
+
+  async function invite() {
+    if (!wsId) return
+    setBusy(true)
+    try {
+      await api.addMember(wsId, email.trim(), role)
+      toast(`${email.trim()} 님을 추가했습니다`)
+      setEmail('')
+      await reload(wsId)
+    } catch (e) {
+      let msg = '초대에 실패했습니다'
+      if (e instanceof ApiError) {
+        msg =
+          e.code === 'USER_NOT_FOUND_BY_EMAIL'
+            ? '가입된 사용자가 아닙니다 (먼저 회원가입 필요)'
+            : e.code === 'MEMBER_ALREADY_EXISTS'
+              ? '이미 멤버입니다'
+              : e.message
+      }
+      toast(msg, 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function changeRole(userId: string, next: WorkspaceMemberRole) {
+    if (!wsId) return
+    try {
+      await api.updateMemberRole(wsId, userId, next)
+      await reload(wsId)
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : '역할 변경에 실패했습니다', 'error')
+    }
+  }
+
+  async function remove(userId: string) {
+    if (!wsId) return
+    try {
+      await api.removeMember(wsId, userId)
+      toast('멤버를 제거했습니다', 'info')
+      await reload(wsId)
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : '멤버 제거에 실패했습니다', 'error')
+    }
+  }
+
   return (
     <div>
       <Head title="멤버" sub="이 프로젝트에 접근할 수 있는 사용자" />
       <Panel title="팀">
-        <table className="w-full text-[12.5px]">
-          <tbody>
-            {app.members.map((m) => (
-              <tr key={m.email} className="border-b border-gray-50 last:border-0">
-                <td className="px-4 py-2.5">
-                  <div className="font-medium text-gray-800">{m.name}</div>
-                  <div className="text-[11px] text-gray-400">{m.email}</div>
-                </td>
-                <td className="px-4 py-2.5">
-                  <select
-                    value={m.role}
-                    onChange={(e) => app.changeMemberRole(m.email, e.target.value as Role)}
-                    className="rounded-md border border-gray-200 px-2 py-1 text-[12px] outline-none"
-                  >
-                    <option value="developer">개발자</option>
-                    <option value="operator">운영자</option>
-                  </select>
-                </td>
-                <td className="px-4 py-2.5 text-gray-400">{m.joinedAt}</td>
-                <td className="px-4 py-2.5 text-right">
-                  <button
-                    onClick={() => {
-                      app.removeMember(m.email)
-                      toast('멤버를 삭제했습니다', 'info')
-                    }}
-                    className="text-[11.5px] font-medium text-rose-600 hover:underline"
-                  >
-                    삭제
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <div className="flex items-center gap-2 border-t border-gray-100 px-4 py-3">
-          <input
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="teammate@company.com"
-            className="h-9 flex-1 rounded-md border border-gray-300 px-3 text-[13px] outline-none focus:border-brand-600"
-          />
-          <select
-            value={role}
-            onChange={(e) => setRole(e.target.value as Role)}
-            className="h-9 rounded-md border border-gray-300 px-2 text-[13px] outline-none"
-          >
-            <option value="developer">개발자</option>
-            <option value="operator">운영자</option>
-          </select>
-          <button
-            disabled={!email.includes('@')}
-            onClick={() => {
-              app.addMember(email, role)
-              toast(`${email} 님에게 초대를 보냈습니다`)
-              setEmail('')
-            }}
-            className="rounded-md bg-brand-600 px-3 py-2 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:bg-brand-300"
-          >
-            초대
-          </button>
-        </div>
+        {loading ? (
+          <div className="px-4 py-6 text-center text-[12.5px] text-gray-400">불러오는 중…</div>
+        ) : loadError ? (
+          <div className="px-4 py-6 text-center text-[12.5px] text-rose-500">{loadError}</div>
+        ) : (
+          <table className="w-full text-[12.5px]">
+            <tbody>
+              {members.map((m) => {
+                const editable = canManage && m.role !== 'OWNER'
+                return (
+                  <tr key={m.userId} className="border-b border-gray-50 last:border-0">
+                    <td className="px-4 py-2.5">
+                      <div className="font-medium text-gray-800">{m.email?.split('@')[0] ?? m.userId}</div>
+                      <div className="text-[11px] text-gray-400">{m.email ?? '(이메일 없음)'}</div>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      {editable ? (
+                        <select
+                          value={m.role}
+                          onChange={(e) => changeRole(m.userId, e.target.value as WorkspaceMemberRole)}
+                          className="rounded-md border border-gray-200 px-2 py-1 text-[12px] outline-none"
+                        >
+                          <option value="ADMIN">관리자</option>
+                          <option value="MEMBER">멤버</option>
+                        </select>
+                      ) : (
+                        <span className="text-gray-600">{MEMBER_ROLE_LABEL[m.role]}</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-gray-400">{m.joinedAt?.slice(0, 10)}</td>
+                    <td className="px-4 py-2.5 text-right">
+                      {editable && (
+                        <button
+                          onClick={() => remove(m.userId)}
+                          className="text-[11.5px] font-medium text-rose-600 hover:underline"
+                        >
+                          제거
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+              {members.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="px-4 py-6 text-center text-[12.5px] text-gray-400">
+                    멤버가 없습니다
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        )}
+        {canManage && (
+          <div className="flex items-center gap-2 border-t border-gray-100 px-4 py-3">
+            <input
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="teammate@company.com"
+              className="h-9 flex-1 rounded-md border border-gray-300 px-3 text-[13px] outline-none focus:border-brand-600"
+            />
+            <select
+              value={role}
+              onChange={(e) => setRole(e.target.value as WorkspaceMemberRole)}
+              className="h-9 rounded-md border border-gray-300 px-2 text-[13px] outline-none"
+            >
+              <option value="ADMIN">관리자</option>
+              <option value="MEMBER">멤버</option>
+            </select>
+            <button
+              disabled={!email.includes('@') || busy}
+              onClick={invite}
+              className="rounded-md bg-brand-600 px-3 py-2 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:bg-brand-300"
+            >
+              초대
+            </button>
+          </div>
+        )}
       </Panel>
+      {!loading && !loadError && !canManage && (
+        <p className="mt-2 px-1 text-[11.5px] text-gray-400">
+          멤버 초대·역할 변경·제거는 소유자/관리자만 가능합니다.
+        </p>
+      )}
     </div>
   )
 }
