@@ -28,6 +28,36 @@ controller:
     - credentials
     - blueocean
     - timestamper          # Jenkinsfile options { timestamps() } 지원 (#161)
+    - pipeline-stage-view  # job 페이지 빌드×스테이지 매트릭스 뷰 (#192)
+    - job-dsl              # JCasC로 bifrost-ci job 코드-구동 생성 (#194)
+
+  # bifrost-ci job을 JCasC(job-dsl)로 정의 — helm upgrade/재기동 시 자동 재생성·동기화.
+  # lightweight(false)가 핵심: on이면 폴링 baseline 미기록으로 webhook 자동 트리거가 안 됨(#161).
+  JCasC:
+    configScripts:
+      bifrost-ci-job: |
+        jobs:
+          - script: |
+              pipelineJob('bifrost-ci') {
+                description('Bifrost CI — main 머지 시 변경 서비스 Kaniko 빌드 → Harbor → gitops tag (#123)')
+                logRotator { numToKeep(20) }
+                triggers { githubPush() }
+                definition {
+                  cpsScm {
+                    scm {
+                      git {
+                        remote {
+                          url('https://github.com/cloud-team2/bifrost.git')
+                          credentials('github-pat')
+                        }
+                        branch('*/main')
+                      }
+                    }
+                    scriptPath('Jenkinsfile')
+                    lightweight(false)
+                  }
+                }
+              }
 
 persistence:
   enabled: true
