@@ -30,6 +30,7 @@ ingress:
   subnets: subnet-0d8a1dcc1e064b04d,subnet-05e64cd452e9a3c55
   healthcheckPath: /
   path: /
-  # HTTPS — ACM 인증서(bifrost.skala-ai.com, ap-northeast-2). HTTP(80)는 443으로 리다이렉트.
+  # HTTPS — ACM 인증서(bifrost.skala-ai.com, ap-northeast-2). 443 리스너에 부착.
+  # ※ ssl-redirect(HTTP→HTTPS 강제)는 LB Controller IAM에 ModifyListener 권한이 없어 보류(A안 대기).
+  #    현재는 http·https 둘 다 접속 가능. 권한 확보 시 sslRedirect 복원 예정.
   certificateArn: arn:aws:acm:ap-northeast-2:881490135253:certificate/6c9ee6fc-6d84-42e4-ac4a-76ab0f4f6b42
-  sslRedirect: "443"

@@ -16,7 +16,8 @@ metadata:
     alb.ingress.kubernetes.io/backend-protocol: HTTP
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
     alb.ingress.kubernetes.io/certificate-arn: {{ .Values.ingress.certificateArn }}
-    alb.ingress.kubernetes.io/ssl-redirect: {{ .Values.ingress.sslRedirect | quote }}
+    {{- /* ssl-redirect(HTTP→HTTPS)는 ALB ModifyListener 권한 필요 → LB Controller IAM 정책에
+           해당 권한이 없어 보류(A안: 교수님 IAM 승인 대기). 현재는 http·https 둘 다 열림. */}}
     alb.ingress.kubernetes.io/healthcheck-path: {{ .Values.ingress.healthcheckPath }}
     alb.ingress.kubernetes.io/success-codes: "200-399"
 spec:
