@@ -609,9 +609,9 @@ function SyncTab({ edge }: { edge: Edge }) {
   // 실제 source/sink 행수(#107). -1은 접속 실패/테이블 미존재(생성 중).
   const [sync, setSync]       = useState<SyncStatusResponse | null>(null)
   const [syncErr, setSyncErr] = useState(false)
-  // 추세 차트 실데이터(#126, Prometheus range): 소스지연·미동기화·이벤트분포.
+  // 추세 차트 실데이터(#126, Prometheus range): 전송 시간·이벤트분포.
+  // (consumer lag 추이는 60초 커밋 톱니파라 행 동기화와 무관해 오독되므로 노출하지 않는다, #200)
   const [delaySeries, setDelaySeries] = useState<MetricPoint[]>([])
-  const [unsyncedSeries, setUnsyncedSeries] = useState<MetricPoint[]>([])
   const [eventSeries, setEventSeries] = useState<EventDistPoint[]>([])
   const [rangeMin, setRangeMin] = useState(15)   // 시계열 차트 시간 범위(기본 15분)
   useEffect(() => {
@@ -619,13 +619,12 @@ function SyncTab({ edge }: { edge: Edge }) {
     let cancelled = false
     setSync(null)      // 최초 진입만 로딩 표시(폴링 갱신 때는 깜빡임 없이 값만 교체)
     setSyncErr(false)
-    // 실시간 갱신(#200): 동기화율·전송시간·미동기화·이벤트분포를 주기 폴링해 실시간으로 움직인다.
+    // 실시간 갱신(#200): 동기화율·전송시간·이벤트분포를 주기 폴링해 실시간으로 움직인다.
     const load = () => {
       api.pipelineSyncStatus(wsId, edge.id)
         .then((s) => { if (!cancelled) setSync(s) })
         .catch(() => { if (!cancelled) setSyncErr(true) })
       api.pipelineSourceDelay(wsId, edge.id, rangeMin).then((d) => { if (!cancelled) setDelaySeries(d) }).catch(() => {})
-      api.pipelineUnsynced(wsId, edge.id, rangeMin).then((d) => { if (!cancelled) setUnsyncedSeries(d) }).catch(() => {})
       api.pipelineEventDist(wsId, edge.id, rangeMin).then((d) => { if (!cancelled) setEventSeries(d) }).catch(() => {})
     }
     load()
@@ -652,9 +651,6 @@ function SyncTab({ edge }: { edge: Edge }) {
   const sourceDelay = useMemo(() =>
     delaySeries.map((p) => ({ t: p.timestamp, delay: p.value < 0 ? null : Math.round(p.value) })),
     [delaySeries])
-  const deltaTrend  = useMemo(() =>
-    unsyncedSeries.map((p) => ({ t: p.timestamp, delta: Math.max(0, Math.round(p.value)) })),
-    [unsyncedSeries])
   const eventDist   = useMemo(() =>
     eventSeries.map((p) => {
       const ts = hhmm(p.timestamp)
@@ -736,24 +732,16 @@ function SyncTab({ edge }: { edge: Edge }) {
       </Panel>
 
       {/* ── 차트 패널 ─────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-3">
-        <Panel title="데이터 전송 시간 (ms)" right={<RangeSelector value={rangeMin} onChange={setRangeMin} />}>
-          <div className="px-3 py-3">
-            <TrendChart
-              data={sourceDelay} type="area" height={130} timeAxis
-              series={[{ key: 'delay', label: '전송 시간 (ms)', color: CHART_COLORS.violet }]}
-            />
-          </div>
-        </Panel>
-        <Panel title="Consumer Lag (미커밋 메시지)" right={<span className="text-[12px] text-gray-400">{rangeLabel}</span>}>
-          <div className="px-3 py-3">
-            <TrendChart
-              data={deltaTrend} type="area" height={130} timeAxis
-              series={[{ key: 'delta', label: 'lag (메시지)', color: CHART_COLORS.amber }]}
-            />
-          </div>
-        </Panel>
-      </div>
+      {/* consumer lag 차트는 의도적으로 제거: 60초 offset 커밋 주기의 톱니파라 행 동기화(100%)와
+          무관한데도 '미동기화'로 오독된다. 동기화 여부는 상단 행 기준(Δ)·전송 시간으로 답한다. */}
+      <Panel title="데이터 전송 시간 (ms)" right={<RangeSelector value={rangeMin} onChange={setRangeMin} />}>
+        <div className="px-3 py-3">
+          <TrendChart
+            data={sourceDelay} type="area" height={140} timeAxis
+            series={[{ key: 'delay', label: '전송 시간 (ms)', color: CHART_COLORS.violet }]}
+          />
+        </div>
+      </Panel>
 
       <Panel title="이벤트 타입 분포" right={<span className="text-[12px] text-gray-400">{rangeLabel}</span>}>
         <div className="px-4 py-3">
