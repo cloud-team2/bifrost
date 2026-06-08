@@ -17,4 +17,12 @@ public interface PipelineStatusService {
      * 동일 상태 반복 통지는 멱등 처리(no-op 또는 중복 event 억제)는 구현에 위임한다.
      */
     void applyConnectorStatus(ConnectorStatusUpdate update);
+
+    /**
+     * {@code timeout}보다 오래 {@code creating}에 머문 파이프라인을 {@code error}로 전이한다(#155 백스톱).
+     * NotReady condition조차 안 뜨고 멈춘 경우까지 'creating은 막다른 상태가 아니다'를 보장한다.
+     *
+     * @return error로 전이된 파이프라인 수
+     */
+    int failTimedOutCreating(java.time.Duration timeout);
 }

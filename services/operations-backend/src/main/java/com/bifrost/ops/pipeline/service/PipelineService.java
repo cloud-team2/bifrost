@@ -232,14 +232,18 @@ public class PipelineService {
     }
 
     @Transactional
-    public void delete(UUID wsId, AuthenticatedUser principal, UUID id) {
+    public void delete(UUID wsId, AuthenticatedUser principal, UUID id, boolean force) {
         accessGuard.requireAccess(wsId, principal);
         PipelineEntity p = load(wsId, id);
-        // creating(실제 프로비저닝 진행 중)은 삭제 불가 — in-flight 리소스와의 race 방지. 이 가드는 옳다.
-        // 단, 프로비저닝이 실패하면 creating이 아니라 ERROR로 전이돼야 한다(상태 정확성). 그래야 삭제 가능.
-        if (p.getStatus() == PipelineLifecycle.CREATING) {
-            throw validation("creating 상태에서는 삭제할 수 없습니다");
+        // 정상 삭제: creating(실제 프로비저닝 진행 중)은 in-flight race 방지로 금지. 실패는 error로
+        //   전이되므로 삭제 가능(상태 정확성 — #155 watcher/timeout이 보장).
+        // 강제 삭제(force): 상태 불문 best-effort 청소 — 상태 전이가 끝내 안 잡히는 경우의 안전판(#155).
+        if (!force && p.getStatus() == PipelineLifecycle.CREATING) {
+            throw validation("creating 상태에서는 삭제할 수 없습니다 (정리가 필요하면 force=true)");
         }
+        // 핵심 보장(#155): 파이프라인 행은 관련 CR이 모두 삭제된 뒤에만 제거된다.
+        // CR 정리는 force 여부와 무관하게 반드시 성공해야 하며, 실패하면 예외가 트랜잭션을 롤백시켜
+        // 행이 남는다(다음 시도에서 재정리) → 고아 CR이 절대 남지 않는다. force는 상태 가드만 우회한다.
         provisioningService.delete(new PipelineResourceRef(p.getId(), null, connectorNames(p)));
         connectorRepository.deleteAll(connectorRepository.findByPipelineId(p.getId()));
         pipelineRepository.delete(p);
