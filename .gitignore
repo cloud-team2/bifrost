@@ -77,3 +77,6 @@ coverage/
 # ─── Helm ───
 **/charts/
 **/Chart.lock
+
+# ─── Claude Plugin ───
+.understand-anything/
