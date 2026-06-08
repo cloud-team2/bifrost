@@ -27,6 +27,7 @@ controller:
     - configuration-as-code
     - credentials
     - blueocean
+    - timestamper          # Jenkinsfile options { timestamps() } 지원 (#161)
 
 persistence:
   enabled: true

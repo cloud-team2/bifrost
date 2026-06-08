@@ -45,6 +45,7 @@ spec:
   }
 
   options {
+    timestamps()                                      // timestamper 플러그인 설치됨 (#161, jenkins-values)
     disableConcurrentBuilds()
     buildDiscarder(logRotator(numToKeepStr: '20'))
   }
