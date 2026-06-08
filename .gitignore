@@ -66,6 +66,9 @@ infra/k8s/metadb/01-secret.yaml
 *.kubeconfig
 kubeconfig
 
+# ─── MCP ───
+.mcp.json
+
 # ─── Test / Coverage ───
 *.hprof
 coverage/

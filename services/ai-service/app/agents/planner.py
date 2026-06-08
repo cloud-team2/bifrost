@@ -13,8 +13,8 @@ _LOG_PARAMS = {"query": "pipeline events", "time_range": {"from": "now-30m", "to
 _INCIDENT_LOG_PARAMS = {"query": "error exception failure", "time_range": {"from": "now-1h", "to": "now"}}
 
 _KEYWORD_TOOL_MAP: list[tuple[set[str], str, dict]] = [
-    # catalog §8.1 Observability — get_pipeline_logs (operation: search_logs)
-    ({"파이프라인", "pipeline", "현황", "상태", "로그", "log"}, "get_pipeline_logs", _LOG_PARAMS),
+    # catalog §8.1 Observability — search_logs (operation: search_logs)
+    ({"파이프라인", "pipeline", "현황", "상태", "로그", "log"}, "search_logs", _LOG_PARAMS),
     # catalog §8.1 Observability — get_metrics (operation: query_metrics)
     ({"메트릭", "metric", "지표", "수치", "성능"}, "get_metrics", {"metric": "pipeline_lag_seconds", "time_range": "last_30m"}),
     # catalog §8.2 Pipeline / Change — get_deployments (operation: get_recent_changes)
@@ -24,9 +24,9 @@ _KEYWORD_TOOL_MAP: list[tuple[set[str], str, dict]] = [
     # catalog §8.3 Kafka Consumer — get_consumer_lag
     ({"lag", "컨슈머", "consumer", "지연"}, "get_consumer_lag", {"consumer_group": "default-group"}),
     # incident/장애 → log search for error evidence
-    ({"인시던트", "incident", "장애", "오류", "에러"}, "get_pipeline_logs", _INCIDENT_LOG_PARAMS),
+    ({"인시던트", "incident", "장애", "오류", "에러"}, "search_logs", _INCIDENT_LOG_PARAMS),
 ]
-_DEFAULT_TOOL = ("get_pipeline_logs", _LOG_PARAMS)
+_DEFAULT_TOOL = ("search_logs", _LOG_PARAMS)
 
 
 def _plan_hash(tool_name: str, params: dict) -> str:
