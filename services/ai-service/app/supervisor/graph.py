@@ -48,7 +48,7 @@ class Supervisor:
             self._store.patch(run_id, lambda s: _mark_failed(s))
             raise
 
-        mode = AgentMode(state.run.status) if False else _infer_mode(state)
+        mode = _infer_mode(state)
         current = state.run.current_agent
         nxt = next_stage(mode, current)
 
