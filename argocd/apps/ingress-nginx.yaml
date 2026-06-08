@@ -1,0 +1,40 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ingress-nginx
+  namespace: argocd
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  source:
+    repoURL: https://kubernetes.github.io/ingress-nginx
+    chart: ingress-nginx
+    targetRevision: 4.15.1
+    helm:
+      releaseName: ingress-nginx
+      values: |
+        # ALB 대신 ingress-nginx + NLB 1개로 전 서비스 노출 (#232).
+        controller:
+          replicaCount: 1
+          service:
+            type: LoadBalancer
+            annotations:
+              # AWS LB Controller가 NLB(internet-facing, ip 타겟) 생성
+              service.beta.kubernetes.io/aws-load-balancer-type: external
+              service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+              service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+              service.beta.kubernetes.io/aws-load-balancer-name: bifrost-nlb
+              service.beta.kubernetes.io/aws-load-balancer-subnets: subnet-0d8a1dcc1e064b04d,subnet-05e64cd452e9a3c55
+          ingressClassResource:
+            name: nginx
+            default: false
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 256Mi }
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ingress-nginx
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions:
+      - CreateNamespace=true
