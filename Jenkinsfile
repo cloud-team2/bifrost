@@ -8,13 +8,30 @@
 pipeline {
   agent {
     kubernetes {
-      defaultContainer 'kaniko'
+      defaultContainer 'git'                     // Test/Detect/gitops = git 컨테이너(sh+git)
       yaml '''
 apiVersion: v1
 kind: Pod
 spec:
   containers:
-    - name: kaniko
+    # 서비스마다 별도 kaniko 컨테이너 — 한 컨테이너 재사용 시 kaniko가 빌드 중
+    # base rootfs를 / 에 unpack하며 /busybox(셸)을 덮어 다음 빌드 sh가 죽는다.
+    # 컨테이너를 분리하면 파일시스템이 독립이라 안전. (SERVICES와 1:1, 추가 시 함께 추가)
+    - name: kaniko-ai-service
+      image: gcr.io/kaniko-project/executor:v1.23.2-debug
+      command: ["/busybox/cat"]
+      tty: true
+      volumeMounts:
+        - name: harbor-auth
+          mountPath: /kaniko/.docker
+    - name: kaniko-operations-backend
+      image: gcr.io/kaniko-project/executor:v1.23.2-debug
+      command: ["/busybox/cat"]
+      tty: true
+      volumeMounts:
+        - name: harbor-auth
+          mountPath: /kaniko/.docker
+    - name: kaniko-frontend
       image: gcr.io/kaniko-project/executor:v1.23.2-debug
       command: ["/busybox/cat"]
       tty: true
@@ -69,6 +86,7 @@ spec:
               def base = env.GIT_PREVIOUS_SUCCESSFUL_COMMIT
               def changed
               if (base) {
+                sh "git config --global --add safe.directory ${WORKSPACE}"   // git 컨테이너(root)↔워크스페이스 소유자 불일치 회피
                 changed = sh(returnStdout: true, script: "git diff --name-only ${base} ${GIT_COMMIT}").trim().split('\n') as List
               } else {
                 echo '직전 성공 빌드 없음 → 전체 빌드'
@@ -85,24 +103,22 @@ spec:
         stage('Build & Push') {
           when { expression { env.TO_BUILD?.trim() } }
           steps {
-            container('kaniko') {
-              script {
-                // 빌드 컨텍스트는 서비스마다 다르다:
-                //  - operations-backend: 멀티모듈 Gradle → 컨텍스트=레포 루트(gradlew/settings.gradle/gradle 필요)
-                //  - ai-service/frontend: self-contained Dockerfile → 컨텍스트=서비스 디렉토리
-                // 한 kaniko 컨테이너에서 여러 이미지를 순차 빌드하므로 --cleanup 필수:
-                // kaniko가 빌드 중 base rootfs를 컨테이너 /에 unpack → /busybox(셸)까지 덮어
-                // 다음 sh가 안 뜬다. --cleanup이 빌드마다 파일시스템을 복원해 다음 빌드를 보장.
-                for (svc in env.TO_BUILD.trim().split(' ')) {
-                  def ctx = (svc == 'operations-backend') ? "${WORKSPACE}" : "${WORKSPACE}/services/${svc}"
+            script {
+              // 빌드 컨텍스트는 서비스마다 다르다:
+              //  - operations-backend: 멀티모듈 Gradle → 컨텍스트=레포 루트(gradlew/settings.gradle/gradle 필요)
+              //  - ai-service/frontend: self-contained Dockerfile → 컨텍스트=서비스 디렉토리
+              // 각 서비스는 자기 전용 kaniko 컨테이너(kaniko-<svc>)에서 빌드 — 컨테이너 재사용 시
+              // kaniko가 rootfs를 덮어 다음 빌드 셸이 사라지는 문제를 컨테이너 격리로 회피.
+              for (svc in env.TO_BUILD.trim().split(' ')) {
+                def ctx = (svc == 'operations-backend') ? "${WORKSPACE}" : "${WORKSPACE}/services/${svc}"
+                container("kaniko-${svc}") {
                   sh """
                     /kaniko/executor \
                       --context=dir://${ctx} \
                       --dockerfile=${WORKSPACE}/services/${svc}/Dockerfile \
                       --destination=${HARBOR}/${PROJECT}/bifrost-${svc}:${TAG} \
                       --destination=${HARBOR}/${PROJECT}/bifrost-${svc}:latest \
-                      --insecure --skip-tls-verify --insecure-pull \
-                      --cleanup
+                      --insecure --skip-tls-verify --insecure-pull
                   """
                 }
               }
