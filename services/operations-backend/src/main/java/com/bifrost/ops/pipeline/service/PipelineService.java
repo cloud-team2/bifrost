@@ -59,6 +59,7 @@ public class PipelineService {
     private final WorkspaceAccessGuard accessGuard;
     private final EventService eventService;
     private final AuditService auditService;
+    private final com.bifrost.ops.pipeline.kafka.KafkaResourceCleaner kafkaResourceCleaner;
 
     public PipelineService(PipelineRepository pipelineRepository,
                            DatasourceRepository datasourceRepository,
@@ -67,7 +68,8 @@ public class PipelineService {
                            PipelineProvisioningService provisioningService,
                            WorkspaceAccessGuard accessGuard,
                            EventService eventService,
-                           AuditService auditService) {
+                           AuditService auditService,
+                           com.bifrost.ops.pipeline.kafka.KafkaResourceCleaner kafkaResourceCleaner) {
         this.pipelineRepository = pipelineRepository;
         this.datasourceRepository = datasourceRepository;
         this.workspaceRepository = workspaceRepository;
@@ -76,6 +78,7 @@ public class PipelineService {
         this.accessGuard = accessGuard;
         this.eventService = eventService;
         this.auditService = auditService;
+        this.kafkaResourceCleaner = kafkaResourceCleaner;
     }
 
     // ---------- 목록 / 상세 ----------
@@ -245,6 +248,9 @@ public class PipelineService {
         // CR 정리는 force 여부와 무관하게 반드시 성공해야 하며, 실패하면 예외가 트랜잭션을 롤백시켜
         // 행이 남는다(다음 시도에서 재정리) → 고아 CR이 절대 남지 않는다. force는 상태 가드만 우회한다.
         provisioningService.delete(new PipelineResourceRef(p.getId(), null, connectorNames(p)));
+        // Kafka 측 잔재(토픽·sink consumer group) 정리(#200). best-effort — 실패해도 삭제는 진행.
+        // CR이 모두 제거된 뒤 호출해야 Debezium source가 토픽을 재생성하지 않는다.
+        kafkaResourceCleaner.deleteTopicAndSinkGroup(p.getTopicName(), p.getId());
         connectorRepository.deleteAll(connectorRepository.findByPipelineId(p.getId()));
         pipelineRepository.delete(p);
         eventService.record(wsId, null, EventLevel.INFO, "PIPELINE_DELETED",

@@ -120,7 +120,7 @@ public class PipelineTopicService {
                 try {
                     double produceRate = kafkaMetricsQuery.produceRate(topic);
                     double consumeRate = kafkaMetricsQuery.consumeRate(topic);
-                    long lag = kafkaMetricsQuery.totalLag(topic);
+                    long lag = kafkaMetricsQuery.totalLag(sinkConsumerGroup(id));
                     return new PipelineMetricsResponse(produceRate, consumeRate, lag, errorPct);
                 } catch (Exception e) {
                     log.warn("Prometheus 조회 실패, 스냅샷 fallback: topic={}, cause={}", topic, e.getMessage());
@@ -145,7 +145,7 @@ public class PipelineTopicService {
 
         long endSec = System.currentTimeMillis() / 1000L;
         long startSec = endSec - Math.max(1, minutes) * 60L;
-        long stepSec = 60L;
+        long stepSec = stepFor(minutes);
         try {
             Map<Long, Double> produce = kafkaMetricsQuery.produceSeries(topic, startSec, endSec, stepSec);
             Map<Long, Double> consume = kafkaMetricsQuery.consumeSeries(topic, startSec, endSec, stepSec);
@@ -186,13 +186,28 @@ public class PipelineTopicService {
         PipelineEntity p = loadPipeline(wsId, principal, id);
         String topic = p.getTopicName();
         if (topic == null || topic.isBlank() || !kafkaMetricsQuery.isEnabled()) return List.of();
+        String group = sinkConsumerGroup(id);
         long[] win = window(minutes);
         try {
-            return toPoints(kafkaMetricsQuery.unsyncedSeries(topic, win[0], win[1], win[2]));
+            return toPoints(kafkaMetricsQuery.unsyncedSeries(group, win[0], win[1], win[2]));
         } catch (Exception e) {
-            log.warn("미동기화 추이 조회 실패: topic={}, cause={}", topic, e.getMessage());
+            log.warn("미동기화 추이 조회 실패: group={}, cause={}", group, e.getMessage());
             return List.of();
         }
+    }
+
+    /**
+     * 이 파이프라인 sink 커넥터의 Kafka Connect consumer group 이름.
+     * Connect는 sink 커넥터마다 {@code connect-<커넥터명>} 그룹을 쓴다. 커넥터명은 결정적
+     * {@code <pid>-sink}(#155)이며, 저장된 cr_name이 있으면 그것을 우선 사용한다.
+     */
+    private String sinkConsumerGroup(UUID pipelineId) {
+        String sinkName = connectorRepository.findByPipelineId(pipelineId).stream()
+                .filter(c -> c.getKind() == com.bifrost.ops.provisioning.dto.ConnectorKind.SINK)
+                .map(ConnectorEntity::getCrName)
+                .findFirst()
+                .orElse(pipelineId + "-sink");
+        return "connect-" + sinkName;
     }
 
     /** 이벤트 타입 분포 추이(#126, Sync 탭). Debezium create/update/delete 증가분. */
@@ -201,10 +216,13 @@ public class PipelineTopicService {
         String server = debeziumServer(p);
         if (server == null || !kafkaMetricsQuery.isEnabled()) return List.of();
         long[] win = window(minutes);
+        // increase(metric[step])는 윈도우에 샘플이 2개 이상 있어야 계산된다. step이 scrape 간격(15s)과
+        // 같으면 샘플 1개라 빈 결과가 나오므로(예: 15분 범위), 이벤트 분포 step은 최소 30s(2 scrape)로 둔다.
+        long evStep = Math.max(30L, win[2]);
         try {
-            Map<Long, Double> ins = kafkaMetricsQuery.eventCountSeries(server, "create", win[0], win[1], win[2]);
-            Map<Long, Double> upd = kafkaMetricsQuery.eventCountSeries(server, "update", win[0], win[1], win[2]);
-            Map<Long, Double> del = kafkaMetricsQuery.eventCountSeries(server, "delete", win[0], win[1], win[2]);
+            Map<Long, Double> ins = kafkaMetricsQuery.eventCountSeries(server, "create", win[0], win[1], evStep);
+            Map<Long, Double> upd = kafkaMetricsQuery.eventCountSeries(server, "update", win[0], win[1], evStep);
+            Map<Long, Double> del = kafkaMetricsQuery.eventCountSeries(server, "delete", win[0], win[1], evStep);
             java.util.TreeSet<Long> stamps = new java.util.TreeSet<>();
             stamps.addAll(ins.keySet());
             stamps.addAll(upd.keySet());
@@ -226,11 +244,19 @@ public class PipelineTopicService {
 
     // ---- private ----
 
-    /** [startSec, endSec, stepSec] 윈도우 (step 60s). */
+    /** [startSec, endSec, stepSec] 윈도우. step은 창 길이에 비례(짧은 창일수록 촘촘). */
     private long[] window(int minutes) {
         long endSec = System.currentTimeMillis() / 1000L;
         long startSec = endSec - Math.max(1, minutes) * 60L;
-        return new long[]{startSec, endSec, 60L};
+        return new long[]{startSec, endSec, stepFor(minutes)};
+    }
+
+    /**
+     * 창 길이에 맞춘 해상도(step, 초). 약 60점을 목표로 하되 최소 15초
+     * (Prometheus scrape 간격보다 잘게 쪼개도 의미 없음). 예: 5m→15s, 15m→15s, 1h→60s, 3h→180s.
+     */
+    private static long stepFor(int minutes) {
+        return Math.max(15L, minutes);
     }
 
     /** Map<ts초,값> → 시간순 MetricPoint(ms). */
