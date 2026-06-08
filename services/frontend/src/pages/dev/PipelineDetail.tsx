@@ -137,13 +137,18 @@ function OverviewTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
   useEffect(() => {
     if (!wsId) return
     let cancelled = false
-    api.pipelineTopicInfo(wsId, edge.id).then((t) => { if (!cancelled) setTopicInfo(t) }).catch(() => {})
-    api.pipelineMetrics(wsId, edge.id).then((m) => { if (!cancelled) setMetrics(m) }).catch(() => {})
-    api.pipelineThroughput(wsId, edge.id, 30).then((t) => { if (!cancelled) setThroughput(t) }).catch(() => {})
-    if (isEda) {
-      api.pipelineConsumerGroups(wsId, edge.id).then((g) => { if (!cancelled) setGroups(g) }).catch(() => {})
+    // 실시간 갱신(#200): 마운트 시 1회 + 주기 폴링으로 Prometheus 대시보드처럼 그래프가 움직인다.
+    const load = () => {
+      api.pipelineTopicInfo(wsId, edge.id).then((t) => { if (!cancelled) setTopicInfo(t) }).catch(() => {})
+      api.pipelineMetrics(wsId, edge.id).then((m) => { if (!cancelled) setMetrics(m) }).catch(() => {})
+      api.pipelineThroughput(wsId, edge.id, 30).then((t) => { if (!cancelled) setThroughput(t) }).catch(() => {})
+      if (isEda) {
+        api.pipelineConsumerGroups(wsId, edge.id).then((g) => { if (!cancelled) setGroups(g) }).catch(() => {})
+      }
     }
-    return () => { cancelled = true }
+    load()
+    const timer = setInterval(load, 5000)
+    return () => { cancelled = true; clearInterval(timer) }
   }, [wsId, edge.id, isEda])
 
   const m = {
@@ -586,16 +591,20 @@ function SyncTab({ edge }: { edge: Edge }) {
   useEffect(() => {
     if (!wsId) return
     let cancelled = false
-    setSync(null)
+    setSync(null)      // 최초 진입만 로딩 표시(폴링 갱신 때는 깜빡임 없이 값만 교체)
     setSyncErr(false)
-    api
-      .pipelineSyncStatus(wsId, edge.id)
-      .then((s) => { if (!cancelled) setSync(s) })
-      .catch(() => { if (!cancelled) setSyncErr(true) })
-    api.pipelineSourceDelay(wsId, edge.id).then((d) => { if (!cancelled) setDelaySeries(d) }).catch(() => {})
-    api.pipelineUnsynced(wsId, edge.id).then((d) => { if (!cancelled) setUnsyncedSeries(d) }).catch(() => {})
-    api.pipelineEventDist(wsId, edge.id).then((d) => { if (!cancelled) setEventSeries(d) }).catch(() => {})
-    return () => { cancelled = true }
+    // 실시간 갱신(#200): 동기화율·전송시간·미동기화·이벤트분포를 주기 폴링해 실시간으로 움직인다.
+    const load = () => {
+      api.pipelineSyncStatus(wsId, edge.id)
+        .then((s) => { if (!cancelled) setSync(s) })
+        .catch(() => { if (!cancelled) setSyncErr(true) })
+      api.pipelineSourceDelay(wsId, edge.id).then((d) => { if (!cancelled) setDelaySeries(d) }).catch(() => {})
+      api.pipelineUnsynced(wsId, edge.id).then((d) => { if (!cancelled) setUnsyncedSeries(d) }).catch(() => {})
+      api.pipelineEventDist(wsId, edge.id).then((d) => { if (!cancelled) setEventSeries(d) }).catch(() => {})
+    }
+    load()
+    const timer = setInterval(load, 5000)
+    return () => { cancelled = true; clearInterval(timer) }
   }, [wsId, edge.id])
 
   const hhmm = (ts: number) => new Date(ts).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
@@ -805,7 +814,7 @@ function MessagesTab({ edge }: { edge: Edge }) {
     return () => { cancelled = true }
   }, [wsId, edge.id])
   const [partition, setPartition] = useState<'all' | number>('all')
-  const [live, setLive] = useState(false)
+  const [live, setLive] = useState(true)   // 기본 live: 진입 즉시 실시간으로 메시지가 쌓이는 걸 본다(#200)
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<number | null>(null)
   const [rawView, setRawView] = useState(false)
