@@ -12,6 +12,9 @@ import com.bifrost.ops.auth.persistence.entity.UserEntity;
 import com.bifrost.ops.auth.persistence.repository.UserRepository;
 import com.bifrost.ops.provisioning.dto.TenantProvisionRequest;
 import com.bifrost.ops.provisioning.port.TenantProvisionerPort;
+import com.bifrost.ops.workspace.Role;
+import com.bifrost.ops.workspace.persistence.entity.ProjectMemberEntity;
+import com.bifrost.ops.workspace.persistence.repository.ProjectMemberRepository;
 import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,6 +48,9 @@ class AuthServiceTest {
     private WorkspaceRepository workspaceRepository;
 
     @Mock
+    private ProjectMemberRepository memberRepository;
+
+    @Mock
     private PasswordEncoder passwordEncoder;
 
     @Mock
@@ -60,6 +66,7 @@ class AuthServiceTest {
         authService = new AuthService(
             userRepository,
             workspaceRepository,
+            memberRepository,
             passwordEncoder,
             jwtService,
             tenantProvisioner
@@ -100,6 +107,12 @@ class AuthServiceTest {
         assertThat(userCaptor.getValue().getEmail()).isEqualTo("user@example.com");
         assertThat(userCaptor.getValue().getName()).isEqualTo("User Name");
         assertThat(userCaptor.getValue().getPasswordHash()).isEqualTo("encoded-password");
+
+        ArgumentCaptor<ProjectMemberEntity> memberCaptor = ArgumentCaptor.forClass(ProjectMemberEntity.class);
+        verify(memberRepository).saveAndFlush(memberCaptor.capture());
+        assertThat(memberCaptor.getValue().getWorkspaceId()).isEqualTo(workspaceId);
+        assertThat(memberCaptor.getValue().getUserId()).isEqualTo(userId);
+        assertThat(memberCaptor.getValue().getRole()).isEqualTo(Role.OWNER);
 
         ArgumentCaptor<TenantProvisionRequest> provisionCaptor = ArgumentCaptor.forClass(TenantProvisionRequest.class);
         verify(tenantProvisioner).provision(provisionCaptor.capture());
@@ -253,13 +266,15 @@ class AuthServiceTest {
         user.setLastLoginAt(Instant.parse("2026-06-08T01:02:03Z"));
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
         when(workspaceRepository.findById(workspaceId)).thenReturn(Optional.of(workspace));
+        when(memberRepository.findByIdWorkspaceIdAndIdUserId(workspaceId, userId))
+                .thenReturn(Optional.of(new ProjectMemberEntity(workspaceId, userId, Role.ADMIN)));
 
         MeResponse response = authService.me(new AuthenticatedUser(userId, workspaceId, "user@example.com"));
 
         assertThat(response.userId()).isEqualTo(userId);
         assertThat(response.email()).isEqualTo("user@example.com");
         assertThat(response.name()).isEqualTo("User Name");
-        assertThat(response.role()).isEqualTo("OWNER");
+        assertThat(response.role()).isEqualTo("ADMIN");
         assertThat(response.joinedAt()).isEqualTo(user.getCreatedAt());
         assertThat(response.lastLoginAt()).isEqualTo(Instant.parse("2026-06-08T01:02:03Z"));
         assertThat(response.workspaceId()).isEqualTo(workspaceId);
@@ -276,10 +291,26 @@ class AuthServiceTest {
         workspace.setOwnerUserId(UUID.randomUUID());
         when(userRepository.findById(userId)).thenReturn(Optional.of(user(userId, workspaceId, "user@example.com", "encoded-password")));
         when(workspaceRepository.findById(workspaceId)).thenReturn(Optional.of(workspace));
+        when(memberRepository.findByIdWorkspaceIdAndIdUserId(workspaceId, userId)).thenReturn(Optional.empty());
 
         MeResponse response = authService.me(new AuthenticatedUser(userId, workspaceId, "user@example.com"));
 
         assertThat(response.role()).isEqualTo("MEMBER");
+    }
+
+    @Test
+    void meFallsBackToOwnerWhenMembershipMissing() {
+        UUID userId = UUID.randomUUID();
+        UUID workspaceId = UUID.randomUUID();
+        WorkspaceEntity workspace = workspace(workspaceId, "Team A", "team-a", WorkspaceEntity.Status.ACTIVE);
+        workspace.setOwnerUserId(userId);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user(userId, workspaceId, "user@example.com", "encoded-password")));
+        when(workspaceRepository.findById(workspaceId)).thenReturn(Optional.of(workspace));
+        when(memberRepository.findByIdWorkspaceIdAndIdUserId(workspaceId, userId)).thenReturn(Optional.empty());
+
+        MeResponse response = authService.me(new AuthenticatedUser(userId, workspaceId, "user@example.com"));
+
+        assertThat(response.role()).isEqualTo("OWNER");
     }
 
     private static RegisterRequest registerRequest() {

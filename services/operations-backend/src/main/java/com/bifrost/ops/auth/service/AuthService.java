@@ -13,7 +13,10 @@ import com.bifrost.ops.auth.persistence.entity.UserEntity;
 import com.bifrost.ops.auth.persistence.repository.UserRepository;
 import com.bifrost.ops.provisioning.dto.TenantProvisionRequest;
 import com.bifrost.ops.provisioning.port.TenantProvisionerPort;
+import com.bifrost.ops.workspace.Role;
+import com.bifrost.ops.workspace.persistence.entity.ProjectMemberEntity;
 import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
+import com.bifrost.ops.workspace.persistence.repository.ProjectMemberRepository;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,17 +35,20 @@ public class AuthService {
 
     private final UserRepository userRepository;
     private final WorkspaceRepository workspaceRepository;
+    private final ProjectMemberRepository memberRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final TenantProvisionerPort tenantProvisioner;
 
     public AuthService(UserRepository userRepository,
                        WorkspaceRepository workspaceRepository,
+                       ProjectMemberRepository memberRepository,
                        PasswordEncoder passwordEncoder,
                        JwtService jwtService,
                        TenantProvisionerPort tenantProvisioner) {
         this.userRepository = userRepository;
         this.workspaceRepository = workspaceRepository;
+        this.memberRepository = memberRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.tenantProvisioner = tenantProvisioner;
@@ -78,6 +84,7 @@ public class AuthService {
             workspace = workspaceRepository.saveAndFlush(workspace);
             user.setTenantId(workspace.getId());
             user = userRepository.saveAndFlush(user);
+            memberRepository.saveAndFlush(new ProjectMemberEntity(workspace.getId(), user.getId(), Role.OWNER));
         } catch (DataIntegrityViolationException e) {
             throw mapRegistrationConflict(req, e);
         }
@@ -141,12 +148,14 @@ public class AuthService {
         WorkspaceEntity workspace = workspaceRepository.findById(principal.tenantId())
             .orElseThrow(() -> new ApiException(ErrorCode.AUTH_TOKEN_INVALID,
                     "세션이 더 이상 유효하지 않습니다. 다시 로그인해주세요"));
-        String role = principal.userId().equals(workspace.getOwnerUserId()) ? "OWNER" : "MEMBER";
+        Role role = memberRepository.findByIdWorkspaceIdAndIdUserId(workspace.getId(), principal.userId())
+                .map(ProjectMemberEntity::getRole)
+                .orElseGet(() -> principal.userId().equals(workspace.getOwnerUserId()) ? Role.OWNER : Role.MEMBER);
         return new MeResponse(
             principal.userId(),
             principal.email(),
             user.getName(),
-            role,
+            role.name(),
             user.getCreatedAt(),
             user.getLastLoginAt(),
             workspace.getId(),

@@ -18,6 +18,9 @@ public class WorkspaceEntity {
     @Column(nullable = false, length = 63, unique = true)
     private String namespace;
 
+    @Column(length = 50)
+    private String timezone;
+
     /** 워크스페이스 소유자(생성자) user id. 소유 기반 다중 워크스페이스 scope의 기준(#72). */
     @Column(name = "owner_user_id")
     private UUID ownerUserId;
@@ -58,6 +61,8 @@ public class WorkspaceEntity {
     public void setName(String name) { this.name = name; }
     public String getNamespace() { return namespace; }
     public void setNamespace(String namespace) { this.namespace = namespace; }
+    public String getTimezone() { return timezone; }
+    public void setTimezone(String timezone) { this.timezone = timezone; }
     public UUID getOwnerUserId() { return ownerUserId; }
     public void setOwnerUserId(UUID ownerUserId) { this.ownerUserId = ownerUserId; }
     public Status getStatus() { return status; }

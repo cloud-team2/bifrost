@@ -9,10 +9,14 @@ import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
 import com.bifrost.ops.provisioning.dto.TenantProvisionRequest;
 import com.bifrost.ops.provisioning.port.TenantProvisionerPort;
 import com.bifrost.ops.workspace.NamespaceSlug;
+import com.bifrost.ops.workspace.Role;
 import com.bifrost.ops.workspace.WorkspaceAccessGuard;
 import com.bifrost.ops.workspace.dto.WorkspaceCreateRequest;
 import com.bifrost.ops.workspace.dto.WorkspaceResponse;
+import com.bifrost.ops.workspace.dto.WorkspaceUpdateRequest;
+import com.bifrost.ops.workspace.persistence.entity.ProjectMemberEntity;
 import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
+import com.bifrost.ops.workspace.persistence.repository.ProjectMemberRepository;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,15 +40,18 @@ public class WorkspaceService {
     private static final Logger log = LoggerFactory.getLogger(WorkspaceService.class);
 
     private final WorkspaceRepository workspaceRepository;
+    private final ProjectMemberRepository memberRepository;
     private final PipelineRepository pipelineRepository;
     private final TenantProvisionerPort tenantProvisioner;
     private final WorkspaceAccessGuard accessGuard;
 
     public WorkspaceService(WorkspaceRepository workspaceRepository,
+                            ProjectMemberRepository memberRepository,
                             PipelineRepository pipelineRepository,
                             TenantProvisionerPort tenantProvisioner,
                             WorkspaceAccessGuard accessGuard) {
         this.workspaceRepository = workspaceRepository;
+        this.memberRepository = memberRepository;
         this.pipelineRepository = pipelineRepository;
         this.tenantProvisioner = tenantProvisioner;
         this.accessGuard = accessGuard;
@@ -52,7 +59,13 @@ public class WorkspaceService {
 
     /** 로그인 사용자가 소유한 워크스페이스 목록(생성순). 카드 요약용 파이프라인 카운트 포함(#105). */
     public List<WorkspaceResponse> list(AuthenticatedUser principal) {
-        return workspaceRepository.findByOwnerUserIdOrderByCreatedAt(principal.userId()).stream()
+        List<UUID> workspaceIds = memberRepository.findByIdUserIdOrderByJoinedAtAsc(principal.userId()).stream()
+                .map(ProjectMemberEntity::getWorkspaceId)
+                .toList();
+        List<WorkspaceEntity> workspaces = workspaceIds.isEmpty()
+                ? workspaceRepository.findByOwnerUserIdOrderByCreatedAt(principal.userId())
+                : workspaceRepository.findByIdInOrderByCreatedAt(workspaceIds);
+        return workspaces.stream()
                 .map(this::withCounts)
                 .toList();
     }
@@ -90,6 +103,7 @@ public class WorkspaceService {
 
         try {
             workspace = workspaceRepository.saveAndFlush(workspace);
+            memberRepository.saveAndFlush(new ProjectMemberEntity(workspace.getId(), principal.userId(), Role.OWNER));
         } catch (DataIntegrityViolationException e) {
             ApiException mapped = mapConflict(e);
             OpsLog.fail("Project", "신규 프로젝트 생성 실패", "name=" + req.name() + ", reason=" + mapped.getMessage());
@@ -101,6 +115,33 @@ public class WorkspaceService {
                 "name=" + workspace.getName() + ", namespace=" + workspace.getNamespace()
                         + ", wsId=" + workspace.getId());
         return WorkspaceResponse.from(workspace);
+    }
+
+    @Transactional
+    public WorkspaceResponse update(UUID wsId, AuthenticatedUser principal, WorkspaceUpdateRequest req) {
+        requireManager(wsId, principal);
+        WorkspaceEntity workspace = workspaceRepository.findById(wsId)
+                .orElseThrow(() -> new ApiException(ErrorCode.WORKSPACE_NOT_FOUND, "워크스페이스를 찾을 수 없습니다"));
+        if (req.name() != null && !req.name().isBlank()) {
+            String name = req.name().trim();
+            if (!name.equals(workspace.getName()) && workspaceRepository.existsByName(name)) {
+                throw new ApiException(ErrorCode.WORKSPACE_NAME_CONFLICT, "이미 사용 중인 워크스페이스 이름");
+            }
+            workspace.setName(name);
+        }
+        if (req.timezone() != null) {
+            workspace.setTimezone(req.timezone().isBlank() ? null : req.timezone().trim());
+        }
+        return withCounts(workspaceRepository.saveAndFlush(workspace));
+    }
+
+    private void requireManager(UUID wsId, AuthenticatedUser principal) {
+        boolean hasRole = memberRepository.existsByIdWorkspaceIdAndIdUserIdAndRoleIn(
+                wsId, principal.userId(), List.of(Role.OWNER, Role.ADMIN));
+        if (hasRole || workspaceRepository.existsByIdAndOwnerUserId(wsId, principal.userId())) {
+            return;
+        }
+        throw new ApiException(ErrorCode.WORKSPACE_FORBIDDEN, "워크스페이스 관리 권한이 없습니다");
     }
 
     private ApiException mapConflict(DataIntegrityViolationException e) {

@@ -61,9 +61,9 @@ class PipelineControllerTest {
     @Test
     void deleteReturns204() {
         UUID id = UUID.randomUUID();
-        ResponseEntity<Void> resp = controller.delete(wsId, id, principal);
+        ResponseEntity<Void> resp = controller.delete(wsId, id, principal, false);
         assertThat(resp.getStatusCode().value()).isEqualTo(204);
-        verify(service).delete(wsId, principal, id);
+        verify(service).delete(wsId, principal, id, false);
     }
 
     private static PipelineResponse sample(String status) {
