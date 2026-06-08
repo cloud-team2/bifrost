@@ -53,6 +53,22 @@ class ConsumerLagParams(ToolParams):
     consumer_group: str
 
 
+class ListProjectPipelinesParams(ToolParams):
+    pass
+
+
+class PipelineTopologyParams(ToolParams):
+    pipeline_id: str
+
+
+class GetIncidentSummaryParams(ToolParams):
+    incident_id: str
+
+
+class _StubData(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
 @dataclass(frozen=True)
 class ToolDefinition:
     name: str
@@ -95,7 +111,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
     definitions = [
         # ── catalog §8.1 Observability ──────────────────────────────────────
         ToolDefinition(
-            name="get_pipeline_logs",
+            name="search_logs",
             operation="search_logs",
             method="POST",
             path_template="/internal/ops/projects/{project_id}/observability/logs/search",
@@ -154,6 +170,36 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
             result_model=ConsumerLagData,
             path_params=("consumer_group",),
             alias_for="get_consumer_lag",
+        ),
+        # ── stub tools — path/params finalized after Spring internalops impl ──
+        ToolDefinition(
+            name="list_project_pipelines",
+            operation="list_project_pipelines",
+            method="GET",
+            path_template="/internal/ops/projects/{project_id}/pipelines",
+            risk=RiskLevel.READ_ONLY,
+            params_model=ListProjectPipelinesParams,
+            result_model=_StubData,
+        ),
+        ToolDefinition(
+            name="get_pipeline_topology",
+            operation="get_pipeline_topology",
+            method="GET",
+            path_template="/internal/ops/projects/{project_id}/pipelines/{pipeline_id}/topology",
+            risk=RiskLevel.READ_ONLY,
+            params_model=PipelineTopologyParams,
+            result_model=_StubData,
+            path_params=("pipeline_id",),
+        ),
+        ToolDefinition(
+            name="get_incident_summary",
+            operation="get_incident_summary",
+            method="GET",
+            path_template="/internal/ops/incidents/{incident_id}/summary",
+            risk=RiskLevel.READ_ONLY,
+            params_model=GetIncidentSummaryParams,
+            result_model=_StubData,
+            path_params=("incident_id",),
         ),
     ]
     return {definition.name: definition for definition in definitions}
