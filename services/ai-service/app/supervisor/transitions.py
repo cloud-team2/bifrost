@@ -1,25 +1,32 @@
-"""Stage transition tables per AgentMode (§15 §4 Branch 규칙).
-
-Only simple_query is implemented in this skeleton. Other modes are filled in
-during the Supervisor full implementation issue.
-"""
+"""Stage transition tables per AgentMode (§15 §4 Branch 규칙)."""
 from __future__ import annotations
 
 from app.schemas.state import AgentMode
 
 SIMPLE_QUERY_STAGES: tuple[str, ...] = ("planner", "retrieval", "verifier", "report")
 
-_STAGE_SEQUENCES: dict[AgentMode, tuple[str, ...]] = {
-    AgentMode.SIMPLE_QUERY: SIMPLE_QUERY_STAGES,
-}
+INCIDENT_ANALYSIS_STAGES: tuple[str, ...] = (
+    "correlation", "planner", "retrieval",
+    "classifier", "rca", "verifier", "report",
+)
+
+INCIDENT_ANALYSIS_REMEDIATION_SUFFIX: tuple[str, ...] = ("remediation", "policy_guard")
 
 
-def stages_for_mode(mode: AgentMode) -> tuple[str, ...]:
-    return _STAGE_SEQUENCES.get(mode, ())
+def stages_for_mode(mode: AgentMode, remediation_requested: bool = False) -> tuple[str, ...]:
+    if mode == AgentMode.SIMPLE_QUERY:
+        return SIMPLE_QUERY_STAGES
+    if mode == AgentMode.INCIDENT_ANALYSIS:
+        base = INCIDENT_ANALYSIS_STAGES
+        if remediation_requested:
+            idx = base.index("rca") + 1
+            return base[:idx] + INCIDENT_ANALYSIS_REMEDIATION_SUFFIX + base[idx:]
+        return base
+    return ()
 
 
-def next_stage(mode: AgentMode, current: str | None) -> str | None:
-    stages = stages_for_mode(mode)
+def next_stage(mode: AgentMode, current: str | None, remediation_requested: bool = False) -> str | None:
+    stages = stages_for_mode(mode, remediation_requested)
     if not stages:
         return None
     if current is None:
