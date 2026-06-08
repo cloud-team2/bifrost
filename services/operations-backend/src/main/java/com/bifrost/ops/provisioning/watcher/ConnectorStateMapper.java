@@ -91,9 +91,13 @@ public class ConnectorStateMapper {
             case "FAILED" -> ConnectorRuntimeState.FAILED;
             case "PAUSED" -> ConnectorRuntimeState.PAUSED;
             case "UNASSIGNED" -> ConnectorRuntimeState.UNASSIGNED;
-            case "RUNNING" -> failed > 0
-                    ? ConnectorRuntimeState.PARTIALLY_FAILED
-                    : ConnectorRuntimeState.RUNNING;
+            // 전체 task 실패면 connector는 RUNNING이어도 사실상 down → FAILED(→ERROR).
+            // 일부만 실패면 PARTIALLY_FAILED(→LAG). (#179: DB 장애 등으로 모든 task가 죽는 경우 error로)
+            case "RUNNING" -> {
+                if (failed <= 0) yield ConnectorRuntimeState.RUNNING;
+                else if (total > 0 && failed >= total) yield ConnectorRuntimeState.FAILED;
+                else yield ConnectorRuntimeState.PARTIALLY_FAILED;
+            }
             default -> ConnectorRuntimeState.UNKNOWN;
         };
     }

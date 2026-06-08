@@ -99,8 +99,9 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
         if (next == current) {
             return;
         }
-        // 상태 사유 동기화(#155): ERROR면 커넥터 lastError를 노출하고, 정상 상태로 가면 클리어.
-        String message = next == PipelineLifecycle.ERROR ? firstError(connectors) : null;
+        // 상태 사유 동기화(#155/#179): 비정상(ERROR/LAG)이면 커넥터 lastError를 노출, 정상이면 클리어.
+        boolean degraded = next == PipelineLifecycle.ERROR || next == PipelineLifecycle.LAG;
+        String message = degraded ? firstError(connectors) : null;
         transition(p, current, next, message);
     }
 

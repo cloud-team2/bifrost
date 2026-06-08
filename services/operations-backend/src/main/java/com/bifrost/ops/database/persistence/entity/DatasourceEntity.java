@@ -58,6 +58,16 @@ public class DatasourceEntity {
     @Column(name = "last_inspected_at")
     private Instant lastInspectedAt;
 
+    // 연결 헬스(#179): 주기 프로브로 갱신. HEALTHY | UNREACHABLE | UNKNOWN
+    @Column(name = "connection_status", length = 20)
+    private String connectionStatus;
+
+    @Column(name = "connection_error", length = 255)
+    private String connectionError;
+
+    @Column(name = "connection_checked_at")
+    private Instant connectionCheckedAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -96,5 +106,11 @@ public class DatasourceEntity {
     public void setSinkReadinessReport(String sinkReadinessReport) { this.sinkReadinessReport = sinkReadinessReport; }
     public Instant getLastInspectedAt() { return lastInspectedAt; }
     public void setLastInspectedAt(Instant lastInspectedAt) { this.lastInspectedAt = lastInspectedAt; }
+    public String getConnectionStatus() { return connectionStatus; }
+    public void setConnectionStatus(String connectionStatus) { this.connectionStatus = connectionStatus; }
+    public String getConnectionError() { return connectionError; }
+    public void setConnectionError(String connectionError) { this.connectionError = connectionError; }
+    public Instant getConnectionCheckedAt() { return connectionCheckedAt; }
+    public void setConnectionCheckedAt(Instant connectionCheckedAt) { this.connectionCheckedAt = connectionCheckedAt; }
     public Instant getCreatedAt() { return createdAt; }
 }
