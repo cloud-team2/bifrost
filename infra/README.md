@@ -23,8 +23,8 @@ docker-compose up -d
 
 띄워지는 것:
 - meta-db (5433) — 플랫폼 메타데이터 Postgres
-- user-postgres (5434) — 사용자 DB 시뮬레이션 (wal_level=logical)
-- user-mariadb (3307) — 사용자 DB 시뮬레이션 (binlog ROW/FULL)
+- tenant-postgres (5434) — 사용자 DB 시뮬레이션 (wal_level=logical)
+- tenant-mariadb (3307) — 사용자 DB 시뮬레이션 (binlog ROW/FULL)
 - kafka (9092, 9094) — Kafka 단일 노드
 - kafka-connect (8083) — Debezium plugins 포함
 - kafka-ui (8090) — Kafka 모니터링 UI

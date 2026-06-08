@@ -5,7 +5,7 @@ plugins {
 }
 
 allprojects {
-    group = 'com.platform'
+    group = 'com.bifrost'
     version = '0.1.0-SNAPSHOT'
 
     repositories {
@@ -13,7 +13,9 @@ allprojects {
     }
 }
 
-subprojects {
+// java 플러그인은 실제 모듈(자식 없는 leaf)에만 적용한다.
+// 'services' 같은 중간 컨테이너 프로젝트에 적용되면 빈 build/ 가 생성된다.
+configure(subprojects.findAll { it.childProjects.isEmpty() }) {
     apply plugin: 'java'
 
     java {

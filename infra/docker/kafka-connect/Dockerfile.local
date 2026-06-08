@@ -1,0 +1,20 @@
+# 로컬 개발 환경 전용 (docker-compose.yml에서 참조)
+# Confluent Platform 기반 — K8s 배포 불가, 로컬 전용
+
+FROM confluentinc/cp-kafka-connect:7.7.1
+
+USER root
+
+ARG DEBEZIUM_VERSION=2.7.3.Final
+
+RUN mkdir -p /opt/kafka/plugins
+
+RUN curl -sL \
+      "https://repo1.maven.org/maven2/io/debezium/debezium-connector-postgres/${DEBEZIUM_VERSION}/debezium-connector-postgres-${DEBEZIUM_VERSION}-plugin.tar.gz" \
+    | tar -xz -C /opt/kafka/plugins
+
+RUN curl -sL \
+      "https://repo1.maven.org/maven2/io/debezium/debezium-connector-mariadb/${DEBEZIUM_VERSION}/debezium-connector-mariadb-${DEBEZIUM_VERSION}-plugin.tar.gz" \
+    | tar -xz -C /opt/kafka/plugins
+
+USER appuser

@@ -1,0 +1,55 @@
+# kind(로컬) 전용 KafkaConnect(#99). EKS는 spec.build로 이미지를 만들지만 kind는 미리 로컬 빌드해
+# `kind load`한 이미지를 직접 참조한다(non-latest 태그라 imagePullPolicy 기본 IfNotPresent → 로컬 사용).
+# 이름은 백엔드 설정(kafka-connect.cluster=platform-connect)과 동일.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaConnect
+metadata:
+  name: platform-connect
+  namespace: platform-kafka
+  annotations:
+    strimzi.io/use-connector-resources: "true"   # KafkaConnector CR을 reconcile
+spec:
+  version: 4.2.0
+  replicas: 1
+  image: bifrost/kafka-connect-kind:v1
+  bootstrapServers: platform-kafka-kafka-bootstrap:9092   # plain 리스너(인증 없음)
+  # Strimzi 1.0.0(v1)은 group/internal topic을 spec 최상위 필드로 받는다(config 안이 아님).
+  groupId: platform-connect
+  offsetStorageTopic: platform-connect-offsets
+  configStorageTopic: platform-connect-configs
+  statusStorageTopic: platform-connect-status
+  config:
+    config.storage.replication.factor: 1
+    offset.storage.replication.factor: 1
+    status.storage.replication.factor: 1
+    key.converter: org.apache.kafka.connect.json.JsonConverter
+    value.converter: org.apache.kafka.connect.json.JsonConverter
+    key.converter.schemas.enable: false
+    value.converter.schemas.enable: false
+  # JMX Prometheus Exporter — 포트 9404로 Debezium/Connect 메트릭 노출 (소스 지연 등).
+  # ConfigMap connect-metrics-config는 infra/k8s/monitoring/03-connect-metrics-configmap.yaml로 적용.
+  metricsConfig:
+    type: jmxPrometheusExporter
+    valueFrom:
+      configMapKeyRef:
+        name: connect-metrics-config
+        key: connect-metrics-config.yml
+  resources:
+    requests:
+      memory: 768Mi
+      cpu: 250m
+    limits:
+      memory: 1280Mi
+      cpu: "1"
+  # 기동/리밸런스 중 /health 응답이 느려 기본 probe(60s 후·5s 타임아웃·3회)가 Connect를
+  # 기동 도중 kill → 크래시루프에 빠지는 문제를 막는다. 한 번 완주하면 안정화된다.
+  livenessProbe:
+    initialDelaySeconds: 120
+    timeoutSeconds: 15
+    periodSeconds: 15
+    failureThreshold: 6
+  readinessProbe:
+    initialDelaySeconds: 90
+    timeoutSeconds: 15
+    periodSeconds: 15
+    failureThreshold: 6

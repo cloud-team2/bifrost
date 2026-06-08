@@ -1,0 +1,27 @@
+# kind(로컬) 전용 Kafka Connect 이미지(#99).
+# EKS는 KafkaConnect spec.build(Kaniko→Harbor)로 만들지만, kind는 이 이미지를 로컬 빌드 후
+# `kind load docker-image`로 노드에 적재한다. infra/k8s/kafka/kafka-connect.yaml의 build 플러그인과
+# 동일 구성: Debezium PostgreSQL/MariaDB source + Confluent JDBC sink + JDBC 드라이버 + debezium-core(unwrap SMT).
+FROM quay.io/strimzi/kafka:1.0.0-kafka-4.2.0
+
+USER root:root
+ARG DEBEZIUM_VERSION=3.5.1.Final
+
+# --- Debezium source 커넥터 ---
+RUN mkdir -p /opt/kafka/plugins/debezium-postgres && \
+    curl -sL "https://repo1.maven.org/maven2/io/debezium/debezium-connector-postgres/${DEBEZIUM_VERSION}/debezium-connector-postgres-${DEBEZIUM_VERSION}-plugin.tar.gz" \
+      | tar -xz -C /opt/kafka/plugins/debezium-postgres
+RUN mkdir -p /opt/kafka/plugins/debezium-mariadb && \
+    curl -sL "https://repo1.maven.org/maven2/io/debezium/debezium-connector-mariadb/${DEBEZIUM_VERSION}/debezium-connector-mariadb-${DEBEZIUM_VERSION}-plugin.tar.gz" \
+      | tar -xz -C /opt/kafka/plugins/debezium-mariadb
+
+# --- JDBC sink(Confluent) + 드라이버 + debezium-core(ExtractNewRecordState SMT) ---
+RUN cd /opt/kafka/plugins && \
+    curl -sL -o jdbc.zip "https://hub-downloads.confluent.io/api/plugins/confluentinc/kafka-connect-jdbc/versions/10.7.4/confluentinc-kafka-connect-jdbc-10.7.4.zip" && \
+    unzip -q jdbc.zip && rm jdbc.zip && \
+    JDBCLIB="$(ls -d confluentinc-kafka-connect-jdbc-*)/lib" && \
+    curl -sL -o "${JDBCLIB}/postgresql-42.7.4.jar" "https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.4/postgresql-42.7.4.jar" && \
+    curl -sL -o "${JDBCLIB}/mariadb-java-client-3.4.1.jar" "https://repo1.maven.org/maven2/org/mariadb/jdbc/mariadb-java-client/3.4.1/mariadb-java-client-3.4.1.jar" && \
+    curl -sL -o "${JDBCLIB}/debezium-core-${DEBEZIUM_VERSION}.jar" "https://repo1.maven.org/maven2/io/debezium/debezium-core/${DEBEZIUM_VERSION}/debezium-core-${DEBEZIUM_VERSION}.jar"
+
+USER 1001

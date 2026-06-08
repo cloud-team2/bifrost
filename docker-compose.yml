@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # ─────────────── MetaDB ───────────────
   meta-db:
@@ -20,9 +18,9 @@ services:
       retries: 5
 
   # ─────────────── 사용자 DB (시뮬레이션) ───────────────
-  user-postgres:
+  tenant-postgres:
     image: postgres:15
-    container_name: user-postgres
+    container_name: tenant-postgres
     command: ["postgres", "-c", "wal_level=logical", "-c", "max_wal_senders=10", "-c", "max_replication_slots=10"]
     ports:
       - "5434:5432"
@@ -31,11 +29,13 @@ services:
       POSTGRES_PASSWORD: debezium
       POSTGRES_DB: testdb
     volumes:
-      - user-postgres-data:/var/lib/postgresql/data
+      - tenant-postgres-data:/var/lib/postgresql/data
+      # 최초 기동 시 샘플 스키마 주입(파이프라인 테이블 선택/CDC 데모용, #90)
+      - ./infra/local/tenantdb-init/postgres:/docker-entrypoint-initdb.d:ro
 
-  user-mariadb:
+  tenant-mariadb:
     image: mariadb:10.11
-    container_name: user-mariadb
+    container_name: tenant-mariadb
     command:
       - "--log-bin=binlog"
       - "--binlog-format=ROW"
@@ -50,31 +50,42 @@ services:
       MARIADB_PASSWORD: debezium
       MARIADB_DATABASE: testdb
     volumes:
-      - user-mariadb-data:/var/lib/mysql
+      - tenant-mariadb-data:/var/lib/mysql
+      # 최초 기동 시 샘플 스키마 주입(#90)
+      - ./infra/local/tenantdb-init/mariadb:/docker-entrypoint-initdb.d:ro
 
-  # ─────────────── Kafka ───────────────
+  # ─────────────── Kafka (KRaft) ───────────────
   kafka:
-    image: bitnami/kafka:3.7
+    image: confluentinc/cp-kafka:7.7.1
+    hostname: kafka
     container_name: kafka
     ports:
       - "9092:9092"
       - "9094:9094"
     environment:
-      KAFKA_CFG_NODE_ID: 0
-      KAFKA_CFG_PROCESS_ROLES: controller,broker
-      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094
-      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
-      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
-      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
-      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://kafka:9092,CONTROLLER://kafka:9093,EXTERNAL://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
     volumes:
-      - kafka-data:/bitnami/kafka
+      - kafka-data:/var/lib/kafka/data
 
   # ─────────────── Kafka Connect ───────────────
   kafka-connect:
     build:
       context: ./infra/docker/kafka-connect
+      dockerfile: Dockerfile.local   # K8s용은 Dockerfile (Strimzi 기반)
     container_name: kafka-connect
     depends_on:
       - kafka
@@ -112,6 +123,6 @@ services:
 
 volumes:
   meta-db-data:
-  user-postgres-data:
-  user-mariadb-data:
+  tenant-postgres-data:
+  tenant-mariadb-data:
   kafka-data:

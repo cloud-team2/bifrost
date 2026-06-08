@@ -1,41 +1,66 @@
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaConnect
 metadata:
   name: platform-connect
   namespace: platform-kafka
   annotations:
-    # CRD 기반 connector 관리 활성화
+    # KafkaConnector CR로 connector lifecycle 관리
     strimzi.io/use-connector-resources: "true"
 spec:
-  version: 3.7.1
-  replicas: 2
+  version: 4.2.0
+  replicas: 1
   bootstrapServers: platform-kafka-kafka-bootstrap:9092
-  
-  # 커스텀 이미지 (Debezium plugins 포함)
-  image: your-account.dkr.ecr.ap-northeast-2.amazonaws.com/platform-kafka-connect:latest
-  
+
+  # Strimzi spec.build: 클러스터 내부에서 Kaniko로 이미지 빌드 후 Harbor push
+  build:
+    output:
+      type: docker
+      image: harbor.harbor.svc.cluster.local/library/bifrost-kafka-connect:latest
+      pushSecret: harbor-push-secret
+    plugins:
+      - name: debezium-postgres
+        artifacts:
+          - type: tgz
+            url: https://repo1.maven.org/maven2/io/debezium/debezium-connector-postgres/3.5.1.Final/debezium-connector-postgres-3.5.1.Final-plugin.tar.gz
+      - name: debezium-mariadb
+        artifacts:
+          - type: tgz
+            url: https://repo1.maven.org/maven2/io/debezium/debezium-connector-mariadb/3.5.1.Final/debezium-connector-mariadb-3.5.1.Final-plugin.tar.gz
+      # CDC(direct) Sink: Confluent JDBC Sink + JDBC 드라이버.
+      # 드라이버 jar는 connector와 같은 plugin 디렉토리(sandbox)에 있어야 classpath에 잡힌다.
+      - name: jdbc-sink
+        artifacts:
+          - type: zip
+            url: https://hub-downloads.confluent.io/api/plugins/confluentinc/kafka-connect-jdbc/versions/10.7.4/confluentinc-kafka-connect-jdbc-10.7.4.zip
+          - type: jar
+            url: https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.4/postgresql-42.7.4.jar
+          - type: jar
+            url: https://repo1.maven.org/maven2/org/mariadb/jdbc/mariadb-java-client/3.4.1/mariadb-java-client-3.4.1.jar
+          # ExtractNewRecordState SMT(transforms.unwrap)는 debezium-postgres/mariadb 플러그인에
+          # 번들된 debezium-core에서 Connect가 plugin.path 전역으로 로드한다(별도 jar 불필요 —
+          # debezium-core 런타임 jar은 Maven Central에 미배포, tarball에만 포함).
+
+  groupId: platform-connect
+  offsetStorageTopic: platform-connect-offsets
+  configStorageTopic: platform-connect-configs
+  statusStorageTopic: platform-connect-status
+
   config:
-    group.id: platform-connect
-    offset.storage.topic: platform-connect-offsets
-    config.storage.topic: platform-connect-configs
-    status.storage.topic: platform-connect-status
-    
+    # dev 클러스터 3 브로커 기준 replication factor (운영은 3으로 올릴 것)
     offset.storage.replication.factor: 3
     config.storage.replication.factor: 3
     status.storage.replication.factor: 3
-    
     key.converter: org.apache.kafka.connect.json.JsonConverter
     value.converter: org.apache.kafka.connect.json.JsonConverter
-    key.converter.schemas.enable: false
-    value.converter.schemas.enable: false
-  
-  # External Secret을 connector config에서 ${secrets:...} 식으로 참조 가능
-  externalConfiguration:
-    volumes:
-      - name: connector-config
-        secret:
-          secretName: connect-secrets
-  
+    key.converter.schemas.enable: "false"
+    value.converter.schemas.enable: "false"
+    topic.creation.enable: "true"
+    # pipeline 생성 시 Debezium이 자동 생성하는 CDC 토픽 기본값 (설계 §4.1)
+    topic.creation.default.replication.factor: "3"
+    topic.creation.default.partitions: "3"
+    topic.creation.default.cleanup.policy: delete
+    topic.creation.default.retention.ms: "604800000"
+
   resources:
     requests:
       memory: 1Gi
@@ -43,3 +68,20 @@ spec:
     limits:
       memory: 2Gi
       cpu: 2
+
+  # buildah가 HTTP Harbor를 insecure registry로 인식하도록 registries.conf 주입
+  # Strimzi는 /mnt 하위 경로만 허용 → REGISTRIES_CONFIG_PATH로 경로 override
+  template:
+    buildPod:
+      volumes:
+        - name: registries-conf
+          configMap:
+            name: buildah-registries
+    buildContainer:
+      volumeMounts:
+        - name: registries-conf
+          mountPath: /mnt/registries/registries.conf
+          subPath: registries.conf
+      env:
+        - name: REGISTRIES_CONFIG_PATH
+          value: /mnt/registries/registries.conf

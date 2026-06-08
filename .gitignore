@@ -2,7 +2,9 @@
 .gradle/
 build/
 out/
+bin/
 **/build/
+**/bin/
 **/.gradle/
 !gradle/wrapper/gradle-wrapper.jar
 !gradle/wrapper/gradle-wrapper.properties
@@ -43,10 +45,13 @@ logs/
 **/.terraform/
 *.tfstate
 *.tfstate.*
-*.tfvars
-!*.tfvars.example
-.terraform.lock.hcl
+# .terraform.lock.hcl 은 커밋 대상 (팀 provider 버전 통일)
 crash.log
+**/terraform.tfvars
+**/terraform.tfvars.json
+
+# ─── K8s Secrets ───
+infra/k8s/metadb/01-secret.yaml
 
 # ─── Docker ───
 *.pid

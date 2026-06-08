@@ -1,0 +1,33 @@
+controller:
+  serviceType: ClusterIP
+  servicePort: 8080
+
+  # Ingress는 infra/k8s/ingress/jenkins-ingress.yaml 에서 별도 관리
+  ingress:
+    enabled: false
+
+  jenkinsUrl: http://jenkins.local
+
+  admin:
+    username: admin
+    password: "admin"
+
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+
+  installPlugins:
+    - kubernetes
+    - workflow-aggregator
+    - git
+    - configuration-as-code
+    - credentials
+    - blueocean
+
+persistence:
+  enabled: true
+  size: 20Gi

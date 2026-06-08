@@ -1,0 +1,140 @@
+# Prometheus 단독 배포 (platform-kafka 네임스페이스)
+# Kafka 브로커 JMX exporter(9404)와 Kafka Exporter(9308)를 스크랩한다.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: platform-kafka
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    scrape_configs:
+      # Kafka 브로커 JMX exporter (produce/consume rate, bytes)
+      - job_name: kafka-broker
+        static_configs:
+          - targets:
+              - platform-kafka-kafka-0.platform-kafka-kafka-brokers.platform-kafka.svc.cluster.local:9404
+        relabel_configs:
+          - target_label: cluster
+            replacement: platform-kafka
+
+      # Kafka Exporter (consumer group lag)
+      - job_name: kafka-exporter
+        static_configs:
+          - targets:
+              - platform-kafka-kafka-exporter.platform-kafka.svc.cluster.local:9308
+        relabel_configs:
+          - target_label: cluster
+            replacement: platform-kafka
+
+      # Kafka Connect + Debezium (소스 지연 등)
+      - job_name: kafka-connect
+        static_configs:
+          - targets:
+              - platform-connect-metrics.platform-kafka.svc.cluster.local:9404
+        relabel_configs:
+          - target_label: cluster
+            replacement: platform-kafka
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: platform-kafka
+  labels:
+    app: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.53.0
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time=7d
+            - --web.enable-lifecycle
+          ports:
+            - containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: data
+              mountPath: /prometheus
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+        - name: data
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: platform-kafka
+  labels:
+    app: prometheus
+spec:
+  selector:
+    app: prometheus
+  ports:
+    - name: http
+      port: 9090
+      targetPort: 9090
+
+---
+# Kafka Exporter Service — Strimzi는 exporter용 Service를 자동 생성하지 않는다(PodMonitor 전제).
+# 정적 스크랩을 쓰므로 직접 만든다. Strimzi 1.0은 모든 컴포넌트 메트릭을 9404로 노출 →
+# scrape_configs의 :9308 타깃이 도달하도록 port 9308 → targetPort 9404로 매핑한다.
+apiVersion: v1
+kind: Service
+metadata:
+  name: platform-kafka-kafka-exporter
+  namespace: platform-kafka
+  labels:
+    app: kafka-exporter
+spec:
+  selector:
+    strimzi.io/name: platform-kafka-kafka-exporter
+  ports:
+    - name: metrics
+      port: 9308
+      targetPort: 9404
+
+---
+# Kafka Connect 메트릭 Service — Connect 파드의 JMX exporter(9404)를 스크랩 대상으로 노출.
+apiVersion: v1
+kind: Service
+metadata:
+  name: platform-connect-metrics
+  namespace: platform-kafka
+  labels:
+    app: kafka-connect-metrics
+spec:
+  selector:
+    strimzi.io/name: platform-connect-connect
+  ports:
+    - name: metrics
+      port: 9404
+      targetPort: 9404
