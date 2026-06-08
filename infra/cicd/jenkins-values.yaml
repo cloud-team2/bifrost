@@ -28,6 +28,7 @@ controller:
     - credentials
     - blueocean
     - timestamper          # Jenkinsfile options { timestamps() } 지원 (#161)
+    - pipeline-stage-view  # job 페이지 빌드×스테이지 매트릭스 뷰 (#192)
 
 persistence:
   enabled: true
