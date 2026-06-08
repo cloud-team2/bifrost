@@ -7,6 +7,7 @@ from fastapi import APIRouter
 
 from app.core.config import settings
 from app.schemas import ApiResponse
+from app.tools.registry import get_tool_registry
 
 router = APIRouter()
 
@@ -22,17 +23,20 @@ def health() -> ApiResponse:
 
 
 @router.get("/ready")
-def ready() -> ApiResponse:
-    """의존성(LLM, Spring Boot, State/Evidence Store) 준비 상태.
+async def ready() -> ApiResponse:
+    """의존성(LLM, Spring Boot, State/Evidence Store) 준비 상태."""
+    try:
+        spring_ok = await get_tool_registry().health()
+        spring_status = "ok" if spring_ok else "unavailable"
+    except Exception:
+        spring_status = "unavailable"
 
-    현재는 스캐폴드라 정적 ok를 반환한다. 실제 헬스 점검은 후속 구현.
-    """
     return ApiResponse.success(
         _request_id(),
         {
             "status": "ready",
             "dependencies": {
-                "spring_operations": "unknown",
+                "spring_operations": spring_status,
                 "llm_provider": "unknown",
                 "agent_run_store": "unknown",
                 "vector_store": "unknown",
