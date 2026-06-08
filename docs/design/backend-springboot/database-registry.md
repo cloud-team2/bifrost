@@ -51,6 +51,24 @@ SecretStore
 
 `secret-store.provider=db`(기본값)이면 `DbSecretStore`, `=mock`이면 `InMemorySecretStore`(재시작 시 휘발).
 
+### 3.5 연결 상태 — 주기 헬스 프로브 (#179)
+
+연결 상태는 **등록 시점 1회가 아니라 지속적으로** 갱신해야 한다(접속정보 변경·DB 다운을 즉시 반영). `DatabaseHealthProbeJob`이 60초 주기로 모든 datasource를 프로브한다.
+
+```text
+DatabaseHealthProbeJob (@Scheduled 60s)
+  각 datasource → DatabaseConnectionTester.test()
+    성공 → connection_status = HEALTHY
+    실패 → connection_status = UNREACHABLE, connection_error = 사유
+  상태가 바뀌면 → PipelineStatusService.reevaluateForDatasource(datasourceId)
+    이 DB를 source/sink로 쓰는 모든 파이프라인 재계산
+      UNREACHABLE → 파이프라인 error("source DB '<name>' 연결 불가: <error>")
+      HEALTHY 회복 → connector 상태 기반 active 복귀
+```
+
+- 컬럼: `datasources.connection_status`/`connection_error`/`connection_checked_at`(V10 마이그레이션).
+- 프론트 DB 노드 색상: `UNREACHABLE` → error(빨강). 파이프라인 상태로의 전이·attribution 정본은 [lifecycle.md §2·§5](./lifecycle.md).
+
 ### 4. Step 3 — CDC 준비도 점검 (FR-015)
 
 DB 등록 직후 자동 실행하며, Database 상세 화면에서 수동 재점검도 가능하다. **DB 엔진별로 구현체를 선택하는 인터페이스 추상화**로 설계한다.
