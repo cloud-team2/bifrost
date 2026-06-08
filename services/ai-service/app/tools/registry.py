@@ -13,9 +13,11 @@ from app.schemas.tools import (
     ConnectorStatusData,
     ConsumerLagData,
     DeploymentsData,
+    IncidentSummaryData,
+    ListProjectPipelinesData,
     LogSearchData,
-    LogSearchRequest,
     MetricsData,
+    PipelineTopologyData,
     SpringErrorCode,
     ToolContext,
     ToolResult,
@@ -63,10 +65,6 @@ class PipelineTopologyParams(ToolParams):
 
 class GetIncidentSummaryParams(ToolParams):
     incident_id: str
-
-
-class _StubData(BaseModel):
-    model_config = ConfigDict(extra="allow")
 
 
 @dataclass(frozen=True)
@@ -171,7 +169,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
             path_params=("consumer_group",),
             alias_for="get_consumer_lag",
         ),
-        # ── stub tools — path/params finalized after Spring internalops impl ──
+        # ── catalog §8.4 Pipeline read (Spring PR #154) ──────────────────────
         ToolDefinition(
             name="list_project_pipelines",
             operation="list_project_pipelines",
@@ -179,7 +177,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
             path_template="/internal/ops/projects/{project_id}/pipelines",
             risk=RiskLevel.READ_ONLY,
             params_model=ListProjectPipelinesParams,
-            result_model=_StubData,
+            result_model=ListProjectPipelinesData,
         ),
         ToolDefinition(
             name="get_pipeline_topology",
@@ -188,9 +186,10 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
             path_template="/internal/ops/projects/{project_id}/pipelines/{pipeline_id}/topology",
             risk=RiskLevel.READ_ONLY,
             params_model=PipelineTopologyParams,
-            result_model=_StubData,
+            result_model=PipelineTopologyData,
             path_params=("pipeline_id",),
         ),
+        # ── catalog §8.5 Incident summary (Spring PR #157) ───────────────────
         ToolDefinition(
             name="get_incident_summary",
             operation="get_incident_summary",
@@ -198,7 +197,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
             path_template="/internal/ops/incidents/{incident_id}/summary",
             risk=RiskLevel.READ_ONLY,
             params_model=GetIncidentSummaryParams,
-            result_model=_StubData,
+            result_model=IncidentSummaryData,
             path_params=("incident_id",),
         ),
     ]
