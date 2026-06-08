@@ -25,4 +25,10 @@ public interface PipelineStatusService {
      * @return error로 전이된 파이프라인 수
      */
     int failTimedOutCreating(java.time.Duration timeout);
+
+    /**
+     * 특정 datasource(source/sink) 연결 헬스가 바뀌었을 때, 이를 쓰는 파이프라인 상태를 재평가한다(#179).
+     * source DB가 죽어도 커넥터가 retry로 RUNNING을 유지(이벤트 미발생)하는 경우까지 반영한다.
+     */
+    void reevaluateForDatasource(java.util.UUID datasourceId);
 }

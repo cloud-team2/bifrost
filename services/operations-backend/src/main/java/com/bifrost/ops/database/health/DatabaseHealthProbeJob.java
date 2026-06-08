@@ -33,13 +33,16 @@ public class DatabaseHealthProbeJob {
     private final DatasourceRepository datasourceRepository;
     private final DatabaseConnectionTester connectionTester;
     private final SecretStore secretStore;
+    private final com.bifrost.ops.pipeline.PipelineStatusService pipelineStatusService;
 
     public DatabaseHealthProbeJob(DatasourceRepository datasourceRepository,
                                   DatabaseConnectionTester connectionTester,
-                                  SecretStore secretStore) {
+                                  SecretStore secretStore,
+                                  com.bifrost.ops.pipeline.PipelineStatusService pipelineStatusService) {
         this.datasourceRepository = datasourceRepository;
         this.connectionTester = connectionTester;
         this.secretStore = secretStore;
+        this.pipelineStatusService = pipelineStatusService;
     }
 
     /** 기본 60초마다 등록된 모든 DB의 연결 상태를 프로브한다. */
@@ -56,6 +59,7 @@ public class DatabaseHealthProbeJob {
     }
 
     private void probe(DatasourceEntity e) {
+        String prev = e.getConnectionStatus();
         String status;
         String error = null;
         try {
@@ -77,6 +81,16 @@ public class DatabaseHealthProbeJob {
         e.setConnectionError(truncate(error));
         e.setConnectionCheckedAt(Instant.now());
         datasourceRepository.save(e);
+
+        // 연결 상태가 바뀌면(죽음/복구) 이 DB를 쓰는 파이프라인 상태를 재평가(#179).
+        // source DB가 죽어도 Debezium은 retry로 RUNNING을 유지해 커넥터 이벤트가 안 오므로 이 경로가 필요.
+        if (!status.equals(prev)) {
+            try {
+                pipelineStatusService.reevaluateForDatasource(e.getId());
+            } catch (RuntimeException ex) {
+                log.debug("DB 헬스 변화 후 파이프라인 재평가 실패(무시): id={}, cause={}", e.getId(), ex.getMessage());
+            }
+        }
     }
 
     private static String truncate(String s) {

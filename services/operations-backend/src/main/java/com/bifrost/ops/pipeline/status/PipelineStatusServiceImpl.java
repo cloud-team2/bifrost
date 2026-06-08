@@ -36,17 +36,20 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
 
     private final PipelineRepository pipelineRepository;
     private final ConnectorRepository connectorRepository;
+    private final com.bifrost.ops.database.persistence.repository.DatasourceRepository datasourceRepository;
     private final EventService eventService;
     private final AuditService auditService;
     private final SsePublisher ssePublisher;
 
     public PipelineStatusServiceImpl(PipelineRepository pipelineRepository,
                                      ConnectorRepository connectorRepository,
+                                     com.bifrost.ops.database.persistence.repository.DatasourceRepository datasourceRepository,
                                      EventService eventService,
                                      AuditService auditService,
                                      SsePublisher ssePublisher) {
         this.pipelineRepository = pipelineRepository;
         this.connectorRepository = connectorRepository;
+        this.datasourceRepository = datasourceRepository;
         this.eventService = eventService;
         this.auditService = auditService;
         this.ssePublisher = ssePublisher;
@@ -91,17 +94,42 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
         return n;
     }
 
-    /** connector 상태들을 보고 pipeline 상태를 재계산하고, 변경 시에만 기록·발행한다. */
+    /**
+     * 특정 datasource(source/sink) 헬스 변화 시, 이를 쓰는 파이프라인 상태를 재평가한다(#179).
+     * source DB가 죽어도 Debezium은 retry로 RUNNING을 유지해 커넥터 이벤트가 안 오므로, DB 프로브가
+     * 이 경로로 파이프라인을 직접 재평가해야 'DB 죽음'이 파이프라인 상태에 반영된다.
+     */
+    @Override
+    @Transactional
+    public void reevaluateForDatasource(UUID datasourceId) {
+        for (PipelineEntity p : pipelineRepository
+                .findBySourceDatasourceIdOrSinkDatasourceId(datasourceId, datasourceId)) {
+            recompute(p);
+        }
+    }
+
+    /** connector 상태 + DB 헬스를 보고 pipeline 상태를 재계산하고, 변경 시에만 기록·발행한다. */
     private void recompute(PipelineEntity p) {
         List<ConnectorEntity> connectors = connectorRepository.findByPipelineId(p.getId());
         PipelineLifecycle current = p.getStatus();
-        PipelineLifecycle next = computeStatus(p.getPattern(), connectors);
+        PipelineLifecycle connectorNext = computeStatus(p.getPattern(), connectors);
+
+        // DB 헬스도 입력(#179): source/sink DB가 UNREACHABLE이면 커넥터가 retry로 RUNNING이어도 ERROR.
+        // 단, 프로비저닝 중(creating)이면 DB 사유로 덮어쓰지 않는다(생성 흐름이 별도 판정).
+        String dbReason = current == PipelineLifecycle.CREATING ? null : dbUnreachableReason(p);
+        PipelineLifecycle next = dbReason != null ? PipelineLifecycle.ERROR : connectorNext;
         if (next == current) {
             return;
         }
-        // 상태 사유 동기화(#155/#179): 비정상(ERROR/LAG)이면 커넥터 lastError를 노출, 정상이면 클리어.
-        boolean degraded = next == PipelineLifecycle.ERROR || next == PipelineLifecycle.LAG;
-        String message = degraded ? firstError(connectors) : null;
+        // 사유: DB 원인이 있으면 우선(근본 원인), 아니면 커넥터 lastError. 정상으로 가면 클리어.
+        String message;
+        if (next == PipelineLifecycle.ERROR) {
+            message = dbReason != null ? dbReason : firstError(connectors);
+        } else if (next == PipelineLifecycle.LAG) {
+            message = firstError(connectors);
+        } else {
+            message = null;
+        }
         transition(p, current, next, message);
     }
 
@@ -172,6 +200,25 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
                 .filter(e -> e != null && !e.isBlank())
                 .findFirst()
                 .orElse(null);
+    }
+
+    /** 파이프라인의 source/sink DB 중 UNREACHABLE이 있으면 원인 문자열, 없으면 null(#179). */
+    private String dbUnreachableReason(PipelineEntity p) {
+        String r = dbReasonFor(p.getSourceDatasourceId(), "source");
+        return r != null ? r : dbReasonFor(p.getSinkDatasourceId(), "sink");
+    }
+
+    private String dbReasonFor(UUID datasourceId, String role) {
+        if (datasourceId == null) {
+            return null;
+        }
+        var ds = datasourceRepository.findById(datasourceId).orElse(null);
+        if (ds == null
+                || !com.bifrost.ops.database.health.DatabaseHealthProbeJob.UNREACHABLE.equals(ds.getConnectionStatus())) {
+            return null;
+        }
+        String detail = ds.getConnectionError() != null ? ": " + ds.getConnectionError() : "";
+        return role + " DB '" + ds.getName() + "' 연결 불가" + detail;
     }
 
     private UUID resolvePipelineId(String connectorName) {
