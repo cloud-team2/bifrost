@@ -90,6 +90,9 @@ spec:
                 // 빌드 컨텍스트는 서비스마다 다르다:
                 //  - operations-backend: 멀티모듈 Gradle → 컨텍스트=레포 루트(gradlew/settings.gradle/gradle 필요)
                 //  - ai-service/frontend: self-contained Dockerfile → 컨텍스트=서비스 디렉토리
+                // 한 kaniko 컨테이너에서 여러 이미지를 순차 빌드하므로 --cleanup 필수:
+                // kaniko가 빌드 중 base rootfs를 컨테이너 /에 unpack → /busybox(셸)까지 덮어
+                // 다음 sh가 안 뜬다. --cleanup이 빌드마다 파일시스템을 복원해 다음 빌드를 보장.
                 for (svc in env.TO_BUILD.trim().split(' ')) {
                   def ctx = (svc == 'operations-backend') ? "${WORKSPACE}" : "${WORKSPACE}/services/${svc}"
                   sh """
@@ -98,7 +101,8 @@ spec:
                       --dockerfile=${WORKSPACE}/services/${svc}/Dockerfile \
                       --destination=${HARBOR}/${PROJECT}/bifrost-${svc}:${TAG} \
                       --destination=${HARBOR}/${PROJECT}/bifrost-${svc}:latest \
-                      --insecure --skip-tls-verify --insecure-pull
+                      --insecure --skip-tls-verify --insecure-pull \
+                      --cleanup
                   """
                 }
               }
