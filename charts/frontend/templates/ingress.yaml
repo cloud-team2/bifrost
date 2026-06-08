@@ -6,24 +6,18 @@ metadata:
   labels:
     app: {{ .Chart.Name }}
   annotations:
-    # operations-backend와 공유하는 bifrost-app ALB. `/` catch-all (order 높음 = 나중 평가).
-    alb.ingress.kubernetes.io/group.name: {{ .Values.ingress.groupName }}
-    alb.ingress.kubernetes.io/group.order: {{ .Values.ingress.groupOrder | quote }}
-    alb.ingress.kubernetes.io/load-balancer-name: bifrost-app-alb
-    alb.ingress.kubernetes.io/scheme: internet-facing
-    alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/subnets: {{ .Values.ingress.subnets }}
-    alb.ingress.kubernetes.io/backend-protocol: HTTP
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
-    alb.ingress.kubernetes.io/certificate-arn: {{ .Values.ingress.certificateArn }}
-    {{- /* ssl-redirect(HTTP→HTTPS)는 ALB ModifyListener 권한 필요 → LB Controller IAM 정책에
-           해당 권한이 없어 보류(A안: 교수님 IAM 승인 대기). 현재는 http·https 둘 다 열림. */}}
-    alb.ingress.kubernetes.io/healthcheck-path: {{ .Values.ingress.healthcheckPath }}
-    alb.ingress.kubernetes.io/success-codes: "200-399"
+    # ingress-nginx + cert-manager(Let's Encrypt) — ALB/ACM 대체 (#232)
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.clusterIssuer }}
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"   # HTTP→HTTPS 강제 (nginx 자체, IAM 무관)
 spec:
   ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+      secretName: {{ .Chart.Name }}-tls
   rules:
-    - http:
+    - host: {{ .Values.ingress.host }}
+      http:
         paths:
           - path: {{ .Values.ingress.path }}
             pathType: Prefix
