@@ -32,6 +32,9 @@ public interface PipelineRepository extends JpaRepository<PipelineEntity, UUID> 
     /** 프로비저닝 타임아웃 스윕(#155): 지정 시각 이전 생성되고 아직 해당 상태인 파이프라인. */
     List<PipelineEntity> findByStatusAndCreatedAtBefore(PipelineLifecycle status, Instant createdAt);
 
+    /** 특정 datasource(source 또는 sink)를 쓰는 파이프라인 — DB 헬스 변화 시 상태 재평가용(#179). */
+    List<PipelineEntity> findBySourceDatasourceIdOrSinkDatasourceId(UUID sourceId, UUID sinkId);
+
     /** offset 스냅샷 수집용: null이 아닌 모든 topic 이름(중복 제거). */
     @Query("SELECT DISTINCT p.topicName FROM PipelineEntity p WHERE p.topicName IS NOT NULL")
     List<String> findAllActiveTopics();

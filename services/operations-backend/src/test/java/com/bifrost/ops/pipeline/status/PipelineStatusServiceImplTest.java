@@ -34,13 +34,14 @@ class PipelineStatusServiceImplTest {
 
     @Mock private PipelineRepository pipelineRepository;
     @Mock private ConnectorRepository connectorRepository;
+    @Mock private com.bifrost.ops.database.persistence.repository.DatasourceRepository datasourceRepository;
     @Mock private EventService eventService;
     @Mock private AuditService auditService;
     @Mock private SsePublisher ssePublisher;
 
     private PipelineStatusServiceImpl service() {
         return new PipelineStatusServiceImpl(pipelineRepository, connectorRepository,
-                eventService, auditService, ssePublisher);
+                datasourceRepository, eventService, auditService, ssePublisher);
     }
 
     // ---------- computeStatus 규칙 ----------
