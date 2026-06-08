@@ -2,17 +2,20 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: jenkins-alb
+  name: jenkins
   namespace: {{ .Values.jenkins.namespace }}
   annotations:
-    {{- include "infra.albAnnotations" . | nindent 4 }}
-    alb.ingress.kubernetes.io/group.order: {{ .Values.jenkins.ingress.groupOrder | quote }}
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":{{ .Values.jenkins.ingress.listenPort }}}]'
-    alb.ingress.kubernetes.io/healthcheck-path: {{ .Values.jenkins.ingress.healthcheckPath }}
+    cert-manager.io/cluster-issuer: {{ .Values.clusterIssuer }}
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
 spec:
-  ingressClassName: alb
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - {{ .Values.jenkins.host }}
+      secretName: jenkins-tls
   rules:
-    - http:
+    - host: {{ .Values.jenkins.host }}
+      http:
         paths:
           - path: /
             pathType: Prefix
@@ -20,5 +23,5 @@ spec:
               service:
                 name: jenkins
                 port:
-                  number: {{ .Values.jenkins.ingress.listenPort }}
+                  number: {{ .Values.jenkins.servicePort }}
 {{- end }}

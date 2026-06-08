@@ -2,18 +2,21 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: harbor-alb
+  name: harbor
   namespace: {{ .Values.harbor.namespace }}
   annotations:
-    {{- include "infra.albAnnotations" . | nindent 4 }}
-    alb.ingress.kubernetes.io/group.order: {{ .Values.harbor.ingress.groupOrder | quote }}
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":{{ .Values.harbor.ingress.listenPort }}}]'
-    alb.ingress.kubernetes.io/healthcheck-path: {{ .Values.harbor.ingress.healthcheckPath }}
-    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds={{ .Values.harbor.ingress.idleTimeout }}
+    cert-manager.io/cluster-issuer: {{ .Values.clusterIssuer }}
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"   # docker push 대용량 layer 허용
 spec:
-  ingressClassName: alb
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - {{ .Values.harbor.host }}
+      secretName: harbor-tls
   rules:
-    - http:
+    - host: {{ .Values.harbor.host }}
+      http:
         paths:
           - path: /
             pathType: Prefix
@@ -21,5 +24,5 @@ spec:
               service:
                 name: harbor
                 port:
-                  number: {{ .Values.harbor.ingress.listenPort }}
+                  number: {{ .Values.harbor.servicePort }}
 {{- end }}
