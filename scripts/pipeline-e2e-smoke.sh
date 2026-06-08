@@ -94,12 +94,13 @@ wait_running() {
       "${BASE_URL}/internal/pipelines/status?projectId=${PROJECT_KEY}&connectorName=${name}" \
       2>/dev/null || echo '{}')
     local state
-    state=$(echo "${resp}" | jq -r '.connectorState // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
+    # OpsEnvelope(.result.connectorState) 우선, 구형 응답(.connectorState) fallback
+    state=$(echo "${resp}" | jq -r '.result.connectorState // .connectorState // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
     case "${state}" in
       RUNNING) pass "connector ${name} → RUNNING"; return 0 ;;
       FAILED)
         local last_error
-        last_error=$(echo "${resp}" | jq -r '.tasks[]?.trace // empty' 2>/dev/null | head -1 || true)
+        last_error=$(echo "${resp}" | jq -r '(.result.tasks // .tasks // [])[]?.trace // empty' 2>/dev/null | head -1 || true)
         fail "connector ${name} → FAILED${last_error:+: ${last_error:0:200}}"
         return 1 ;;
       *) info "connector ${name} state=${state} (대기)"; ;;
