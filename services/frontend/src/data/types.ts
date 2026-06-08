@@ -212,7 +212,8 @@ export interface Account {
 /* ----------------------------------------------------------------- chart */
 
 export interface Point {
-  t: string
-  // null은 측정값 없음(그래프 끊김) — recharts가 gap으로 렌더(connectNulls=false 기본).
+  // t는 카테고리 라벨(string) 또는 epoch ms(number, timeAxis 차트).
+  t: number | string
+  // null은 측정값 없음(그래프 끊김) — recharts가 gap으로 렌더(connectNulls=false).
   [k: string]: number | string | null
 }

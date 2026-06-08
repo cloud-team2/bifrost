@@ -195,7 +195,7 @@ function OverviewTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
   // 실데이터(Prometheus range)만 사용. 비어있으면 빈 차트(더미 위장 금지, #175).
   const throughputData = useMemo(() =>
     throughput.map((p) => ({
-      t: new Date(p.timestamp).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
+      t: p.timestamp,   // epoch ms — timeAxis가 실제 시간 간격으로 배치(Grafana식)
       produced: Math.round(p.produceRate * 100) / 100,
       consumed: Math.round(p.consumeRate * 100) / 100,
     })), [throughput])
@@ -234,7 +234,7 @@ function OverviewTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
           </div>
         }>
         <div className="px-3 py-3">
-          <TrendChart data={throughputData} type="area" height={160}
+          <TrendChart data={throughputData} type="area" height={160} timeAxis
             series={[
               { key: 'produced', label: 'Produced', color: CHART_COLORS.brand },
               { key: 'consumed', label: 'Consumed', color: CHART_COLORS.emerald },
@@ -650,10 +650,10 @@ function SyncTab({ edge }: { edge: Edge }) {
   // 소스지연은 Debezium이 전달할 데이터가 없을 때(idle) -1을 준다. 이때는 "지연 0"이 아니라
   // 측정값이 없는 것이므로 null로 두어 그래프를 끊는다(Prometheus처럼). 0으로 클램프하면 거짓 0.
   const sourceDelay = useMemo(() =>
-    delaySeries.map((p) => ({ t: hhmm(p.timestamp), delay: p.value < 0 ? null : Math.round(p.value) })),
+    delaySeries.map((p) => ({ t: p.timestamp, delay: p.value < 0 ? null : Math.round(p.value) })),
     [delaySeries])
   const deltaTrend  = useMemo(() =>
-    unsyncedSeries.map((p) => ({ t: hhmm(p.timestamp), delta: Math.max(0, Math.round(p.value)) })),
+    unsyncedSeries.map((p) => ({ t: p.timestamp, delta: Math.max(0, Math.round(p.value)) })),
     [unsyncedSeries])
   const eventDist   = useMemo(() =>
     eventSeries.map((p) => {
@@ -740,16 +740,16 @@ function SyncTab({ edge }: { edge: Edge }) {
         <Panel title="데이터 전송 시간 (ms)" right={<RangeSelector value={rangeMin} onChange={setRangeMin} />}>
           <div className="px-3 py-3">
             <TrendChart
-              data={sourceDelay} type="area" height={130}
+              data={sourceDelay} type="area" height={130} timeAxis
               series={[{ key: 'delay', label: '전송 시간 (ms)', color: CHART_COLORS.violet }]}
             />
           </div>
         </Panel>
-        <Panel title="미동기화 Rows 추이" right={<span className="text-[12px] text-gray-400">{rangeLabel}</span>}>
+        <Panel title="Consumer Lag (미커밋 메시지)" right={<span className="text-[12px] text-gray-400">{rangeLabel}</span>}>
           <div className="px-3 py-3">
             <TrendChart
-              data={deltaTrend} type="area" height={130}
-              series={[{ key: 'delta', label: 'Δ rows', color: CHART_COLORS.amber }]}
+              data={deltaTrend} type="area" height={130} timeAxis
+              series={[{ key: 'delta', label: 'lag (메시지)', color: CHART_COLORS.amber }]}
             />
           </div>
         </Panel>
