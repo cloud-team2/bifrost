@@ -85,3 +85,39 @@ def test_fail_loops_guard_raises():
         check_fail_loops(state, policy.max_fail_loops)
 
     assert exc_info.value.reason == "fail_loops"
+
+
+def test_incident_analysis_advances_through_stages():
+    sup, store = _supervisor()
+    sup.start_run("run_001", AgentMode.INCIDENT_ANALYSIS)
+
+    stages = []
+    nxt = sup.advance("run_001")
+    while nxt is not None:
+        stages.append(nxt)
+        nxt = sup.advance("run_001")
+
+    assert stages == ["correlation", "planner", "retrieval", "classifier", "rca", "verifier", "report"]
+    state = store.get("run_001")
+    assert state is not None
+    assert state.run.status == RunStatus.COMPLETED
+    assert state.run.step_count == 8  # 7 stages + 1 final None advance
+
+
+def test_incident_analysis_remediation_advances_through_stages():
+    sup, store = _supervisor()
+    sup.start_run("run_001", AgentMode.INCIDENT_ANALYSIS, remediation_requested=True)
+
+    stages = []
+    nxt = sup.advance("run_001")
+    while nxt is not None:
+        stages.append(nxt)
+        nxt = sup.advance("run_001")
+
+    assert stages == [
+        "correlation", "planner", "retrieval", "classifier", "rca",
+        "remediation", "policy_guard", "verifier", "report",
+    ]
+    state = store.get("run_001")
+    assert state is not None
+    assert state.run.status == RunStatus.COMPLETED

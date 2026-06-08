@@ -1,6 +1,7 @@
 """Workflow runner — Supervisor 상태 전이 기반 실행 + SSE 이벤트 발행.
 
 simple_query 경로: router(pre-supervisor) → planner → retrieval → verifier → report
+incident_analysis 경로: router → correlation → planner → retrieval → classifier → rca → verifier → report
 """
 from __future__ import annotations
 
@@ -8,7 +9,10 @@ import logging
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from app.agents import classifier as classifier_agent
 from app.agents import planner as planner_agent
+from app.agents import rca as rca_agent
+from app.agents import remediation as remediation_agent
 from app.agents import report as report_agent
 from app.agents import retrieval as retrieval_agent
 from app.agents import router as router_agent
@@ -22,6 +26,8 @@ from app.streaming.event_bus import EventBus
 from app.supervisor.graph import get_supervisor
 from app.tools.registry import ToolClientRegistry
 from app.workflow.guards import RunBudgetExceeded
+from app.workflow.stages.correlation import run_correlation
+from app.workflow.stages.policy_guard import run_policy_guard
 
 logger = logging.getLogger(__name__)
 
@@ -73,11 +79,17 @@ async def run_workflow(
                        _evt(run_id, StreamingEventType.AGENT_COMPLETED, "router", f"mode: {mode.value}"))
 
         # ── Supervisor 초기화 ──────────────────────────────────────────────────
-        supervisor.start_run(run_id, mode)
+        supervisor.start_run(
+            run_id, mode,
+            remediation_requested=router_out.route_decision.remediation_requested,
+        )
 
         # ── Stage 루프 ─────────────────────────────────────────────────────────
         planner_out = None
         retrieval_out = None
+        classifier_out = None
+        rca_out = None
+        remediation_out = None
 
         while True:
             try:
@@ -97,6 +109,13 @@ async def run_workflow(
             await run_repo.update_status(run_id, "running", stage)
 
             match stage:
+                case "correlation":
+                    await _publish(bus, event_repo, run_id,
+                                   _evt(run_id, StreamingEventType.AGENT_STARTED, "correlation", "알림 이벤트를 분석합니다"))
+                    await run_correlation()
+                    await _publish(bus, event_repo, run_id,
+                                   _evt(run_id, StreamingEventType.AGENT_COMPLETED, "correlation", "알림 그룹 분석 완료"))
+
                 case "planner":
                     await _publish(bus, event_repo, run_id,
                                    _evt(run_id, StreamingEventType.AGENT_STARTED, "planner", "데이터 조회 계획을 수립합니다"))
@@ -121,6 +140,42 @@ async def run_workflow(
                     await _publish(bus, event_repo, run_id, _evt(
                         run_id, StreamingEventType.AGENT_COMPLETED, "retrieval",
                         f"근거 {len(retrieval_out.evidence_items)}건 수집",
+                    ))
+
+                case "classifier":
+                    await _publish(bus, event_repo, run_id,
+                                   _evt(run_id, StreamingEventType.AGENT_STARTED, "classifier", "장애 유형을 분류합니다"))
+                    classifier_out = await classifier_agent.run_classifier(user_message, retrieval_out)
+                    scope = classifier_out.classification.incident_scope.value
+                    await _publish(bus, event_repo, run_id,
+                                   _evt(run_id, StreamingEventType.AGENT_COMPLETED, "classifier", f"scope: {scope}"))
+
+                case "rca":
+                    await _publish(bus, event_repo, run_id,
+                                   _evt(run_id, StreamingEventType.AGENT_STARTED, "rca", "근본 원인을 분석합니다"))
+                    rca_out = await rca_agent.run_rca(classifier_out, retrieval_out)
+                    await _publish(bus, event_repo, run_id, _evt(
+                        run_id, StreamingEventType.AGENT_COMPLETED, "rca",
+                        f"후보 {len(rca_out.root_cause_candidates)}건",
+                    ))
+
+                case "remediation":
+                    await _publish(bus, event_repo, run_id,
+                                   _evt(run_id, StreamingEventType.AGENT_STARTED, "remediation", "조치 후보를 생성합니다"))
+                    remediation_out = await remediation_agent.run_remediation(rca_out)
+                    await _publish(bus, event_repo, run_id, _evt(
+                        run_id, StreamingEventType.AGENT_COMPLETED, "remediation",
+                        f"후보 {len(remediation_out.action_candidates)}건",
+                    ))
+
+                case "policy_guard":
+                    await _publish(bus, event_repo, run_id,
+                                   _evt(run_id, StreamingEventType.AGENT_STARTED, "policy_guard", "정책을 확인합니다"))
+                    candidates = remediation_out.action_candidates if remediation_out else []
+                    policy_out = await run_policy_guard(candidates)
+                    await _publish(bus, event_repo, run_id, _evt(
+                        run_id, StreamingEventType.AGENT_COMPLETED, "policy_guard",
+                        f"결정 {len(policy_out.policy_decisions)}건",
                     ))
 
                 case "verifier":
