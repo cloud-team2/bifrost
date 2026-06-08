@@ -149,13 +149,19 @@ kubernetesClient.resource(source).inNamespace("platform-kafka").create();
 
 ### 5. 생명주기 (FR-005)
 
+> 삭제 정책·실패 attribution의 정본은 [lifecycle.md](./lifecycle.md). 아래는 프로비저닝 관점 요약.
+
 | 동작 | 구현 |
 | --- | --- |
 | pause | KafkaConnector `state: paused` patch |
 | resume | `state: running` patch |
-| delete | Source(+Sink) Connector CR 삭제, pipeline 행 제거 |
+| delete | KafkaConnector CR 삭제(이름 기반 + pid 접두사 sweep) → **토픽·sink consumer group 정리** → pipeline 행 제거 |
 
-`creating` 상태는 Connector가 RUNNING으로 전이할 때까지(최대 30초) 유지하고, 초과 시 경고 이벤트를 남긴다.
+- **삭제 보장(#155)**: CR 정리는 반드시 성공해야 하며, 실패 시 예외가 트랜잭션을 롤백시켜 행이 남는다(다음 시도 재정리) → **고아 KafkaConnector CR이 절대 남지 않는다**. `force=true`는 `creating` 상태 가드만 우회한다.
+- **Kafka 잔재 정리(#200, best-effort)**: CR을 지워도 Kafka Connect는 sink consumer group을, Debezium은 토픽을 자동 삭제하지 않는다. `KafkaResourceCleaner`가 **consumer group이 빌 때까지 기다렸다 먼저 지우고 토픽을 맨 마지막**에 지운다(순서 반대면 `GroupNotEmptyException`·`auto.create`로 인한 빈 토픽 재생성). 남기면 orphan group lag 합산·재스냅샷 누적 문제가 생긴다([lifecycle.md §6](./lifecycle.md)).
+- `creating`은 Connector가 RUNNING으로 전이할 때까지 유지하고, 타임아웃 초과 시 `error`로 내려 상태 정확성·삭제 가능성을 보장한다(`ProvisioningTimeoutJob`).
+
+> **아직 정리하지 않는 잔재**: PostgreSQL source의 publication·replication slot(`bif_{project}_{pid}_*`)은 삭제 시 정리 대상에 미포함(후속).
 
 ### 6. Connector 상태 감지 — Fabric8 Watch (FR-008)
 
