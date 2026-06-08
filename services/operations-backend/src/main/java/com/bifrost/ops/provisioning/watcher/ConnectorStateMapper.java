@@ -3,6 +3,7 @@ package com.bifrost.ops.provisioning.watcher;
 import com.bifrost.ops.pipeline.ConnectorRuntimeState;
 import com.bifrost.ops.pipeline.ConnectorStatusUpdate;
 import com.bifrost.ops.pipeline.PipelineLifecycle;
+import io.strimzi.api.kafka.model.common.Condition;
 import io.strimzi.api.kafka.model.connector.KafkaConnector;
 import io.strimzi.api.kafka.model.connector.KafkaConnectorStatus;
 import org.springframework.stereotype.Component;
@@ -44,10 +45,42 @@ public class ConnectorStateMapper {
                 .count();
 
         ConnectorRuntimeState synthetic = synthesize(connectorState, total, failed);
-        PipelineLifecycle lifecycle = toLifecycle(synthetic);
         String lastError = firstFailedTrace(connectorState, tasks);
 
+        // CR이 NotReady(operator가 커넥터 배포 거부: config invalid·DB 연결 거부 등)면,
+        // runtime connectorStatus가 비어 UNKNOWN/UNASSIGNED로 보여도 '아직 시작 중'이 아니라 '실패'다(#155).
+        // 이미 RUNNING/FAILED/PAUSED로 판정됐으면 runtime 상태를 우선한다.
+        if (synthetic == ConnectorRuntimeState.UNKNOWN || synthetic == ConnectorRuntimeState.UNASSIGNED) {
+            String notReady = notReadyMessage(cr);
+            if (notReady != null) {
+                synthetic = ConnectorRuntimeState.FAILED;
+                lastError = truncate(notReady);
+            }
+        }
+
+        PipelineLifecycle lifecycle = toLifecycle(synthetic);
         return new ConnectorStatusUpdate(name, synthetic, lifecycle, total, failed, lastError);
+    }
+
+    /**
+     * KafkaConnector CR의 conditions에서 NotReady(=배포 실패) 메시지를 찾는다. 없으면 null.
+     * Strimzi는 커넥터를 생성 못 하면 {@code NotReady=True}(또는 {@code Ready=False})로 사유를 남긴다.
+     */
+    private String notReadyMessage(KafkaConnector cr) {
+        KafkaConnectorStatus status = cr.getStatus();
+        if (status == null || status.getConditions() == null) {
+            return null;
+        }
+        for (Condition c : status.getConditions()) {
+            boolean notReady =
+                    ("NotReady".equalsIgnoreCase(c.getType()) && "True".equalsIgnoreCase(c.getStatus()))
+                            || ("Ready".equalsIgnoreCase(c.getType()) && "False".equalsIgnoreCase(c.getStatus()));
+            if (notReady) {
+                String msg = c.getMessage() != null ? c.getMessage() : c.getReason();
+                return msg != null ? msg : "connector NotReady";
+            }
+        }
+        return null;
     }
 
     private ConnectorRuntimeState synthesize(String connectorState, int total, int failed) {

@@ -73,13 +73,17 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
 
     /** connector 상태들을 보고 pipeline 상태를 재계산하고, 변경 시에만 기록·발행한다. */
     private void recompute(PipelineEntity p) {
+        List<ConnectorEntity> connectors = connectorRepository.findByPipelineId(p.getId());
         PipelineLifecycle current = p.getStatus();
-        PipelineLifecycle next = computeStatus(p.getPattern(), connectorRepository.findByPipelineId(p.getId()));
+        PipelineLifecycle next = computeStatus(p.getPattern(), connectors);
         if (next == current) {
             return;
         }
         p.setStatus(next);
         p.setStatusUpdatedAt(Instant.now());
+        // 상태 사유 동기화(#155): ERROR면 커넥터 lastError를 노출하고, 정상 상태로 가면 클리어.
+        // 이게 없으면 실패해도 statusMessage=null이라 '왜 실패했는지' 안 보였다.
+        p.setStatusMessage(next == PipelineLifecycle.ERROR ? firstError(connectors) : null);
         pipelineRepository.save(p);
 
         EventLevel level = switch (next) {
@@ -133,6 +137,15 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
 
     private static String parseState(String state) {
         return state == null ? "" : state.toUpperCase();
+    }
+
+    /** 커넥터들 중 첫 lastError를 pipeline 상태 사유로 쓴다. 없으면 null. */
+    private static String firstError(List<ConnectorEntity> connectors) {
+        return connectors.stream()
+                .map(ConnectorEntity::getLastError)
+                .filter(e -> e != null && !e.isBlank())
+                .findFirst()
+                .orElse(null);
     }
 
     private UUID resolvePipelineId(String connectorName) {

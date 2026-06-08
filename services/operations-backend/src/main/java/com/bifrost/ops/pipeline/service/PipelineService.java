@@ -235,6 +235,8 @@ public class PipelineService {
     public void delete(UUID wsId, AuthenticatedUser principal, UUID id) {
         accessGuard.requireAccess(wsId, principal);
         PipelineEntity p = load(wsId, id);
+        // creating(실제 프로비저닝 진행 중)은 삭제 불가 — in-flight 리소스와의 race 방지. 이 가드는 옳다.
+        // 단, 프로비저닝이 실패하면 creating이 아니라 ERROR로 전이돼야 한다(상태 정확성). 그래야 삭제 가능.
         if (p.getStatus() == PipelineLifecycle.CREATING) {
             throw validation("creating 상태에서는 삭제할 수 없습니다");
         }
