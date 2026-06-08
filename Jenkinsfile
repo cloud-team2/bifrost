@@ -87,10 +87,14 @@ spec:
           steps {
             container('kaniko') {
               script {
+                // 빌드 컨텍스트는 서비스마다 다르다:
+                //  - operations-backend: 멀티모듈 Gradle → 컨텍스트=레포 루트(gradlew/settings.gradle/gradle 필요)
+                //  - ai-service/frontend: self-contained Dockerfile → 컨텍스트=서비스 디렉토리
                 for (svc in env.TO_BUILD.trim().split(' ')) {
+                  def ctx = (svc == 'operations-backend') ? "${WORKSPACE}" : "${WORKSPACE}/services/${svc}"
                   sh """
                     /kaniko/executor \
-                      --context=dir://${WORKSPACE}/services/${svc} \
+                      --context=dir://${ctx} \
                       --dockerfile=${WORKSPACE}/services/${svc}/Dockerfile \
                       --destination=${HARBOR}/${PROJECT}/bifrost-${svc}:${TAG} \
                       --destination=${HARBOR}/${PROJECT}/bifrost-${svc}:latest \

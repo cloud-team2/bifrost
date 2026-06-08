@@ -143,9 +143,45 @@ public class StrimziKafkaPipelineProvisioner implements KafkaPipelineProvisioner
     @Override
     public void deletePipelineResources(PipelineResourceRef resourceRef) {
         String ns = resourceRef.namespace() != null ? resourceRef.namespace() : namespace;
-        for (String name : resourceRef.connectorNames()) {
+        java.util.UUID pid = resourceRef.pipelineId();
+
+        // 삭제 대상: 저장된 이름 + pipelineId 기반 결정적 이름({pid}-source/-sink).
+        // 엔티티에 이름이 누락/불일치(프로비저닝 부분 실패 등)해도 결정적 이름으로 표준 CR을 보장 삭제한다.
+        java.util.LinkedHashSet<String> names = new java.util.LinkedHashSet<>(resourceRef.connectorNames());
+        if (pid != null) {
+            names.add(pid + "-source");
+            names.add(pid + "-sink");
+        }
+        for (String name : names) {
+            // 없는 CR은 no-op. k8s 접근 실패는 예외를 던져 호출부 트랜잭션을 롤백시킨다(고아 CR 방지).
             k8s.resource(buildConnectorTemplate(name)).inNamespace(ns).delete();
             log.info("connector 삭제 요청: namespace={}, name={}", ns, name);
+        }
+
+        // 고아 방지 sweep(#155): pipelineId 접두사를 가진 KafkaConnector CR을 전수 조회해 남은 것도 삭제.
+        if (pid != null) {
+            sweepOrphanConnectors(ns, pid + "-");
+        }
+    }
+
+    /** {@code prefix}로 시작하는 KafkaConnector CR을 전수 삭제(이름 기반 삭제 후 잔여 보강). */
+    private void sweepOrphanConnectors(String ns, String prefix) {
+        try {
+            var list = k8s.genericKubernetesResources("kafka.strimzi.io/v1", "KafkaConnector")
+                    .inNamespace(ns)
+                    .withLabel("strimzi.io/cluster", connectCluster)
+                    .list();
+            for (GenericKubernetesResource cr : list.getItems()) {
+                String name = cr.getMetadata() != null ? cr.getMetadata().getName() : null;
+                if (name != null && name.startsWith(prefix)) {
+                    k8s.resource(buildConnectorTemplate(name)).inNamespace(ns).delete();
+                    log.info("connector 고아 sweep 삭제: namespace={}, name={}", ns, name);
+                }
+            }
+        } catch (RuntimeException e) {
+            // 목록 조회 실패 시: 이름 기반(결정적) 삭제는 이미 끝났으므로 표준 CR은 정리된 상태다.
+            log.warn("connector 고아 sweep 조회 실패(결정적 이름 삭제는 완료): prefix={}, cause={}",
+                    prefix, e.getMessage());
         }
     }
 
