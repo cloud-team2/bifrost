@@ -39,13 +39,13 @@ spec:
   environment {
     HARBOR      = 'harbor.harbor.svc.cluster.local'
     PROJECT     = 'library'
-    TAG         = "${GIT_COMMIT.take(8)}"
+    TAG         = "${(env.GIT_COMMIT ?: 'latest').take(8)}"
     GITOPS_REPO = 'github.com/cloud-team2/bifrost.git'
     SERVICES    = 'ai-service operations-backend frontend'   // services/<svc> = 빌드 컨텍스트
   }
 
   options {
-    timestamps()
+    timestamps()                                      // timestamper 플러그인 설치됨 (#161, jenkins-values)
     disableConcurrentBuilds()
     buildDiscarder(logRotator(numToKeepStr: '20'))
   }
@@ -58,9 +58,9 @@ spec:
       }
     }
 
-    // main 머지에서만 동작. 변경된 서비스만 골라 빌드/배포.
-    stage('CD (main only)') {
-      when { branch 'main' }
+    // 이 job은 SCM이 */main 단일 브랜치라 항상 main 빌드 = CD 수행.
+    // (멀티브랜치가 아니라 BRANCH_NAME이 비므로 when{branch} 대신 job의 브랜치 설정으로 main 한정)
+    stage('CD') {
       stages {
         stage('Detect changes') {
           steps {
