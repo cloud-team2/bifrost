@@ -32,8 +32,8 @@ env:
   KAFKA_CLUSTER_NAME: platform-kafka
   KAFKA_CLUSTER_NAMESPACE: platform-kafka
   KAFKA_CONNECT_CLUSTER: platform-connect
-  # Prometheus 메트릭 수집 (#126)
-  PROMETHEUS_URL: http://prometheus.platform-kafka.svc.cluster.local:9090
+  # Prometheus 메트릭 수집 (#126) — kube-prometheus-stack(#124) Prometheus
+  PROMETHEUS_URL: http://kps-prometheus.monitoring.svc.cluster.local:9090
   PROMETHEUS_ENABLED: "true"
   PROVISIONING_MODE: real
   AI_SERVICE_URL: http://ai-service.bifrost-system.svc.cluster.local:8082
