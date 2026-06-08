@@ -265,7 +265,7 @@ async def test_executor_injects_idempotency_key():
         ActionCandidate(
             action_id="act_exec",
             action_type=ActionType.RUNTIME_TOOL,
-            action_name="restart",
+            action_name="test-src-connector",   # connector_name으로 사용됨
             risk=RiskLevel.HIGH,
             reason="approved",
             status=ActionStatus.READY,
@@ -295,7 +295,7 @@ async def test_executor_records_before_after_evidence():
         ActionCandidate(
             action_id="act_ev",
             action_type=ActionType.RUNTIME_TOOL,
-            action_name="restart",
+            action_name="test-src-connector",   # connector_name으로 사용됨
             risk=RiskLevel.HIGH,
             reason="approved",
             status=ActionStatus.READY,
