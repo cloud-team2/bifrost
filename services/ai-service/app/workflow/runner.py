@@ -123,6 +123,11 @@ async def run_workflow(
                     tool_names = ", ".join(s.tool_name for s in planner_out.retrieval_plan)
                     await _publish(bus, event_repo, run_id,
                                    _evt(run_id, StreamingEventType.AGENT_COMPLETED, "planner", f"조회 도구: {tool_names}"))
+                    await _publish(bus, event_repo, run_id, _evt(
+                        run_id, StreamingEventType.PARTIAL_RESULT, "planner",
+                        f"조회 계획 확정: {tool_names}",
+                        {"stage": "planner", "plan": [s.tool_name for s in planner_out.retrieval_plan]},
+                    ))
 
                 case "retrieval":
                     await _publish(bus, event_repo, run_id,
@@ -149,6 +154,16 @@ async def run_workflow(
                     scope = classifier_out.classification.incident_scope.value
                     await _publish(bus, event_repo, run_id,
                                    _evt(run_id, StreamingEventType.AGENT_COMPLETED, "classifier", f"scope: {scope}"))
+                    clf = classifier_out.classification
+                    await _publish(bus, event_repo, run_id, _evt(
+                        run_id, StreamingEventType.PARTIAL_RESULT, "classifier",
+                        f"incident 유형 분류: scope={clf.incident_scope.value}",
+                        {
+                            "stage": "classifier",
+                            "scope": clf.incident_scope.value,
+                            "types": [t.type for t in clf.incident_types],
+                        },
+                    ))
 
                 case "rca":
                     await _publish(bus, event_repo, run_id,
@@ -158,6 +173,18 @@ async def run_workflow(
                         run_id, StreamingEventType.AGENT_COMPLETED, "rca",
                         f"후보 {len(rca_out.root_cause_candidates)}건",
                     ))
+                    await _publish(bus, event_repo, run_id, _evt(
+                        run_id, StreamingEventType.PARTIAL_RESULT, "rca",
+                        f"근본 원인 후보 {len(rca_out.root_cause_candidates)}건",
+                        {"stage": "rca", "candidates": len(rca_out.root_cause_candidates)},
+                    ))
+                    if rca_out.root_cause_candidates:
+                        top = rca_out.root_cause_candidates[0]
+                        await _publish(bus, event_repo, run_id, _evt(
+                            run_id, StreamingEventType.REPORT_PREVIEW_AVAILABLE, "rca",
+                            f"[검증 전 preview] 원인 후보: {top.root_cause_id} (confidence: {top.confidence:.0%})",
+                            {"root_cause_id": top.root_cause_id, "confidence": top.confidence, "verified": False},
+                        ))
 
                 case "remediation":
                     await _publish(bus, event_repo, run_id,
@@ -172,7 +199,7 @@ async def run_workflow(
                     await _publish(bus, event_repo, run_id,
                                    _evt(run_id, StreamingEventType.AGENT_STARTED, "policy_guard", "정책을 확인합니다"))
                     candidates = remediation_out.action_candidates if remediation_out else []
-                    policy_out = await run_policy_guard(candidates)
+                    policy_out = await run_policy_guard(candidates, bus=bus, event_repo=event_repo, run_id=run_id)
                     await _publish(bus, event_repo, run_id, _evt(
                         run_id, StreamingEventType.AGENT_COMPLETED, "policy_guard",
                         f"결정 {len(policy_out.policy_decisions)}건",

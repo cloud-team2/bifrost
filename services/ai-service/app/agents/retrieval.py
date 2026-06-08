@@ -65,6 +65,20 @@ async def run_retrieval(
                 message=summary,
                 payload={"tool": step.tool_name, "step_id": step.step_id, "summary": summary},
             ))
+            await _pub(bus, event_repo, run_id, StreamingEvent(
+                event_id=str(uuid4()),
+                run_id=run_id,
+                timestamp=datetime.now(timezone.utc),
+                type=StreamingEventType.EVIDENCE_COLLECTED,
+                agent="retrieval",
+                message=f"근거 수집: {summary[:80]}",
+                payload={
+                    "evidence_id": evidence.evidence_id,
+                    "evidence_type": evidence.type.value,
+                    "summary": summary[:80],
+                    "redaction_status": evidence.redaction_status.value,
+                },
+            ))
         else:
             error_msg = result.error.message if result.error else "조회 실패"
             summary = f"{step.tool_name}: {error_msg}"

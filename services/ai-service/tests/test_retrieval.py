@@ -56,9 +56,13 @@ async def test_retrieval_success_emits_completed_not_failed() -> None:
 
     types = [e.type for e in published]
     assert StreamingEventType.TOOL_CALL_COMPLETED in types
+    assert StreamingEventType.EVIDENCE_COLLECTED in types
     assert StreamingEventType.TOOL_CALL_FAILED not in types
     assert "[mock]" not in out.evidence_items[0].summary
     assert "failed" not in out.evidence_items[0].store_ref
+
+    ev_collected = next(e for e in published if e.type == StreamingEventType.EVIDENCE_COLLECTED)
+    assert ev_collected.payload["evidence_id"] == out.evidence_items[0].evidence_id
 
 
 @pytest.mark.asyncio
