@@ -121,9 +121,12 @@ async def run_workflow(
                 case "correlation":
                     await _publish(bus, event_repo, run_id,
                                    _evt(run_id, StreamingEventType.AGENT_STARTED, "correlation", "알림 이벤트를 분석합니다"))
-                    await run_correlation()
-                    await _publish(bus, event_repo, run_id,
-                                   _evt(run_id, StreamingEventType.AGENT_COMPLETED, "correlation", "알림 그룹 분석 완료"))
+                    correlation_out = await run_correlation(user_message=user_message)
+                    scope_label = correlation_out.scope.value
+                    await _publish(bus, event_repo, run_id, _evt(
+                        run_id, StreamingEventType.AGENT_COMPLETED, "correlation",
+                        f"scope={scope_label}, groups={len(correlation_out.groups)}",
+                    ))
 
                 case "planner":
                     await _publish(bus, event_repo, run_id,
