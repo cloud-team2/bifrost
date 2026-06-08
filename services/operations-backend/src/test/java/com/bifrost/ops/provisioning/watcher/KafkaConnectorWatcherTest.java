@@ -34,23 +34,9 @@ class KafkaConnectorWatcherTest {
         return cr;
     }
 
-    private KafkaConnectorWatcher watcher(ConnectorStatusSink sink, Consumer<ConnectorStatusUpdate> statusConsumer) {
+    private KafkaConnectorWatcher watcher(ConnectorStatusSink sink, PipelineStatusService service) {
         return new KafkaConnectorWatcher(
-                null, sink, statusService(statusConsumer), new ConnectorStateMapper(), "platform-kafka", "platform-connect");
-    }
-
-    private PipelineStatusService statusService(Consumer<ConnectorStatusUpdate> statusConsumer) {
-        return new PipelineStatusService() {
-            @Override
-            public void applyConnectorStatus(ConnectorStatusUpdate update) {
-                statusConsumer.accept(update);
-            }
-
-            @Override
-            public int failTimedOutCreating(java.time.Duration timeout) {
-                return 0;
-            }
-        };
+                null, sink, service, new ConnectorStateMapper(), "platform-kafka", "platform-connect");
     }
 
     /** applyConnectorStatus만 캡처하고 나머지는 no-op인 PipelineStatusService 어댑터(다중 메서드라 람다 불가). */
