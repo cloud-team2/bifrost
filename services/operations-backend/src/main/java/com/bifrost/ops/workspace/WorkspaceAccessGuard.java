@@ -52,4 +52,16 @@ public class WorkspaceAccessGuard {
         throw new ApiException(ErrorCode.WORKSPACE_FORBIDDEN,
                 "워크스페이스 접근 권한이 없습니다");
     }
+
+    /** project_member 소속만 확인한다. 관리 권한은 요구하지 않는다. */
+    public void requireMember(UUID wsId, AuthenticatedUser principal) {
+        if (principal == null) {
+            throw new ApiException(ErrorCode.UNAUTHENTICATED, "인증이 필요합니다");
+        }
+        if (memberRepository.existsByIdWorkspaceIdAndIdUserId(wsId, principal.userId())) {
+            return;
+        }
+        throw new ApiException(ErrorCode.WORKSPACE_FORBIDDEN,
+                "워크스페이스 접근 권한이 없습니다");
+    }
 }

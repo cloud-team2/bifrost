@@ -6,6 +6,7 @@ import com.bifrost.ops.auth.persistence.repository.UserRepository;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
 import com.bifrost.ops.workspace.Role;
+import com.bifrost.ops.workspace.WorkspaceAccessGuard;
 import com.bifrost.ops.workspace.dto.ProjectMemberAddRequest;
 import com.bifrost.ops.workspace.dto.ProjectMemberResponse;
 import com.bifrost.ops.workspace.dto.ProjectMemberUpdateRequest;
@@ -27,18 +28,21 @@ public class ProjectMemberService {
     private final ProjectMemberRepository memberRepository;
     private final WorkspaceRepository workspaceRepository;
     private final UserRepository userRepository;
+    private final WorkspaceAccessGuard accessGuard;
 
     public ProjectMemberService(ProjectMemberRepository memberRepository,
                                 WorkspaceRepository workspaceRepository,
-                                UserRepository userRepository) {
+                                UserRepository userRepository,
+                                WorkspaceAccessGuard accessGuard) {
         this.memberRepository = memberRepository;
         this.workspaceRepository = workspaceRepository;
         this.userRepository = userRepository;
+        this.accessGuard = accessGuard;
     }
 
     @Transactional(readOnly = true)
     public List<ProjectMemberResponse> list(UUID wsId, AuthenticatedUser principal) {
-        requireManager(wsId, principal);
+        accessGuard.requireMember(wsId, principal);
         List<ProjectMemberEntity> members = memberRepository.findByIdWorkspaceIdOrderByJoinedAtAsc(wsId);
         Map<UUID, UserEntity> users = userRepository.findAllById(
                 members.stream().map(ProjectMemberEntity::getUserId).toList())
