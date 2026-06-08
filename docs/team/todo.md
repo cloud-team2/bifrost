@@ -1,245 +1,320 @@
-# TODO - Spring Boot 구현 배정 + Agent/마무리 역할
+# TODO - 2026-06-08 (Latest)
 
-## 이번주 목표
+## 현재 기준
 
-- **목요일까지** Spring Boot에서 EDA/CDC 파이프라인 생성 흐름을 끝낸다.
-- mock 기준 필수 흐름: workspace 생성 -> DB 등록 -> CDC readiness 조회 -> EDA/CDC pipeline 생성 -> `creating` -> `active` -> SSE/event/audit 기록.
-- infra green이면 real 흐름까지 확인한다: EDA source insert -> topic 적재, CDC source insert/update -> sink 반영.
-- **금요일은** 신규 구현보다 연동, 테스트, 버그 수정, 다음주 TODO 작성에 집중한다.
+- `workspace -> DB 등록 -> pipeline 생성` 흐름은 **디버깅 완료**로 본다.
+- 이번 라운드의 메인 목표는 **모니터링 데이터 -> agent -> 운영 화면 연결**과 **wireframe 기준 settings/account Spring Boot 구현**이다.
+- 오늘부터는 파이프라인 생성 신규 기능보다 다음 3축을 우선한다.
+  - Spring Boot monitoring / incidents public API
+  - Spring `/internal/ops` + FastAPI agent 실제 연동
+  - Settings / Login wireframe 기준 계정·설정 API
 
-## 참조 문서
+## 이번 라운드 핵심 원칙
 
-| 문서 | 이번주에 사용할 내용 |
-| --- | --- |
-| [기능명세서](../spec.md) | FR-001~005, FR-013~018, FR-019, FR-022/025/026, 부록 B 상태값 |
-| [springboot/api.md](../api/springboot.md) | A.0 공통 응답, A.1 auth, A.2 workspace, A.3 database, A.4 pipeline, A.8 SSE, Part B `/internal/ops` |
-| [springboot/](../design/backend-springboot/overview.md) | §2 Provisioning, §3 Database Registry, §4 Data Model, Evidence/Audit |
-| [infra/DETAILS.md](../design/infra.md) | Kafka Connect 목표 구조, KafkaConnector, KafkaUser, 배포 순서 |
-| [fastapi/](../design/backend-fastapi/overview.md) | Spring `/internal/ops` read tool 계약을 잡을 때만 참조 |
+- 기존 public API(`workspace`, `database`, `pipeline`)는 가능하면 깨지지 않게 유지한다.
+- 새 API가 아직 완전하지 않아도, **response shape를 먼저 고정**하고 내부 구현은 stub으로 시작할 수 있다.
+- Spring public API와 Spring internalops API는 분리해서 본다.
+  - public API: frontend 운영/설정 화면용
+  - internalops: FastAPI agent read tool / control plane용
+- frontend는 mock 제거가 목표지만, backend가 늦으면 fixture adapter로 중간 연결해도 된다.
+- 각 담당자는 아래 TODO를 **GitHub issue로 바로 쪼갤 수 있는 단위**로 관리한다.
 
-## 배정 원칙
+## 현재 공백 요약
 
-| 담당 | 영역 | 소유 패키지/파일 |
+### Spring Boot
+
+- 이미 되는 것
+  - auth / workspace / database / pipeline / workspace SSE
+  - pipeline detail 관련 일부 read API(topic, consumer group, messages, metrics, sync)
+
+- 아직 비어 있는 것
+  - `overview`, `cluster`, `resource-events`, `incidents` 같은 운영/모니터링 public API
+  - `/internal/ops` 공통 envelope와 agent read tool API
+  - settings / account / members / notifications / thresholds / AI policy API
+
+### FastAPI
+
+- 이미 되는 것
+  - `/api/v1/health`, `/ready`, `/version`, `/capabilities`
+  - `/api/v1/agent/runs`, `/runs/{id}`, `/runs/{id}/events`
+  - router / planner / retrieval / verifier / report 스캐폴드
+
+- 아직 비어 있는 것
+  - supervisor 기반 실제 workflow 집행
+  - classifier / rca / remediation 단계 실제 연결
+  - approvals / actions / reports / catalogs / admin route surface
+  - Spring internalops와 실제 맞물리는 tool registry
+
+### Frontend
+
+- 이미 되는 것
+  - login / workspace / database / pipeline 화면 기본 연동
+  - workspace SSE(`pipeline_status_changed`)
+
+- 아직 비어 있는 것
+  - `OperatorOverview`, `OperatorCluster`, `OperatorResourceEvents`, `Alerts` 실 API 연동
+  - `BifrostAgent`, `OperatorAgentPanel`, `DevAIChatPanel`의 실제 FastAPI run/SSE 연동
+  - `Settings` 화면의 서버 연동
+
+## 역할 분담
+
+| 담당 | 메인 축 | 핵심 책임 |
 | --- | --- | --- |
-| 정재환 | **DB 쪽 전부** | `database`, `database/cdc`, `secret`, `V2__database.sql`, DB 관련 `/api/v1`와 Agent read 계약 |
-| 백강민 | **Fabric8/Strimzi 쪽 전부** | `provisioning/impl`, `adapters/kafka`, `watcher`, `V3__connector.sql`, KafkaConnector/Watcher |
-| 권세빈 | **나머지 Spring Boot 전부** | `global`(config·common), `auth`, `workspace`, `pipeline`, `provisioning` interface/mock/DTO, `monitoring`/`event`/`incident`, `governance`(policy·approval·changemanagement·idempotency·audit), `streaming`, `V1__core.sql`, status |
-| 김연수 | **Agent 점검/마무리** | 목요일 Agent 로직 검토, 금요일 Agent 마무리 |
-| 이성민 | **Spring Boot 검토/연동/마무리** | 금요일 Spring Boot PR/API/E2E 검토와 마무리 |
+| 정재환 | 인프라 + 프론트엔드 | 운영 화면 API 연동, AI 패널 FastAPI/SSE 연동, 배포 환경값 정리 |
+| 이성민 | Spring Boot 모니터링 | overview / cluster / resource-events / incidents public API |
+| 백강민 | Spring internalops | FastAPI가 읽는 `/internal/ops` read API, 공통 envelope, 계약 문서 |
+| 김연수 | FastAPI agent | supervisor 연결, monitoring read tool 연동, incident_analysis 흐름, SSE event 보강 |
+| 권세빈 | Spring Boot 설정/계정 | wireframe 기준 `Settings` / `Login` 서버 API 구현 |
 
-남의 패키지와 Flyway 파일은 직접 수정하지 않는다. 경계가 필요하면 interface/DTO를 먼저 합의하고 각자 영역에서 구현한다.
+---
 
-**Flyway 규칙(교차 FK)**: `V1__core.sql`/`V2__database.sql`/`V3__connector.sql`은 각자 자기 파일 안의 테이블만 만들고, **다른 파일의 테이블을 가리키는 FK 제약은 선언하지 않는다**(해당 컬럼은 `uuid`로만 둔다). 파일 간 교차 FK(`pipeline.source_db_id`/`sink_db_id` → `database`, `connector.pipeline_id` → `pipeline`)는 전부 마지막 공용 마이그레이션 `V4__fk_constraints.sql`(권세빈 소유)에 모아 V1~V3 이후에 건다. Flyway는 버전 번호 순으로 실행되므로 V1의 `pipeline`이 V2의 `database`를 FK로 참조하면 fresh DB에서 마이그레이션이 깨진다.
-금요일에는 백강민이 없으므로 Fabric8/Strimzi 잔여 이슈와 real provisioner 연동 책임은 정재환이 인수한다.
+## 정재환 - 인프라 + 프론트엔드
 
-## 요일별 산출물
+참고 화면:
+- [OperatorOverview.tsx](../../services/frontend/src/pages/op/OperatorOverview.tsx)
+- [OperatorCluster.tsx](../../services/frontend/src/pages/op/OperatorCluster.tsx)
+- [OperatorResourceEvents.tsx](../../services/frontend/src/pages/op/OperatorResourceEvents.tsx)
+- [Alerts.tsx](../../services/frontend/src/pages/Alerts.tsx)
+- [BifrostAgent.tsx](../../services/frontend/src/pages/ai/BifrostAgent.tsx)
+- [OperatorAgentPanel.tsx](../../services/frontend/src/pages/ai/OperatorAgentPanel.tsx)
+- [DevAIChatPanel.tsx](../../services/frontend/src/pages/ai/DevAIChatPanel.tsx)
 
-### 화요일 - 계약과 스키마 먼저 고정
+### 오늘/이번 라운드 TODO
 
-- 권세빈: Spring 공통 skeleton, 응답 envelope, error code, `V1__core.sql`, `KafkaPipelineProvisioner` interface/DTO/mock 초안.
-- 정재환: `V2__database.sql`, `database` table, `secret_ref`, `SecretStore.resolve` signature를 먼저 고정하고 공유.
-- 정재환: Agent 설계 검토 시작. Spring `/internal/ops` read tool 후보, service token/header, evidence 반환 규칙, FastAPI와 Spring 책임 경계를 초안으로 정리.
-- 백강민: Fabric8/Strimzi dependency, KafkaConnector CRD 접근 확인, 수동 KafkaConnector apply PoC.
+- [ ] `services/frontend/src/lib/api.ts`를 기준으로 platform API와 agent API를 논리적으로 분리한다.
+- [ ] `OperatorOverview`를 실제 monitoring overview API에 붙인다.
+- [ ] `OperatorCluster`, `OperatorResourceEvents`를 실제 API에 붙인다.
+- [ ] `Alerts`를 incidents API에 붙인다.
+- [ ] AI 패널 중 최소 1개에서 `POST /api/v1/agent/runs` + `GET /api/v1/agent/runs/{run_id}/events`가 실제로 동작하게 만든다.
+- [ ] workspace SSE와 agent SSE를 서로 분리된 흐름으로 관리한다.
+- [ ] backend가 덜 붙은 화면은 fixture adapter로 응답 shape만 먼저 고정한다.
+- [ ] 프론트에서 필요한 env 목록을 정리한다.
+  - platform base URL
+  - agent base URL
+  - workspace SSE URL
+  - agent SSE URL
+- [ ] `infra/cicd`, `infra/k8s`, `docs/guides` 기준으로 앱 배포/연동에 필요한 환경값과 누락 manifest를 표로 정리한다.
 
-완료 기준:
-- 권세빈/정재환/백강민이 서로 기다리지 않도록 pipeline DTO, DB id/secret_ref, connector naming의 초안이 나온다.
-- Flyway 교차 FK 규칙 합의: 개별 V1~V3엔 교차 FK를 넣지 않고 `V4__fk_constraints.sql`(권세빈 소유)에 모은다.
+### GitHub issue로 쪼갤 때의 추천 단위
 
-### 수요일 - API와 real provisioner 골격
+- [ ] `[FE] OperatorOverview 실 API 연동`
+- [ ] `[FE] OperatorCluster + ResourceEvents 실 API 연동`
+- [ ] `[FE] Alerts incidents API 연동`
+- [ ] `[FE] Agent panel run 생성 연동`
+- [ ] `[FE] Agent SSE hook 구현`
+- [ ] `[Infra/FE] frontend env 및 base URL 문서화`
 
-- 권세빈: auth/login/refresh, workspace 생성, pipeline 생성, pattern 검증, mock `creating -> active`, SSE `pipeline_status_changed`.
-- 정재환: 인프라 마무리 우선 진행 후 DB API 구현. connection-test, DB 등록, schema 조회, cdc-readiness.
-- 정재환: Agent 기반 다지기. `list_project_pipelines`, `get_pipeline_topology`, `get_connector_status`, `get_consumer_lag`, `search_logs`, `get_incident_summary`의 input/output과 error mapping 확정.
-- 백강민: Source Debezium mapper, CDC Sink JDBC mapper, real provisioner skeleton, Watcher skeleton.
+### 완료 기준
 
-판정:
-- 정재환이 infra `green/red`를 기록한다.
-- green이면 목요일 real E2E 리허설, red면 목요일은 mock E2E를 확정한다.
+- [ ] 운영 화면 4개가 mock 없이 실제 API 또는 고정 fixture adapter 기준으로 동작한다.
+- [ ] AI 패널 1개 이상이 실제 FastAPI run + SSE를 사용한다.
+- [ ] `npm run build`가 계속 통과한다.
 
-### 목요일 - 파이프라인 생성 성공
+---
 
-- 권세빈: `PipelineStatusService` 단일 writer 확정, event/audit/SSE 연결, 생성 응답 DTO 마감.
-- 정재환: DB API 누락 정리, source/sink seed data와 smoke command 준비, Agent read tool용 Spring 내부 API 계약 정리.
-- 백강민: mock/real provisioner 스왑, KafkaConnector 생성, Watcher -> `PipelineStatusService` 연결, 금요일 부재 전 잔여 이슈/운영 방법을 정재환에게 인계.
-- 김연수: Agent 쪽 로직에 문제 있는지 확인. Tool Client Registry, State, diagnose-only workflow, SSE progress event, Spring `/internal/ops` client 경계가 설계와 맞는지 검토하고 이슈를 정리.
-- 김연수: **루프 가드 중앙 집행 검증** — 전역 step(`MAX_STEPS`=24)·revision·fail·gap·scope·revise_action 상한이 `run` namespace 카운터로 Supervisor 한 곳에서 집행되는지, 어떤 분기도 가드 검사를 우회하지 않는지 확인([fastapi DETAILS §15.5.1](../design/backend-fastapi/contract/contract-workflow-control.md#51-루프-방지와-종료-보장)).
-- 김연수: **fail 경로 캡 확인** — `Verifier fail → Planner`가 `MAX_FAIL_LOOPS`로 막히는지(과거 무제한 되돌림 여부) 점검.
-- 김연수: **latency 보강 검토** — Retrieval 독립 read tool 병렬 실행, 부분 결과 스트리밍(`report_preview_available`/`partial_result`), stage별 timeout이 설계대로 들어가는지 확인([fastapi DETAILS §15.4.2](../design/backend-fastapi/contract/contract-workflow-control.md#42-지연-최소화latency-원칙)).
+## 이성민 - Spring Boot 모니터링 / incident public API
 
-완료 기준:
-- mock 기준 EDA/CDC 생성 E2E 성공.
-- infra green이면 real 기준 EDA topic 적재와 CDC sink 반영까지 확인.
-- Agent 로직 검토 결과가 이슈 목록 또는 수정 TODO로 남아 있다.
+참고 문서:
+- [frontend.md](../design/frontend.md)
+- [monitoring.md](../design/backend-springboot/monitoring.md)
 
-### 금요일 - 연동, 테스트, Agent/Spring Boot 마무리, 다음주 TODO
+### 오늘/이번 라운드 TODO
 
-- 권세빈/정재환: EDA/CDC 생성 버그 수정, API/SSE 계약 불일치 정리, mock/real config 정리.
-- 정재환: 백강민 부재분 책임. Fabric8/Strimzi, KafkaConnector, Watcher, real provisioner 잔여 이슈를 인수해 연동/테스트를 마무리한다.
-- 김연수: Agent 쪽 마무리 작업. diagnose-only 흐름, read tool 연동, SSE progress event, Spring client error handling, ready/capabilities를 정리. Retrieval 병렬화·부분 결과 스트리밍·루프 가드(fail 캡 포함) 반영 마무리.
-- 이성민: Spring Boot 쪽 검토 및 연동 + 마무리 작업. PR 리뷰, API 계약 대조, mock/real E2E 스크립트, 시연 체크리스트, 다음주 TODO 작성.
+- [ ] `GET /api/v1/workspaces/{wsId}/overview`를 구현한다.
+- [ ] `GET /api/v1/workspaces/{wsId}/cluster`를 구현한다.
+- [ ] `GET /api/v1/workspaces/{wsId}/resource-events`를 구현한다.
+- [ ] `GET /api/v1/workspaces/{wsId}/incidents`를 구현한다.
+- [ ] `GET /api/v1/workspaces/{wsId}/incidents/{id}`를 구현한다.
+- [ ] collector/query/service가 아직 비어 있는 부분은 stub 허용하되 response shape를 먼저 고정한다.
+- [ ] incident 응답에서 severity, status, grouping, timeline 기준을 먼저 정리한다.
+- [ ] 기존 pipeline monitoring read와 새 operator monitoring read의 DTO/명칭 충돌이 없는지 확인한다.
 
-## 정재환 - DB 쪽 작업 전체
+### GitHub issue로 쪼갤 때의 추천 단위
 
-참조:
-- [기능명세서](../spec.md): FR-013~018, 부록 B.3
-- [springboot/api.md](../api/springboot.md): A.3 Database, Part B 공통 response/error
-- [springboot/](../design/backend-springboot/overview.md): §3 Database Registry, §4 Data Model의 `database`
+- [ ] `[SB-Monitoring] workspace overview API 구현`
+- [ ] `[SB-Monitoring] cluster API 구현`
+- [ ] `[SB-Monitoring] resource-events API 구현`
+- [ ] `[SB-Incident] incidents 목록 API 구현`
+- [ ] `[SB-Incident] incidents 상세 API 구현`
+- [ ] `[SB-Monitoring] monitoring read model/stub 정리`
 
-작업:
-- [ ] `V2__database.sql` 작성 (교차 FK 미선언 — `database` 테이블만 생성, `pipeline`→`database` FK는 권세빈 `V4__fk_constraints.sql`로 위임)
-- [ ] `database` table 작성: workspace/project scope, name, engine, host, port, db_name, username, `secret_ref`, timestamps
-- [ ] credential 원문 저장 금지 처리
-- [ ] `SecretStore` interface 작성
-- [ ] `SecretStore` mock 작성
-- [ ] `SecretStore.resolve` 입력/출력 shape 확정
-- [ ] `secret_ref` naming 규칙 확정 후 권세빈/백강민에게 공유
-- [ ] DB 등록 DTO/request validation 작성
-- [ ] DB 목록 API: `GET /api/v1/workspaces/{wsId}/databases?role=&engine=&q=`
-- [ ] DB 연결 테스트 API: `POST /api/v1/workspaces/{wsId}/databases/connection-test`
-- [ ] 연결 테스트는 HikariCP `SELECT 1`, timeout 5s 기준
-- [ ] 연결 오류 분류: timeout, auth failed, network, db not found, unknown
-- [ ] DB 등록 API: `POST /api/v1/workspaces/{wsId}/databases`
-- [ ] DB 상세 API: `GET /api/v1/workspaces/{wsId}/databases/{dbId}`
-- [ ] DB schema 조회 API: `GET /api/v1/workspaces/{wsId}/databases/{dbId}/schema`
-- [ ] schema 응답: table, column, type, nullable, pk/index 여부
-- [ ] CDC readiness API: `GET /api/v1/workspaces/{wsId}/databases/{dbId}/cdc-readiness`
-- [ ] PostgreSQL readiness: `wal_level`, replication 권한, slot 생성 가능 여부, publication 가능 여부
-- [ ] MariaDB readiness: binlog enabled, row format, server_id, replication 권한
-- [ ] DB metrics API는 이번주 최소 stub 또는 mock 응답으로 계약만 맞춤
-- [ ] DB pipelines API는 pipeline table 연동 기준으로 구현 또는 stub
-- [ ] DB 관련 controller/service/repository 테스트
-- [ ] Agent read tool 계약 정리: DB/pipeline 조회에 필요한 `/internal/ops` 입력/출력, error mapping, service token header
-- [ ] 화요일 Agent 설계 검토: FastAPI와 Spring 책임 경계, credential 금지, `/internal/ops` read tool 후보 정리
-- [ ] 수요일 Agent 기반 다지기: read tool input/output, error mapping, evidence reference 반환 규칙, ready dependency 정리
-- [ ] 인프라 마무리 지원: KafkaConnect `platform-connect`, source/sink DB, metadb/RBAC, smoke command, 수요일 green/red 판정
+### 완료 기준
 
-완료 기준:
-- `database` schema와 `SecretStore.resolve` 계약이 먼저 공유되어 권세빈/백강민이 막히지 않는다.
-- connection-test, DB 등록, schema, cdc-readiness가 동작한다.
-- secret 원문이 DB/로그/응답에 남지 않는다.
+- [ ] frontend 운영 화면이 참조할 public monitoring API shape가 확정된다.
+- [ ] incidents 목록/상세 API가 agent와 frontend에서 공통 참조 가능하다.
 
-## 백강민 - Fabric8/Strimzi 쪽 작업 전체
+---
 
-참조:
-- [기능명세서](../spec.md): FR-004, FR-005, FR-008, 부록 B.2
-- [springboot/api.md](../api/springboot.md): A.4 Pipeline, Part B §14 Kafka Connect, §17 Strimzi
-- [springboot/](../design/backend-springboot/overview.md): §2 Provisioning
-- [infra/DETAILS.md](../design/infra.md): Kafka Connect 목표 구조
+## 백강민 - Spring `/internal/ops` 계약 및 read API
 
-작업:
-- [ ] `V3__connector.sql` 작성 (교차 FK 미선언 — `connector` 테이블만 생성, `connector`→`pipeline` FK는 권세빈 `V4__fk_constraints.sql`로 위임)
-- [ ] `connector` table 또는 connector metadata migration 작성
-- [ ] Fabric8 client 설정
-- [ ] Strimzi KafkaConnector CRD 접근 설정
-- [ ] KafkaConnector CR 생성 DTO/mapper 작성
-- [ ] connector naming 규칙 확정: project_key, dbName, schema, table 포함
-- [ ] 권세빈의 `KafkaPipelineProvisioner` interface real 구현 작성
-- [ ] EDA fan_out 생성 구현: Source Debezium connector 1개 생성
-- [ ] Source connector `tasksMax=1`
-- [ ] CDC direct 생성 구현: Source Debezium connector + Sink JDBC connector 생성
-- [ ] Sink connector upsert 설정
-- [ ] Sink connector `tasksMax=3`까지 허용
-- [ ] 정재환의 `SecretStore.resolve` 결과 사용
-- [ ] workspace KafkaUser credential 이름 규칙 적용
-- [ ] Secret 원문 로그/응답 금지
-- [ ] KafkaConnector 생성 실패 처리
-- [ ] Topic/Secret/Connector 단계별 실패 원인 코드 구분
-- [ ] KafkaConnector Watcher 구현
-- [ ] Watcher 상태 매핑: RUNNING -> active, FAILED -> error, 일부 task FAILED -> lag 또는 partial failure event
-- [ ] Watcher는 pipeline row를 직접 수정하지 않고 권세빈의 `PipelineStatusService` 호출
-- [ ] real/mock provisioner 설정 스왑 가능하게 구성
-- [ ] Fabric8/Watcher 테스트 또는 최소 smoke 테스트
+참고 파일:
+- [InternalController.java](../../services/operations-backend/src/main/java/com/bifrost/ops/internalops/controller/InternalController.java)
+- [spring_client.py](../../services/ai-service/app/tools/spring_client.py)
+- [registry.py](../../services/ai-service/app/tools/registry.py)
 
-완료 기준:
-- EDA 생성 요청이 Source KafkaConnector CR 생성까지 이어진다.
-- CDC 생성 요청이 Source/Sink KafkaConnector CR 생성까지 이어진다.
-- Watcher가 connector 상태를 `PipelineStatusService`로 전달한다.
+### 오늘/이번 라운드 TODO
 
-## 권세빈 - 나머지 Spring Boot 작업 전체
+- [ ] `/internal/ops/health`, `/internal/ops/ready`, `/internal/ops/version`을 구현한다.
+- [ ] 내부 운영 공통 응답 봉투를 도입한다.
+  - `{ ok, request_id, operation, result, evidence[], audit_event_id }`
+- [ ] 내부 운영 공통 에러 봉투를 정리한다.
+- [ ] agent 헤더를 받는 공통 규칙을 정리한다.
+  - `X-Agent-Run-Id`
+  - `X-Agent-Step-Id`
+  - `X-Agent-Name`
+  - `X-Request-Id`
+  - `X-Actor-Type`
+  - `X-Actor-Id`
+- [ ] FastAPI용 최소 read tool API를 구현한다.
+  - `list_project_pipelines`
+  - `get_pipeline_topology`
+  - `get_connector_status`
+  - `get_consumer_lag`
+  - `search_logs`
+  - `get_incident_summary`
+- [ ] 실제 데이터가 아직 어렵다면 stub 응답이라도 path와 result schema는 먼저 고정한다.
+- [ ] FastAPI가 기대하는 path와 실제 Spring path 차이를 흡수한다.
+- [ ] `docs/api/internal-ops-read-tools.md`를 새로 만들고, tool 이름 / path / params / result / error mapping을 남긴다.
 
-참조:
-- [기능명세서](../spec.md): FR-001~005, FR-019~021, 부록 B.1/B.5/B.6
-- [springboot/api.md](../api/springboot.md): A.0, A.1, A.2, A.4, A.6, A.7, A.8, Part B 공통 규칙
-- [springboot/](../design/backend-springboot/overview.md): §1 Server Design, §2 Provisioning interface, §4 Data Model
+### GitHub issue로 쪼갤 때의 추천 단위
 
-작업:
-- [ ] Spring package skeleton 정리
-- [ ] build.gradle 의존성 머지 관리
-- [ ] 공통 응답 envelope 구현: `{ok, request_id, data}` / `{ok, request_id, error}`
-- [ ] 표준 error code 구조 구현
-- [ ] request_id 생성/전파
-- [ ] global exception handler
-- [ ] auth/login API
-- [ ] auth/refresh API
-- [ ] 데모 계정 seed
-- [ ] JWT 발급/검증 필터
-- [ ] workspace 목록 API
-- [ ] workspace 생성 API
-- [ ] workspace 상세 API
-- [ ] `project_key` slug 생성
-- [ ] workspace 생성자 `project_member` 등록
-- [ ] KafkaUser/ACL 트리거 호출부 interface 또는 stub
-- [ ] `V1__core.sql` 작성: app_user, workspace, project_member, pipeline, event, audit_event, incident 등 core table (교차 FK 미선언 — `pipeline.source_db_id`/`sink_db_id`는 `uuid` 컬럼만)
-- [ ] `V4__fk_constraints.sql` 작성: 파일 간 교차 FK(`pipeline`→`database`, `connector`→`pipeline`)를 V1~V3 이후에 추가
-- [ ] pipeline 목록 API: `GET /api/v1/workspaces/{wsId}/pipelines?status=`
-- [ ] pipeline 생성 API: `POST /api/v1/workspaces/{wsId}/pipelines`
-- [ ] pipeline 상세 API
-- [ ] pipeline pause API
-- [ ] pipeline resume API
-- [ ] pipeline delete API
-- [ ] pattern 검증: `fan_out`은 sink 없음, `direct`는 sink 필수
-- [ ] sourceDbId/sinkDbId workspace ownership 검증
-- [ ] duplicate pipeline name 검증
-- [ ] `KafkaPipelineProvisioner` interface 작성
-- [ ] provisioner request/response DTO 작성
-- [ ] mock provisioner 작성
-- [ ] mock 기준 `creating -> active` 상태 전이
-- [ ] `PipelineStatusService` 작성
-- [ ] pipeline 상태 변경 단일 writer 보장
-- [ ] 상태 변경 시 event 기록
-- [ ] 상태 변경 시 audit_event 기록
-- [ ] SSE publisher 작성
-- [ ] `GET /api/v1/workspaces/{wsId}/events/stream`
-- [ ] SSE event: `pipeline_status_changed`
-- [ ] SSE event: `connector_state_changed`
-- [ ] 이벤트 로그 API: `GET /api/v1/workspaces/{wsId}/events?level=&pipelineId=`
-- [ ] 운영 overview API는 이번주 최소 stub/mock 응답
-- [ ] incident 목록/상세 API는 이번주 최소 stub/mock 응답
-- [ ] pipeline 상세 탭 API는 이번주 생성 E2E에 필요한 범위만 stub/mock 응답
-- [ ] 내부 운영 API 공통 header/response/error 구조 skeleton
-- [ ] `/internal/ops/health`, `/internal/ops/ready`, `/internal/ops/version`
-- [ ] `/internal/ops/projects/{project_id}/pipelines`
-- [ ] `/internal/ops/projects/{project_id}/pipelines/{pipeline_id}`
-- [ ] `/internal/ops/projects/{project_id}/kafka/connectors/{connector_name}/status`는 백강민 구현과 연결 또는 stub
-- [ ] `/internal/ops/projects/{project_id}/incidents/{incident_id}/summary`는 stub
-- [ ] controller/service 테스트
-- [ ] mock E2E 테스트: workspace -> DB 등록 -> pipeline 생성 -> active -> SSE/event/audit
+- [ ] `[SB-InternalOps] 공통 envelope + headers + health/ready/version 구현`
+- [ ] `[SB-InternalOps] pipeline 목록 및 topology read API 구현`
+- [ ] `[SB-InternalOps] connector status + consumer lag API 구현`
+- [ ] `[SB-InternalOps] logs + incident summary API 구현`
+- [ ] `[Docs] internal-ops read tools 계약 문서 작성`
 
-완료 기준:
-- mock 기준 EDA/CDC pipeline 생성 E2E가 성공한다.
-- 상태 변경은 `PipelineStatusService`만 통해 발생한다.
-- 백강민이 real provisioner를 붙일 interface/DTO가 고정되어 있다.
-- 정재환 DB API와 pipeline 생성 검증이 연결되어 있다.
+### 완료 기준
 
-## 최종 체크리스트
+- [ ] FastAPI `SpringOpsClient`가 path/envelope mismatch 없이 호출 가능하다.
+- [ ] monitoring 기반 agent retrieval에 필요한 최소 read tool surface가 열린다.
+- [ ] `/internal/ops` 계약 문서가 repo 안에 남는다.
 
-- [ ] 정재환: DB schema/SecretStore 계약 공유
-- [ ] 정재환: 화/수 Agent 설계 검토와 기반 다지기 완료
-- [ ] 정재환: DB 등록/connection-test/schema/cdc-readiness 완료
-- [ ] 정재환: infra green/red 판정
-- [ ] 정재환: 금요일 백강민 부재분 Fabric8/real provisioner 잔여 책임 인수
-- [ ] 백강민: real provisioner 구현
-- [ ] 백강민: Watcher -> PipelineStatusService 연결
-- [ ] 백강민: 목요일까지 Fabric8/Strimzi 잔여 이슈를 정재환에게 인계
-- [ ] 권세빈: auth/workspace/pipeline/mock/SSE/event/audit 완료
-- [ ] 김연수: 목요일 Agent 로직 문제 검토 완료
-- [ ] 김연수: 루프 가드 중앙 집행 + fail 경로 캡 검증 완료
-- [ ] 김연수: Retrieval 병렬화 + 부분 결과 스트리밍 + stage timeout 반영 확인
-- [ ] 김연수: 금요일 Agent 마무리 완료
-- [ ] 이성민: 금요일 Spring Boot 검토/연동/마무리 완료
-- [ ] EDA mock 생성 E2E 성공
-- [ ] CDC mock 생성 E2E 성공
-- [ ] infra green이면 EDA real topic 적재 확인
-- [ ] infra green이면 CDC real sink 반영 확인
-- [ ] 금요일 통합 테스트/시연 절차 작성
-- [ ] 다음주 TODO 작성
+---
+
+## 김연수 - FastAPI agent 실제 workflow
+
+참고 파일:
+- [runner.py](../../services/ai-service/app/workflow/runner.py)
+- [graph.py](../../services/ai-service/app/supervisor/graph.py)
+- [registry.py](../../services/ai-service/app/tools/registry.py)
+- [routes_agent.py](../../services/ai-service/app/api/routes_agent.py)
+
+### 오늘/이번 라운드 TODO
+
+- [ ] `run_workflow()`를 `Supervisor`와 실제로 연결한다.
+- [ ] mode별 흐름을 정리한다.
+  - `simple_query`
+  - `incident_analysis`
+  - `action_execution`
+  - `approval_decision`
+- [ ] `classifier`, `rca`, `remediation` skeleton을 실제 run path에 연결한다.
+- [ ] tool registry canonical naming을 정리하고 Spring internalops 계약과 맞춘다.
+- [ ] monitoring read tool이 실제 Spring internalops를 치도록 연결한다.
+- [ ] SSE event를 보강한다.
+  - `evidence_collected`
+  - `partial_result`
+  - `report_preview_available`
+  - `approval_required`
+  - `run_completed`
+- [ ] 기존 테스트(`test_tools_registry.py`, `test_supervisor_graph.py`)를 최신 흐름에 맞춰 갱신한다.
+
+### GitHub issue로 쪼갤 때의 추천 단위
+
+- [ ] `[FA-Agent] Supervisor를 실제 run workflow에 연결`
+- [ ] `[FA-Agent] tool registry canonical naming 정리`
+- [ ] `[FA-Agent] incident_analysis workflow skeleton 연결`
+- [ ] `[FA-Agent] monitoring read tool 실제 호출 연결`
+- [ ] `[FA-Agent] SSE event 보강`
+- [ ] `[FA-Agent] incident workflow 테스트 보강`
+
+### 완료 기준
+
+- [ ] FastAPI run path가 단순 helper 체인이 아니라 supervisor state 기반으로 동작한다.
+- [ ] `incident_analysis`에서 monitoring evidence를 읽고 단계별 SSE를 보낸다.
+- [ ] tool 이름과 테스트 기대값 불일치가 해소된다.
+
+---
+
+## 권세빈 - wireframe 기준 Spring Boot 설정 / 계정 구현
+
+참고 화면:
+- [Settings.tsx](../../services/frontend/src/pages/Settings.tsx)
+- [Login.tsx](../../services/frontend/src/pages/Login.tsx)
+- [AppStore.tsx](../../services/frontend/src/store/AppStore.tsx)
+
+### 구현 기준 섹션
+
+- [ ] `내 계정`
+- [ ] `일반`
+- [ ] `멤버`
+- [ ] `알림`
+- [ ] `임계값`
+- [ ] `AI 자동복구`
+- [ ] `Kafka 사용자` / `Kafka 시크릿`은 후순위 백로그로 둔다.
+
+### 오늘/이번 라운드 TODO
+
+- [ ] `내 계정` 섹션용 API를 정리한다.
+  - `me`
+  - 이름 / 이메일 / 역할
+  - 가입일
+  - 마지막 로그인
+- [ ] `일반` 섹션용 API를 구현한다.
+  - 프로젝트 이름 조회 / 수정
+  - 시간대 조회 / 수정
+  - 슬러그는 읽기 전용 유지
+- [ ] `멤버` 섹션용 API를 구현한다.
+  - 멤버 목록
+  - 초대
+  - 역할 변경
+  - 제거
+- [ ] `알림` 섹션용 API를 구현한다.
+  - Slack webhook
+  - 이메일 수신자
+  - severity 정책
+- [ ] `임계값` 섹션용 API를 구현한다.
+  - lag warning threshold
+  - lag critical threshold
+- [ ] `AI 자동복구` 섹션용 API를 구현한다.
+  - autonomous
+  - approval wait
+  - prod lock
+- [ ] 설정 저장용 persistence 전략을 정한다.
+  - 테이블 추가 또는 임시 저장 전략
+- [ ] `Kafka 사용자`, `Kafka 시크릿`은 후순위 관리 API로 분리해 백로그화한다.
+
+### GitHub issue로 쪼갤 때의 추천 단위
+
+- [ ] `[SB-Settings] 내 계정(me/session) API 정리`
+- [ ] `[SB-Settings] 일반 설정 API 구현`
+- [ ] `[SB-Settings] 멤버 목록/초대/역할변경/삭제 API 구현`
+- [ ] `[SB-Settings] 알림 설정 API 구현`
+- [ ] `[SB-Settings] 임계값 설정 API 구현`
+- [ ] `[SB-Settings] AI 자동복구 설정 API 구현`
+- [ ] `[SB-Settings][Backlog] Kafka 사용자/시크릿 관리 API`
+
+### 완료 기준
+
+- [ ] frontend `Settings`의 핵심 섹션이 mock/local state가 아니라 서버 API를 볼 수 있다.
+- [ ] login/me/session 흐름과 설정 저장 흐름이 충돌 없이 정리된다.
+
+---
+
+## handoff 순서
+
+| 우선순위 | 산출물 | 담당 |
+| --- | --- | --- |
+| 1 | `/internal/ops` 공통 계약, read tool 목록, envelope, JSON 예시 | 백강민 |
+| 2 | overview / cluster / resource-events / incidents public API shape | 이성민 |
+| 3 | Settings / Account / Members / Notifications / Thresholds / AI policy API shape | 권세빈 |
+| 4 | supervisor 연결, tool naming 정리, incident_analysis 흐름, SSE event 정의 | 김연수 |
+| 5 | 운영 화면 실 API 연동, AI 패널 run/SSE 연동, env 정리 | 정재환 |
+
+## 이번 라운드 종료 조건
+
+- [ ] 파이프라인 생성 신규 기능이 아니라 monitoring/agent/settings가 메인 개발 축으로 전환되었다.
+- [ ] 운영 화면이 mock 의존에서 벗어나기 시작했다.
+- [ ] FastAPI agent가 실제 Spring `/internal/ops` 데이터를 읽기 시작했다.
+- [ ] Settings wireframe의 핵심 섹션이 서버 API 기준으로 구현되기 시작했다.
+- [ ] 각 담당 TODO가 GitHub issue로 쪼개질 수 있는 수준으로 정리되었다.
