@@ -72,6 +72,10 @@ Bifrost API가 반환하는 에러 코드의 단일 출처. 코드 추가/변경
 | 코드 | HTTP | 이름 | 트리거 | 클라이언트 권장 처리 |
 |---|---|---|---|---|
 | 40001 | 404 | `PIPELINE_NOT_FOUND` | `id`가 없거나 해당 워크스페이스 소유가 아님(상세·pause·resume·delete) | "파이프라인을 찾을 수 없습니다" 안내, 목록으로 복귀 |
+| 40002 | 404 | `KAFKA_PRINCIPAL_NOT_FOUND` | `id`가 없거나 해당 워크스페이스 소유 Kafka principal이 아님 | principal 목록 새로고침 |
+| 40003 | 400 | `KAFKA_PRINCIPAL_USERNAME_INVALID` | username이 1~255자 `[A-Za-z0-9_-]+` 형식이 아님 | username 입력값 수정 유도 |
+| 40004 | 409 | `KAFKA_PRINCIPAL_CONFLICT` | 같은 워크스페이스에 동일 username principal이 이미 존재 | "이미 사용 중인 username입니다" 안내 |
+| 40005 | 409 | `KAFKA_PRINCIPAL_ALREADY_REVOKED` | revoked principal에 deactivate/revoke/rotate 요청 | revoked 상태 표시 후 변경 버튼 비활성화 |
 
 > 생성 마법사 검증 실패(pattern↔sink 정합성·source/sink ownership·CDC readiness BLOCKED·중복 이름·동일 source+테이블+패턴)는 도메인 코드를 따로 두지 않고 `VALIDATION_FAILED`(90001)로 응답한다([pipeline.md §2](../design/backend-springboot/pipeline.md)). provisioner 부분 실패는 예외가 아니라 pipeline 상태를 `error`로 두고 `status_message`에 stage/errorCode를 남긴다.
 
