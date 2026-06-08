@@ -11,7 +11,9 @@ infra/
 │   ├── deploy.sh              # 배포 스크립트
 │   ├── jenkins-values.yaml    # Jenkins Helm values
 │   ├── argocd-values.yaml     # ArgoCD Helm values
-│   └── harbor-values.yaml     # Harbor Helm values
+│   ├── harbor-values.yaml     # Harbor Helm values
+│   └── jobs/
+│       └── bifrost-ci-config.xml  # bifrost-ci Pipeline job 정의 (SoT)
 └── k8s/
     └── ingress/
         ├── harbor-ingress.yaml   # Harbor  ALB (port 80,  group.order 10)
@@ -43,6 +45,42 @@ Public Subnets: `subnet-0d8a1dcc1e064b04d`, `subnet-05e64cd452e9a3c55`
 ./infra/cicd/deploy.sh harbor
 ./infra/cicd/deploy.sh ingress
 ```
+
+## CI 파이프라인 Job (bifrost-ci)
+
+CI 파이프라인은 Jenkins의 **`bifrost-ci`** Pipeline job이 실행한다. job 정의는
+[`jobs/bifrost-ci-config.xml`](jobs/bifrost-ci-config.xml)에 SoT로 보관한다.
+
+| 설정 | 값 |
+|------|-----|
+| 종류 | Pipeline script from SCM |
+| SCM | `github.com/cloud-team2/bifrost.git` (creds `github-pat`), `*/main` |
+| scriptPath | `Jenkinsfile` |
+| Lightweight checkout | **false** (필수) |
+| 트리거 | GitHub hook (`GitHubPushTrigger`) |
+
+> **Lightweight checkout은 반드시 off.** on이면 Jenkinsfile만 가볍게 받아 폴링
+> baseline(SCMRevisionState)을 기록하지 않아, webhook poke가 와도 폴링이 변경을
+> 감지하지 못해 **자동 빌드가 트리거되지 않는다.** off면 매 빌드가 full checkout으로
+> baseline을 남겨 push→자동 빌드가 동작한다.
+
+### Job 재생성 / 갱신
+
+```bash
+# 포트포워딩 후 Jenkins CLI로 (admin/admin)
+kubectl -n jenkins port-forward svc/jenkins 8080:8080 &
+curl -s http://localhost:8080/jnlpJars/jenkins-cli.jar -o /tmp/jenkins-cli.jar
+
+# 최초 생성
+java -jar /tmp/jenkins-cli.jar -s http://localhost:8080 -auth admin:admin \
+  create-job bifrost-ci < infra/cicd/jobs/bifrost-ci-config.xml
+
+# 기존 갱신
+java -jar /tmp/jenkins-cli.jar -s http://localhost:8080 -auth admin:admin \
+  update-job bifrost-ci < infra/cicd/jobs/bifrost-ci-config.xml
+```
+
+GitHub webhook은 `http://<ALB>:8080/github-webhook/` (push 이벤트)로 등록돼 있어야 한다.
 
 ## 현재 배포 버전
 
