@@ -18,12 +18,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/**
- * 인증 API. 프론트 기본 호출은 {@code /api/v1/auth/**} 계약(#72)을 따르며,
- * 기존 {@code /api/auth/**} 경로도 하위 호환으로 유지한다.
- */
+/** 인증 API. 프론트 기본 호출은 {@code /api/v1/auth/**} 계약(#72)을 따른다. */
 @RestController
-@RequestMapping({"/api/v1/auth", "/api/auth"})
+@RequestMapping("/api/v1/auth")
 public class AuthController {
 
     private final AuthService authService;
