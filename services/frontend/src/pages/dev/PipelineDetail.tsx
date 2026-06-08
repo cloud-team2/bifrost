@@ -122,6 +122,29 @@ function ActBtn({ icon, label, onClick, danger }: {
   )
 }
 
+/* 시계열 차트 시간 범위 선택기(Prometheus 스타일). 짧은 창일수록 백엔드 step이 촘촘해진다. */
+const RANGE_OPTIONS: { label: string; minutes: number }[] = [
+  { label: '5m',  minutes: 5 },
+  { label: '15m', minutes: 15 },
+  { label: '30m', minutes: 30 },
+  { label: '1h',  minutes: 60 },
+  { label: '3h',  minutes: 180 },
+]
+
+function RangeSelector({ value, onChange }: { value: number; onChange: (m: number) => void }) {
+  return (
+    <div className="flex items-center gap-0.5 rounded-md border border-gray-200 bg-gray-50 p-0.5">
+      {RANGE_OPTIONS.map((o) => (
+        <button key={o.minutes} onClick={() => onChange(o.minutes)}
+          className={cn('rounded px-2 py-0.5 text-[11px] font-medium transition-colors',
+            value === o.minutes ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700')}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 /* ---------------------------------------------------------------- Overview tab */
 
 function OverviewTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
@@ -133,6 +156,7 @@ function OverviewTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
   const [metrics, setMetrics] = useState<PipelineMetricsResponse | null>(null)
   const [groups, setGroups] = useState<ConsumerGroupInfo[]>([])
   const [throughput, setThroughput] = useState<ThroughputPoint[]>([])
+  const [rangeMin, setRangeMin] = useState(15)   // 시계열 차트 시간 범위(기본 15분 — 실시간 변동이 잘 보임)
 
   useEffect(() => {
     if (!wsId) return
@@ -141,7 +165,7 @@ function OverviewTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
     const load = () => {
       api.pipelineTopicInfo(wsId, edge.id).then((t) => { if (!cancelled) setTopicInfo(t) }).catch(() => {})
       api.pipelineMetrics(wsId, edge.id).then((m) => { if (!cancelled) setMetrics(m) }).catch(() => {})
-      api.pipelineThroughput(wsId, edge.id, 30).then((t) => { if (!cancelled) setThroughput(t) }).catch(() => {})
+      api.pipelineThroughput(wsId, edge.id, rangeMin).then((t) => { if (!cancelled) setThroughput(t) }).catch(() => {})
       if (isEda) {
         api.pipelineConsumerGroups(wsId, edge.id).then((g) => { if (!cancelled) setGroups(g) }).catch(() => {})
       }
@@ -149,7 +173,7 @@ function OverviewTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
     load()
     const timer = setInterval(load, 5000)
     return () => { cancelled = true; clearInterval(timer) }
-  }, [wsId, edge.id, isEda])
+  }, [wsId, edge.id, isEda, rangeMin])
 
   const m = {
     produce_rate: metrics?.produceRate ?? 0,
@@ -206,6 +230,7 @@ function OverviewTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
             <div className="flex items-center gap-1.5 text-[11.5px] text-gray-500">
               <span className="h-2 w-2 rounded-full" style={{ background: CHART_COLORS.emerald }} />Consumed
             </div>
+            <RangeSelector value={rangeMin} onChange={setRangeMin} />
           </div>
         }>
         <div className="px-3 py-3">
@@ -588,6 +613,7 @@ function SyncTab({ edge }: { edge: Edge }) {
   const [delaySeries, setDelaySeries] = useState<MetricPoint[]>([])
   const [unsyncedSeries, setUnsyncedSeries] = useState<MetricPoint[]>([])
   const [eventSeries, setEventSeries] = useState<EventDistPoint[]>([])
+  const [rangeMin, setRangeMin] = useState(15)   // 시계열 차트 시간 범위(기본 15분)
   useEffect(() => {
     if (!wsId) return
     let cancelled = false
@@ -598,16 +624,17 @@ function SyncTab({ edge }: { edge: Edge }) {
       api.pipelineSyncStatus(wsId, edge.id)
         .then((s) => { if (!cancelled) setSync(s) })
         .catch(() => { if (!cancelled) setSyncErr(true) })
-      api.pipelineSourceDelay(wsId, edge.id).then((d) => { if (!cancelled) setDelaySeries(d) }).catch(() => {})
-      api.pipelineUnsynced(wsId, edge.id).then((d) => { if (!cancelled) setUnsyncedSeries(d) }).catch(() => {})
-      api.pipelineEventDist(wsId, edge.id).then((d) => { if (!cancelled) setEventSeries(d) }).catch(() => {})
+      api.pipelineSourceDelay(wsId, edge.id, rangeMin).then((d) => { if (!cancelled) setDelaySeries(d) }).catch(() => {})
+      api.pipelineUnsynced(wsId, edge.id, rangeMin).then((d) => { if (!cancelled) setUnsyncedSeries(d) }).catch(() => {})
+      api.pipelineEventDist(wsId, edge.id, rangeMin).then((d) => { if (!cancelled) setEventSeries(d) }).catch(() => {})
     }
     load()
     const timer = setInterval(load, 5000)
     return () => { cancelled = true; clearInterval(timer) }
-  }, [wsId, edge.id])
+  }, [wsId, edge.id, rangeMin])
 
   const hhmm = (ts: number) => new Date(ts).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
+  const rangeLabel = rangeMin >= 60 ? `최근 ${rangeMin / 60}시간` : `최근 ${rangeMin}분`
 
   const tableName  = edge.table ? `${edge.table.schema}.${edge.table.name}` : '—'
   const sinkReady  = !!sync && sync.sourceRows >= 0 && sync.sinkRows >= 0
@@ -710,7 +737,7 @@ function SyncTab({ edge }: { edge: Edge }) {
 
       {/* ── 차트 패널 ─────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-3">
-        <Panel title="데이터 전송 시간 (ms)" right={<span className="text-[12px] text-gray-400">최근 2시간</span>}>
+        <Panel title="데이터 전송 시간 (ms)" right={<RangeSelector value={rangeMin} onChange={setRangeMin} />}>
           <div className="px-3 py-3">
             <TrendChart
               data={sourceDelay} type="area" height={130}
@@ -718,7 +745,7 @@ function SyncTab({ edge }: { edge: Edge }) {
             />
           </div>
         </Panel>
-        <Panel title="미동기화 Rows 추이" right={<span className="text-[12px] text-gray-400">최근 2시간</span>}>
+        <Panel title="미동기화 Rows 추이" right={<span className="text-[12px] text-gray-400">{rangeLabel}</span>}>
           <div className="px-3 py-3">
             <TrendChart
               data={deltaTrend} type="area" height={130}
@@ -728,7 +755,7 @@ function SyncTab({ edge }: { edge: Edge }) {
         </Panel>
       </div>
 
-      <Panel title="이벤트 타입 분포" right={<span className="text-[12px] text-gray-400">최근 1시간</span>}>
+      <Panel title="이벤트 타입 분포" right={<span className="text-[12px] text-gray-400">{rangeLabel}</span>}>
         <div className="px-4 py-3">
           <ResponsiveChart width="100%" height={140}>
             <BarChart data={eventDist} barSize={10} margin={{ top: 4, right: 8, left: -28, bottom: 0 }}>

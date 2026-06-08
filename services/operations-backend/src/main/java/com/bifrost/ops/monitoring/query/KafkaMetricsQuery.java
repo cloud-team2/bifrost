@@ -78,10 +78,16 @@ public class KafkaMetricsQuery {
                 startSec, endSec, stepSec);
     }
 
-    /** 소스 지연(ms) 시계열 — Debezium MilliSecondsBehindSource. server=Debezium topic.prefix. */
+    /**
+     * 소스 지연(ms) 시계열 — Debezium MilliSecondsBehindSource(=데이터 전송 시간). server=topic.prefix.
+     * 순간 게이지는 부하 배치 타이밍에 따라 크게 튀므로, 스텝 구간 평균(avg_over_time)으로 평활화해
+     * 대표 전송시간을 보여준다(폴링 간 들쭉날쭉함도 완화). 데이터 없음(idle) 구간은 -1 유지 → 프론트가 gap 처리.
+     */
     public java.util.Map<Long, Double> sourceDelaySeries(String server, long startSec, long endSec, long stepSec) {
+        // 평활화 창은 스크랩 간격(~15~30s)보다 충분히 커야 여러 스크랩을 평균내 추세가 보인다(최소 60s).
+        long smoothSec = Math.max(60L, stepSec);
         return client.queryRange(
-                "max(debezium_metrics_millisecondsbehindsource{server=\"" + server + "\"})",
+                "max(avg_over_time(debezium_metrics_millisecondsbehindsource{server=\"" + server + "\"}[" + smoothSec + "s]))",
                 startSec, endSec, stepSec);
     }
 

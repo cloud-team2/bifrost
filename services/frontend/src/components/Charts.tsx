@@ -90,6 +90,7 @@ export function TrendChart({
                 stroke={s.color}
                 strokeWidth={2}
                 fill={`url(#g-${s.key})`}
+                isAnimationActive={false}
               />
             ))}
           </AreaChart>
@@ -111,6 +112,7 @@ export function TrendChart({
                 stroke={s.color}
                 strokeWidth={2}
                 dot={false}
+                isAnimationActive={false}
               />
             ))}
           </LineChart>

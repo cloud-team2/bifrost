@@ -145,7 +145,7 @@ public class PipelineTopicService {
 
         long endSec = System.currentTimeMillis() / 1000L;
         long startSec = endSec - Math.max(1, minutes) * 60L;
-        long stepSec = 60L;
+        long stepSec = stepFor(minutes);
         try {
             Map<Long, Double> produce = kafkaMetricsQuery.produceSeries(topic, startSec, endSec, stepSec);
             Map<Long, Double> consume = kafkaMetricsQuery.consumeSeries(topic, startSec, endSec, stepSec);
@@ -241,11 +241,19 @@ public class PipelineTopicService {
 
     // ---- private ----
 
-    /** [startSec, endSec, stepSec] 윈도우 (step 60s). */
+    /** [startSec, endSec, stepSec] 윈도우. step은 창 길이에 비례(짧은 창일수록 촘촘). */
     private long[] window(int minutes) {
         long endSec = System.currentTimeMillis() / 1000L;
         long startSec = endSec - Math.max(1, minutes) * 60L;
-        return new long[]{startSec, endSec, 60L};
+        return new long[]{startSec, endSec, stepFor(minutes)};
+    }
+
+    /**
+     * 창 길이에 맞춘 해상도(step, 초). 약 60점을 목표로 하되 최소 15초
+     * (Prometheus scrape 간격보다 잘게 쪼개도 의미 없음). 예: 5m→15s, 15m→15s, 1h→60s, 3h→180s.
+     */
+    private static long stepFor(int minutes) {
+        return Math.max(15L, minutes);
     }
 
     /** Map<ts초,값> → 시간순 MetricPoint(ms). */
