@@ -71,15 +71,44 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
         recompute(p);
     }
 
+    @Override
+    @Transactional
+    public int failTimedOutCreating(java.time.Duration timeout) {
+        Instant cutoff = Instant.now().minus(timeout);
+        List<PipelineEntity> stuck =
+                pipelineRepository.findByStatusAndCreatedAtBefore(PipelineLifecycle.CREATING, cutoff);
+        int n = 0;
+        for (PipelineEntity p : stuck) {
+            String reason = firstError(connectorRepository.findByPipelineId(p.getId()));
+            String message = reason != null ? reason
+                    : "프로비저닝 타임아웃: 커넥터가 " + timeout.toMinutes() + "분 내 RUNNING되지 않음";
+            transition(p, PipelineLifecycle.CREATING, PipelineLifecycle.ERROR, message);
+            n++;
+        }
+        if (n > 0) {
+            log.warn("프로비저닝 타임아웃으로 {}개 파이프라인을 error로 전이", n);
+        }
+        return n;
+    }
+
     /** connector 상태들을 보고 pipeline 상태를 재계산하고, 변경 시에만 기록·발행한다. */
     private void recompute(PipelineEntity p) {
+        List<ConnectorEntity> connectors = connectorRepository.findByPipelineId(p.getId());
         PipelineLifecycle current = p.getStatus();
-        PipelineLifecycle next = computeStatus(p.getPattern(), connectorRepository.findByPipelineId(p.getId()));
+        PipelineLifecycle next = computeStatus(p.getPattern(), connectors);
         if (next == current) {
             return;
         }
+        // 상태 사유 동기화(#155): ERROR면 커넥터 lastError를 노출하고, 정상 상태로 가면 클리어.
+        String message = next == PipelineLifecycle.ERROR ? firstError(connectors) : null;
+        transition(p, current, next, message);
+    }
+
+    /** 상태 전이 1건: row 갱신 + event/audit/SSE 발행(단일 경로). recompute·timeout이 공통 사용. */
+    private void transition(PipelineEntity p, PipelineLifecycle current, PipelineLifecycle next, String message) {
         p.setStatus(next);
         p.setStatusUpdatedAt(Instant.now());
+        p.setStatusMessage(message);
         pipelineRepository.save(p);
 
         EventLevel level = switch (next) {
@@ -133,6 +162,15 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
 
     private static String parseState(String state) {
         return state == null ? "" : state.toUpperCase();
+    }
+
+    /** 커넥터들 중 첫 lastError를 pipeline 상태 사유로 쓴다. 없으면 null. */
+    private static String firstError(List<ConnectorEntity> connectors) {
+        return connectors.stream()
+                .map(ConnectorEntity::getLastError)
+                .filter(e -> e != null && !e.isBlank())
+                .findFirst()
+                .orElse(null);
     }
 
     private UUID resolvePipelineId(String connectorName) {

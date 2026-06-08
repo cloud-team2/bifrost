@@ -181,12 +181,16 @@ public class PipelineController {
         return pipelineService.resume(wsId, principal, id);
     }
 
-    /** 삭제(FR-005). connector CR 삭제 + 행 제거. creating 중에는 불가. */
+    /**
+     * 삭제(FR-005). connector CR 삭제 + 행 제거. 정상 삭제는 creating 중 불가.
+     * {@code force=true}면 상태 불문 best-effort 청소(#155) — 리소스 정리가 실패해도 행은 제거.
+     */
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable UUID wsId,
                                        @PathVariable UUID id,
-                                       @AuthenticationPrincipal AuthenticatedUser principal) {
-        pipelineService.delete(wsId, principal, id);
+                                       @AuthenticationPrincipal AuthenticatedUser principal,
+                                       @RequestParam(defaultValue = "false") boolean force) {
+        pipelineService.delete(wsId, principal, id, force);
         return ResponseEntity.noContent().build();
     }
 }

@@ -50,7 +50,9 @@ export function workspaceToProject(
 function cdcToNodeStatus(status: string | null): NodeStatus {
   if (status === 'BLOCKED') return 'error'
   if (status === 'WARNING') return 'warning'
-  return 'healthy'
+  if (status === 'OK') return 'healthy'
+  // null/미확인(아직 체크 안 됨)을 '정상'(초록)으로 칠하지 않는다 — 연결 끊김을 못 보던 원인.
+  return 'warning'
 }
 
 export function datasourceToNode(db: DatabaseResponse, index = 0): Node {
