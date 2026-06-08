@@ -1,30 +1,41 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Icon } from '../../components/Icon'
 import { Gauge, MetricCard, PageHead, Panel, StatusBadge } from '../../components/blocks'
 import { TrendChart, CHART_COLORS, ChartLegend } from '../../components/Charts'
-import { CLUSTER } from '../../store/AppStore'
-import { genSeries } from '../../data/helpers'
 import { formatNum, cn } from '../../lib/format'
-import type { Broker } from '../../data/types'
+import {
+  api,
+  type BrokerInfo,
+  type ConnectClusterResponse,
+  type KafkaClusterResponse,
+  type ThroughputPoint,
+} from '../../lib/api'
+
+/* 초당 바이트 → 사람이 읽는 단위(KB/MB/s). */
+function fmtRate(bytesPerSec: number | null): string {
+  if (bytesPerSec == null) return '—'
+  if (bytesPerSec >= 1e6) return `${(bytesPerSec / 1e6).toFixed(1)} MB/s`
+  if (bytesPerSec >= 1e3) return `${(bytesPerSec / 1e3).toFixed(0)} KB/s`
+  return `${Math.round(bytesPerSec)} B/s`
+}
+function fmtBytes(bytes: number): string {
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`
+  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(0)} MB`
+  return `${(bytes / 1e3).toFixed(0)} KB`
+}
 
 /* ---------------------------------------------------------------- component */
 
 export function OperatorCluster() {
   const [tab, setTab] = useState('Brokers')
   const tabs = ['Brokers', 'KafkaConnect']
-
-  const [selectedBroker, setSelectedBroker] = useState<Broker | null>(null)
-
-  function back() {
-    setSelectedBroker(null)
-  }
+  const [selectedBroker, setSelectedBroker] = useState<BrokerInfo | null>(null)
 
   const crumbs: { label: string; onClick?: () => void }[] = [{ label: 'Cluster' }]
   if (selectedBroker) {
-    crumbs[0].onClick = back
-    crumbs.push({ label: selectedBroker.name })
+    crumbs[0].onClick = () => setSelectedBroker(null)
+    crumbs.push({ label: `broker-${selectedBroker.id}` })
   }
-
   const showBreadcrumb = crumbs.length > 1
 
   return (
@@ -76,28 +87,48 @@ export function OperatorCluster() {
 
 /* ---------------------------------------------------------------- Brokers tab */
 
-function BrokersTab({ onSelectBroker }: { onSelectBroker: (b: Broker) => void }) {
-  const brokers = CLUSTER.BROKERS
-  const totalParts = CLUSTER.CLUSTER_TOPICS.reduce((s, t) => s + t.partitions, 0)
-  const urp = CLUSTER.CLUSTER_TOPICS.filter((t) => t.replicaPct < 100).length
-  const throughput = useMemo(() => genSeries([{ key: 'produce', base: 7200, vary: 1400 }, { key: 'consume', base: 7000, vary: 1400 }]), [])
-  const disk = useMemo(() => genSeries([{ key: 'disk', base: 54, vary: 2, drift: 0.5 }], 30), [])
+function BrokersTab({ onSelectBroker }: { onSelectBroker: (b: BrokerInfo) => void }) {
+  const [data, setData] = useState<KafkaClusterResponse | null>(null)
+  const [throughput, setThroughput] = useState<ThroughputPoint[]>([])
+
+  useEffect(() => {
+    let cancelled = false
+    const load = () => {
+      api.clusterKafka().then((d) => { if (!cancelled) setData(d) }).catch(() => {})
+      api.clusterThroughput(30).then((t) => { if (!cancelled) setThroughput(t) }).catch(() => {})
+    }
+    load()
+    const timer = setInterval(load, 5000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [])
+
+  const tputData = useMemo(() =>
+    throughput.map((p) => ({
+      t: p.timestamp,
+      produce: Math.round(p.produceRate * 100) / 100,
+      consume: Math.round(p.consumeRate * 100) / 100,
+    })), [throughput])
   const tputSeries = [
     { key: 'produce', label: 'Produce msg/s', color: CHART_COLORS.amber },
     { key: 'consume', label: 'Consume msg/s', color: CHART_COLORS.brand },
   ]
 
+  if (!data) return <div className="px-2 py-10 text-center text-[13px] text-gray-400">불러오는 중…</div>
+
+  const urp = data.underReplicated
+  const controllerLabel = data.controllerId >= 0 ? `broker-${data.controllerId}` : '—'
+
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-4 gap-4">
-        <MetricCard label="Active controller" value="broker-2" icon="cpu" />
+        <MetricCard label="Active controller" value={controllerLabel} icon="cpu" />
         <MetricCard label="Under-replicated" value={urp} icon="alert" tone={urp ? 'warn' : 'good'} />
-        <MetricCard label="Offline partitions" value={0} tone="good" />
-        <MetricCard label="Total partitions" value={totalParts} icon="server" />
+        <MetricCard label="Offline partitions" value={data.offlinePartitions} tone={data.offlinePartitions ? 'bad' : 'good'} />
+        <MetricCard label="Total partitions" value={data.totalPartitions} icon="server" />
       </div>
 
       <div className="grid grid-cols-3 gap-4">
-        {brokers.map((b) => (
+        {data.brokers.map((b) => (
           <button
             key={b.id}
             onClick={() => onSelectBroker(b)}
@@ -107,24 +138,23 @@ function BrokersTab({ onSelectBroker }: { onSelectBroker: (b: Broker) => void })
               <div className="px-4 py-3">
                 <div className="flex items-center gap-2">
                   <Icon name="server" size={16} className="text-gray-400" />
-                  <span className="text-[13.5px] font-semibold text-gray-900">{b.name}</span>
+                  <span className="text-[13.5px] font-semibold text-gray-900">broker-{b.id}</span>
+                  {b.controller && (
+                    <span className="rounded bg-brand-50 px-1.5 py-0.5 text-[9.5px] font-bold uppercase text-brand-700">controller</span>
+                  )}
                   <div className="ml-auto flex items-center gap-1.5">
                     <StatusBadge status={b.status} />
                     <Icon name="chevron-right" size={13} className="text-gray-400" />
                   </div>
                 </div>
-                <div className="mt-1 text-[11.5px] text-gray-400">{b.leaderPartitions} leader partitions</div>
+                <div className="mt-1 text-[11.5px] text-gray-400">{b.leaderPartitions} leader partitions · {fmtBytes(b.logDirBytes)}</div>
                 <div className="mt-3 space-y-2.5">
-                  <Gauge label="CPU" value={b.cpu} />
-                  <Gauge label="Disk" value={b.disk} />
+                  <Gauge label="CPU" value={b.cpuPct ?? 0} />
+                  <Gauge label="Disk" value={b.diskUsedPct ?? 0} />
                 </div>
                 <div className="mt-3 flex gap-4 border-t border-gray-100 pt-2.5 text-[11.5px]">
-                  <span className="text-gray-500">
-                    Net in <span className="font-medium text-gray-800">{b.netIn} MB/s</span>
-                  </span>
-                  <span className="text-gray-500">
-                    Net out <span className="font-medium text-gray-800">{b.netOut} MB/s</span>
-                  </span>
+                  <span className="text-gray-500">Net in <span className="font-medium text-gray-800">{fmtRate(b.netInBytesPerSec)}</span></span>
+                  <span className="text-gray-500">Net out <span className="font-medium text-gray-800">{fmtRate(b.netOutBytesPerSec)}</span></span>
                 </div>
               </div>
             </Panel>
@@ -132,50 +162,54 @@ function BrokersTab({ onSelectBroker }: { onSelectBroker: (b: Broker) => void })
         ))}
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <Panel title="Cluster throughput" right={<ChartLegend series={tputSeries} />}>
-          <div className="px-3 py-3">
-            <TrendChart data={throughput} series={tputSeries} height={190} />
-          </div>
-        </Panel>
-        <Panel title="Disk usage forecast (%)">
-          <div className="px-3 py-3">
-            <TrendChart
-              data={disk}
-              type="area"
-              height={190}
-              series={[{ key: 'disk', label: 'Disk %', color: CHART_COLORS.violet }]}
-              refLine={{ y: 80, label: 'alert 80%' }}
-            />
-          </div>
-        </Panel>
-      </div>
+      <Panel title="Cluster throughput" right={<ChartLegend series={tputSeries} />}>
+        <div className="px-3 py-3">
+          <TrendChart data={tputData} series={tputSeries} height={190} timeAxis />
+        </div>
+      </Panel>
     </div>
   )
 }
 
-/* ---------------------------------------------------------------- Broker detail drill-down */
+/* ---------------------------------------------------------------- Broker detail */
 
-function BrokerDetail({ broker }: { broker: Broker }) {
+function BrokerDetail({ broker }: { broker: BrokerInfo }) {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-4 gap-4">
         <MetricCard label="Leader partitions" value={broker.leaderPartitions} icon="server" />
-        <MetricCard label="CPU" value={`${broker.cpu}%`} tone={broker.cpu > 70 ? 'warn' : 'good'} />
-        <MetricCard label="Disk" value={`${broker.disk}%`} tone={broker.disk > 75 ? 'warn' : 'good'} />
-        <MetricCard label="Status" value={broker.status} tone={broker.status === 'healthy' ? 'good' : broker.status === 'warning' ? 'warn' : 'bad'} />
+        <MetricCard label="CPU" value={broker.cpuPct != null ? `${broker.cpuPct}%` : '—'} tone={(broker.cpuPct ?? 0) > 80 ? 'warn' : 'good'} />
+        <MetricCard label="Disk" value={broker.diskUsedPct != null ? `${broker.diskUsedPct}%` : '—'} tone={(broker.diskUsedPct ?? 0) > 80 ? 'warn' : 'good'} />
+        <MetricCard label="Log dir" value={fmtBytes(broker.logDirBytes)} icon="server" />
       </div>
 
       <Panel title="네트워크">
         <div className="grid grid-cols-2 divide-x divide-gray-100">
           <div className="px-6 py-4">
             <div className="text-[11px] uppercase tracking-wide text-gray-400">Inbound</div>
-            <div className="mt-1 text-[22px] font-semibold text-gray-900">{broker.netIn} <span className="text-[14px] font-normal text-gray-500">MB/s</span></div>
+            <div className="mt-1 text-[22px] font-semibold text-gray-900">{fmtRate(broker.netInBytesPerSec)}</div>
           </div>
           <div className="px-6 py-4">
             <div className="text-[11px] uppercase tracking-wide text-gray-400">Outbound</div>
-            <div className="mt-1 text-[22px] font-semibold text-gray-900">{broker.netOut} <span className="text-[14px] font-normal text-gray-500">MB/s</span></div>
+            <div className="mt-1 text-[22px] font-semibold text-gray-900">{fmtRate(broker.netOutBytesPerSec)}</div>
           </div>
+        </div>
+      </Panel>
+
+      <Panel title="브로커 정보">
+        <div className="divide-y divide-gray-50 px-4">
+          {[
+            ['Broker ID', String(broker.id)],
+            ['Host', broker.host],
+            ['Port', String(broker.port)],
+            ['Controller', broker.controller ? 'yes' : 'no'],
+            ['Status', broker.status],
+          ].map(([k, v]) => (
+            <div key={k} className="flex items-center py-2.5 text-[12px]">
+              <span className="w-40 shrink-0 text-gray-500">{k}</span>
+              <span className="font-mono text-gray-700">{v}</span>
+            </div>
+          ))}
         </div>
       </Panel>
     </div>
@@ -184,30 +218,29 @@ function BrokerDetail({ broker }: { broker: Broker }) {
 
 /* ---------------------------------------------------------------- KafkaConnect tab */
 
-const KAFKA_CONNECT_WORKERS = [
-  { id: 'connect-worker-0', host: '10.20.1.10:8083', state: 'RUNNING',  version: '3.6.1', connectors: 4, tasks: 7, heapUsedMB: 412, heapMaxMB: 768, cpuPct: 8,  gcTimeSec: 0.3 },
-  { id: 'connect-worker-1', host: '10.20.1.11:8083', state: 'RUNNING',  version: '3.6.1', connectors: 4, tasks: 7, heapUsedMB: 390, heapMaxMB: 768, cpuPct: 7,  gcTimeSec: 0.2 },
-  { id: 'connect-worker-2', host: '10.20.1.12:8083', state: 'WARNING',  version: '3.6.0', connectors: 2, tasks: 3, heapUsedMB: 664, heapMaxMB: 768, cpuPct: 72, gcTimeSec: 6.1 },
-]
-
-const KAFKA_CONNECT_PLUGINS = [
-  { name: 'io.debezium.connector.mysql.MySqlConnector', version: '2.5.0', type: 'Source' },
-  { name: 'io.debezium.connector.postgresql.PostgresConnector', version: '2.5.0', type: 'Source' },
-  { name: 'io.confluent.connect.jdbc.JdbcSinkConnector', version: '10.7.3', type: 'Sink' },
-  { name: 'org.apache.kafka.connect.file.FileStreamSourceConnector', version: '3.6.1', type: 'Source' },
-]
-
 function KafkaConnectTab() {
-  const running = KAFKA_CONNECT_WORKERS.filter((w) => w.state === 'RUNNING').length
-  const warning = KAFKA_CONNECT_WORKERS.filter((w) => w.state === 'WARNING').length
-  const totalTasks = KAFKA_CONNECT_WORKERS.reduce((s, w) => s + w.tasks, 0)
+  const [data, setData] = useState<ConnectClusterResponse | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const load = () => { api.clusterConnect().then((d) => { if (!cancelled) setData(d) }).catch(() => {}) }
+    load()
+    const timer = setInterval(load, 5000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [])
+
+  if (!data) return <div className="px-2 py-10 text-center text-[13px] text-gray-400">불러오는 중…</div>
+
+  const running = data.workers.filter((w) => w.state === 'Running').length
+  const notRunning = data.workers.length - running
+  const totalTasks = data.connectors.reduce((s, c) => s + c.tasks, 0)
 
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-4 gap-4">
-        <MetricCard label="Workers" value={KAFKA_CONNECT_WORKERS.length} icon="server" />
+        <MetricCard label="Workers" value={data.workers.length} icon="server" />
         <MetricCard label="Running" value={running} tone="good" />
-        <MetricCard label="Warning" value={warning} tone={warning ? 'warn' : 'good'} />
+        <MetricCard label="Not running" value={notRunning} tone={notRunning ? 'warn' : 'good'} />
         <MetricCard label="Total tasks" value={totalTasks} />
       </div>
 
@@ -219,53 +252,44 @@ function KafkaConnectTab() {
               <th className="px-4 py-2 font-semibold">State</th>
               <th className="px-4 py-2 font-semibold">JVM Heap</th>
               <th className="px-4 py-2 font-semibold">CPU</th>
-              <th className="px-4 py-2 font-semibold">GC / 30s</th>
-              <th className="px-4 py-2 font-semibold">Tasks</th>
+              <th className="px-4 py-2 font-semibold">GC (누적)</th>
               <th className="px-4 py-2 font-semibold">Version</th>
             </tr>
           </thead>
           <tbody>
-            {KAFKA_CONNECT_WORKERS.map((w) => {
-              const heapPct = w.heapUsedMB / w.heapMaxMB
-              const heapWarn = heapPct >= 0.95 ? 'text-rose-600' : heapPct >= 0.85 ? 'text-amber-600' : 'text-gray-700'
+            {data.workers.map((w) => {
+              const heapPct = w.heapUsedBytes && w.heapMaxBytes ? w.heapUsedBytes / w.heapMaxBytes : 0
               const heapBar = heapPct >= 0.95 ? 'bg-rose-400' : heapPct >= 0.85 ? 'bg-amber-400' : 'bg-emerald-400'
-              const cpuWarn = w.cpuPct >= 70 ? 'text-rose-600' : w.cpuPct >= 40 ? 'text-amber-600' : 'text-gray-700'
-              const cpuBar = w.cpuPct >= 70 ? 'bg-rose-400' : w.cpuPct >= 40 ? 'bg-amber-400' : 'bg-emerald-400'
-              const gcWarn = w.gcTimeSec > 5 ? 'text-rose-600' : w.gcTimeSec > 2 ? 'text-amber-600' : 'text-gray-700'
               return (
-                <tr key={w.id} className="border-b border-gray-50">
+                <tr key={w.name} className="border-b border-gray-50">
                   <td className="px-4 py-3">
-                    <div className="font-mono text-[12px] font-medium text-gray-800">{w.id}</div>
-                    <div className="font-mono text-[10.5px] text-gray-400">{w.host}</div>
+                    <div className="font-mono text-[12px] font-medium text-gray-800">{w.name}</div>
+                    <div className="font-mono text-[10.5px] text-gray-400">{w.host ?? '—'}</div>
                   </td>
                   <td className="px-4 py-3">
                     <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase',
-                      w.state === 'RUNNING' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700')}>
+                      w.state === 'Running' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700')}>
                       {w.state}
                     </span>
                   </td>
-                  <td className="px-4 py-3 w-36">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className={cn('text-[11px] font-semibold tabular-nums', heapWarn)}>
-                        {w.heapUsedMB} / {w.heapMaxMB} MB
-                      </span>
-                      <span className={cn('text-[10px]', heapWarn)}>{Math.round(heapPct * 100)}%</span>
-                    </div>
-                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-200">
-                      <div className={cn('h-full rounded-full', heapBar)} style={{ width: `${heapPct * 100}%` }} />
-                    </div>
+                  <td className="px-4 py-3 w-40">
+                    {w.heapUsedBytes != null && w.heapMaxBytes != null ? (
+                      <>
+                        <div className="mb-1 flex items-center justify-between">
+                          <span className="text-[11px] font-semibold tabular-nums text-gray-700">
+                            {fmtBytes(w.heapUsedBytes)} / {fmtBytes(w.heapMaxBytes)}
+                          </span>
+                          <span className="text-[10px] text-gray-500">{Math.round(heapPct * 100)}%</span>
+                        </div>
+                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-200">
+                          <div className={cn('h-full rounded-full', heapBar)} style={{ width: `${heapPct * 100}%` }} />
+                        </div>
+                      </>
+                    ) : <span className="text-gray-400">—</span>}
                   </td>
-                  <td className="px-4 py-3 w-28">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className={cn('text-[11px] font-semibold tabular-nums', cpuWarn)}>{w.cpuPct}%</span>
-                    </div>
-                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-200">
-                      <div className={cn('h-full rounded-full', cpuBar)} style={{ width: `${w.cpuPct}%` }} />
-                    </div>
-                  </td>
-                  <td className={cn('px-4 py-3 font-mono text-[12px] font-semibold', gcWarn)}>{w.gcTimeSec}s</td>
-                  <td className="px-4 py-3 text-gray-600">{w.tasks}</td>
-                  <td className="px-4 py-3 font-mono text-[11.5px] text-gray-400">{w.version}</td>
+                  <td className="px-4 py-3 text-gray-700 tabular-nums">{w.cpuPct != null ? `${w.cpuPct}%` : '—'}</td>
+                  <td className="px-4 py-3 font-mono text-[12px] text-gray-600">{w.gcSeconds != null ? `${w.gcSeconds}s` : '—'}</td>
+                  <td className="px-4 py-3 font-mono text-[11.5px] text-gray-400">{w.version ?? '—'}</td>
                 </tr>
               )
             })}
@@ -280,27 +304,30 @@ function KafkaConnectTab() {
               <th className="px-4 py-2 font-semibold">Name</th>
               <th className="px-4 py-2 font-semibold">Kind</th>
               <th className="px-4 py-2 font-semibold">Status</th>
-              <th className="px-4 py-2 font-semibold">Project</th>
+              <th className="px-4 py-2 font-semibold">Pipeline</th>
               <th className="px-4 py-2 font-semibold">Tasks</th>
-              <th className="px-4 py-2 font-semibold">Records/s</th>
             </tr>
           </thead>
           <tbody>
-            {CLUSTER.CLUSTER_CONNECTORS.map((c) => (
+            {data.connectors.map((c) => (
               <tr key={c.name} className="border-b border-gray-50">
                 <td className="px-4 py-2.5 font-mono font-medium text-gray-800">{c.name}</td>
                 <td className="px-4 py-2.5">
-                  <span className={cn(
-                    'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
-                    c.kind === 'Source' ? 'bg-sky-50 text-sky-700' : 'bg-violet-50 text-violet-700',
-                  )}>{c.kind}</span>
+                  <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
+                    c.kind === 'SOURCE' ? 'bg-sky-50 text-sky-700' : 'bg-violet-50 text-violet-700')}>{c.kind}</span>
                 </td>
-                <td className="px-4 py-2.5"><StatusBadge status={c.status} /></td>
-                <td className="px-4 py-2.5 text-gray-500 text-[11.5px]">{c.project}</td>
+                <td className="px-4 py-2.5">
+                  <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase',
+                    c.status === 'RUNNING' ? 'bg-emerald-50 text-emerald-700'
+                      : c.status === 'PAUSED' ? 'bg-gray-100 text-gray-600' : 'bg-rose-50 text-rose-700')}>{c.status}</span>
+                </td>
+                <td className="px-4 py-2.5 text-gray-500 text-[11.5px]">{c.pipeline}</td>
                 <td className="px-4 py-2.5 text-gray-600">{c.tasks}</td>
-                <td className="px-4 py-2.5 text-gray-600">{formatNum(c.recordsPerSec)}</td>
               </tr>
             ))}
+            {data.connectors.length === 0 && (
+              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-400">커넥터 없음</td></tr>
+            )}
           </tbody>
         </table>
       </Panel>
@@ -315,39 +342,29 @@ function KafkaConnectTab() {
             </tr>
           </thead>
           <tbody>
-            {KAFKA_CONNECT_PLUGINS.map((p) => (
-              <tr key={p.name} className="border-b border-gray-50">
-                <td className="px-4 py-2.5 font-mono text-[11px] text-gray-700">{p.name}</td>
+            {data.plugins.map((p) => (
+              <tr key={p.className} className="border-b border-gray-50">
+                <td className="px-4 py-2.5 font-mono text-[11px] text-gray-700">{p.className}</td>
                 <td className="px-4 py-2.5">
-                  <span
-                    className={cn(
-                      'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
-                      p.type === 'Source' ? 'bg-sky-50 text-sky-700' : 'bg-violet-50 text-violet-700',
-                    )}
-                  >
-                    {p.type}
-                  </span>
+                  <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
+                    p.type === 'source' ? 'bg-sky-50 text-sky-700' : 'bg-violet-50 text-violet-700')}>{p.type}</span>
                 </td>
                 <td className="px-4 py-2.5 font-mono text-[11.5px] text-gray-500">{p.version}</td>
               </tr>
             ))}
+            {data.plugins.length === 0 && (
+              <tr><td colSpan={3} className="px-4 py-6 text-center text-gray-400">플러그인 정보 없음</td></tr>
+            )}
           </tbody>
         </table>
       </Panel>
 
       <Panel title="Connect 클러스터 설정">
         <div className="divide-y divide-gray-50 px-4">
-          {[
-            { key: 'group.id', value: 'bifrost-connect-cluster' },
-            { key: 'config.storage.topic', value: '_connect-configs' },
-            { key: 'offset.storage.topic', value: '_connect-offsets' },
-            { key: 'status.storage.topic', value: '_connect-status' },
-            { key: 'key.converter', value: 'org.apache.kafka.connect.json.JsonConverter' },
-            { key: 'value.converter', value: 'io.confluent.connect.avro.AvroConverter' },
-          ].map(({ key, value }) => (
+          {Object.entries(data.config).map(([key, value]) => (
             <div key={key} className="flex items-center py-2.5 text-[12px]">
               <span className="w-64 shrink-0 font-mono text-gray-500">{key}</span>
-              <span className="font-mono text-gray-700">{value}</span>
+              <span className="font-mono text-gray-700 break-all">{value}</span>
             </div>
           ))}
         </div>
