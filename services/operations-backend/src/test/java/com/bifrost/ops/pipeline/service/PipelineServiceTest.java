@@ -192,7 +192,7 @@ class PipelineServiceTest {
         p.setSourceConnectorName("src");
         when(pipelineRepository.findByIdAndTenantId(id, wsId)).thenReturn(Optional.of(p));
 
-        service().delete(wsId, principal, id);
+        service().delete(wsId, principal, id, false);
 
         verify(provisioningService).delete(any());
         verify(pipelineRepository).delete(p);

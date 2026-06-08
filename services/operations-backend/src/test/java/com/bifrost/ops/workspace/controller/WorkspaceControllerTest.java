@@ -6,6 +6,7 @@ import com.bifrost.ops.global.common.error.ErrorCode;
 import com.bifrost.ops.workspace.dto.WorkspaceCreateRequest;
 import com.bifrost.ops.workspace.dto.WorkspaceResponse;
 import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
+import com.bifrost.ops.workspace.service.ProjectMemberService;
 import com.bifrost.ops.workspace.service.WorkspaceService;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.ResponseEntity;
@@ -22,7 +23,8 @@ import static org.mockito.Mockito.when;
 class WorkspaceControllerTest {
 
     private final WorkspaceService service = mock(WorkspaceService.class);
-    private final WorkspaceController controller = new WorkspaceController(service);
+    private final ProjectMemberService memberService = mock(ProjectMemberService.class);
+    private final WorkspaceController controller = new WorkspaceController(service, memberService);
 
     private final AuthenticatedUser principal =
             new AuthenticatedUser(UUID.randomUUID(), UUID.randomUUID(), "u@bifrost.io");
@@ -62,6 +64,6 @@ class WorkspaceControllerTest {
 
     private static WorkspaceResponse sample(UUID id, String name) {
         return new WorkspaceResponse(id, name, name.toLowerCase().replace(' ', '-'),
-                WorkspaceEntity.Status.PROVISIONING, Instant.now(), 0L, 0L);
+                null, WorkspaceEntity.Status.PROVISIONING, Instant.now(), 0L, 0L);
     }
 }

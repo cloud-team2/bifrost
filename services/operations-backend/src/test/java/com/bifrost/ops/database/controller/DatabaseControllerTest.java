@@ -86,13 +86,13 @@ class DatabaseControllerTest {
     @Test
     void rejectsAccessToOtherWorkspace() {
         AuthenticatedUser other = new AuthenticatedUser(UUID.randomUUID(), UUID.randomUUID(), "x@bifrost.io");
-        doThrow(new ApiException(ErrorCode.RESOURCE_NOT_OWNED_BY_PROJECT, "no"))
+        doThrow(new ApiException(ErrorCode.WORKSPACE_FORBIDDEN, "no"))
                 .when(accessGuard).requireAccess(wsId, other);
 
         assertThatThrownBy(() -> controller.get(wsId, UUID.randomUUID(), other))
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).code())
-                        .isEqualTo(ErrorCode.RESOURCE_NOT_OWNED_BY_PROJECT));
+                        .isEqualTo(ErrorCode.WORKSPACE_FORBIDDEN));
     }
 
     @Test

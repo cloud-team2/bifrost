@@ -3,6 +3,7 @@ package com.bifrost.ops.workspace;
 import com.bifrost.ops.auth.jwt.AuthenticatedUser;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
+import com.bifrost.ops.workspace.persistence.repository.ProjectMemberRepository;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
 import org.springframework.stereotype.Component;
 
@@ -26,9 +27,12 @@ import java.util.UUID;
 public class WorkspaceAccessGuard {
 
     private final WorkspaceRepository workspaceRepository;
+    private final ProjectMemberRepository memberRepository;
 
-    public WorkspaceAccessGuard(WorkspaceRepository workspaceRepository) {
+    public WorkspaceAccessGuard(WorkspaceRepository workspaceRepository,
+                                ProjectMemberRepository memberRepository) {
         this.workspaceRepository = workspaceRepository;
+        this.memberRepository = memberRepository;
     }
 
     /** 접근 불가 시 예외를 던진다. 통과하면 void. */
@@ -39,10 +43,13 @@ public class WorkspaceAccessGuard {
         if (wsId.equals(principal.tenantId())) {
             return;
         }
+        if (memberRepository.existsByIdWorkspaceIdAndIdUserId(wsId, principal.userId())) {
+            return;
+        }
         if (workspaceRepository.existsByIdAndOwnerUserId(wsId, principal.userId())) {
             return;
         }
-        throw new ApiException(ErrorCode.RESOURCE_NOT_OWNED_BY_PROJECT,
+        throw new ApiException(ErrorCode.WORKSPACE_FORBIDDEN,
                 "워크스페이스 접근 권한이 없습니다");
     }
 }

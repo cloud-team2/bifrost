@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -33,9 +34,23 @@ class KafkaConnectorWatcherTest {
         return cr;
     }
 
-    private KafkaConnectorWatcher watcher(ConnectorStatusSink sink, PipelineStatusService service) {
+    private KafkaConnectorWatcher watcher(ConnectorStatusSink sink, Consumer<ConnectorStatusUpdate> statusConsumer) {
         return new KafkaConnectorWatcher(
-                null, sink, service, new ConnectorStateMapper(), "platform-kafka", "platform-connect");
+                null, sink, statusService(statusConsumer), new ConnectorStateMapper(), "platform-kafka", "platform-connect");
+    }
+
+    private PipelineStatusService statusService(Consumer<ConnectorStatusUpdate> statusConsumer) {
+        return new PipelineStatusService() {
+            @Override
+            public void applyConnectorStatus(ConnectorStatusUpdate update) {
+                statusConsumer.accept(update);
+            }
+
+            @Override
+            public int failTimedOutCreating(java.time.Duration timeout) {
+                return 0;
+            }
+        };
     }
 
     @Test

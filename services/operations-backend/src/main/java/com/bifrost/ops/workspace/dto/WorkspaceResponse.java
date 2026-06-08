@@ -15,6 +15,7 @@ public record WorkspaceResponse(
     UUID id,
     String name,
     String projectKey,
+    String timezone,
     WorkspaceEntity.Status status,
     Instant createdAt,
     long pipelineCount,
@@ -27,6 +28,6 @@ public record WorkspaceResponse(
 
     public static WorkspaceResponse from(WorkspaceEntity w, long pipelineCount, long activePipelineCount) {
         return new WorkspaceResponse(w.getId(), w.getName(), w.getNamespace(),
-                w.getStatus(), w.getCreatedAt(), pipelineCount, activePipelineCount);
+                w.getTimezone(), w.getStatus(), w.getCreatedAt(), pipelineCount, activePipelineCount);
     }
 }

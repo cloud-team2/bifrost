@@ -27,7 +27,7 @@
 ```text
 요청 → JWT 검증(sub) → currentUser
   → workspace 범위 호출이면 project_member(workspace_id, app_user_id) 존재 확인
-     없으면 RESOURCE_NOT_OWNED_BY_PROJECT / 403
+     없으면 WORKSPACE_FORBIDDEN / 403
 ```
 
 - `role_hint`(`ta`/`aa`/`developer`/`operator`)는 **화면 동선 강조용 라벨**일 뿐 인가 근거가 아니다([data-model §3.2](./data-model.md#4-data-model)).

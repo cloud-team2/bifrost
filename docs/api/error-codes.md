@@ -45,6 +45,7 @@ Bifrost API가 반환하는 에러 코드의 단일 출처. 코드 추가/변경
 | 10003 | 401 | `UNAUTHENTICATED` | 인증이 필요한 API에 토큰 없이 접근 | 로그인 화면으로 리다이렉트 |
 | 10004 | 401 | `AUTH_TOKEN_INVALID` | JWT 서명 위변조·형식 오류·없는 issuer 등 | 토큰 폐기 후 재로그인 유도 |
 | 10005 | 401 | `AUTH_TOKEN_EXPIRED` | JWT 만료 | refresh 또는 재로그인 유도 |
+| 10006 | 404 | `USER_NOT_FOUND_BY_EMAIL` | 멤버 초대/추가 시 email에 해당하는 사용자가 없음 | 가입된 이메일인지 확인하도록 안내 |
 
 ### 워크스페이스(프로젝트) / 멤버 (20000~20999)
 
@@ -53,7 +54,10 @@ Bifrost API가 반환하는 에러 코드의 단일 출처. 코드 추가/변경
 | 20001 | 409 | `WORKSPACE_NAME_CONFLICT` | 회원가입 시 같은 워크스페이스 이름 존재 | "이미 사용 중인 이름입니다" 안내 |
 | 20002 | 409 | `WORKSPACE_NAMESPACE_CONFLICT` | 회원가입 시 같은 namespace 존재 | "이미 사용 중인 namespace입니다" 안내 |
 | 20003 | 404 | `WORKSPACE_NOT_FOUND` | 현재 사용자의 워크스페이스를 조회할 수 없음 | "워크스페이스를 찾을 수 없습니다" 안내, 로그인 재시도 권장 |
-| 20004 | 403 | `RESOURCE_NOT_OWNED_BY_PROJECT` | 요청 경로의 `wsId`가 사용자 소속 워크스페이스가 아님(scope 위반) | "접근 권한이 없습니다" 안내, 워크스페이스 선택 화면 유도 |
+| 20004 | 403 | `WORKSPACE_FORBIDDEN` | 요청 경로의 `wsId`가 사용자 소속 워크스페이스가 아니거나 관리 권한이 없음 | "접근 권한이 없습니다" 안내, 워크스페이스 선택 화면 유도 |
+| 20005 | 404 | `MEMBER_NOT_FOUND` | 멤버 수정/삭제 대상이 워크스페이스 멤버가 아님 | 멤버 목록 새로고침 |
+| 20006 | 409 | `MEMBER_ALREADY_EXISTS` | 이미 워크스페이스에 속한 사용자를 다시 추가 | 기존 멤버임을 안내 |
+| 20007 | 409 | `OWNER_DEMOTION_FORBIDDEN` | OWNER 역할 변경 또는 삭제 시도 | OWNER 이관 정책이 생기기 전까지 차단 안내 |
 
 ### 데이터베이스 (30000~30999)
 
