@@ -7,6 +7,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.NoHandlerFoundException;
 
 import java.util.List;
 
@@ -41,6 +42,12 @@ public class GlobalExceptionHandler {
                 ? e.getCause() : e;
         return ResponseEntity.status(ErrorCode.VALIDATION_FAILED.status())
             .body(ErrorResponse.of(ErrorCode.VALIDATION_FAILED, cause.getMessage()));
+    }
+
+    @ExceptionHandler(NoHandlerFoundException.class)
+    public ResponseEntity<ErrorResponse> handleNoHandler(NoHandlerFoundException e) {
+        return ResponseEntity.status(404)
+            .body(new ErrorResponse("404", "요청한 경로를 찾을 수 없습니다", List.of()));
     }
 
     @ExceptionHandler(Exception.class)
