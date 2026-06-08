@@ -97,6 +97,10 @@ export interface DatabaseResponse {
   username: string
   password: string
   cdcReadinessStatus: 'OK' | 'WARNING' | 'BLOCKED' | null
+  /** 연결 헬스 주기 프로브(#179). null=아직 미프로브. */
+  connectionStatus: 'HEALTHY' | 'UNREACHABLE' | null
+  connectionError: string | null
+  connectionCheckedAt: string | null
   roles: string[]
   createdAt: string
 }
