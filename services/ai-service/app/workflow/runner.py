@@ -1,7 +1,9 @@
 """Workflow runner — Supervisor 상태 전이 기반 실행 + SSE 이벤트 발행.
 
-simple_query 경로: router(pre-supervisor) → planner → retrieval → verifier → report
-incident_analysis 경로: router → correlation → planner → retrieval → classifier → rca → verifier → report
+simple_query 경로: planner → retrieval → verifier → report
+incident_analysis 경로: correlation → planner → retrieval → classifier → rca → verifier → report
+action_execution 경로: policy_guard → approval_gate → change_gate → executor → verifier → report
+approval_decision 경로: approval_gate → executor → verifier → report
 """
 from __future__ import annotations
 
@@ -26,7 +28,10 @@ from app.streaming.event_bus import EventBus
 from app.supervisor.graph import get_supervisor
 from app.tools.registry import ToolClientRegistry
 from app.workflow.guards import RunBudgetExceeded
+from app.workflow.stages.approval_gate import run_approval_gate
+from app.workflow.stages.change_gate import run_change_gate
 from app.workflow.stages.correlation import run_correlation
+from app.workflow.stages.executor import run_executor
 from app.workflow.stages.policy_guard import run_policy_guard
 
 logger = logging.getLogger(__name__)
@@ -85,11 +90,15 @@ async def run_workflow(
         )
 
         # ── Stage 루프 ─────────────────────────────────────────────────────────
+        correlation_out = None
         planner_out = None
         retrieval_out = None
         classifier_out = None
         rca_out = None
         remediation_out = None
+        policy_out = None
+        approval_out = None
+        executor_out = None
 
         while True:
             try:
@@ -205,6 +214,63 @@ async def run_workflow(
                         f"결정 {len(policy_out.policy_decisions)}건",
                     ))
 
+                case "approval_gate":
+                    await _publish(bus, event_repo, run_id,
+                                   _evt(run_id, StreamingEventType.AGENT_STARTED, "approval_gate", "승인 상태를 확인합니다"))
+                    decisions = policy_out.policy_decisions if policy_out else []
+                    approval_out = await run_approval_gate(decisions, run_id)
+                    if approval_out.run_status == "waiting_for_approval":
+                        await run_repo.update_status(run_id, "waiting_for_approval", "approval_gate")
+                    await _publish(bus, event_repo, run_id, _evt(
+                        run_id, StreamingEventType.AGENT_COMPLETED, "approval_gate",
+                        f"승인 {len(approval_out.approved_actions)}건, status={approval_out.run_status}",
+                    ))
+
+                case "change_gate":
+                    await _publish(bus, event_repo, run_id,
+                                   _evt(run_id, StreamingEventType.AGENT_STARTED, "change_gate", "변경관리를 확인합니다"))
+                    decisions = policy_out.policy_decisions if policy_out else []
+                    change_out = await run_change_gate(decisions, run_id)
+                    await _publish(bus, event_repo, run_id, _evt(
+                        run_id, StreamingEventType.AGENT_COMPLETED, "change_gate",
+                        f"변경관리 {len(change_out.change_management_records)}건, status={change_out.run_status}",
+                    ))
+
+                case "executor":
+                    await _publish(bus, event_repo, run_id,
+                                   _evt(run_id, StreamingEventType.AGENT_STARTED, "executor", "조치를 실행합니다"))
+                    exec_context = ToolContext(
+                        run_id=run_id,
+                        step_id=str(uuid4()),
+                        agent_name="executor",
+                        project_id=project_id,
+                        request_id=str(uuid4()),
+                    )
+                    approved = approval_out.approved_actions if approval_out else []
+                    from app.schemas.state import ActionCandidate, ActionStatus as AS
+                    ready_candidates = [
+                        ActionCandidate(
+                            action_id=a.action_id,
+                            action_type="runtime_tool",
+                            action_name=a.action_id,
+                            risk="high",
+                            reason="approved",
+                            status=AS.READY,
+                            tool_name=_find_tool_name(a.action_id, remediation_out),
+                        )
+                        for a in approved
+                    ]
+                    executor_out = await run_executor(
+                        ready_candidates,
+                        run_id=run_id,
+                        context=exec_context,
+                        registry=registry,
+                    )
+                    await _publish(bus, event_repo, run_id, _evt(
+                        run_id, StreamingEventType.AGENT_COMPLETED, "executor",
+                        f"실행 {len(executor_out.execution_results)}건",
+                    ))
+
                 case "verifier":
                     await _publish(bus, event_repo, run_id,
                                    _evt(run_id, StreamingEventType.AGENT_STARTED, "verifier", "결과를 검증합니다"))
@@ -245,3 +311,13 @@ async def run_workflow(
 
     finally:
         await bus.close_run(run_id)
+
+
+def _find_tool_name(action_id: str, remediation_out) -> str | None:
+    """remediation 결과에서 action_id에 해당하는 tool_name을 찾는다."""
+    if remediation_out is None:
+        return None
+    for c in remediation_out.action_candidates:
+        if c.action_id == action_id:
+            return c.tool_name
+    return None
