@@ -49,6 +49,15 @@ async def _after_check(
     return ActionStatus.FAILED
 
 
+def _build_tool_params(tool_name: str, action_name: str) -> dict:
+    """tool_name 패턴으로 필요한 path param을 action_name에서 추출."""
+    if "connector" in tool_name:
+        return {"connector_name": action_name}
+    if "consumer_group" in tool_name:
+        return {"consumer_group": action_name}
+    return {}
+
+
 async def run_executor(
     candidates: list[ActionCandidate],
     *,
@@ -72,7 +81,7 @@ async def run_executor(
 
         tool_result = await registry.call_tool(
             action.tool_name,
-            {},
+            _build_tool_params(action.tool_name, action.action_name),
             exec_context,
         )
 
