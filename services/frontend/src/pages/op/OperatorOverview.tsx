@@ -10,12 +10,8 @@ export function OperatorOverview() {
   const pipelineIds = proj?.pipelineIds ?? []
 
   const projectEdges = app.edges.filter((e) => pipelineIds.includes(e.id))
-  const projectIncidents = app.incidents.filter(
-    (i) =>
-      i.affectedPipelines.length === 0 ||
-      i.affectedPipelines.some((pid) => pipelineIds.includes(pid)),
-  )
-  const openInc = projectIncidents.filter((i) => i.status !== 'resolved')
+  const projectIncidents = app.incidents
+  const openInc = projectIncidents.filter((i) => i.status.toUpperCase() !== 'RESOLVED')
   const issueEdges = projectEdges.filter((e) => e.status === 'lag' || e.status === 'error')
   const activeEdges = projectEdges.filter((e) => e.status === 'active')
 
@@ -117,16 +113,16 @@ export function OperatorOverview() {
                   <span
                     className={cn(
                       'mt-1 h-2 w-2 shrink-0 rounded-full',
-                      inc.severity === 'critical'
+                      inc.severity.toUpperCase() === 'CRITICAL' || inc.severity.toUpperCase() === 'ERROR'
                         ? 'bg-rose-500'
-                        : inc.severity === 'warning'
+                        : inc.severity.toUpperCase() === 'WARN'
                           ? 'bg-amber-500'
                           : 'bg-sky-500',
                     )}
                   />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-[12.5px] font-medium text-gray-800">{inc.title}</div>
-                    <div className="text-[11px] text-gray-400">{inc.createdAt}</div>
+                    <div className="text-[11px] text-gray-400">{new Date(inc.openedAt).toLocaleString('ko-KR')}</div>
                   </div>
                   <StatusBadge status={inc.status} />
                 </button>

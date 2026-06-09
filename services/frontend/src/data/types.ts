@@ -76,35 +76,6 @@ export interface User {
   initial: string
 }
 
-/* -------------------------------------------------------------- incidents */
-
-export type Severity = 'critical' | 'warning' | 'info'
-
-export interface AiAction {
-  id: string
-  label: string
-  risk: 'low' | 'medium' | 'high'
-  estimatedTime: string
-  detail: string
-}
-
-export interface IncidentReport {
-  id: string
-  title: string
-  severity: Severity
-  status: 'open' | 'investigating' | 'resolved'
-  createdAt: string
-  updatedAt: string
-  summary: string
-  rootCause: string
-  affectedPipelines: string[]
-  affectedTeams: string[]
-  aiActions: AiAction[]
-  actionLog: { time: string; actor: string; action: string }[]
-  triggerEventId: string
-  relatedEventIds: string[]
-}
-
 /* ---------------------------------------------------------------- events */
 
 export type LogLevel = 'error' | 'warning' | 'info'
@@ -118,15 +89,6 @@ export interface ActivityEvent {
   incidentId?: string
 }
 
-export interface ResourceEvent {
-  id: string
-  time: string
-  level: LogLevel
-  resourceType: string
-  resourceName: string
-  message: string
-  incidentId?: string
-}
 
 /* --------------------------------------------------------------- cluster */
 
@@ -179,26 +141,6 @@ export interface Member {
   email: string
   role: Role
   joinedAt: string
-}
-
-export interface KafkaUser {
-  id: string
-  principal: string
-  auth: 'SCRAM-SHA-512' | 'mTLS'
-  secret: string
-  acl: { read: boolean; write: boolean; admin: boolean }
-  status: 'active' | 'inactive'
-  lastActive: string
-}
-
-export interface KafkaSecret {
-  id: string
-  name: string
-  type: 'SCRAM' | 'mTLS'
-  cluster: string
-  connections: number
-  lastRotated: string
-  status: 'active' | 'revoked'
 }
 
 export interface Account {

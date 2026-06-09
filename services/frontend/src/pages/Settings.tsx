@@ -1,14 +1,21 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Icon, type IconName } from '../components/Icon'
 import { Panel, StatusBadge } from '../components/blocks'
-import { Gauge } from '../components/blocks'
-import { TrendChart, CHART_COLORS } from '../components/Charts'
 import { Switch } from '../components/ui'
 import { useToast } from '../components/Toast'
 import { useApp } from '../store/AppStore'
-import { genSeries } from '../data/helpers'
 import type { Role } from '../data/types'
-import { api, ApiError, type ProjectMemberResponse, type WorkspaceMemberRole } from '../lib/api'
+import {
+  api,
+  ApiError,
+  type AiPolicySettingsResponse,
+  type KafkaPrincipalResponse,
+  type NotificationSettingsResponse,
+  type NotificationSeverityPolicy,
+  type ProjectMemberResponse,
+  type ThresholdSettingsResponse,
+  type WorkspaceMemberRole,
+} from '../lib/api'
 import { cn } from '../lib/format'
 
 const SECTIONS: { id: string; label: string; icon: IconName }[] = [
@@ -402,11 +409,79 @@ function MembersSection() {
   )
 }
 
+function SettingsLoadState({ loading, error }: { loading: boolean; error: string | null }) {
+  if (loading) {
+    return <div className="rounded-xl border border-gray-200 bg-white py-12 text-center text-[13px] text-gray-400">불러오는 중…</div>
+  }
+  if (error) {
+    return <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-6 text-center text-[13px] text-rose-700">{error}</div>
+  }
+  return null
+}
+
 function NotificationsSection() {
   const app = useApp()
   const toast = useToast()
-  const { settings } = app
+  const wsId = app.currentProject?.id
+  const [draft, setDraft] = useState<NotificationSettingsResponse | null>(null)
   const [recipient, setRecipient] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (!wsId) return
+    let alive = true
+    setLoading(true)
+    setError(null)
+    api
+      .getNotificationSettings(wsId)
+      .then((data) => {
+        if (alive) setDraft(data)
+      })
+      .catch((e) => {
+        if (alive) setError(e instanceof ApiError ? e.message : '알림 설정을 불러오지 못했습니다')
+      })
+      .finally(() => {
+        if (alive) setLoading(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [wsId])
+
+  async function save() {
+    if (!wsId || !draft) return
+    setSaving(true)
+    try {
+      const saved = await api.updateNotificationSettings(wsId, {
+        slackEnabled: draft.slackEnabled,
+        slackWebhookUrl: draft.slackWebhookUrl,
+        emailRecipients: draft.emailRecipients,
+        severity: draft.severity,
+      })
+      setDraft(saved)
+      toast('알림 설정을 저장했습니다')
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : '알림 설정 저장에 실패했습니다', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const loadState = SettingsLoadState({ loading, error })
+  if (loadState) {
+    return (
+      <div>
+        <Head title="알림" sub="Bifrost가 알림을 보내는 채널" />
+        {loadState}
+      </div>
+    )
+  }
+  if (!draft) return null
+
+  const update = (patch: Partial<NotificationSettingsResponse>) => setDraft((prev) => (prev ? { ...prev, ...patch } : prev))
+
   return (
     <div>
       <Head title="알림" sub="Bifrost가 알림을 보내는 채널" />
@@ -414,37 +489,35 @@ function NotificationsSection() {
         <Panel title="Slack">
           <div className="space-y-3 px-5 py-4">
             <div className="flex items-center gap-3">
-              <Switch checked={settings.slackEnabled} onChange={(v) => app.updateSettings({ slackEnabled: v })} />
+              <Switch checked={draft.slackEnabled} onChange={(v) => update({ slackEnabled: v })} />
               <span className="text-[13px] text-gray-700">Slack으로 알림 보내기</span>
             </div>
             <input
-              value={settings.slackWebhook}
-              onChange={(e) => app.updateSettings({ slackWebhook: e.target.value })}
+              value={draft.slackWebhookUrl ?? ''}
+              onChange={(e) => update({ slackWebhookUrl: e.target.value })}
               placeholder="https://hooks.slack.com/services/…"
               className="h-9 w-full rounded-md border border-gray-300 px-3 font-mono text-[12px] outline-none focus:border-brand-600"
             />
-            <button
-              onClick={() => toast(settings.slackWebhook ? 'Slack으로 테스트 메시지를 보냈습니다' : '먼저 Webhook URL을 입력하세요', settings.slackWebhook ? 'success' : 'error')}
-              className="rounded-md border border-gray-300 px-3 py-1.5 text-[12.5px] font-medium text-gray-700 hover:bg-gray-50"
-            >
-              테스트 전송
-            </button>
+            <p className="text-[11.5px] text-gray-400">테스트 전송 API는 아직 없으므로 저장된 Webhook 정책만 관리합니다.</p>
           </div>
         </Panel>
 
         <Panel title="이메일 수신자">
           <div className="divide-y divide-gray-50">
-            {settings.emailRecipients.map((r) => (
+            {draft.emailRecipients.map((r) => (
               <div key={r} className="flex items-center px-4 py-2.5 text-[12.5px]">
                 <span className="flex-1 text-gray-700">{r}</span>
                 <button
-                  onClick={() => app.updateSettings({ emailRecipients: settings.emailRecipients.filter((x) => x !== r) })}
+                  onClick={() => update({ emailRecipients: draft.emailRecipients.filter((x) => x !== r) })}
                   className="text-[11.5px] font-medium text-rose-600 hover:underline"
                 >
                   삭제
                 </button>
               </div>
             ))}
+            {draft.emailRecipients.length === 0 && (
+              <div className="px-4 py-6 text-center text-[12.5px] text-gray-400">수신자가 없습니다</div>
+            )}
           </div>
           <div className="flex gap-2 border-t border-gray-100 px-4 py-3">
             <input
@@ -456,7 +529,7 @@ function NotificationsSection() {
             <button
               disabled={!recipient.includes('@')}
               onClick={() => {
-                app.updateSettings({ emailRecipients: [...settings.emailRecipients, recipient] })
+                update({ emailRecipients: [...draft.emailRecipients, recipient.trim()] })
                 setRecipient('')
               }}
               className="rounded-md bg-brand-600 px-3 py-2 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:bg-brand-300"
@@ -478,8 +551,8 @@ function NotificationsSection() {
               <label key={v} className="flex items-center gap-2.5 text-[13px] text-gray-700">
                 <input
                   type="radio"
-                  checked={settings.severity === v}
-                  onChange={() => app.updateSettings({ severity: v })}
+                  checked={draft.severity === v}
+                  onChange={() => update({ severity: v as NotificationSeverityPolicy })}
                   className="accent-brand-600"
                 />
                 {label}
@@ -487,6 +560,15 @@ function NotificationsSection() {
             ))}
           </div>
         </Panel>
+        <div className="flex justify-end">
+          <button
+            onClick={save}
+            disabled={saving || !wsId}
+            className="rounded-md bg-brand-600 px-3.5 py-1.5 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:bg-brand-300"
+          >
+            저장
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -495,19 +577,68 @@ function NotificationsSection() {
 function ThresholdsSection() {
   const app = useApp()
   const toast = useToast()
-  const { lagThresholds } = app.settings
-  const [warning, setWarning] = useState(String(lagThresholds.warning))
-  const [critical, setCritical] = useState(String(lagThresholds.critical))
+  const wsId = app.currentProject?.id
+  const [settings, setSettings] = useState<ThresholdSettingsResponse | null>(null)
+  const [warning, setWarning] = useState('')
+  const [critical, setCritical] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
 
-  function save() {
+  useEffect(() => {
+    if (!wsId) return
+    let alive = true
+    setLoading(true)
+    setError(null)
+    api
+      .getThresholdSettings(wsId)
+      .then((data) => {
+        if (!alive) return
+        setSettings(data)
+        setWarning(String(data.warning))
+        setCritical(String(data.critical))
+      })
+      .catch((e) => {
+        if (alive) setError(e instanceof ApiError ? e.message : '임계값 설정을 불러오지 못했습니다')
+      })
+      .finally(() => {
+        if (alive) setLoading(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [wsId])
+
+  async function save() {
+    if (!wsId) return
     const w = parseInt(warning, 10)
     const c = parseInt(critical, 10)
     if (isNaN(w) || isNaN(c) || w <= 0 || c <= w) {
       toast('임계값을 올바르게 입력해주세요 (경고 < 위험)', 'error')
       return
     }
-    app.updateSettings({ lagThresholds: { warning: w, critical: c } })
-    toast('임계값을 저장했습니다')
+    setSaving(true)
+    try {
+      const saved = await api.updateThresholdSettings(wsId, { warning: w, critical: c })
+      setSettings(saved)
+      setWarning(String(saved.warning))
+      setCritical(String(saved.critical))
+      toast('임계값을 저장했습니다')
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : '임계값 저장에 실패했습니다', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const loadState = SettingsLoadState({ loading, error })
+  if (loadState) {
+    return (
+      <div>
+        <Head title="임계값" sub="파이프라인 Lag 경보 기준을 설정합니다" />
+        {loadState}
+      </div>
+    )
   }
 
   return (
@@ -548,11 +679,12 @@ function ThresholdsSection() {
         </div>
         <div className="flex items-center justify-between border-t border-gray-100 px-5 py-3">
           <p className="text-[11.5px] text-gray-400">
-            현재 설정: 경고 {lagThresholds.warning.toLocaleString()}건 · 위험 {lagThresholds.critical.toLocaleString()}건
+            현재 설정: 경고 {settings?.warning.toLocaleString() ?? '—'}건 · 위험 {settings?.critical.toLocaleString() ?? '—'}건
           </p>
           <button
             onClick={save}
-            className="rounded-md bg-brand-600 px-3.5 py-1.5 text-[13px] font-semibold text-white hover:bg-brand-700"
+            disabled={saving || !wsId}
+            className="rounded-md bg-brand-600 px-3.5 py-1.5 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:bg-brand-300"
           >
             저장
           </button>
@@ -564,59 +696,104 @@ function ThresholdsSection() {
 
 function AiSection() {
   const app = useApp()
-  const { settings } = app
-  const usage = useMemo(() => genSeries([{ key: 'tokens', base: 28000, vary: 14000, drift: 600 }], 30), [])
-  const used = 612
-  const max = 1000
+  const toast = useToast()
+  const wsId = app.currentProject?.id
+  const [policy, setPolicy] = useState<AiPolicySettingsResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (!wsId) return
+    let alive = true
+    setLoading(true)
+    setError(null)
+    api
+      .getAiPolicySettings(wsId)
+      .then((data) => {
+        if (alive) setPolicy(data)
+      })
+      .catch((e) => {
+        if (alive) setError(e instanceof ApiError ? e.message : 'AI 정책을 불러오지 못했습니다')
+      })
+      .finally(() => {
+        if (alive) setLoading(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [wsId])
+
+  async function save() {
+    if (!wsId || !policy) return
+    setSaving(true)
+    try {
+      const saved = await api.updateAiPolicySettings(wsId, policy)
+      setPolicy(saved)
+      toast('AI 자동복구 정책을 저장했습니다')
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : 'AI 정책 저장에 실패했습니다', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const loadState = SettingsLoadState({ loading, error })
+  if (loadState) {
+    return (
+      <div>
+        <Head title="AI 자동복구" sub="자동 복구 정책" />
+        {loadState}
+      </div>
+    )
+  }
+  if (!policy) return null
+
+  const update = (patch: Partial<AiPolicySettingsResponse>) => setPolicy((prev) => (prev ? { ...prev, ...patch } : prev))
+
   return (
     <div>
-      <Head title="AI 자동복구" sub="토큰 사용량 및 자동 복구 정책" />
-      <div className="space-y-4">
-        <Panel title="토큰 사용량">
-          <div className="px-5 py-4">
-            <Gauge label={`월 ${max}K 토큰 중 ${used}K 사용`} value={used} max={max} unit="K" />
-            <div className="mt-4">
-              <TrendChart
-                data={usage}
-                type="area"
-                height={150}
-                series={[{ key: 'tokens', label: '토큰', color: CHART_COLORS.brand }]}
-              />
+      <Head title="AI 자동복구" sub="자동 복구 정책" />
+      <Panel title="자동 복구">
+        <div className="divide-y divide-gray-50">
+          <ToggleRow
+            on={policy.autonomous}
+            onToggle={(v) => update({ autonomous: v })}
+            title="자동 실행 허용"
+            desc="운영 AI가 낮은 리스크의 조치를 승인 없이 실행하도록 허용합니다."
+          />
+          <div className="flex items-center justify-between px-5 py-3.5">
+            <div>
+              <div className="text-[13px] font-medium text-gray-800">승인 대기 시간</div>
+              <div className="text-[12px] text-gray-500">에이전트가 타임아웃 전까지 사람의 승인을 기다리는 시간입니다.</div>
             </div>
+            <select
+              value={policy.approvalWaitMinutes}
+              onChange={(e) => update({ approvalWaitMinutes: Number(e.target.value) })}
+              className="h-9 rounded-md border border-gray-300 px-2 text-[13px] outline-none"
+            >
+              {[5, 10, 30, 60].map((minutes) => (
+                <option key={minutes} value={minutes}>{minutes}분</option>
+              ))}
+            </select>
           </div>
-        </Panel>
-        <Panel title="자동 복구">
-          <div className="divide-y divide-gray-50">
-            <ToggleRow
-              on={settings.aiAutonomous}
-              onToggle={(v) => app.updateSettings({ aiAutonomous: v })}
-              title="자동 실행 허용"
-              desc="운영 AI가 낮은 리스크의 조치를 승인 없이 실행하도록 허용합니다."
-            />
-            <div className="flex items-center justify-between px-5 py-3.5">
-              <div>
-                <div className="text-[13px] font-medium text-gray-800">승인 대기 시간</div>
-                <div className="text-[12px] text-gray-500">에이전트가 타임아웃 전까지 사람의 승인을 기다리는 시간입니다.</div>
-              </div>
-              <select
-                value={settings.aiApprovalWait}
-                onChange={(e) => app.updateSettings({ aiApprovalWait: e.target.value })}
-                className="h-9 rounded-md border border-gray-300 px-2 text-[13px] outline-none"
-              >
-                {['5분', '10분', '30분', '1시간'].map((t) => (
-                  <option key={t}>{t}</option>
-                ))}
-              </select>
-            </div>
-            <ToggleRow
-              on={settings.aiProdLock}
-              onToggle={(v) => app.updateSettings({ aiProdLock: v })}
-              title="프로덕션 환경 잠금"
-              desc="프로덕션 리소스에 대한 모든 자동 조치를 차단합니다."
-            />
-          </div>
-        </Panel>
-      </div>
+          <ToggleRow
+            on={policy.prodLock}
+            onToggle={(v) => update({ prodLock: v })}
+            title="프로덕션 환경 잠금"
+            desc="프로덕션 리소스에 대한 모든 자동 조치를 차단합니다."
+          />
+        </div>
+        <div className="flex justify-end border-t border-gray-100 px-5 py-3">
+          <button
+            onClick={save}
+            disabled={saving || !wsId}
+            className="rounded-md bg-brand-600 px-3.5 py-1.5 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:bg-brand-300"
+          >
+            저장
+          </button>
+        </div>
+      </Panel>
     </div>
   )
 }
@@ -636,8 +813,77 @@ function ToggleRow({ on, onToggle, title, desc }: { on: boolean; onToggle: (v: b
 export function KafkaUsersSection() {
   const app = useApp()
   const toast = useToast()
-  const [principal, setPrincipal] = useState('')
-  const [auth, setAuth] = useState<'SCRAM-SHA-512' | 'mTLS'>('SCRAM-SHA-512')
+  const wsId = app.currentProject?.id
+  const [rows, setRows] = useState<KafkaPrincipalResponse[]>([])
+  const [username, setUsername] = useState('')
+  const [secretRef, setSecretRef] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [creating, setCreating] = useState(false)
+
+  async function reload(ws: string) {
+    setLoading(true)
+    setError(null)
+    try {
+      setRows(await api.listKafkaPrincipals(ws))
+    } catch (e) {
+      setRows([])
+      setError(e instanceof ApiError ? e.message : 'Kafka 사용자를 불러오지 못했습니다')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (wsId) reload(wsId)
+  }, [wsId])
+
+  async function create() {
+    if (!wsId || !username.trim()) return
+    setCreating(true)
+    try {
+      await api.createKafkaPrincipal(wsId, { username: username.trim(), secretRef: secretRef.trim() || null })
+      toast('Kafka 사용자를 생성했습니다')
+      setUsername('')
+      setSecretRef('')
+      await reload(wsId)
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : 'Kafka 사용자 생성에 실패했습니다', 'error')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  async function action(id: string, kind: 'deactivate' | 'revoke' | 'rotate') {
+    if (!wsId) return
+    setBusyId(id)
+    try {
+      const updated =
+        kind === 'deactivate'
+          ? await api.deactivateKafkaPrincipal(wsId, id)
+          : kind === 'revoke'
+            ? await api.revokeKafkaPrincipal(wsId, id)
+            : await api.rotateKafkaPrincipal(wsId, id)
+      setRows((prev) => prev.map((row) => (row.id === id ? updated : row)))
+      toast(kind === 'rotate' ? 'Kafka 사용자 시크릿 참조를 교체했습니다' : 'Kafka 사용자 상태를 변경했습니다')
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : 'Kafka 사용자 작업에 실패했습니다', 'error')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const loadState = SettingsLoadState({ loading, error })
+  if (loadState) {
+    return (
+      <div>
+        <Head title="Kafka 사용자" sub="클러스터 접속이 허용된 주체(Principal)" />
+        {loadState}
+      </div>
+    )
+  }
+
   return (
     <div>
       <Head title="Kafka 사용자" sub="클러스터 접속이 허용된 주체(Principal)" />
@@ -645,75 +891,78 @@ export function KafkaUsersSection() {
         <table className="w-full text-[12px]">
           <thead>
             <tr className="border-b border-gray-100 text-left text-[10.5px] uppercase tracking-wide text-gray-400">
-              <th className="px-4 py-2 font-semibold">주체</th>
-              <th className="px-3 py-2 font-semibold">인증</th>
-              <th className="px-3 py-2 font-semibold">ACL</th>
+              <th className="px-4 py-2 font-semibold">Username</th>
+              <th className="px-3 py-2 font-semibold">Secret ref</th>
+              <th className="px-3 py-2 font-semibold">Created</th>
               <th className="px-3 py-2 font-semibold">상태</th>
               <th className="px-3 py-2" />
             </tr>
           </thead>
           <tbody>
-            {app.kafkaUsers.map((u) => (
+            {rows.map((u) => (
               <tr key={u.id} className="border-b border-gray-50">
-                <td className="px-4 py-2.5 font-mono font-medium text-gray-800">{u.principal}</td>
-                <td className="px-3 py-2.5 text-gray-500">{u.auth}</td>
-                <td className="px-3 py-2.5">
-                  <div className="flex gap-1">
-                    {(['read', 'write', 'admin'] as const).map((k) => (
-                      <span
-                        key={k}
-                        className={cn(
-                          'rounded px-1 py-0.5 text-[9.5px] font-bold uppercase',
-                          u.acl[k] ? 'bg-brand-100 text-brand-700' : 'bg-gray-100 text-gray-300',
-                        )}
-                      >
-                        {k[0]}
-                      </span>
-                    ))}
-                  </div>
-                </td>
-                <td className="px-3 py-2.5">
-                  <button onClick={() => app.toggleKafkaUser(u.id)}>
-                    <StatusBadge status={u.status} />
-                  </button>
-                </td>
+                <td className="px-4 py-2.5 font-mono font-medium text-gray-800">{u.username}</td>
+                <td className="px-3 py-2.5 font-mono text-[11px] text-gray-500">{u.secretRef ?? '—'}</td>
+                <td className="px-3 py-2.5 text-gray-400">{u.createdAt.slice(0, 10)}</td>
+                <td className="px-3 py-2.5"><StatusBadge status={u.status} /></td>
                 <td className="px-3 py-2.5 text-right">
-                  <button
-                    onClick={() => {
-                      app.removeKafkaUser(u.id)
-                      toast('주체를 삭제했습니다', 'info')
-                    }}
-                    className="text-[11px] font-medium text-rose-600 hover:underline"
-                  >
-                    삭제
-                  </button>
+                  <div className="flex justify-end gap-2">
+                    {u.status === 'ACTIVE' && (
+                      <button
+                        disabled={busyId === u.id}
+                        onClick={() => action(u.id, 'deactivate')}
+                        className="text-[11px] font-medium text-gray-600 hover:underline disabled:opacity-50"
+                      >
+                        비활성화
+                      </button>
+                    )}
+                    {u.status !== 'REVOKED' && (
+                      <>
+                        <button
+                          disabled={busyId === u.id}
+                          onClick={() => action(u.id, 'rotate')}
+                          className="text-[11px] font-medium text-brand-600 hover:underline disabled:opacity-50"
+                        >
+                          교체
+                        </button>
+                        <button
+                          disabled={busyId === u.id}
+                          onClick={() => action(u.id, 'revoke')}
+                          className="text-[11px] font-medium text-rose-600 hover:underline disabled:opacity-50"
+                        >
+                          폐기
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={5} className="px-4 py-6 text-center text-[12.5px] text-gray-400">
+                  Kafka 사용자가 없습니다
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
-        <div className="flex items-center gap-2 border-t border-gray-100 px-4 py-3">
+        <div className="grid grid-cols-[1fr_1fr_auto] items-center gap-2 border-t border-gray-100 px-4 py-3">
           <input
-            value={principal}
-            onChange={(e) => setPrincipal(e.target.value)}
-            placeholder="서비스 이름 (User: 접두사 자동 추가)"
-            className="h-9 flex-1 rounded-md border border-gray-300 px-3 text-[13px] outline-none focus:border-brand-600"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="username (영문/숫자/_/-)"
+            className="h-9 rounded-md border border-gray-300 px-3 text-[13px] outline-none focus:border-brand-600"
           />
-          <select
-            value={auth}
-            onChange={(e) => setAuth(e.target.value as typeof auth)}
-            className="h-9 rounded-md border border-gray-300 px-2 text-[13px] outline-none"
-          >
-            <option>SCRAM-SHA-512</option>
-            <option>mTLS</option>
-          </select>
+          <input
+            value={secretRef}
+            onChange={(e) => setSecretRef(e.target.value)}
+            placeholder="secretRef (선택)"
+            className="h-9 rounded-md border border-gray-300 px-3 font-mono text-[12px] outline-none focus:border-brand-600"
+          />
           <button
-            disabled={!principal.trim()}
-            onClick={() => {
-              app.addKafkaUser(principal.trim(), auth, `${principal.trim()}-secret`)
-              toast('Kafka 사용자를 생성했습니다')
-              setPrincipal('')
-            }}
+            disabled={!username.trim() || creating}
+            onClick={create}
             className="rounded-md bg-brand-600 px-3 py-2 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:bg-brand-300"
           >
             추가
@@ -725,106 +974,13 @@ export function KafkaUsersSection() {
 }
 
 export function KafkaSecretsSection() {
-  const app = useApp()
-  const toast = useToast()
-  const [name, setName] = useState('')
-  const [type, setType] = useState<'SCRAM' | 'mTLS'>('SCRAM')
-  const [revealed, setRevealed] = useState<string | null>(null)
-
   return (
     <div>
       <Head title="Kafka 시크릿" sub="커넥터와 컨슈머가 사용하는 자격 증명" />
-
-      {revealed && (
-        <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3.5">
-          <div className="flex items-center gap-1.5 text-[12px] font-bold text-amber-700">
-            <Icon name="alert" size={13} />
-            1회성 시크릿 값
-          </div>
-          <div className="mt-1.5 flex items-center gap-2">
-            <code className="flex-1 rounded bg-white px-2 py-1.5 font-mono text-[12px] text-gray-800">{revealed}</code>
-            <button
-              onClick={() => {
-                navigator.clipboard?.writeText(revealed)
-                toast('시크릿을 복사했습니다')
-              }}
-              className="rounded-md border border-amber-300 bg-white px-2 py-1.5 text-[11.5px] font-medium text-amber-700"
-            >
-              복사
-            </button>
-          </div>
-          <div className="mt-1.5 text-[11px] text-amber-700">
-            이 값은 창을 닫으면 다시 확인할 수 없습니다.
-          </div>
-        </div>
-      )}
-
-      <Panel title="시크릿">
-        <table className="w-full text-[12px]">
-          <thead>
-            <tr className="border-b border-gray-100 text-left text-[10.5px] uppercase tracking-wide text-gray-400">
-              <th className="px-4 py-2 font-semibold">이름</th>
-              <th className="px-3 py-2 font-semibold">유형</th>
-              <th className="px-3 py-2 font-semibold">연결 수</th>
-              <th className="px-3 py-2 font-semibold">교체일</th>
-              <th className="px-3 py-2 font-semibold">상태</th>
-              <th className="px-3 py-2" />
-            </tr>
-          </thead>
-          <tbody>
-            {app.kafkaSecrets.map((s) => (
-              <tr key={s.id} className="border-b border-gray-50">
-                <td className="px-4 py-2.5 font-mono font-medium text-gray-800">{s.name}</td>
-                <td className="px-3 py-2.5">
-                  <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-600">{s.type}</span>
-                </td>
-                <td className="px-3 py-2.5 text-gray-600">{s.connections}</td>
-                <td className="px-3 py-2.5 text-gray-400">{s.lastRotated}</td>
-                <td className="px-3 py-2.5"><StatusBadge status={s.status} /></td>
-                <td className="px-3 py-2.5 text-right">
-                  {s.status === 'active' && (
-                    <button
-                      onClick={() => {
-                        app.revokeSecret(s.id)
-                        toast('시크릿을 폐기했습니다', 'info')
-                      }}
-                      className="text-[11px] font-medium text-rose-600 hover:underline"
-                    >
-                      폐기
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <div className="flex items-center gap-2 border-t border-gray-100 px-4 py-3">
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="시크릿 이름"
-            className="h-9 flex-1 rounded-md border border-gray-300 px-3 text-[13px] outline-none focus:border-brand-600"
-          />
-          <select
-            value={type}
-            onChange={(e) => setType(e.target.value as typeof type)}
-            className="h-9 rounded-md border border-gray-300 px-2 text-[13px] outline-none"
-          >
-            <option>SCRAM</option>
-            <option>mTLS</option>
-          </select>
-          <button
-            disabled={!name.trim()}
-            onClick={() => {
-              app.addSecret(name.trim(), type)
-              setRevealed(`bfr_${Math.random().toString(36).slice(2, 12)}${Math.random().toString(36).slice(2, 10)}`)
-              toast('시크릿을 생성했습니다')
-              setName('')
-            }}
-            className="rounded-md bg-brand-600 px-3 py-2 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:bg-brand-300"
-          >
-            생성
-          </button>
+      <Panel title="이번 PR 제외">
+        <div className="space-y-2 px-5 py-5 text-[13px] leading-relaxed text-gray-600">
+          <p>Kafka 시크릿은 전용 백엔드 API가 아직 없어 mock 목록·생성·폐기 UI를 제거했습니다.</p>
+          <p className="text-[12px] text-gray-400">백엔드 API가 추가되면 이 탭을 실데이터로 연결합니다.</p>
         </div>
       </Panel>
     </div>

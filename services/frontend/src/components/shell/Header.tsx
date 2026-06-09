@@ -3,7 +3,7 @@ import { useApp } from '../../store/AppStore'
 
 export function Header({ viewLabel }: { viewLabel: string }) {
   const app = useApp()
-  const openIncidents = app.incidents.filter((i) => i.status !== 'resolved').length
+  const openIncidents = app.incidents.filter((i) => i.status.toUpperCase() !== 'RESOLVED').length
 
   return (
     <header className="flex h-11 shrink-0 items-center gap-3 border-b border-gray-200 bg-white px-4">

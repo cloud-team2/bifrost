@@ -294,6 +294,76 @@ export interface EventResponse {
   createdAt: string
 }
 
+/** incident 목록/상세(S5). operations-backend IncidentResponse record와 동일 필드. */
+export interface IncidentResponse {
+  id: string
+  tenantId: string
+  groupingKey: string
+  severity: string
+  status: string
+  title: string
+  rca: string | null
+  sourceType: string | null
+  sourceId: string | null
+  openedAt: string
+  resolvedAt: string | null
+}
+/** KRaft/리소스 이벤트(S5). operations-backend ResourceEventResponse record와 동일 필드. */
+export interface ResourceEventResponse {
+  eventType: string
+  resource: string
+  detail: string
+  occurredAt: string
+}
+
+/* ── Workspace Settings(#253) ─────────────────────────────────────── */
+export type NotificationSeverityPolicy = 'all' | 'warning' | 'error'
+export interface NotificationSettingsResponse {
+  slackEnabled: boolean
+  slackWebhookUrl: string | null
+  emailRecipients: string[]
+  severity: NotificationSeverityPolicy
+}
+export interface NotificationSettingsRequest {
+  slackEnabled?: boolean
+  slackWebhookUrl?: string | null
+  emailRecipients?: string[]
+  severity?: NotificationSeverityPolicy
+}
+export interface ThresholdSettingsResponse {
+  warning: number
+  critical: number
+}
+export interface ThresholdSettingsRequest {
+  warning?: number
+  critical?: number
+}
+export interface AiPolicySettingsResponse {
+  autonomous: boolean
+  approvalWaitMinutes: number
+  prodLock: boolean
+}
+export interface AiPolicySettingsRequest {
+  autonomous?: boolean
+  approvalWaitMinutes?: number
+  prodLock?: boolean
+}
+export type KafkaPrincipalStatus = 'ACTIVE' | 'INACTIVE' | 'REVOKED'
+export interface KafkaPrincipalResponse {
+  id: string
+  workspaceId: string
+  username: string
+  secretRef: string | null
+  status: KafkaPrincipalStatus
+  createdAt: string
+  deactivatedAt: string | null
+  revokedAt: string | null
+}
+export interface KafkaPrincipalCreateRequest {
+  username: string
+  secretRef?: string | null
+}
+
 
 /* ── Agent Run API(#252) ───────────────────────────────────────────── */
 export type AgentRunMode = 'simple_query' | 'incident_analysis' | 'action_execution' | 'approval_decision'
@@ -477,6 +547,16 @@ export const api = {
     request<ThroughputPoint[]>('GET', `/api/v1/clusters/kafka/throughput?minutes=${minutes}`),
   clusterConnect: () => request<ConnectClusterResponse>('GET', `/api/v1/clusters/connect`),
 
+  // monitoring incidents/resource-events (#253)
+  listIncidents: (wsId: string, status?: string) => {
+    const q = status ? `?status=${encodeURIComponent(status)}` : ''
+    return request<IncidentResponse[]>('GET', `/api/v1/workspaces/${wsId}/monitoring/incidents${q}`)
+  },
+  getIncident: (wsId: string, incidentId: string) =>
+    request<IncidentResponse>('GET', `/api/v1/workspaces/${wsId}/monitoring/incidents/${incidentId}`),
+  listResourceEvents: (wsId: string) =>
+    request<ResourceEventResponse[]>('GET', `/api/v1/workspaces/${wsId}/monitoring/resource-events`),
+
   pausePipeline: (wsId: string, id: string) =>
     request<PipelineResponse>('POST', `/api/v1/workspaces/${wsId}/pipelines/${id}/pause`),
   resumePipeline: (wsId: string, id: string) =>
@@ -511,6 +591,30 @@ export const api = {
     const token = getToken() ?? ''
     return `${BASE}/api/v1/workspaces/${wsId}/events/stream?access_token=${encodeURIComponent(token)}`
   },
+
+  // workspace settings (#253)
+  getNotificationSettings: (wsId: string) =>
+    request<NotificationSettingsResponse>('GET', `/api/v1/workspaces/${wsId}/settings/notifications`),
+  updateNotificationSettings: (wsId: string, body: NotificationSettingsRequest) =>
+    request<NotificationSettingsResponse>('PUT', `/api/v1/workspaces/${wsId}/settings/notifications`, body),
+  getThresholdSettings: (wsId: string) =>
+    request<ThresholdSettingsResponse>('GET', `/api/v1/workspaces/${wsId}/settings/thresholds`),
+  updateThresholdSettings: (wsId: string, body: ThresholdSettingsRequest) =>
+    request<ThresholdSettingsResponse>('PUT', `/api/v1/workspaces/${wsId}/settings/thresholds`, body),
+  getAiPolicySettings: (wsId: string) =>
+    request<AiPolicySettingsResponse>('GET', `/api/v1/workspaces/${wsId}/settings/ai-policy`),
+  updateAiPolicySettings: (wsId: string, body: AiPolicySettingsRequest) =>
+    request<AiPolicySettingsResponse>('PUT', `/api/v1/workspaces/${wsId}/settings/ai-policy`, body),
+  listKafkaPrincipals: (wsId: string) =>
+    request<KafkaPrincipalResponse[]>('GET', `/api/v1/workspaces/${wsId}/kafka/principals`),
+  createKafkaPrincipal: (wsId: string, body: KafkaPrincipalCreateRequest) =>
+    request<KafkaPrincipalResponse>('POST', `/api/v1/workspaces/${wsId}/kafka/principals`, body),
+  deactivateKafkaPrincipal: (wsId: string, id: string) =>
+    request<KafkaPrincipalResponse>('POST', `/api/v1/workspaces/${wsId}/kafka/principals/${id}/deactivate`),
+  revokeKafkaPrincipal: (wsId: string, id: string) =>
+    request<KafkaPrincipalResponse>('POST', `/api/v1/workspaces/${wsId}/kafka/principals/${id}/revoke`),
+  rotateKafkaPrincipal: (wsId: string, id: string) =>
+    request<KafkaPrincipalResponse>('POST', `/api/v1/workspaces/${wsId}/kafka/principals/${id}/rotate`),
 }
 
 export interface ConnectionTestInput {
