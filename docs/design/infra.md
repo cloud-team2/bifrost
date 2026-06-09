@@ -40,22 +40,27 @@ flowchart TB
 
 `platform-kafka`(Kafka·Connect·CR) · `bifrost-system`(FE·FastAPI·SpringBoot) · `registry`(Harbor) · `cicd`(Jenkins) · `argocd` · `monitoring`(Prometheus·Alertmanager·Grafana·Loki·Tempo·exporters) · `metadb`(Spring 메타·evidence) · `agentdb`(FastAPI run·pgvector 벡터) · `tenantdb`(고객 source/sink)
 
-## 현재 상태 (2026-06-05)
+## 현재 상태 (2026-06-09)
 
-| 완료 | 미구성 |
+전 구성요소가 **GitOps(ArgoCD app-of-apps)로 배포·관리**된다. 수동 배포 단계는 끝났고, ArgoCD `bifrost-root`가 gitops 브랜치를 단일 진실로 reconcile한다.
+
+| 영역 | 상태 |
 | --- | --- |
-| **EKS 5노드 단일 풀(t3.xlarge, #119)**, Strimzi Operator, `platform-kafka` Ready(3 broker/controller, PVC 3), 내부 topic 3, **Kafka Connect `platform-connect`(1 replica, JMX 메트릭 #124)**, **Harbor**, **Jenkins(JCasC #194)**, **Argo CD(app-of-apps 가동)**, gp3 default, metadb/**agentdb(pgvector, #120)**/tenantdb, **앱 배포(frontend/ops-backend/ai-service, #123 CICD)**, **Monitoring 풀셋(kube-prometheus-stack·Loki·Tempo·kafka-exporter, #124)** | Evidence/Audit Store **스키마**, KafkaConnector/KafkaUser, metrics-server, Loki 로그 소비처(search_logs stub)·Tempo OTLP 계측 |
+| 클러스터 | EKS 5노드 단일 풀(t3.xlarge, #119), gp3 default, metrics-server. 용량 ~30%로 여유 |
+| Kafka | Strimzi `platform-kafka` Ready(3 broker/controller, PVC 3), 내부 topic 3, Kafka Connect `platform-connect`(JMX 메트릭) |
+| Delivery | Harbor · Jenkins(JCasC #194) · Argo CD — **전부 GitOps 연동**. CI(Jenkins)→Harbor push→gitops tag 갱신→ArgoCD 배포(#123) 파이프라인 가동 |
+| 외부 노출 | **NLB + ingress-nginx + cert-manager(Let's Encrypt)** — `bifrost`/`jenkins`/`harbor`/`argocd`.skala-ai.com (HTTPS, #232). 구 ALB+ACM 폐기 |
+| 앱 | frontend · operations-backend · ai-service(agentdb persistence·alembic initContainer #255) → `bifrost-system` |
+| DB | metadb · agentdb(pgvector #120) · tenantdb |
+| Observability | kube-prometheus-stack · Loki · Tempo · kafka-exporter (#124), 단일 `monitoring` 앱 |
 
-> ⚠️ Harbor·Jenkins·Argo CD·Kafka Connect는 **수동 배포**되어 있고 **manifest가 repo에 YAML로 미반영**이다(Argo CD Application 0개 = GitOps 미연동). manifest 역추출·GitOps 연동은 후속 작업. 상세 스냅샷은 [§2 추가 배포 현황](#35-추가-배포-현황-2026-06-02-스냅샷-수동-배포).
-> ⚠️ **앱 이미지 배포 경로**: ai-service 등 앱은 **Harbor(in-cluster)** 에 올린다(Docker Hub 아님). 정석 플로우 = Jenkins CI 빌드(Kaniko/buildah, docker 미사용)→Harbor push→GitOps manifest tag 갱신→ArgoCD 배포(#123). 노트북 docker 수동 push는 지양. Harbor 외부 UI는 `https://harbor.skala-ai.com`(NLB→ingress-nginx→LE TLS, #232), CI push·노드 pull은 내부 DNS `harbor.harbor.svc.cluster.local/library/<image>`(externalURL은 CI Kaniko 토큰 realm 보존 위해 `http://harbor.local` 유지), `harbor-push-secret`(dockerconfigjson) imagePullSecret.
-
-## 다음 우선순위
-
-(완료: Harbor·Jenkins·Argo CD·Kafka Connect 수동 배포) → **manifest 역추출·GitOps(Argo CD Application) 연동** → Monitoring(+Loki/Tempo) → Evidence/Audit/Metadata Store → KafkaConnector/KafkaUser → Spring Boot → FastAPI → Frontend.
+**남은 작업**: KafkaConnector/KafkaUser CR(IaC) · Kafka Connect 2 replica + 커스텀 plugin 이미지 · Evidence/Audit Store 스키마 · Loki 로그 소비처(ops-backend `search_logs` 실연동) · Tempo OTLP 앱 계측(다음 라운드).
 
 ## 점검 필요 (운영 전)
 
-`auto.create.topics.enable=true` 끄기 · plain listener 제한(scram 표준화) · tenantdb LoadBalancer 노출 재검토 · PDB/anti-affinity · gp3 Retain(orphan PV) 정책 · **클러스터 용량: 3×t3.large CPU 요청 ~81%로 포화 임박, 남은 스택(monitoring·앱) 수용 불가 → 노드 확장/인스턴스 상향 필요([§2 §11 용량 분석](#11-클러스터-용량-분석-및-대응안-2026-06-02--해소됨119))**.
+`auto.create.topics.enable=true` 끄기 · plain listener 제한(scram 표준화) · tenantdb 노출 재검토 · Kafka PDB/anti-affinity · gp3 Retain(orphan PV) 정책 · **수동 시크릿(`operations-backend-secrets`·`ai-llm-secret`·복제 `harbor-push-secret`)의 GitOps화**(현재 GitOps 밖이라 네임스페이스 삭제 시 소멸 — SealedSecrets/External Secrets 권장).
+
+> **앱 이미지 배포 경로**: ai-service 등 앱은 **Harbor(in-cluster)** 에 올린다(Docker Hub 아님). 정석 플로우 = Jenkins CI 빌드(Kaniko, docker 미사용)→Harbor push→gitops `image.tag` 갱신→ArgoCD 배포(#123). Harbor 외부 UI는 `https://harbor.skala-ai.com`, CI push·노드 pull은 내부 DNS `harbor.harbor.svc.cluster.local/library/<image>`(externalURL은 CI Kaniko 토큰 realm 보존 위해 `http://harbor.local` 유지), `harbor-push-secret`(dockerconfigjson) imagePullSecret.
 
 ## 더 읽기 → [DETAILS.md](#)
 
@@ -255,7 +260,7 @@ Kafka cluster 자체와 Strimzi Operator는 bootstrap 단계에서는 수동 적
 > - **CI**(`Jenkinsfile`, repo 루트): **직전 성공 빌드 대비 변경 감지 → 바뀐 서비스만** Kaniko 빌드(docker 미사용; Dockerfile은 Kaniko 입력이라 유지) → Harbor `.../library/bifrost-<svc>:<git-sha>` push(HTTP `--insecure`) → 그 서비스의 gitops `charts/<svc>/values.yaml` `image.tag`만 commit.
 > - **CD = `gitops` 브랜치**(long-lived, **merge 금지**). ArgoCD가 **polling/reconcile로 감지(webhook 미사용)** → auto-sync. gitops 구조: `charts/`(operations-backend·ai-service·frontend helm) · `databases/`(metadb·agentdb·tenantdb raw, directory app·prune off) · `infra/`(CI/CD nginx Ingress: jenkins/harbor/argocd) · `argocd/`(app-of-apps).
 > - **ArgoCD 앱 구성 (#232 정리, 11→8)**: `bifrost-root`(app-of-apps, `argocd/apps/` 감시) 아래 — `monitoring`(kps+loki+tempo multi-source) · `bifrost-services`(frontend+ops-backend+ai-service multi-source, bifrost-system) · `databases`(metadb+agentdb, prune off) · `tenantdb`(분리, prune off) · `cert-manager` · `ingress-nginx` · `cicd-ingress`. 파일 추가/삭제 = 앱 추가/삭제(root prune=true).
-> - **라이브 배선(후속)**: Jenkins job·Kaniko agent·`harbor-push-secret`(jenkins ns)·`github-pat` cred·main webhook·ArgoCD repo connect(GitHub PAT)·`kubectl apply -f argocd/root.yaml`(부트스트랩)·secret(jwt-secret 등). 그리고 develop의 중복 차트(`services/<svc>/helm`) → gitops 일원화 정리.
+> - **부트스트랩(완료)**: Jenkins job·Kaniko agent·`harbor-push-secret`·`github-pat` cred·main webhook·ArgoCD repo connect·`kubectl apply -f argocd/root.yaml`·앱 시크릿 배선 완료. (단, `operations-backend-secrets`·`ai-llm-secret`·복제 `harbor-push-secret`은 GitOps 밖 수동 secret — 네임스페이스 삭제 내성 위해 GitOps화 권장.)
 
 ### 8. Observability와 Evidence
 
@@ -370,7 +375,7 @@ arn:aws:eks:ap-northeast-2:881490135253:cluster/skala3-cloud1-finalproj-team2
 
 > **Kafka broker HA**: broker PVC는 AZ 고정(2a·2a·2b). 단일 풀 5노드는 2a 노드가 3개라 **2a broker 2개가 서로 다른 노드에 배치**되어, 노드 1대 장애 시 broker 1개만 영향(정상 HA). 풀을 3노드 이하로 줄이면 2a broker가 한 노드에 겹칠 수 있으니 주의(`min_size=3` 유지).
 
-> **사이징 메모**: 총 requests ≈ 5.7 vCPU(우리 monolith는 아직 미배포, 부하 대부분이 CI/CD·Kafka). **5노드**(allocatable ~19.5 vCPU)로 운영 — 모니터링 스택(~3~6 vCPU)까지 여유. CI/CD(Harbor·Jenkins·ArgoCD)가 무거우니 빡빡하면 `desired_size` 한 줄로 증설(무중단 in-place).
+> **사이징 메모**: 총 requests ≈ 5.7 vCPU(~30%, 모니터링·앱·Connect 포함). **5노드**(allocatable ~19.5 vCPU)로 여유 운영. CI/CD(Harbor·Jenkins·ArgoCD)가 무거우니 빡빡하면 `desired_size` 한 줄로 증설(무중단 in-place).
 
 **검증 명령어 (#119 노드풀)** — `AWS_PROFILE=skala_student AWS_REGION=ap-northeast-2`, `C=skala3-cloud1-finalproj-team2`:
 
@@ -399,10 +404,11 @@ Namespace:
 | `metadb` | Active | Spring metadata / audit / evidence DB |
 | `agentdb` | Active | FastAPI Agent Run Store + Knowledge Vector Store (pgvector) — #120 |
 | `tenantdb` | Active | 고객(테넌트) source/sink DB (데모) |
-| `bifrost-system` | Active | 앱(FE·FastAPI·Spring) — ns·ai-service helm/secret 준비, 배포는 CICD 대기 |
-| `harbor` | Active | Harbor registry (수동 배포) |
-| `jenkins` | Active | Jenkins (수동 배포, 25h) |
-| `argocd` | Active | Argo CD (수동 배포, 25h, App 0개) |
+| `bifrost-system` | Active | 앱(frontend·operations-backend·ai-service) — `bifrost-services` ArgoCD 앱 |
+| `harbor` | Active | Harbor registry (GitOps) |
+| `jenkins` | Active | Jenkins (GitOps, JCasC #194) |
+| `argocd` | Active | Argo CD (app-of-apps, child 앱 7개) |
+| `monitoring` | Active | kube-prometheus-stack·Loki·Tempo·exporters (#124) |
 
 ### 3. 현재 설치된 핵심 리소스
 
@@ -486,20 +492,16 @@ Listener:
 | `platform-internal-service-discovered` | 3 | 3 | True |
 | `platform-internal-service-lag-updated` | 3 | 3 | True |
 
-#### 3.5 추가 배포 현황 (2026-06-02 스냅샷, 수동 배포)
-
-> ⚠️ 아래 리소스는 **수동(kubectl/Helm)으로 배포**된 상태이며 **manifest가 repo에 YAML로 반영되어 있지 않다**. manifest 역추출과 GitOps(Argo CD) 연동은 후속 작업이다(Argo CD는 설치되어 있으나 등록된 Application이 0개다).
+#### 3.5 Delivery·Connect 배포 현황
 
 | Namespace | 워크로드 | 상태 |
 | --- | --- | --- |
-| `harbor` | Harbor 8 pod (core·database·jobservice·nginx·portal·redis·registry[2/2]·trivy) | 정상 Running. PVC: registry 50Gi·db 10Gi·trivy 10Gi·redis 5Gi·jobservice 5Gi (gp3 Bound) |
-| `jenkins` | `jenkins-0` (2/2, StatefulSet) | 정상. PVC 20Gi |
-| `argocd` | Argo CD 7 pod (server·repo-server·application/applicationset/notifications-controller·dex·redis) | 정상. **등록 Application 0개(GitOps 미연동)** |
-| `platform-kafka` | `platform-connect` (KafkaConnect CR, **replicas 1** READY) + entity-operator | Connect 가동. 목표 2 replica, connector plugin image는 Harbor 기반 재정의 예정. **KafkaConnector/KafkaUser CR은 아직 없음** |
+| `harbor` | Harbor 8 pod (core·database·jobservice·nginx·portal·redis·registry·trivy) | 정상. PVC: registry 50Gi·db 10Gi·trivy 10Gi·redis 5Gi·jobservice 5Gi. 외부 UI `https://harbor.skala-ai.com` |
+| `jenkins` | `jenkins-0` (StatefulSet, JCasC #194) | 정상. PVC 20Gi. 외부 UI `https://jenkins.skala-ai.com`, main 머지 webhook |
+| `argocd` | Argo CD 7 pod | 정상. **app-of-apps 가동(`bifrost-root` + 7 child 앱)**. 외부 UI `https://argocd.skala-ai.com` |
+| `platform-kafka` | `platform-connect` (KafkaConnect CR) + entity-operator | Connect 가동. 남은 보강: 2 replica 증설, connector plugin 포함 커스텀 이미지(Harbor), KafkaConnector/KafkaUser CR(IaC) |
 
-여전히 미구성: `monitoring`(Prometheus/Grafana/Loki/Tempo·exporter), `bifrost-system`(FE/FastAPI/Spring 앱), Evidence/Audit Store, KafkaConnector/KafkaUser CR, metrics-server(`kubectl top` 불가), IngressClass.
-
-**이상 징후: 없음.** 모든 pod Running, Pending/CrashLoop 0, 과다 재시작 0. harbor-database(1회)·harbor-jobservice(3회)·jenkins-0(3회)·argocd-dex(2회)에 기동 시점 소수 재시작이 있으나 의존성 기동 순서에 따른 정상 범위다. **Harbor 8 pod는 Harbor 표준 구성요소로 과다하지 않다**(각 pod가 별개 컴포넌트). trivy(취약점 스캐너)만 선택적이라 불필요 시 비활성화해 리소스를 줄일 수 있다.
+trivy(취약점 스캐너)는 선택적이라 불필요 시 비활성화해 리소스를 줄일 수 있다.
 
 ### 4. 현재 수정 검토가 필요한 항목
 
@@ -532,17 +534,15 @@ MVP로는 적절하다. 다만 리소스 여유가 생기면 controller와 broke
 
 #### 4.5 Kafka Connect — 배포됨(보강 필요)
 
-KafkaConnect CR `platform-connect`가 **replicas 1**로 가동 중이다([§3.5](#35-추가-배포-현황-2026-06-02-스냅샷-수동-배포)). 다만 (a) 목표 replicas 2로 증설, (b) connector plugin 포함 custom image를 Harbor 기반으로 재정의, (c) source/sink **KafkaConnector CR**와 워크스페이스 **KafkaUser CR** 생성이 남았다.
+KafkaConnect CR `platform-connect`가 가동 중이다([§3.5](#35-deliveryconnect-배포-현황)). 남은 보강: (a) 목표 replicas 2로 증설, (b) connector plugin 포함 custom image를 Harbor 기반으로 재정의, (c) source/sink **KafkaConnector CR**와 워크스페이스 **KafkaUser CR** 생성(IaC 정식화).
 
-#### 4.6 CI/CD와 Registry — 배포됨(수동, GitOps 미연동)
+#### 4.6 CI/CD와 Registry — GitOps 연동 완료
 
-Harbor·Jenkins·Argo CD가 각각 `harbor`/`jenkins`/`argocd` namespace에 **수동 배포**되어 정상 가동 중이다([§3.5](#35-추가-배포-현황-2026-06-02-스냅샷-수동-배포)). 남은 일: (a) **Argo CD Application 등록**(현재 0개)으로 GitOps 연동, (b) Jenkins build→Harbor push→manifest tag update 파이프라인 구성, (c) 이 리소스들의 **manifest를 repo에 YAML로 역추출**(현재 미반영).
+Harbor·Jenkins·Argo CD가 정상 가동하며 **GitOps로 연동**됐다([§3.5](#35-deliveryconnect-배포-현황)). Argo CD app-of-apps(`bifrost-root`)가 gitops 브랜치를 reconcile하고, Jenkins build→Harbor push→gitops `image.tag` 갱신→ArgoCD 배포 파이프라인이 main 머지 트리거로 가동한다(#123). 외부 노출은 NLB+ingress-nginx+LE(#232).
 
-#### 4.7 Observability 미구성
+#### 4.7 Observability — 배포 완료 (#124)
 
-Prometheus, Grafana, Loki, Tempo, Kafka exporter 계열 리소스는 확인되지 않았다.
-
-Agent RCA를 위해 metric/log/trace/event 수집 계층이 필요하다.
+kube-prometheus-stack(Prometheus·Grafana·Alertmanager·exporters) + Loki + Tempo가 `monitoring` 네임스페이스에 단일 `monitoring` ArgoCD 앱으로 배포됐다. 상세는 [§6.7 Observability](#67-observability).
 
 #### 4.8 Schema Registry — 설계 참조 있으나 미계획
 
@@ -553,15 +553,15 @@ Spring Boot adapter([server.md §11](./backend-springboot/server.md#11-resource-
 | Namespace | 목적 | 현재 상태 |
 | --- | --- | --- |
 | `strimzi-system` | Strimzi operator | 존재 |
-| `platform-kafka` | Kafka, Kafka Connect, Kafka topic/user/rebalance | 일부 존재 |
-| `bifrost-system` | Frontend, FastAPI Agent, Spring Boot Backend | ns 생성·ai-service helm/secret 준비(#120), 배포 CICD 대기 |
-| `harbor` | Harbor (registry) — 계획상 `registry`였으나 실제 ns명 `harbor` | 존재(수동) |
-| `jenkins` | Jenkins — 계획상 `cicd`였으나 실제 ns명 `jenkins` | 존재(수동) |
-| `argocd` | Argo CD | 존재(수동, App 0개) |
-| `monitoring` | Prometheus, Grafana, Loki, exporters | 필요 |
-| `metadb` | Spring metadata / audit / evidence DB | 존재 |
-| `agentdb` | FastAPI Agent Run Store + Knowledge Vector Store(pgvector) | 존재(#120, 스키마는 앱 마이그레이션) |
-| `tenantdb` | 고객(테넌트) source/sink DB (데모) | 존재 |
+| `platform-kafka` | Kafka, Kafka Connect, Kafka topic/user/rebalance | Kafka·Connect·topic 완료, KafkaConnector/User CR 잔여 |
+| `bifrost-system` | Frontend, FastAPI Agent, Spring Boot Backend | 배포 완료(`bifrost-services` 앱) |
+| `harbor` | Harbor (registry) — 계획상 `registry`였으나 실제 ns명 `harbor` | 배포 완료(GitOps) |
+| `jenkins` | Jenkins — 계획상 `cicd`였으나 실제 ns명 `jenkins` | 배포 완료(GitOps) |
+| `argocd` | Argo CD (app-of-apps) | 배포 완료 |
+| `monitoring` | Prometheus, Grafana, Loki, Tempo, exporters | 배포 완료(#124) |
+| `metadb` | Spring metadata / audit / evidence DB | 배포 완료 |
+| `agentdb` | FastAPI Agent Run Store + Knowledge Vector Store(pgvector) | 배포 완료(#120, alembic initContainer로 스키마 자동 적용 #255) |
+| `tenantdb` | 고객(테넌트) source/sink DB (데모) | 배포 완료(독립 ArgoCD 앱) |
 
 ### 6. Target Resource Plan
 
@@ -765,11 +765,11 @@ KafkaNodePool brokers
 - Kafka broker PVC 3개 Bound
 - 내부 KafkaTopic 3개 Ready
 - metadb/**agentdb(pgvector pg16, #120)**/tenantdb workload Running
-- `bifrost-system` ns + ai-service helm 차트·LLM secret·harbor-push-secret 준비 (#120, 실배포는 CICD #123 대기)
-- Kafka Connect `platform-connect`(KafkaConnect CR, replicas 1) Ready — 2026-06-02 (수동)
-- Harbor 8 pod Running — 2026-06-02 (수동, manifest 미반영)
-- Jenkins `jenkins-0` Running — 2026-06-02 (수동)
-- Argo CD 7 pod Running — 2026-06-02 (수동, Application 0개)
+- `bifrost-system` 앱(frontend·operations-backend·ai-service) 배포 — `bifrost-services` ArgoCD 앱(#123)
+- Kafka Connect `platform-connect`(KafkaConnect CR) Ready
+- Harbor·Jenkins·Argo CD Running — **GitOps 연동(app-of-apps)**, 외부 HTTPS(#232)
+- 외부 노출 NLB+ingress-nginx+cert-manager(Let's Encrypt) — bifrost/jenkins/harbor/argocd.skala-ai.com (#232)
+- Monitoring 풀셋(kube-prometheus-stack·Loki·Tempo·exporter, #124) 단일 `monitoring` 앱
 
 #### 수정 검토
 
@@ -782,19 +782,16 @@ KafkaNodePool brokers
 
 #### 남은 작업
 
-> Harbor·Jenkins·Argo CD·Kafka Connect 설치는 완료(수동). 아래는 그 이후 남은 작업이다.
+> GitOps 연동·CI/CD 파이프라인·앱/모니터링 배포·외부 노출(#232)은 완료. 아래가 남은 작업이다.
 
-1. **수동 배포 리소스(Harbor/Jenkins/Argo CD/Kafka Connect)의 manifest를 repo에 YAML로 역추출**
-2. Argo CD Application 등록 + GitOps repository 구성(현재 App 0개)
-3. Jenkins build → Harbor push → manifest tag update 파이프라인
-4. Harbor imagePullSecret을 각 application namespace에 배포
-5. Kafka Connect replicas 2 증설 + connector plugin image(Harbor) 재정의
-6. KafkaUser / KafkaConnector / 추가 KafkaTopic 정의
-7. Monitoring stack 설치(Prometheus/Grafana) + Loki/Tempo + exporter + metrics-server
-8. Evidence Store / Audit Store / Metadata Store 구성
-9. Cruise Control / KafkaRebalance 활성화
-10. Spring Boot Operations Backend / FastAPI Agent / Frontend 배포(`bifrost-system`)
-11. NetworkPolicy / RBAC / IngressClass 정리
+1. Kafka Connect replicas 2 증설 + connector plugin image(Harbor) 재정의
+2. KafkaUser / KafkaConnector / 추가 KafkaTopic **IaC 정식화**
+3. Evidence Store / Audit Store 스키마 구성
+4. Loki 로그 소비처(ops-backend `search_logs` 실연동) · Tempo OTLP 앱 계측(다음 라운드)
+5. Cruise Control / KafkaRebalance 활성화(선택)
+6. NetworkPolicy 강제(VPC CNI policy agent 선행) / RBAC 정리
+7. **수동 시크릿 GitOps화**(SealedSecrets/External Secrets) — 네임스페이스 삭제 내성
+8. Kafka 운영 점검: `auto.create.topics` off · plain listener 제한 · PDB/anti-affinity
 
 ### 9. 배포 순서
 
@@ -827,49 +824,6 @@ KafkaNodePool brokers
 - LoadBalancer/Ingress 노출 변경
 - 운영 정책상 금지/허용 리소스 변경
 
-### 11. 클러스터 용량 분석 및 대응안 (2026-06-02) — ✅ 해소됨(#119)
+### 11. 클러스터 용량 — ✅ 해소됨 (#119)
 
-> **해소(2026-06-05, #119)**: 아래 3×t3.large 포화 분석은 **해결됐다.** 대응안 (1)(2)(4)를 적용해 **단일 풀 5× t3.xlarge(allocatable ~19.5 vCPU)**로 스펙업 + right-size 완료. 현재 총 requests ~5.7 vCPU(~30%)로 모니터링·앱까지 여유. 현행 노드 스펙은 [§2.2 현재 클러스터 스냅샷](#2-현재-클러스터-스냅샷)이 단일 출처. 아래는 의사결정 근거로 보존한 **이력**이다.
-
-> 기준: metrics-server가 없어 실시간 usage는 측정 불가하다. 아래는 **`kubectl describe node`의 requests/limits(스케줄링 기준)** 분석이다. 실제 right-sizing은 metrics-server 설치 후 usage로 보정한다.
-
-#### 11.1 노드 스펙
-
-| 항목 | 값 |
-| --- | --- |
-| 노드 | **3 × t3.large** (각 2 vCPU / 8GiB, **burstable**) |
-| 노드당 allocatable | CPU **1930m**, MEM **~7.08GiB**, pods 35 |
-| 클러스터 allocatable 합 | CPU **~5.79 vCPU**, MEM **~20.7GiB** |
-
-#### 11.2 현재 할당 (requests / limits)
-
-| 노드 | CPU req | MEM req | CPU limit | MEM limit | pods |
-| --- | --- | --- | --- | --- | --- |
-| 128-71 | 1381m (71%) | 3561Mi (50%) | 5010m (259%) | 6864Mi (96%) | 11 |
-| 131-173 | 1491m (77%) | 3921Mi (55%) | 5510m (285%) | 9328Mi (131%) | 14 |
-| 159-30 | 1791m (**92%**) | 4317Mi (60%) | 5510m (285%) | 9668Mi (**136%**) | 18 |
-| **합계** | **~4663m (≈81%)** | **~11.5GiB (≈56%)** | 과다 오버커밋 | **~25.3GiB (≈122%)** | 43 |
-
-#### 11.3 진단
-
-- **CPU가 병목이다.** 요청이 이미 클러스터 ≈81%, 노드3은 92%로 **여유 CPU가 클러스터 전체 ~1.1 vCPU(노드3은 ~0.14 vCPU)뿐**이다. 추가 워크로드는 곧 `Pending`(unschedulable)으로 떨어진다.
-- **메모리 limit 오버커밋.** 노드2·3의 메모리 limit이 allocatable을 초과(131%·136%, 클러스터 122%). 메모리는 압축 불가 자원이라 동시 burst 시 **OOMKill/eviction 위험**이 있다(요청 기준 여유는 ~9GiB로 아직 있음).
-- **t3는 burstable.** baseline은 vCPU당 30%(노드당 지속 ~0.6 vCPU). Kafka broker·Kafka Connect·JVM·DB 같은 **지속 부하**가 CPU 크레딧을 소진하면 throttling이 발생한다 — 데이터/상태 플레인에 t3는 부적합.
-- **아직 안 뜬 스택이 더 크다.** 남은 필수 구성(`monitoring`: Prometheus+Loki+Tempo+Grafana+Promtail DS+exporter, `bifrost-system`: Spring JVM+FastAPI+Frontend, Kafka Connect replica 2, Evidence/Audit Store, metrics-server)의 요청 합은 대략 **+3~6 vCPU / +6~12GiB**로 추정된다. 현재 가용(CPU ~1.1 vCPU)으로는 **수용 불가**.
-
-**결론: 현재 3×t3.large로는 설계상 남은 컴포넌트를 올릴 수 없다. 노드 증설 또는 인스턴스 상향이 선행돼야 한다.**
-
-#### 11.4 대응안 (우선순위)
-
-> 단일 EKS·VPC 제약([§1.2](#2-제약사항))은 **새 클러스터/VPC 생성** 금지일 뿐, 기존 노드그룹의 수량·인스턴스 타입 조정은 허용된다.
-
-| # | 대응 | 내용 | 효과/비고 |
-| --- | --- | --- | --- |
-| 1 | **인스턴스 상향(권장)** | 데이터/상태·관측 플레인용으로 **m5/m6i.xlarge(4 vCPU/16GiB)** 3~4대로 전환 또는 혼합 | burstable 탈피(지속 부하 안정) + 용량 확보. Kafka/JVM에 적합 |
-| 2 | 노드 증설 | nodegroup desired 3 → 5~6(t3.large) | 가장 빠르지만 t3 크레딧 문제는 잔존 → 임시방편 |
-| 3 | 옵셔널 축소 | Harbor `trivy` off, monitoring 리텐션·리소스 축소, Cruise Control 보류, 비핵심 단일 replica 유지 | 즉시 수 백 m~1 vCPU 절감 |
-| 4 | requests/limits 정합 | 메모리 limit ≤ allocatable로 캡, 핵심 stateful(Kafka·DB)은 requests=limits(Guaranteed) | eviction/OOM 위험 제거 |
-| 5 | 전용 노드그룹/taint | Kafka(stateful·지속) 전용 노드 분리, 관측/CI는 별도 노드그룹 | 자원 경합·장애 격리 |
-| 6 | metrics-server 설치 | 실제 usage 기반 right-sizing·HPA 가능 | 현재는 requests 추정만 가능 |
-
-**권장 경로**: (4)(3)로 당장의 위험을 낮추고 metrics-server(6)로 실측한 뒤, 남은 스택 배포 전에 (1) 인스턴스 상향(예: 3×m5.xlarge = 12 vCPU/48GiB)을 적용한다.
+초기 3×t3.large는 CPU requests ~81%로 포화 임박이었으나, **#119에서 5×t3.xlarge 단일 풀(allocatable ~19.5 vCPU)로 스펙업 + right-size** 완료. 현재 총 requests ~5.7 vCPU(~30%)로 모니터링·앱·Connect까지 여유. 현행 노드 스펙은 [§2.2 현재 클러스터 스냅샷](#2-현재-클러스터-스냅샷)이 단일 출처. (단일 EKS·VPC 제약은 새 클러스터/VPC 생성 금지일 뿐, 노드그룹 수량·인스턴스 타입 조정은 허용.)
