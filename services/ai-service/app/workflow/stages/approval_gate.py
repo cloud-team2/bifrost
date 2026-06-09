@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from app.persistence.approval_link_repository import ApprovalLink, get_approval_repo
 from app.schemas.outputs import ApprovedActionOutput, ApprovalGateOutput
-from app.schemas.state import ActionStatus, PolicyDecision, RunStatus
+from app.schemas.state import ActionStatus, PolicyDecision, PolicyDecisionType, RunStatus
 
 
 async def run_approval_gate(
@@ -19,7 +19,10 @@ async def run_approval_gate(
     has_pending = False
 
     for decision in policy_decisions:
-        if decision.status == ActionStatus.PENDING_APPROVAL:
+        if (
+            decision.status == ActionStatus.PENDING_APPROVAL
+            and decision.decision == PolicyDecisionType.REQUIRE_APPROVAL
+        ):
             existing: ApprovalLink | None = repo.get_by_action(run_id, decision.action_id)
 
             if existing and existing.status == "approved":
