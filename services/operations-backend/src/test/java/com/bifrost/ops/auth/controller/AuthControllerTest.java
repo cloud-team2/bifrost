@@ -47,7 +47,7 @@ class AuthControllerTest {
     void legacyAliasAuthMeReturns404WithoutBearer() throws Exception {
         mockMvc.perform(get("/api/auth/me"))
             .andExpect(status().isNotFound())
-            .andExpect(jsonPath("$.code").value("404"))
+            .andExpect(jsonPath("$.code").value("90006"))
             .andExpect(jsonPath("$.message").value("요청한 경로를 찾을 수 없습니다"));
     }
 
@@ -58,7 +58,7 @@ class AuthControllerTest {
         mockMvc.perform(get("/api/auth/me")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer legacy-token"))
             .andExpect(status().isNotFound())
-            .andExpect(jsonPath("$.code").value("404"))
+            .andExpect(jsonPath("$.code").value("90006"))
             .andExpect(jsonPath("$.message").value("요청한 경로를 찾을 수 없습니다"));
     }
 }

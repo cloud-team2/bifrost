@@ -46,8 +46,8 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(NoHandlerFoundException.class)
     public ResponseEntity<ErrorResponse> handleNoHandler(NoHandlerFoundException e) {
-        return ResponseEntity.status(404)
-            .body(new ErrorResponse("404", "요청한 경로를 찾을 수 없습니다", List.of()));
+        return ResponseEntity.status(ErrorCode.RESOURCE_NOT_FOUND.status())
+            .body(ErrorResponse.of(ErrorCode.RESOURCE_NOT_FOUND, "요청한 경로를 찾을 수 없습니다"));
     }
 
     @ExceptionHandler(Exception.class)
