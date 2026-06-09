@@ -52,19 +52,21 @@ public record PipelineProvisionCommand(
     /**
      * DB 엔드포인트. 자격증명은 {@code secretRef}로만 참조한다.
      *
-     * @param engine    DB 엔진(connector class 선택 기준)
-     * @param host      DB 호스트
-     * @param port      DB 포트
-     * @param dbName    DB 이름(토픽 prefix 구성)
-     * @param schema    스키마(단일 테이블). sink는 미사용 가능(null)
-     * @param table     테이블(단일 테이블). sink는 미사용 가능(null)
-     * @param secretRef SecretStore 참조(평문 금지)
+     * @param engine       DB 엔진(connector class 선택 기준)
+     * @param host         DB 호스트
+     * @param port         DB 포트
+     * @param dbName       DB 이름(토픽 prefix 구성)
+     * @param datasourceId datasource 고유 id(토픽 슬러그에 섞어 표시 이름 충돌 방지, #265)
+     * @param schema       스키마(단일 테이블). sink는 미사용 가능(null)
+     * @param table        테이블(단일 테이블). sink는 미사용 가능(null)
+     * @param secretRef    SecretStore 참조(평문 금지)
      */
     public record Endpoint(
             DbType engine,
             String host,
             int port,
             String dbName,
+            UUID datasourceId,
             String schema,
             String table,
             String secretRef
@@ -78,6 +80,9 @@ public record PipelineProvisionCommand(
             }
             if (dbName == null || dbName.isBlank()) {
                 throw new IllegalArgumentException("dbName must not be blank");
+            }
+            if (datasourceId == null) {
+                throw new IllegalArgumentException("datasourceId must not be null");
             }
             if (secretRef == null || secretRef.isBlank()) {
                 throw new IllegalArgumentException("secretRef must not be blank");
