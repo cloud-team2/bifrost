@@ -10,11 +10,14 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from app.core.config import settings
 from app.schemas.state import RiskLevel
 from app.schemas.tools import (
+    AlertsData,
     ConnectorActionData,
     ConnectorStatusData,
     ConsumerGroupActionData,
     ConsumerLagData,
     DeploymentsData,
+    GetAlertsParams,
+    GetTracesParams,
     IncidentSummaryData,
     ListProjectPipelinesData,
     LogSearchData,
@@ -24,6 +27,7 @@ from app.schemas.tools import (
     ToolContext,
     ToolResult,
     ToolStatus,
+    TracesData,
 )
 from app.tools.result import failed_tool_result, result_from_spring_response
 from app.tools.spring_client import SpringOpsClient
@@ -262,6 +266,25 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
             result_model=ConsumerGroupActionData,
             path_params=("consumer_group",),
             requires_approval=True,
+        ),
+        ToolDefinition(
+            name="get_traces",
+            operation="query_traces",
+            method="GET",
+            path_template="/internal/ops/projects/{project_id}/connectors/{connector_name}/traces",
+            risk=RiskLevel.READ_ONLY,
+            params_model=GetTracesParams,
+            result_model=TracesData,
+            path_params=("connector_name",),
+        ),
+        ToolDefinition(
+            name="get_alerts",
+            operation="list_alerts",
+            method="GET",
+            path_template="/internal/ops/projects/{project_id}/observability/alerts",
+            risk=RiskLevel.READ_ONLY,
+            params_model=GetAlertsParams,
+            result_model=AlertsData,
         ),
     ]
     return {definition.name: definition for definition in definitions}
