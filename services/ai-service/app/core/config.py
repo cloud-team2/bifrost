@@ -24,6 +24,15 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_default_model: str = "gpt-4o-mini"
 
+    # Knowledge RAG embeddings
+    embedding_api_key: str = ""
+    embedding_model: str = "text-embedding-3-small"
+    # NOTE: alembic/versions/002 의 vector(1536) 컬럼과 반드시 일치해야 한다.
+    # 차원 변경 시 새 마이그레이션이 필요(기존 임베딩 재인덱싱). 단순 env 변경만으로는 INSERT가 깨진다.
+    embedding_dimensions: int = 1536
+    knowledge_search_limit: int = 3
+    knowledge_min_score: float = 0.05
+
     # Agent Run Store (agentdb — PostgreSQL)
     database_url: str = "postgresql+asyncpg://agent:agent@localhost:5432/agentdb"
 

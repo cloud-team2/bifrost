@@ -21,6 +21,7 @@ from app.agents import router as router_agent
 from app.agents import verifier as verifier_agent
 from app.llm.provider import get_llm_provider
 from app.persistence.event_repository import AnyEventRepo, InMemoryEventRepository, get_event_repo
+from app.persistence.report_repository import get_report_repo
 from app.persistence.run_repository import AnyRunRepo
 from app.schemas.events import StreamingEvent, StreamingEventType
 from app.schemas.tools import ToolContext
@@ -99,6 +100,7 @@ async def run_workflow(
         policy_out = None
         approval_out = None
         executor_out = None
+        verifier_out = None
 
         while True:
             try:
@@ -152,7 +154,14 @@ async def run_workflow(
                         request_id=str(uuid4()),
                     )
                     retrieval_out = await retrieval_agent.run_retrieval(
-                        run_id, planner_out, context, registry, bus, event_repo
+                        run_id,
+                        planner_out,
+                        context,
+                        registry,
+                        bus,
+                        event_repo,
+                        user_message=user_message,
+                        mode=mode,
                     )
                     await _publish(bus, event_repo, run_id, _evt(
                         run_id, StreamingEventType.AGENT_COMPLETED, "retrieval",
@@ -287,6 +296,14 @@ async def run_workflow(
                                    _evt(run_id, StreamingEventType.AGENT_STARTED, "report", "답변을 생성합니다"))
                     llm = get_llm_provider()
                     answer = await report_agent.run_report(user_message, retrieval_out, mode, llm)
+                    await _persist_report_snapshot(
+                        run_id=run_id,
+                        answer=answer,
+                        mode=mode,
+                        retrieval_out=retrieval_out,
+                        rca_out=rca_out,
+                        verifier_out=verifier_out,
+                    )
                     await _publish(bus, event_repo, run_id, _evt(
                         run_id, StreamingEventType.PARTIAL_RESULT, "report",
                         answer[:300],
@@ -324,3 +341,44 @@ def _find_tool_name(action_id: str, remediation_out) -> str | None:
         if c.action_id == action_id:
             return c.tool_name
     return None
+
+
+async def _persist_report_snapshot(
+    *,
+    run_id: str,
+    answer: str,
+    mode,
+    retrieval_out,
+    rca_out,
+    verifier_out,
+) -> None:
+    root_cause_id = None
+    confidence = None
+    if rca_out and rca_out.root_cause_candidates:
+        top = rca_out.root_cause_candidates[0]
+        root_cause_id = top.root_cause_id
+        confidence = top.confidence
+
+    verified = bool(
+        verifier_out
+        and any(result.approved_for_final_response for result in verifier_out.verification_results)
+    )
+    body = {
+        "answer": answer,
+        "mode": mode.value if hasattr(mode, "value") else str(mode),
+        "evidence": [
+            item.model_dump(mode="json")
+            for item in (retrieval_out.evidence_items if retrieval_out else [])
+        ],
+    }
+
+    try:
+        await get_report_repo().create(
+            run_id,
+            body,
+            root_cause_id=root_cause_id,
+            confidence=confidence,
+            verified=verified,
+        )
+    except Exception as exc:  # report cache failure must not hide the final answer
+        logger.warning("report snapshot persistence failed: run_id=%s error=%s", run_id, exc)

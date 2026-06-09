@@ -51,6 +51,11 @@ curl localhost:8082/api/v1/health
 | `AI_LLM_API_KEY` | "" | OpenAI API 키 (없으면 fallback 텍스트 반환) |
 | `AI_LLM_DEFAULT_MODEL` | gpt-4o-mini | 사용 모델 |
 | `AI_DATABASE_URL` | postgresql+asyncpg://agent:agent@localhost:5432/agentdb | agentdb 연결 (없으면 InMemory fallback) |
+| `AI_EMBEDDING_API_KEY` | "" | knowledge RAG 임베딩용 OpenAI 키 (없으면 `AI_LLM_API_KEY`→`OPENAI_API_KEY` fallback, 모두 없으면 HashingEmbedder) |
+| `AI_EMBEDDING_MODEL` | text-embedding-3-small | 임베딩 모델 |
+| `AI_EMBEDDING_DIMENSIONS` | 1536 | 임베딩 차원. **`alembic/versions/002`의 `vector(1536)`와 반드시 일치** (변경 시 새 마이그레이션 필요) |
+| `AI_KNOWLEDGE_SEARCH_LIMIT` | 3 | simple_query RAG 검색 top-k |
+| `AI_KNOWLEDGE_MIN_SCORE` | 0.05 | RAG 결과 최소 코사인 점수 |
 
 `.env` 예시:
 ```env

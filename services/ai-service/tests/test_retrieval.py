@@ -8,7 +8,7 @@ from app.persistence.event_repository import InMemoryEventRepository
 from app.schemas.events import StreamingEventType
 from app.schemas.outputs import PlannerOutput, RetrievalPlanStep
 from app.schemas.tools import ToolContext, ToolError, ToolResult, ToolStatus, SpringErrorCode
-from app.schemas.state import RiskLevel
+from app.schemas.state import AgentMode, RiskLevel
 from app.streaming.event_bus import EventBus
 
 
@@ -156,3 +156,50 @@ async def test_evidence_collected_emitted_per_retrieval_step() -> None:
     collected_ids = {e.payload["evidence_id"] for e in ec_events}
     item_ids = {item.evidence_id for item in out.evidence_items}
     assert collected_ids == item_ids
+
+
+@pytest.mark.asyncio
+async def test_simple_query_returns_rag_evidence_without_runtime_tool() -> None:
+    from app.knowledge.vector_store import KnowledgeSearchResult
+
+    class FakeVectorStore:
+        async def search(self, query: str, **kwargs):
+            assert query == "DLQ가 뭐야?"
+            return [
+                KnowledgeSearchResult(
+                    chunk_id="chunk-1",
+                    doc_id="glossary:dlq",
+                    doc_type="glossary",
+                    title="DLQ (Dead Letter Queue)",
+                    content="DLQ는 처리 실패 메시지를 격리해 재처리할 수 있게 하는 큐다.",
+                    scope="global",
+                    doc_version="test",
+                    metadata={},
+                    score=0.9,
+                )
+            ]
+
+    registry = AsyncMock()
+    bus = EventBus()
+    published = []
+    bus.publish = AsyncMock(side_effect=lambda run_id, evt: published.append(evt))
+    event_repo = InMemoryEventRepository()
+
+    out = await run_retrieval(
+        "r1",
+        _plan(),
+        _context(),
+        registry,
+        bus,
+        event_repo,
+        user_message="DLQ가 뭐야?",
+        mode=AgentMode.SIMPLE_QUERY,
+        vector_store=FakeVectorStore(),
+    )
+
+    assert len(out.evidence_items) == 1
+    assert out.evidence_items[0].type.value == "knowledge"
+    assert "DLQ" in out.evidence_items[0].summary
+    assert out.evidence_items[0].store_ref.startswith("knowledge://global/glossary:dlq/")
+    registry.call_tool.assert_not_called()
+    assert any(e.type == StreamingEventType.EVIDENCE_COLLECTED for e in published)
