@@ -120,11 +120,11 @@ openOrAttach(severity):
 | `connector_state_changed` | Watcher/ConnectRestPoller 전이 | 상세 Connector 탭(토글) |
 | `incident_opened` / `incident_updated` | `IncidentService` 생성·갱신 | 사이드바 배지·AlertsView |
 
-엔드포인트 `GET /api/v1/workspaces/{wsId}/events/stream`([api A.8](../../api/springboot.md)). `EventSource`는 헤더 불가 → JWT `?access_token=` 쿼리.
+엔드포인트 `GET /api/v1/workspaces/{wsId}/events/stream`([Spring Boot API: Workspace Event Stream](../../api/springboot.md#workspace-event-stream)). `EventSource`는 헤더 불가 → JWT `?access_token=` 쿼리.
 
 ### 8. 플랫폼 read API 매핑
 
-| FR | 화면 | API([api Part A](../../api/springboot.md)) | 데이터 출처 |
+| FR | 화면 | API([Spring Boot API Reference](../../api/springboot.md)) | 데이터 출처 |
 | --- | --- | --- | --- |
 | FR-006 | Overview | `/pipelines/{id}/metrics` | KafkaAdmin lag + JMX rate/error |
 | FR-007 | Consumers | `/pipelines/{id}/consumer-groups` | KafkaAdmin(B.4) |

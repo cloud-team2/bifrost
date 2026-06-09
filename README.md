@@ -128,7 +128,7 @@ main (always deployable)
 | AI / LLM | D | ai-service (FastAPI, Sprint 4~) |
 | Frontend | E | frontend |
 
-자세한 R&R: [docs/team/rnr.md](docs/team/rnr.md)
+자세한 R&R 전용 문서는 WIP다. 현재 역할 분담은 [docs/team/roadmap.md](docs/team/roadmap.md)와 [docs/team/todo.md](docs/team/todo.md)를 기준으로 본다.
 
 ## 문서
 

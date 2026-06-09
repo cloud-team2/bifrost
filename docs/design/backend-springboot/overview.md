@@ -69,7 +69,7 @@ erDiagram
 | --- | --- |
 | 식별자 | `workspace_id`=`project_id`(uuid) ≠ **`namespace`/`projectKey`**(슬러그, Kafka 리소스명) |
 | 파이프라인 | **단일 테이블 1개**. EDA(`fan_out`, Source만) / CDC(`direct`, Source Debezium + Sink JDBC) |
-| 토픽 | Debezium 자동 생성 `cdc.table.{project_key}.{dbName}.{schema}.{table}`(part 6/RF 3) |
+| 토픽 | Debezium 자동 생성 `cdc.table.{projectKey}.{dbName}.{schema}.{table}`(part 6/RF 3) |
 | DB 자격증명 | **secretRef만** 메타DB 저장. 생성 시점에만 `secretStore.resolve()` |
 | 신뢰 경계 | FastAPI 판단 불신, **실행 직전 재검증**. **집행 allowlist·Approval 원본=Spring**([server.md §7.1](./server.md#71-operation-allowlist-집행-경계-단일-출처)) |
 | 관측 수집 | 상태=Watcher(event) / 지표·이벤트·인시던트=폴링 → [monitoring.md](./monitoring.md) |
