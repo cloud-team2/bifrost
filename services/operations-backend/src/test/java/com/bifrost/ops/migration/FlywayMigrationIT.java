@@ -4,8 +4,8 @@ import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.DockerClientFactory;
+import org.testcontainers.containers.PostgreSQLContainer;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -30,11 +30,30 @@ class FlywayMigrationIT {
     private static final String MIGRATION_LOCATION = "classpath:db/migration";
     private static final String PUBLIC_SCHEMA = "public";
     private static final String CONNECTORS_TABLE = "connectors";
+    private static final String USERS_TABLE = "users";
+    private static final String TENANTS_TABLE = "tenants";
+    private static final String PROJECT_MEMBER_TABLE = "project_member";
     private static final List<String> CONNECTORS_COLUMNS = List.of(
             "pipeline_id",
             "cr_name",
             "state",
             "tasks_max");
+    private static final List<String> USERS_COLUMNS = List.of(
+            "name",
+            "last_login_at");
+    private static final List<String> TENANTS_COLUMNS = List.of(
+            "timezone",
+            "owner_user_id");
+    private static final List<String> PROJECT_MEMBER_COLUMNS = List.of(
+            "workspace_id",
+            "user_id",
+            "role",
+            "joined_at");
+    private static final List<TableColumns> REQUIRED_SCHEMA = List.of(
+            new TableColumns(CONNECTORS_TABLE, CONNECTORS_COLUMNS),
+            new TableColumns(USERS_TABLE, USERS_COLUMNS),
+            new TableColumns(TENANTS_TABLE, TENANTS_COLUMNS),
+            new TableColumns(PROJECT_MEMBER_TABLE, PROJECT_MEMBER_COLUMNS));
 
     private static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>(POSTGRES_IMAGE);
 
@@ -57,9 +76,9 @@ class FlywayMigrationIT {
     }
 
     @Test
-    void migratesCleanlyAndCreatesConnectorsSchema() throws Exception {
+    void migratesCleanlyAndCreatesExpectedSchema() throws Exception {
         try (Connection conn = connection()) {
-            assertTableWithColumns(conn, PUBLIC_SCHEMA, CONNECTORS_TABLE, CONNECTORS_COLUMNS);
+            assertTablesWithColumns(conn, PUBLIC_SCHEMA, REQUIRED_SCHEMA);
         }
     }
 
@@ -75,6 +94,16 @@ class FlywayMigrationIT {
     private static Connection connection() throws Exception {
         return DriverManager.getConnection(
                 POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+    }
+
+    private static void assertTablesWithColumns(
+            Connection conn,
+            String schema,
+            List<TableColumns> tables
+    ) throws Exception {
+        for (TableColumns table : tables) {
+            assertTableWithColumns(conn, schema, table.table(), table.columns());
+        }
     }
 
     private static void assertTableWithColumns(
@@ -101,5 +130,8 @@ class FlywayMigrationIT {
         try (ResultSet rs = conn.getMetaData().getColumns(null, schema, table, column)) {
             return rs.next();
         }
+    }
+
+    private record TableColumns(String table, List<String> columns) {
     }
 }

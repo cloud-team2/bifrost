@@ -39,6 +39,7 @@ class ProjectMemberServiceTest {
     private static final String MEMBER_EMAIL = "member@bifrost.io";
     private static final String OUTSIDER_EMAIL = "outsider@bifrost.io";
     private static final String MISSING_EMAIL = "missing@bifrost.io";
+    private static final String OWNER_REQUEST_EMAIL = "owner-request@bifrost.io";
     private static final String PASSWORD_HASH = "hash";
     private static final String WORKSPACE_ACCESS_DENIED_MESSAGE = "워크스페이스 접근 권한이 없습니다";
 
@@ -128,18 +129,33 @@ class ProjectMemberServiceTest {
     }
 
     @Test
-    void addConvertsOwnerRequestToAdminByEmailWhenManager() {
+    void addDowngradesOwnerRequestToAdmin() {
         UUID userId = UUID.randomUUID();
-        UserEntity user = user(userId, MEMBER_EMAIL);
-        allowManagerToAdd(userId, user, MEMBER_EMAIL);
+        UserEntity user = user(userId, OWNER_REQUEST_EMAIL);
+        allowManagerToAdd(userId, user, OWNER_REQUEST_EMAIL);
 
         ProjectMemberResponse response = service().add(
-                workspaceId, manager, new ProjectMemberAddRequest(MEMBER_EMAIL, Role.OWNER));
+                workspaceId, manager, new ProjectMemberAddRequest(OWNER_REQUEST_EMAIL, Role.OWNER));
 
         assertThat(response.userId()).isEqualTo(userId);
-        assertThat(response.email()).isEqualTo(MEMBER_EMAIL);
+        assertThat(response.email()).isEqualTo(OWNER_REQUEST_EMAIL);
         assertThat(response.role()).isEqualTo(Role.ADMIN);
         assertSavedMember(userId, Role.ADMIN);
+    }
+
+    @Test
+    void addRejectsDuplicateMember() {
+        UUID userId = UUID.randomUUID();
+        UserEntity user = user(userId, MEMBER_EMAIL);
+        when(memberRepository.existsByIdWorkspaceIdAndIdUserIdAndRoleIn(workspaceId, managerId, List.of(Role.OWNER, Role.ADMIN)))
+                .thenReturn(true);
+        when(userRepository.findByEmail(MEMBER_EMAIL)).thenReturn(Optional.of(user));
+        when(memberRepository.existsByIdWorkspaceIdAndIdUserId(workspaceId, userId)).thenReturn(true);
+
+        assertThatThrownBy(() -> service().add(
+                workspaceId, manager, new ProjectMemberAddRequest(MEMBER_EMAIL, Role.MEMBER)))
+                .isInstanceOfSatisfying(ApiException.class, e ->
+                        assertThat(e.code()).isEqualTo(ErrorCode.MEMBER_ALREADY_EXISTS));
     }
 
     @Test
@@ -166,6 +182,23 @@ class ProjectMemberServiceTest {
                 workspaceId, ownerId, manager, new ProjectMemberUpdateRequest(Role.MEMBER)))
                 .isInstanceOfSatisfying(ApiException.class, e ->
                         assertThat(e.code()).isEqualTo(ErrorCode.OWNER_DEMOTION_FORBIDDEN));
+    }
+
+    @Test
+    void updateChangesNonOwnerRole() {
+        UUID userId = UUID.randomUUID();
+        ProjectMemberEntity member = new ProjectMemberEntity(workspaceId, userId, Role.MEMBER);
+        UserEntity user = user(userId, MEMBER_EMAIL);
+        when(memberRepository.existsByIdWorkspaceIdAndIdUserIdAndRoleIn(workspaceId, managerId, List.of(Role.OWNER, Role.ADMIN)))
+                .thenReturn(true);
+        when(memberRepository.findByIdWorkspaceIdAndIdUserId(workspaceId, userId)).thenReturn(Optional.of(member));
+        when(memberRepository.saveAndFlush(member)).thenReturn(member);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        ProjectMemberResponse response = service().update(
+                workspaceId, userId, manager, new ProjectMemberUpdateRequest(Role.ADMIN));
+
+        assertThat(response.role()).isEqualTo(Role.ADMIN);
     }
 
     @Test
