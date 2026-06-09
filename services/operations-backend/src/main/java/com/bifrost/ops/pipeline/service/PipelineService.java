@@ -148,7 +148,7 @@ public class PipelineService {
         p.setTableName(req.table());
         p.setTables(tablesJson(req.schema(), req.table()));
         p.setTopicName(com.bifrost.ops.provisioning.naming.ConnectorNaming
-                .topicName(projectKey, source.getDbName(), req.schema(), req.table()));
+                .topicName(projectKey, source.getDbName(), source.getId(), req.schema(), req.table()));
         p.setStatus(PipelineLifecycle.CREATING);
         try {
             p = pipelineRepository.saveAndFlush(p);
@@ -292,10 +292,10 @@ public class PipelineService {
                                                   DatasourceEntity source, DatasourceEntity sink,
                                                   PipelinePattern pattern) {
         PipelineProvisionCommand.Endpoint sourceEp = new PipelineProvisionCommand.Endpoint(
-                source.getDbType(), source.getHost(), source.getPort(), source.getDbName(),
+                source.getDbType(), source.getHost(), source.getPort(), source.getDbName(), source.getId(),
                 p.getSchemaName(), p.getTableName(), source.getSecretRef());
         PipelineProvisionCommand.Endpoint sinkEp = sink == null ? null : new PipelineProvisionCommand.Endpoint(
-                sink.getDbType(), sink.getHost(), sink.getPort(), sink.getDbName(),
+                sink.getDbType(), sink.getHost(), sink.getPort(), sink.getDbName(), sink.getId(),
                 null, null, sink.getSecretRef());
         return new PipelineProvisionCommand(p.getId(), projectKey, pattern, sourceEp, sinkEp);
     }

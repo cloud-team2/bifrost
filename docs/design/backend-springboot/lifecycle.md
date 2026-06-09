@@ -66,7 +66,7 @@ message = (next == error)      ? (dbReason ?? firstConnectorError)
   → 타임아웃 내 미전이 → ProvisioningTimeoutJob이 error 전이
 ```
 
-- **토픽 이름**: `cdc.table.{projectKey}.{dbName}.{schema}.{table}` — Debezium이 자동 생성. KafkaTopic CR을 따로 만들지 않는다.
+- **토픽 이름**: `cdc.table.{projectKey}.{dbSlug}.{schema}.{table}` (`dbSlug = {dbName}-{datasourceId 앞 8 hex}`, 표시 이름 충돌 방지 #265) — Debezium이 자동 생성. KafkaTopic CR을 따로 만들지 않는다.
 - **재생성 주의**: 같은 (source, schema, table, pattern) 중복은 검증에서 차단된다. 다른 파이프라인을 같은 테이블로 만들면 토픽 이름이 같아질 수 있으므로, **삭제 시 토픽을 정리**해 누적을 막는다(§4·§6 참조).
 
 ## 4. 파이프라인 삭제 — 잔재 없는 정리

@@ -37,18 +37,32 @@ public final class ConnectorNaming {
     private ConnectorNaming() {
     }
 
-    /** Debezium {@code topic.prefix}: {@code cdc.table.{projectKey}.{dbName}}. */
-    public static String topicPrefix(String projectKey, String dbName) {
+    /**
+     * Debezium {@code topic.prefix}: {@code cdc.table.{projectKey}.{dbSlug}}.
+     *
+     * <p>{@code dbSlug = {dbName}-{datasourceId 앞 8 hex}}. 표시 이름({@code dbName})은
+     * datasource 등록 시 사용자가 지은 이름이라 서로 다른 물리 DB라도 같을 수 있어, 같은 프로젝트·
+     * 테이블이면 토픽이 충돌했다(#265). datasource 고유 id를 슬러그에 섞어 충돌을 막는다.
+     */
+    public static String topicPrefix(String projectKey, String dbName, UUID datasourceId) {
         requireNotBlank(projectKey, "projectKey");
         requireNotBlank(dbName, "dbName");
-        return TOPIC_ROOT + "." + projectKey + "." + dbName;
+        requireNotNull(datasourceId, "datasourceId");
+        return TOPIC_ROOT + "." + projectKey + "." + datasourceSlug(dbName, datasourceId);
     }
 
-    /** table 중심 토픽 이름: {@code cdc.table.{projectKey}.{dbName}.{schema}.{table}}. */
-    public static String topicName(String projectKey, String dbName, String schema, String table) {
+    /** table 중심 토픽 이름: {@code cdc.table.{projectKey}.{dbSlug}.{schema}.{table}}. */
+    public static String topicName(String projectKey, String dbName, UUID datasourceId, String schema, String table) {
         requireNotBlank(schema, "schema");
         requireNotBlank(table, "table");
-        return topicPrefix(projectKey, dbName) + "." + schema + "." + table;
+        return topicPrefix(projectKey, dbName, datasourceId) + "." + schema + "." + table;
+    }
+
+    /** datasource 식별 슬러그: {@code {dbName}-{datasourceId 앞 8 hex}} — 표시 이름 충돌 방지(#265). */
+    public static String datasourceSlug(String dbName, UUID datasourceId) {
+        requireNotBlank(dbName, "dbName");
+        requireNotNull(datasourceId, "datasourceId");
+        return dbName + "-" + datasourceId.toString().substring(0, 8);
     }
 
     /** KafkaUser ACL prefix(끝에 {@code .} 포함): {@code cdc.table.{projectKey}.}. */
@@ -82,8 +96,12 @@ public final class ConnectorNaming {
     }
 
     private static void requireNotNull(UUID pipelineId) {
-        if (pipelineId == null) {
-            throw new IllegalArgumentException("pipelineId must not be null");
+        requireNotNull(pipelineId, "pipelineId");
+    }
+
+    private static void requireNotNull(UUID value, String field) {
+        if (value == null) {
+            throw new IllegalArgumentException(field + " must not be null");
         }
     }
 }

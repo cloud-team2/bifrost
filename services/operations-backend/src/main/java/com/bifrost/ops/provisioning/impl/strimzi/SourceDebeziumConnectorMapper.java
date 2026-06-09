@@ -59,7 +59,7 @@ public class SourceDebeziumConnectorMapper {
         PipelineProvisionCommand.Endpoint src = command.source();
         UUID pipelineId = command.pipelineId();
         String name = ConnectorNaming.sourceConnectorName(pipelineId);
-        String topicPrefix = ConnectorNaming.topicPrefix(command.projectKey(), src.dbName());
+        String topicPrefix = ConnectorNaming.topicPrefix(command.projectKey(), src.dbName(), src.datasourceId());
         String tableInclude = src.schema() + "." + src.table();
         String connectorClass = connectorClass(src.engine());
 

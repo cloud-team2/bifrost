@@ -25,7 +25,7 @@ class PipelineProvisioningServiceTest {
         return new PipelineProvisionCommand(
                 id, "demo", PipelinePattern.FAN_OUT,
                 new PipelineProvisionCommand.Endpoint(
-                        DbType.POSTGRESQL, "db", 5432, "app", "public", "orders", "secret://src"),
+                        DbType.POSTGRESQL, "db", 5432, "app", UUID.randomUUID(), "public", "orders", "secret://src"),
                 null);
     }
 
