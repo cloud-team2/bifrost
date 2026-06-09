@@ -60,6 +60,30 @@ public class InternalOpsController {
         return ResponseEntity.ok(OpsEnvelope.ok(requestId, "version", result));
     }
 
+    /**
+     * tool-catalog — agent가 호출 가능한 internalops tool 목록(S4, server.md §7.1).
+     * allowlist 정본으로 agent와 계약을 맞춘다.
+     */
+    @GetMapping("/admin/tool-catalog")
+    public ResponseEntity<OpsEnvelope<java.util.List<java.util.Map<String, String>>>> toolCatalog(
+            HttpServletRequest request) {
+        String requestId = AgentHeaders.requestId(request);
+        var catalog = java.util.List.of(
+                tool("get_consumer_lag",      "GET",  "/internal/ops/projects/{projectId}/kafka/consumer-groups/{consumerGroup}/lag"),
+                tool("search_logs",           "POST", "/internal/ops/projects/{projectId}/observability/logs/search"),
+                tool("query_traces",          "GET",  "/internal/ops/projects/{projectId}/connectors/{connectorName}/traces"),
+                tool("get_incident_summary",  "GET",  "/internal/ops/incidents/{incidentId}/summary"),
+                tool("get_pipeline_topology", "GET",  "/internal/ops/projects/{projectId}/pipelines/{pipelineId}/topology"),
+                tool("health",               "GET",  "/internal/ops/health"),
+                tool("ready",                "GET",  "/internal/ops/ready")
+        );
+        return ResponseEntity.ok(OpsEnvelope.ok(requestId, "tool_catalog", catalog));
+    }
+
+    private static java.util.Map<String, String> tool(String name, String method, String path) {
+        return java.util.Map.of("name", name, "method", method, "path", path);
+    }
+
     private boolean isDbAlive() {
         try {
             jdbcTemplate.queryForObject("SELECT 1", Integer.class);

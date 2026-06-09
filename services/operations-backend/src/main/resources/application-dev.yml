@@ -58,6 +58,12 @@ prometheus:
   url: ${PROMETHEUS_URL:http://localhost:9090}
   enabled: ${PROMETHEUS_ENABLED:false}
 
+# Loki (로그 조회, S4)
+# 클러스터 내: loki.monitoring:3100 / 로컬 포트포워드: kubectl port-forward svc/loki 3100:3100 -n monitoring
+loki:
+  url: ${LOKI_URL:http://loki.monitoring:3100}
+
+
 # 외부 서비스 (Agent는 별도 FastAPI)
 ai-service:
   url: ${AI_SERVICE_URL:http://localhost:8082}
@@ -74,8 +80,10 @@ kafka-cluster:
   namespace: platform-kafka
 
 # KafkaConnect 클러스터 (KafkaConnector CR의 strimzi.io/cluster 라벨 기준)
+# rest-url: S1 ConnectRestPoller, S4 query_traces에서 사용
 kafka-connect:
   cluster: platform-connect
+  rest-url: ${KAFKA_CONNECT_REST_URL:http://platform-connect-connect-api.platform-kafka.svc:8083}
 
 # Consumer Group Discovery polling
 discovery:
