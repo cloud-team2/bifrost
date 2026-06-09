@@ -4,6 +4,7 @@ import com.bifrost.ops.auth.persistence.entity.UserEntity;
 import com.bifrost.ops.auth.persistence.repository.UserRepository;
 import com.bifrost.ops.workspace.Role;
 import com.bifrost.ops.workspace.persistence.entity.ProjectMemberEntity;
+import com.bifrost.ops.workspace.persistence.entity.ProjectMemberId;
 import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
 import com.bifrost.ops.workspace.persistence.repository.ProjectMemberRepository;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
@@ -70,6 +71,7 @@ public class DevDataSeeder implements CommandLineRunner {
             return;
         }
         if (userRepository.existsByEmail(email)) {
+            userRepository.findByEmail(email).ifPresent(this::backfillOwnerMembership);
             log.info("[dev-seed] 데모 계정 이미 존재 — skip ({})", email);
             return;
         }
@@ -97,5 +99,14 @@ public class DevDataSeeder implements CommandLineRunner {
 
         log.info("[dev-seed] 데모 계정 생성: {} / (pw: {}자) → 워크스페이스 '{}' ({})",
                 email, password.length(), workspaceName, namespace);
+    }
+
+    private void backfillOwnerMembership(UserEntity user) {
+        ProjectMemberId memberId = new ProjectMemberId(user.getTenantId(), user.getId());
+        if (memberRepository.existsById(memberId)) {
+            return;
+        }
+        memberRepository.saveAndFlush(new ProjectMemberEntity(user.getTenantId(), user.getId(), Role.OWNER));
+        log.info("[dev-seed] 데모 계정 OWNER membership 백필: {} / {}", email, user.getTenantId());
     }
 }
