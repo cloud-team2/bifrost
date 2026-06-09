@@ -12,6 +12,15 @@ INCIDENT_ANALYSIS_STAGES: tuple[str, ...] = (
 
 INCIDENT_ANALYSIS_REMEDIATION_SUFFIX: tuple[str, ...] = ("remediation", "policy_guard")
 
+ACTION_EXECUTION_STAGES: tuple[str, ...] = (
+    "policy_guard", "approval_gate", "change_gate",
+    "executor", "verifier", "report",
+)
+
+APPROVAL_DECISION_STAGES: tuple[str, ...] = (
+    "approval_gate", "executor", "verifier", "report",
+)
+
 
 def stages_for_mode(mode: AgentMode, remediation_requested: bool = False) -> tuple[str, ...]:
     if mode == AgentMode.SIMPLE_QUERY:
@@ -22,6 +31,10 @@ def stages_for_mode(mode: AgentMode, remediation_requested: bool = False) -> tup
             idx = base.index("rca") + 1
             return base[:idx] + INCIDENT_ANALYSIS_REMEDIATION_SUFFIX + base[idx:]
         return base
+    if mode == AgentMode.ACTION_EXECUTION:
+        return ACTION_EXECUTION_STAGES
+    if mode == AgentMode.APPROVAL_DECISION:
+        return APPROVAL_DECISION_STAGES
     return ()
 
 
