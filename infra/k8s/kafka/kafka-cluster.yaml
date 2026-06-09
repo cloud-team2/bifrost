@@ -29,7 +29,7 @@ spec:
       transaction.state.log.min.isr: 2
       default.replication.factor: 3
       min.insync.replicas: 2
-      auto.create.topics.enable: true
+      auto.create.topics.enable: false   # 운영: 토픽은 KafkaTopic CR로 명시 관리(오타/임의 토픽 생성 방지)
     # JMX Prometheus Exporter — 브로커 포트 9404로 메트릭 노출
     metricsConfig:
       type: jmxPrometheusExporter

@@ -8,7 +8,7 @@ metadata:
     strimzi.io/use-connector-resources: "true"
 spec:
   version: 4.2.0
-  replicas: 1
+  replicas: 2   # HA: 단일 파드 SPOF 제거, 장애 시 task rebalance
   bootstrapServers: platform-kafka-kafka-bootstrap:9092
 
   # Strimzi spec.build: 클러스터 내부에서 Kaniko로 이미지 빌드 후 Harbor push
