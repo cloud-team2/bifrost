@@ -58,12 +58,9 @@ spec:
               enabled: true
               storageClassName: gp3
               size: 5Gi
-            # Prometheus(기본) 외에 Loki(로그)·Tempo(trace) datasource 추가 (#124)
+            # Prometheus(기본=isDefault) 외에 Tempo(trace) datasource 추가 (#124).
+            # Loki datasource는 loki-stack이 자체 생성하므로 여기서 중복 추가하지 않는다.
             additionalDataSources:
-              - name: Loki
-                type: loki
-                access: proxy
-                url: http://loki.monitoring.svc.cluster.local:3100
               - name: Tempo
                 type: tempo
                 access: proxy
@@ -90,6 +87,8 @@ spec:
           # Grafana/Prometheus는 kube-prometheus-stack 것을 사용 → 여기선 비활성.
           loki:
             enabled: true
+            # Prometheus가 유일한 기본 datasource → loki-stack의 Loki는 비기본으로 (기본 중복 방지)
+            isDefault: false
             persistence:
               enabled: true
               storageClassName: gp3
