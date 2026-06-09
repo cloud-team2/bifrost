@@ -17,6 +17,7 @@ spec:
     - { server: https://kubernetes.default.svc, namespace: jenkins }
     - { server: https://kubernetes.default.svc, namespace: harbor }
     - { server: https://kubernetes.default.svc, namespace: argocd }
+    - { server: https://kubernetes.default.svc, namespace: kube-system }   # cert-manager leader-election Role
   clusterResourceWhitelist:
     - { group: '*', kind: '*' }   # CRD·ClusterRole·IngressClass·Webhook 설치 필요
 ---
@@ -30,7 +31,11 @@ spec:
   sourceRepos: ['*']
   destinations:
     - { server: https://kubernetes.default.svc, namespace: bifrost-system }
-  # cluster-scoped 리소스 불필요 → 화이트리스트 없음(거부) = 가드레일
+    - { server: https://kubernetes.default.svc, namespace: platform-kafka }   # ops-backend Strimzi 권한 Role
+  clusterResourceWhitelist:
+    - { group: '', kind: Namespace }                              # CreateNamespace
+    - { group: rbac.authorization.k8s.io, kind: ClusterRole }     # ops-backend namespace-manager
+    - { group: rbac.authorization.k8s.io, kind: ClusterRoleBinding }
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
