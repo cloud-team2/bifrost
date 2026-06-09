@@ -165,6 +165,29 @@ class ExecutorOutput(StrictModel):
     execution_results: list[ExecutionResultOutput]
 
 
+class ApprovedActionOutput(StrictModel):
+    approval_id: str
+    action_id: str
+    params_hash: str
+    approved_by: str | None = None
+
+
+class ApprovalGateOutput(StrictModel):
+    approved_actions: list[ApprovedActionOutput] = Field(default_factory=list)
+    run_status: str
+
+
+class ChangeManagementRecordOutput(StrictModel):
+    change_ticket_id: str
+    action_id: str
+    status: str
+
+
+class ChangeManagementOutput(StrictModel):
+    change_management_records: list[ChangeManagementRecordOutput] = Field(default_factory=list)
+    run_status: str
+
+
 class VerificationResultOutput(StrictModel):
     verification_id: str
     target: str
