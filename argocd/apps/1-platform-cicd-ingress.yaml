@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: cicd-ingress
+  name: 1-platform-cicd-ingress
   namespace: argocd
 spec:
   project: platform
