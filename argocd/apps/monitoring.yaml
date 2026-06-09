@@ -139,11 +139,14 @@ spec:
   # loki-stack StatefulSet는 kube-controller-manager가 일부 필드를 defaulting/co-own → SSA 환경에서 영구 OutOfSync 유발.
   # 해당 매니저 소유 필드는 비교에서 제외 (표준 패턴).
   ignoreDifferences:
+    # loki-stack 차트가 빈 컬렉션을 렌더 → k8s가 drop → SSA 환경에서 영구 OutOfSync.
     - group: apps
       kind: StatefulSet
       name: loki
-      managedFieldsManagers:
-        - kube-controller-manager
+      jsonPointers:
+        - /spec/template/spec/initContainers
+        - /spec/template/spec/tolerations
+        - /spec/volumeClaimTemplates
   syncPolicy:
     automated: { prune: true, selfHeal: true }
     syncOptions:
