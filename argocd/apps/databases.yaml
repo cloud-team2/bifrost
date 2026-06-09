@@ -5,7 +5,7 @@ metadata:
   namespace: argocd
   finalizers: [resources-finalizer.argocd.argoproj.io]
 spec:
-  project: default
+  project: data
   # 플랫폼 내부 DB(metadb·agentdb)만 관리. tenantdb는 별도 앱으로 분리.
   sources:
     - repoURL: https://github.com/cloud-team2/bifrost.git
