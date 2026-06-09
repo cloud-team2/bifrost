@@ -151,8 +151,8 @@ PipelineDetail 헤더 (FR-005)
 | Connector (FR-008) | `GET .../pipelines/{id}/connectors` (상태·task·records/s·재시작·마지막 오류) |
 | Sync (FR-009, CDC) | `GET .../pipelines/{id}/sync-status` (source/sink row, 동기화율, 지연) |
 | Messages (FR-010) | `GET .../pipelines/{id}/messages` → Debezium before/after |
-| Connection Guide (FR-011) | `GET .../pipelines/{id}/connection-guide` — 백엔드 [#303](https://github.com/cloud-team2/bifrost/issues/303) 구현 완료(bootstrap·group·인증 템플릿·topic). FE 연결 [#304](https://github.com/cloud-team2/bifrost/issues/304) |
-| Table Mapping (FR-012) | `GET .../pipelines/{id}/table-mapping` — 백엔드 [#303](https://github.com/cloud-team2/bifrost/issues/303) 구현 완료(source table→topic→sink table). FE 연결 [#304](https://github.com/cloud-team2/bifrost/issues/304) |
+| Connection Guide (FR-011) | `GET .../pipelines/{id}/connection-guide` — 백엔드([#303](https://github.com/cloud-team2/bifrost/issues/303))·FE([#304](https://github.com/cloud-team2/bifrost/issues/304)) 연결 완료. bootstrap·group·인증 템플릿·topic, 자격증명은 Secret 이름/키 참조만(원문 미노출) |
+| Table Mapping (FR-012) | `GET .../pipelines/{id}/table-mapping` — 백엔드([#303](https://github.com/cloud-team2/bifrost/issues/303))·FE([#304](https://github.com/cloud-team2/bifrost/issues/304)) 연결 완료. source table→topic→sink table |
 
 기본 표시는 흐름·지연 중심, Kafka 지표(lag 수치·connector state 원문)는 상세 토글에서 노출(§1.1).
 
