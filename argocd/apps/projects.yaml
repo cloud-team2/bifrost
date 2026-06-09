@@ -1,0 +1,26 @@
+# ArgoCD AppProject — Applications 타일 그룹핑 용도(permissive, 가드레일 없음).
+# UI: Applications 화면 좌측 Projects 필터로 그룹별 조회 + 각 타일에 프로젝트 배지 표시.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata: { name: root, namespace: argocd }
+spec: { description: app-of-apps, sourceRepos: ['*'], destinations: [{ server: '*', namespace: '*' }], clusterResourceWhitelist: [{ group: '*', kind: '*' }] }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata: { name: platform, namespace: argocd }
+spec: { description: 클러스터 공용 인프라, sourceRepos: ['*'], destinations: [{ server: '*', namespace: '*' }], clusterResourceWhitelist: [{ group: '*', kind: '*' }] }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata: { name: bifrost, namespace: argocd }
+spec: { description: 우리 애플리케이션, sourceRepos: ['*'], destinations: [{ server: '*', namespace: '*' }], clusterResourceWhitelist: [{ group: '*', kind: '*' }] }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata: { name: data, namespace: argocd }
+spec: { description: 데이터 스토어, sourceRepos: ['*'], destinations: [{ server: '*', namespace: '*' }], clusterResourceWhitelist: [{ group: '*', kind: '*' }] }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata: { name: observability, namespace: argocd }
+spec: { description: 모니터링, sourceRepos: ['*'], destinations: [{ server: '*', namespace: '*' }], clusterResourceWhitelist: [{ group: '*', kind: '*' }] }
