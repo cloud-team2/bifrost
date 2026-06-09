@@ -27,19 +27,19 @@ public class ApprovalValidator {
     @Transactional
     public ApprovalEntity validateAndConsume(UUID approvalId, String paramsHash) {
         ApprovalEntity approval = approvalRepository.findById(approvalId)
-                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "approval not found: " + approvalId));
+                .orElseThrow(() -> new ApiException(ErrorCode.APPROVAL_NOT_FOUND, "approval not found: " + approvalId));
 
         if (!"APPROVED".equals(approval.getDecision())) {
-            throw new ApiException(ErrorCode.WORKSPACE_FORBIDDEN, "approval not in APPROVED state: " + approval.getDecision());
+            throw new ApiException(ErrorCode.APPROVAL_SCOPE_MISMATCH, "approval not in APPROVED state: " + approval.getDecision());
         }
         if (approval.getExpiresAt().isBefore(Instant.now())) {
-            throw new ApiException(ErrorCode.WORKSPACE_FORBIDDEN, "approval expired");
+            throw new ApiException(ErrorCode.APPROVAL_EXPIRED, "approval expired");
         }
         if (approval.getUsedAt() != null) {
-            throw new ApiException(ErrorCode.WORKSPACE_FORBIDDEN, "approval already used");
+            throw new ApiException(ErrorCode.APPROVAL_ALREADY_USED, "approval already used");
         }
         if (!paramsHash.equals(approval.getParamsHash())) {
-            throw new ApiException(ErrorCode.WORKSPACE_FORBIDDEN, "approval params_hash mismatch");
+            throw new ApiException(ErrorCode.APPROVAL_SCOPE_MISMATCH, "approval params_hash mismatch");
         }
 
         approval.setUsedAt(Instant.now());
