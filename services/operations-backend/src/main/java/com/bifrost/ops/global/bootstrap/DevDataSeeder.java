@@ -2,7 +2,10 @@ package com.bifrost.ops.global.bootstrap;
 
 import com.bifrost.ops.auth.persistence.entity.UserEntity;
 import com.bifrost.ops.auth.persistence.repository.UserRepository;
+import com.bifrost.ops.workspace.Role;
+import com.bifrost.ops.workspace.persistence.entity.ProjectMemberEntity;
 import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
+import com.bifrost.ops.workspace.persistence.repository.ProjectMemberRepository;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,6 +34,7 @@ public class DevDataSeeder implements CommandLineRunner {
 
     private final UserRepository userRepository;
     private final WorkspaceRepository workspaceRepository;
+    private final ProjectMemberRepository memberRepository;
     private final PasswordEncoder passwordEncoder;
 
     private final boolean enabled;
@@ -41,6 +45,7 @@ public class DevDataSeeder implements CommandLineRunner {
 
     public DevDataSeeder(UserRepository userRepository,
                          WorkspaceRepository workspaceRepository,
+                         ProjectMemberRepository memberRepository,
                          PasswordEncoder passwordEncoder,
                          @Value("${dev.seed.enabled:true}") boolean enabled,
                          @Value("${dev.seed.email:ta@bifrost.io}") String email,
@@ -49,6 +54,7 @@ public class DevDataSeeder implements CommandLineRunner {
                          @Value("${dev.seed.namespace:demo-team}") String namespace) {
         this.userRepository = userRepository;
         this.workspaceRepository = workspaceRepository;
+        this.memberRepository = memberRepository;
         this.passwordEncoder = passwordEncoder;
         this.enabled = enabled;
         this.email = email;
@@ -86,6 +92,8 @@ public class DevDataSeeder implements CommandLineRunner {
         workspace = workspaceRepository.saveAndFlush(workspace);
         user.setTenantId(workspace.getId());
         userRepository.saveAndFlush(user);
+        // register()와 동일하게 owner를 project_member로 등록 — requireMember 가드 엔드포인트(모니터링 등) 접근에 필요
+        memberRepository.saveAndFlush(new ProjectMemberEntity(workspace.getId(), user.getId(), Role.OWNER));
 
         log.info("[dev-seed] 데모 계정 생성: {} / (pw: {}자) → 워크스페이스 '{}' ({})",
                 email, password.length(), workspaceName, namespace);
