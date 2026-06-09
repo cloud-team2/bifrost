@@ -685,6 +685,7 @@ FastAPI Agent는 Kubernetes/Kafka credential을 갖지 않는다. Spring Boot Op
 
 > **✅ 배포 완료 (#124, gitops ArgoCD)**: `monitoring` namespace에 **kube-prometheus-stack**(Prometheus·Grafana·Alertmanager·node-exporter·kube-state-metrics·operator) + **Loki+Promtail**(loki-stack) + **Tempo**(OTLP 4317/4318). Strimzi **kafkaExporter** + Connect **JMX** 활성 → `kafka_*`·`debezium_metrics_*` 수집. ops-backend `PROMETHEUS_URL=http://kps-prometheus.monitoring:9090`로 연결되어 **#126 파이프라인 차트가 실데이터**. Grafana datasource = Prometheus·Loki·Tempo.
 > ArgoCD 앱: **`monitoring` 단일 multi-source 앱**(kube-prometheus-stack + loki-stack + tempo 통합, #232 앱 정리로 3→1). gitops `argocd/apps/monitoring.yaml`. Grafana datasource 기본값은 Prometheus 하나만(Loki는 loki-stack이 비기본 제공, 중복/이중 default 제거). loki StatefulSet은 SSA 빈 컬렉션 diff를 `ignoreDifferences`로 제외. Prometheus는 전 namespace ServiceMonitor/PodMonitor 수집(`strimzi-metrics` PodMonitor 포함).
+> **Grafana 접근**: `kps-grafana`(ClusterIP)는 **의도적으로 내부 전용**(외부 서브도메인 미부여). adminPassword가 약하고(`admin`) 외부 노출 실익이 낮아, `kubectl port-forward` 또는 ArgoCD 경유로만 접근한다. 외부 노출이 필요하면 비밀번호 강화 후 ingress-nginx+LE로 `grafana.skala-ai.com` 추가.
 > **잔여**: Loki 로그 소비처(ops-backend `search_logs`는 현재 stub — 이성민 log source 연동 후), Tempo는 앱 OTLP 계측 전이라 trace 비어있음(설계 반영 선배포).
 >
 > 배치: 전부 `monitoring` namespace, **`app` 노드풀**(taint 없음)에 스케줄. DaemonSet(node-exporter·Promtail)은 data 풀 taint를 toleration 처리해 전 노드에 배치.
