@@ -10,15 +10,25 @@ import com.bifrost.ops.pipeline.PipelineLifecycle;
 import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
 import com.bifrost.ops.provisioning.persistence.repository.ConnectorRepository;
 import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.ListPartitionReassignmentsResult;
+import org.apache.kafka.clients.admin.PartitionReassignment;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import org.apache.kafka.common.KafkaFuture;
+import org.apache.kafka.common.TopicPartition;
+
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -69,6 +79,51 @@ class MonitoringReadServiceTest {
                 tenantId,
                 ConnectorRuntimeState.FAILED.name(),
                 ConnectorRuntimeState.PARTIALLY_FAILED.name());
+    }
+
+    @Test
+    void resourceEventsMapsPartitionReassignmentWithFiveSecondTimeout() throws Exception {
+        TopicPartition topicPartition = new TopicPartition("orders", 2);
+        PartitionReassignment reassignment = new PartitionReassignment(
+                List.of(1, 2, 3),
+                List.of(3),
+                List.of(1));
+        ListPartitionReassignmentsResult result = mock(ListPartitionReassignmentsResult.class);
+        @SuppressWarnings("unchecked")
+        KafkaFuture<Map<TopicPartition, PartitionReassignment>> future = mock(KafkaFuture.class);
+        when(adminClient.listPartitionReassignments()).thenReturn(result);
+        when(result.reassignments()).thenReturn(future);
+        when(future.get(5L, TimeUnit.SECONDS)).thenReturn(Map.of(topicPartition, reassignment));
+
+        Instant before = Instant.now();
+        var events = service().resourceEvents(tenantId);
+        Instant after = Instant.now();
+
+        assertThat(events).hasSize(1);
+        assertThat(events.get(0).eventType()).isEqualTo("PARTITION_REASSIGNMENT");
+        assertThat(events.get(0).resource()).isEqualTo("orders-2");
+        assertThat(events.get(0).detail())
+                .contains("replicas=[1, 2, 3]")
+                .contains("addingReplicas=[3]");
+        assertThat(events.get(0).occurredAt()).isBetween(before, after);
+        verify(adminClient).listPartitionReassignments();
+        verify(result).reassignments();
+        verify(future).get(5L, TimeUnit.SECONDS);
+    }
+
+    @Test
+    void resourceEventsSwallowsTimeoutAndReturnsEmptyList() throws Exception {
+        ListPartitionReassignmentsResult result = mock(ListPartitionReassignmentsResult.class);
+        @SuppressWarnings("unchecked")
+        KafkaFuture<Map<TopicPartition, PartitionReassignment>> future = mock(KafkaFuture.class);
+        when(adminClient.listPartitionReassignments()).thenReturn(result);
+        when(result.reassignments()).thenReturn(future);
+        when(future.get(5L, TimeUnit.SECONDS)).thenThrow(new TimeoutException("kafka admin timeout"));
+
+        var events = service().resourceEvents(tenantId);
+
+        assertThat(events).isEmpty();
+        verify(future).get(5L, TimeUnit.SECONDS);
     }
 
     private static DatasourceEntity datasource(String connectionStatus) {
