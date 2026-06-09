@@ -94,7 +94,7 @@ class ApprovalControllerTest {
                                 """.formatted(tenantId, PARAMS_HASH, requiredApprover)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.ok").value(true))
-                .andExpect(jsonPath("$.requestId").value(REQUEST_ID))
+                .andExpect(jsonPath("$.request_id").value(REQUEST_ID))
                 .andExpect(jsonPath("$.operation").value("create_approval"))
                 .andExpect(jsonPath("$.result.status").value("pending"))
                 .andExpect(jsonPath("$.result.operation").value("restart_connector_task"))
@@ -476,7 +476,7 @@ class ApprovalControllerTest {
                                 {"tenantId":"%s","paramsHash":"%s"}
                                 """.formatted(consumed.getTenantId(), PARAMS_HASH)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.requestId").value(REQUEST_ID))
+                .andExpect(jsonPath("$.request_id").value(REQUEST_ID))
                 .andExpect(jsonPath("$.operation").value("validate_approval"))
                 .andExpect(jsonPath("$.result.status").value("validated"))
                 .andExpect(jsonPath("$.result.paramsHash").doesNotExist());

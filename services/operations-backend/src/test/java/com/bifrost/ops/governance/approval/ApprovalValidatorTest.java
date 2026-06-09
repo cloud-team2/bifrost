@@ -29,7 +29,7 @@ class ApprovalValidatorTest {
     void consumesApprovedUnusedApproval() {
         UUID approvalId = UUID.randomUUID();
         ApprovalEntity approval = approval(approvalId, "APPROVED", Instant.now().plusSeconds(60), null, PARAMS_HASH);
-        when(repository.findById(approvalId)).thenReturn(Optional.of(approval));
+        when(repository.findByIdForUpdate(approvalId)).thenReturn(Optional.of(approval));
         when(repository.save(any(ApprovalEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         ApprovalEntity consumed = validator.validateAndConsume(approvalId, PARAMS_HASH);
@@ -41,7 +41,7 @@ class ApprovalValidatorTest {
     @Test
     void missingApprovalUsesApprovalNotFoundCode() {
         UUID approvalId = UUID.randomUUID();
-        when(repository.findById(approvalId)).thenReturn(Optional.empty());
+        when(repository.findByIdForUpdate(approvalId)).thenReturn(Optional.empty());
 
         assertApiCode(() -> validator.validateAndConsume(approvalId, PARAMS_HASH), ErrorCode.APPROVAL_NOT_FOUND);
     }
@@ -49,7 +49,7 @@ class ApprovalValidatorTest {
     @Test
     void expiredApprovalUsesExpiredCode() {
         UUID approvalId = UUID.randomUUID();
-        when(repository.findById(approvalId)).thenReturn(Optional.of(
+        when(repository.findByIdForUpdate(approvalId)).thenReturn(Optional.of(
                 approval(approvalId, "APPROVED", Instant.now().minusSeconds(1), null, PARAMS_HASH)));
 
         assertApiCode(() -> validator.validateAndConsume(approvalId, PARAMS_HASH), ErrorCode.APPROVAL_EXPIRED);
@@ -59,7 +59,7 @@ class ApprovalValidatorTest {
     void pendingApprovalUsesScopeMismatchCodeWithoutSaving() {
         UUID approvalId = UUID.randomUUID();
         ApprovalEntity approval = approval(approvalId, "PENDING", Instant.now().plusSeconds(60), null, PARAMS_HASH);
-        when(repository.findById(approvalId)).thenReturn(Optional.of(approval));
+        when(repository.findByIdForUpdate(approvalId)).thenReturn(Optional.of(approval));
 
         assertApiCode(() -> validator.validateAndConsume(approvalId, PARAMS_HASH), ErrorCode.APPROVAL_SCOPE_MISMATCH);
 
@@ -69,7 +69,7 @@ class ApprovalValidatorTest {
     @Test
     void alreadyUsedApprovalUsesAlreadyUsedCode() {
         UUID approvalId = UUID.randomUUID();
-        when(repository.findById(approvalId)).thenReturn(Optional.of(
+        when(repository.findByIdForUpdate(approvalId)).thenReturn(Optional.of(
                 approval(approvalId, "APPROVED", Instant.now().plusSeconds(60), Instant.now(), PARAMS_HASH)));
 
         assertApiCode(() -> validator.validateAndConsume(approvalId, PARAMS_HASH), ErrorCode.APPROVAL_ALREADY_USED);
@@ -78,7 +78,7 @@ class ApprovalValidatorTest {
     @Test
     void paramsMismatchUsesScopeMismatchCode() {
         UUID approvalId = UUID.randomUUID();
-        when(repository.findById(approvalId)).thenReturn(Optional.of(
+        when(repository.findByIdForUpdate(approvalId)).thenReturn(Optional.of(
                 approval(approvalId, "APPROVED", Instant.now().plusSeconds(60), null, PARAMS_HASH)));
 
         assertApiCode(() -> validator.validateAndConsume(approvalId,

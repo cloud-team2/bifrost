@@ -17,6 +17,9 @@ public final class AgentHeaders {
     public static final String X_REQUEST_ID       = "X-Request-Id";
     public static final String X_AGENT_ID         = "X-Agent-Id";
     public static final String X_AGENT_RUN_ID     = "X-Agent-Run-Id";
+    public static final String X_AGENT_STEP_ID    = "X-Agent-Step-Id";
+    public static final String X_IDEMPOTENCY_KEY  = "X-Idempotency-Key";
+    public static final String X_APPROVAL_ID      = "X-Approval-Id";
 
     private AgentHeaders() {}
 
@@ -33,5 +36,10 @@ public final class AgentHeaders {
                 && !value.isBlank()
                 && value.length() <= MAX_REQUEST_ID_LENGTH
                 && value.matches(SAFE_REQUEST_ID);
+    }
+
+    public static String header(HttpServletRequest request, String name) {
+        String value = request.getHeader(name);
+        return (value != null && !value.isBlank()) ? value.trim() : null;
     }
 }
