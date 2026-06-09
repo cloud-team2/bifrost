@@ -1,21 +1,29 @@
 package com.bifrost.ops.database.health;
 
 import com.bifrost.ops.database.connection.DatabaseConnectionTester;
+import com.bifrost.ops.database.connection.DynamicDataSourceFactory;
 import com.bifrost.ops.database.dto.ConnectionTestResponse;
 import com.bifrost.ops.database.persistence.entity.DatasourceEntity;
 import com.bifrost.ops.database.persistence.repository.DatasourceRepository;
+import com.bifrost.ops.event.EventLevel;
+import com.bifrost.ops.event.EventService;
+import com.bifrost.ops.global.common.datasource.DbType;
 import com.bifrost.ops.secret.DbCredential;
 import com.bifrost.ops.secret.SecretStore;
+import com.zaxxer.hikari.HikariDataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.Statement;
 import java.time.Instant;
 
 /**
- * DB 연결 헬스 주기 프로브(#179).
+ * DB 연결 헬스 주기 프로브(#179) + 복제지연 수집(S1).
  *
  * <p>등록된 모든 datasource에 대해 주기적으로 실제 연결을 시도해 {@code connection_status}를 갱신한다.
  * 이는 등록 시점 1회 검사인 cdc/sink readiness와 달리 '지금 연결되는가'를 라이브로 반영하므로,
@@ -29,20 +37,28 @@ public class DatabaseHealthProbeJob {
     public static final String HEALTHY = "HEALTHY";
     public static final String UNREACHABLE = "UNREACHABLE";
     private static final int ERR_MAX = 255;
+    private static final long PG_LAG_WARN_BYTES = 104_857_600L; // 100 MB
+    private static final long MARIADB_LAG_WARN_SEC = 30L;
 
     private final DatasourceRepository datasourceRepository;
     private final DatabaseConnectionTester connectionTester;
     private final SecretStore secretStore;
     private final com.bifrost.ops.pipeline.PipelineStatusService pipelineStatusService;
+    private final DynamicDataSourceFactory dataSourceFactory;
+    private final EventService eventService;
 
     public DatabaseHealthProbeJob(DatasourceRepository datasourceRepository,
                                   DatabaseConnectionTester connectionTester,
                                   SecretStore secretStore,
-                                  com.bifrost.ops.pipeline.PipelineStatusService pipelineStatusService) {
+                                  com.bifrost.ops.pipeline.PipelineStatusService pipelineStatusService,
+                                  DynamicDataSourceFactory dataSourceFactory,
+                                  EventService eventService) {
         this.datasourceRepository = datasourceRepository;
         this.connectionTester = connectionTester;
         this.secretStore = secretStore;
         this.pipelineStatusService = pipelineStatusService;
+        this.dataSourceFactory = dataSourceFactory;
+        this.eventService = eventService;
     }
 
     /** 기본 60초마다 등록된 모든 DB의 연결 상태를 프로브한다. */
@@ -90,6 +106,70 @@ public class DatabaseHealthProbeJob {
             } catch (RuntimeException ex) {
                 log.debug("DB 헬스 변화 후 파이프라인 재평가 실패(무시): id={}, cause={}", e.getId(), ex.getMessage());
             }
+        }
+    }
+
+    /** 30초마다 HEALTHY datasource의 복제지연을 확인해 임계 초과 시 event를 발행한다(S1). */
+    @Scheduled(fixedRate = 30_000, initialDelay = 45_000)
+    @Transactional(readOnly = true)
+    public void probeReplicationLag() {
+        for (DatasourceEntity e : datasourceRepository.findAll()) {
+            if (!HEALTHY.equals(e.getConnectionStatus())) continue;
+            try {
+                checkReplicationLag(e);
+            } catch (RuntimeException ex) {
+                log.debug("복제지연 프로브 실패(무시): id={} cause={}", e.getId(), ex.getMessage());
+            }
+        }
+    }
+
+    private void checkReplicationLag(DatasourceEntity e) {
+        DbCredential cred = secretStore.resolve(e.getSecretRef());
+        if (e.getDbType() == DbType.POSTGRESQL) {
+            checkPostgresLag(e, cred.password());
+        } else if (e.getDbType() == DbType.MARIADB) {
+            checkMariaDbLag(e, cred.password());
+        }
+    }
+
+    private void checkPostgresLag(DatasourceEntity e, String password) {
+        try (HikariDataSource ds = dataSourceFactory.create(e, password, true);
+             Connection conn = ds.getConnection();
+             Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(
+                     "SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn)" +
+                     " FROM pg_replication_slots WHERE active")) {
+            while (rs.next()) {
+                long lagBytes = rs.getLong(1);
+                if (lagBytes > PG_LAG_WARN_BYTES) {
+                    eventService.record(e.getTenantId(), null, EventLevel.WARN,
+                            "DB_REPLICATION_LAG_WARNING",
+                            "PostgreSQL 복제지연 경고: " + lagBytes / 1024 / 1024 + "MB (id=" + e.getId() + ")");
+                }
+            }
+        } catch (Exception ex) {
+            log.debug("PG 복제지연 쿼리 실패(무시): id={} cause={}", e.getId(), ex.getMessage());
+        }
+    }
+
+    private void checkMariaDbLag(DatasourceEntity e, String password) {
+        try (HikariDataSource ds = dataSourceFactory.create(e, password, true);
+             Connection conn = ds.getConnection();
+             Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery("SHOW SLAVE STATUS")) {
+            if (rs.next()) {
+                Object behind = rs.getObject("Seconds_Behind_Master");
+                if (behind != null) {
+                    long lagSec = ((Number) behind).longValue();
+                    if (lagSec > MARIADB_LAG_WARN_SEC) {
+                        eventService.record(e.getTenantId(), null, EventLevel.WARN,
+                                "DB_REPLICATION_LAG_WARNING",
+                                "MariaDB 복제지연 경고: " + lagSec + "초 (id=" + e.getId() + ")");
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            log.debug("MariaDB 복제지연 쿼리 실패(무시): id={} cause={}", e.getId(), ex.getMessage());
         }
     }
 
