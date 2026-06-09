@@ -137,7 +137,7 @@ function GeneralSection() {
   const app = useApp()
   const toast = useToast()
   const wsId = app.currentProject?.id
-  const [name, setName] = useState(app.currentProject?.name ?? app.settings.projectName)
+  const [name, setName] = useState(app.currentProject?.name ?? '')
   const [timezone, setTimezone] = useState('')
   const [saving, setSaving] = useState(false)
 
