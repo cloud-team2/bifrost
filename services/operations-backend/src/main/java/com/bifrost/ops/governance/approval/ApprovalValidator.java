@@ -26,11 +26,26 @@ public class ApprovalValidator {
      */
     @Transactional
     public ApprovalEntity validateAndConsume(UUID approvalId, String paramsHash) {
-        ApprovalEntity approval = approvalRepository.findById(approvalId)
+        return validateAndConsume(approvalId, null, null, paramsHash);
+    }
+
+    /**
+     * 승인 토큰을 tenant·operation·params scope까지 검증하고 사용 처리한다.
+     * null tenantId/operation은 기존 최소 검증 호출부 호환을 위해 scope 검증을 생략한다.
+     */
+    @Transactional
+    public ApprovalEntity validateAndConsume(UUID approvalId, UUID tenantId, String operation, String paramsHash) {
+        ApprovalEntity approval = approvalRepository.findByIdForUpdate(approvalId)
                 .orElseThrow(() -> new ApiException(ErrorCode.APPROVAL_NOT_FOUND, "approval not found: " + approvalId));
 
         if (!"APPROVED".equals(approval.getDecision())) {
             throw new ApiException(ErrorCode.APPROVAL_SCOPE_MISMATCH, "approval not in APPROVED state: " + approval.getDecision());
+        }
+        if (tenantId != null && !tenantId.equals(approval.getTenantId())) {
+            throw new ApiException(ErrorCode.APPROVAL_SCOPE_MISMATCH, "approval tenant mismatch");
+        }
+        if (operation != null && !operation.equals(approval.getOperation())) {
+            throw new ApiException(ErrorCode.APPROVAL_SCOPE_MISMATCH, "approval operation mismatch");
         }
         if (approval.getExpiresAt().isBefore(Instant.now())) {
             throw new ApiException(ErrorCode.APPROVAL_EXPIRED, "approval expired");

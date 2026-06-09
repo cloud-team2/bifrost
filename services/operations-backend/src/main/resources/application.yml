@@ -26,3 +26,8 @@ management:
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
+
+kafka-connect:
+  rest-url: ${KAFKA_CONNECT_REST_URL:}
+  connect-timeout-ms: ${KAFKA_CONNECT_CONNECT_TIMEOUT_MS:2000}
+  read-timeout-ms: ${KAFKA_CONNECT_READ_TIMEOUT_MS:3000}

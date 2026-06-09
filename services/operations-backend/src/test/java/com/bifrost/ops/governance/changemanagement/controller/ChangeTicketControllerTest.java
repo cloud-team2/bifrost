@@ -77,7 +77,7 @@ class ChangeTicketControllerTest {
                                 """.formatted(tenantId)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.ok").value(true))
-                .andExpect(jsonPath("$.requestId").value(REQUEST_ID))
+                .andExpect(jsonPath("$.request_id").value(REQUEST_ID))
                 .andExpect(jsonPath("$.operation").value("create_change_ticket"))
                 .andExpect(jsonPath("$.result.status").value("pending"))
                 .andExpect(jsonPath("$.result.title").value("rollback_pipeline"));
@@ -154,7 +154,7 @@ class ChangeTicketControllerTest {
                                 {"tenantId":"%s"}
                                 """.formatted(tenantId)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.requestId").value(REQUEST_ID))
+                .andExpect(jsonPath("$.request_id").value(REQUEST_ID))
                 .andExpect(jsonPath("$.operation").value("validate_change_ticket"))
                 .andExpect(jsonPath("$.result.changeTicketId").value(ticketId.toString()))
                 .andExpect(jsonPath("$.result.status").value("validated"))
