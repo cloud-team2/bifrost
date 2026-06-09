@@ -27,8 +27,9 @@ env:
   AI_SPRING_OPS_BASE_URL: http://operations-backend.bifrost-system.svc.cluster.local:8080
   AI_LLM_PROVIDER: openai
   AI_LLM_DEFAULT_MODEL: gpt-4o-mini
-  # Agent Run Store / Knowledge Vector Store (pgvector). #134 persistence 배선용 (현재 골격은 미사용).
-  AI_AGENTDB_DSN: postgresql://agent:agent@agentdb-service.agentdb.svc.cluster.local:5432/agentdb
+  # Agent Run Store / Knowledge Vector Store (pgvector).
+  # 코드 기대 env = AI_DATABASE_URL (config.py: env_prefix=AI_, field=database_url). 드라이버 prefix는 db.py가 asyncpg용으로 strip.
+  AI_DATABASE_URL: postgresql+asyncpg://agent:agent@agentdb-service.agentdb.svc.cluster.local:5432/agentdb
 
 secrets:
   llmApiKey: ""   # K8s Secret 'ai-llm-secret'의 api-key 참조 (선택)
