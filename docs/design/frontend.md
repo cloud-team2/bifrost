@@ -164,7 +164,8 @@ OperatorOverviewView (FR-020) GET /api/v1/workspaces/{wsId}/monitoring/overview
 OperatorClusterView (FR-023)  GET /api/v1/clusters/kafka
                               GET /api/v1/clusters/kafka/throughput?minutes=30
                               GET /api/v1/clusters/connect   (Broker·Connect worker, workspace scope 없음)
-OperatorResourceEventsView (FR-024) GET /api/v1/workspaces/{wsId}/monitoring/resource-events
+ResourceEvents (FR-024)       GET /api/v1/workspaces/{wsId}/monitoring/resource-events
+                              (별도 OperatorResourceEventsView는 AlertsView 통합 이벤트 로그로 흡수 — #324)
 ```
 
 ### 8. 인시던트 + AI Agent (FR-021, FR-022, FR-025, FR-026)
