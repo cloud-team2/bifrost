@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: bifrost-root
+  name: 0-root-bifrost-root
   namespace: argocd
 spec:
   project: root
