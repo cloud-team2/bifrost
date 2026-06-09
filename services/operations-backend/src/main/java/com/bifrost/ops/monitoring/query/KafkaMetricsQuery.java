@@ -106,8 +106,22 @@ public class KafkaMetricsQuery {
      * @param op "create" | "update" | "delete"
      */
     public java.util.Map<Long, Double> eventCountSeries(String server, String op, long startSec, long endSec, long stepSec) {
-        return client.queryRange(
-                "sum(increase(debezium_metrics_totalnumberof" + op + "eventsseen{server=\"" + server + "\"}[" + stepSec + "s]))",
+        // increase(metric[step])는 외삽(extrapolation) 때문에 부하가 일정해도 버킷마다 값이 출렁인다
+        // (창에 scrape가 2개냐 3개냐에 따라 48↔56 반복). 원시 누적 카운터를 step 간격으로 받아
+        // 연속 버킷 차분으로 정확한 per-bucket 증가분을 만든다(외삽 없음).
+        java.util.Map<Long, Double> raw = client.queryRange(
+                "sum(debezium_metrics_totalnumberof" + op + "eventsseen{server=\"" + server + "\"})",
                 startSec, endSec, stepSec);
+        java.util.TreeMap<Long, Double> sorted = new java.util.TreeMap<>(raw);
+        java.util.Map<Long, Double> diff = new java.util.LinkedHashMap<>();
+        Double prev = null;
+        for (java.util.Map.Entry<Long, Double> e : sorted.entrySet()) {
+            if (prev != null) {
+                double d = e.getValue() - prev;
+                diff.put(e.getKey(), Math.max(0.0, d)); // 카운터 리셋(커넥터 재시작) 방어
+            }
+            prev = e.getValue();
+        }
+        return diff;
     }
 }
