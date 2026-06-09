@@ -32,6 +32,17 @@ export type View =
   | 'cluster'
   | 'settings'
 
+
+export type AgentRunSseStatus = 'idle' | 'starting' | 'running' | 'waiting_for_approval' | 'completed' | 'failed'
+
+export interface AgentRunSseState {
+  runId: string | null
+  status: AgentRunSseStatus
+  lastEventType: string | null
+  lastMessage: string | null
+  updatedAt: string | null
+}
+
 /** An AI recommended action handed off from an incident to the agent panel. */
 export interface AgentTask {
   incidentId: string
@@ -87,6 +98,8 @@ interface Store {
   agentTask: AgentTask | null
   dispatchAgentTask: (task: AgentTask) => void
   consumeAgentTask: () => void
+  agentRunState: AgentRunSseState
+  setAgentRunState: (patch: Partial<AgentRunSseState>) => void
   /* data */
   projects: Project[]
   nodes: Node[]
@@ -124,6 +137,14 @@ const today = () => new Date().toISOString().slice(0, 10)
 const clock = () =>
   new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
 
+const emptyAgentRunState = (): AgentRunSseState => ({
+  runId: null,
+  status: 'idle',
+  lastEventType: null,
+  lastMessage: null,
+  updatedAt: null,
+})
+
 function userFromEmail(email: string): User {
   return {
     name: email.split('@')[0],
@@ -142,6 +163,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [opSelectedIncidentId, setOpSelectedIncidentId] = useState<string | null>(null)
   const [aiPanelOpen, setAiPanelOpen] = useState(false)
   const [agentTask, setAgentTask] = useState<AgentTask | null>(null)
+  const [agentRunState, setAgentRunStateRaw] = useState<AgentRunSseState>(() => emptyAgentRunState())
   const [authReady, setAuthReady] = useState(false)
 
   /* 실데이터: 로그인/워크스페이스 선택 시 백엔드에서 로드 */
@@ -322,6 +344,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setSelectedPipelineId(null)
       setSelectedDatabaseId(null)
       setAiPanelOpen(false)
+      setAgentRunStateRaw(emptyAgentRunState())
     },
     setProject(p) {
       setCurrentProject(p)
@@ -330,6 +353,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setSelectedPipelineId(null)
         setSelectedDatabaseId(null)
         setOpSelectedIncidentId(null)
+        setAgentRunStateRaw(emptyAgentRunState())
         loadProjectData(p.id)
       }
       pushNav(
@@ -374,6 +398,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     consumeAgentTask() {
       setAgentTask(null)
     },
+    agentRunState,
+    setAgentRunState(patch) {
+      setAgentRunStateRaw((prev) => ({ ...prev, ...patch, updatedAt: new Date().toISOString() }))
+    },
 
     projects,
     nodes,
@@ -397,6 +425,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setOpSelectedIncidentId(null)
         setNodes([])
         setEdges([])
+        setAgentRunStateRaw(emptyAgentRunState())
         pushNav(
           snapshot({
             projectId: p.id,

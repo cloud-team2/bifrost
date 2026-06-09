@@ -288,6 +288,12 @@ export function AgentRunPanel({
         remediation_requested: options.remediationRequested ?? false,
         stream: true,
       })
+      app.setAgentRunState({
+        runId: run.run_id,
+        status: 'starting',
+        lastEventType: 'run_created',
+        lastMessage: `Agent Run ${run.run_id} 생성됨`,
+      })
       updateMsgs((m) => [
         ...m,
         {
@@ -304,6 +310,7 @@ export function AgentRunPanel({
       setRunning(false)
       runningRef.current = false
       const msg = e instanceof ApiError ? e.message : 'Agent Run 생성에 실패했습니다'
+      app.setAgentRunState({ status: 'failed', lastEventType: 'run_create_failed', lastMessage: msg })
       appendText('assistant', msg)
       toast(msg, 'error')
     }
@@ -387,6 +394,12 @@ export function AgentRunPanel({
     const normalized: AgentRunEvent = { ...parsed, type: parsed.type ?? eventType, payload: parsed.payload ?? {} }
     if (normalized.event_id && seenEvents.current.has(normalized.event_id)) return
     if (normalized.event_id) seenEvents.current.add(normalized.event_id)
+    app.setAgentRunState({
+      runId: normalized.run_id,
+      status: agentRunStatusFromEvent(normalized),
+      lastEventType: normalized.type,
+      lastMessage: normalized.message,
+    })
     applyAgentEvent(normalized)
   }
 
@@ -836,6 +849,15 @@ function DoneCard({ msg }: { msg: DoneMsg }) {
       {msg.text}
     </div>
   )
+}
+
+
+function agentRunStatusFromEvent(event: AgentRunEvent) {
+  if (event.type === 'run_completed') {
+    return typeof event.payload.error === 'string' || event.message.startsWith('오류') ? 'failed' : 'completed'
+  }
+  if (event.type === 'approval_required' || event.type === 'change_management_required') return 'waiting_for_approval'
+  return 'running'
 }
 
 function payloadString(event: AgentRunEvent, key: string): string | null {
