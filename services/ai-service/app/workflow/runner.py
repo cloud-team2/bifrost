@@ -20,10 +20,12 @@ from app.agents import retrieval as retrieval_agent
 from app.agents import router as router_agent
 from app.agents import verifier as verifier_agent
 from app.llm.provider import get_llm_provider
+from app.persistence.change_ticket_repository import STATUS_VERIFIED
 from app.persistence.event_repository import AnyEventRepo, InMemoryEventRepository, get_event_repo
 from app.persistence.report_repository import get_report_repo
 from app.persistence.run_repository import AnyRunRepo
 from app.schemas.events import StreamingEvent, StreamingEventType
+from app.schemas.state import ActionCandidate, ActionStatus
 from app.schemas.tools import ToolContext
 from app.streaming.event_bus import EventBus
 from app.supervisor.graph import get_supervisor
@@ -99,6 +101,7 @@ async def run_workflow(
         remediation_out = None
         policy_out = None
         approval_out = None
+        change_out = None
         executor_out = None
         verifier_out = None
 
@@ -243,10 +246,14 @@ async def run_workflow(
                                    _evt(run_id, StreamingEventType.AGENT_STARTED, "change_gate", "변경관리를 확인합니다"))
                     decisions = policy_out.policy_decisions if policy_out else []
                     change_out = await run_change_gate(decisions, run_id)
+                    if change_out.run_status == "waiting_for_approval":
+                        await run_repo.update_status(run_id, "waiting_for_approval", "change_gate")
                     await _publish(bus, event_repo, run_id, _evt(
                         run_id, StreamingEventType.AGENT_COMPLETED, "change_gate",
                         f"변경관리 {len(change_out.change_management_records)}건, status={change_out.run_status}",
                     ))
+                    if change_out.run_status == "waiting_for_approval":
+                        return
 
                 case "executor":
                     await _publish(bus, event_repo, run_id,
@@ -259,18 +266,17 @@ async def run_workflow(
                         request_id=str(uuid4()),
                     )
                     approved = approval_out.approved_actions if approval_out else []
-                    from app.schemas.state import ActionCandidate, ActionStatus as AS
+                    change_ready_ids = [
+                        record.action_id
+                        for record in (change_out.change_management_records if change_out else [])
+                        if record.status == STATUS_VERIFIED
+                    ]
                     ready_candidates = [
-                        ActionCandidate(
-                            action_id=a.action_id,
-                            action_type="runtime_tool",
-                            action_name=a.action_id,
-                            risk="high",
-                            reason="approved",
-                            status=AS.READY,
-                            tool_name=_find_tool_name(a.action_id, remediation_out),
+                        candidate
+                        for action_id in _dedupe_action_ids(
+                            [a.action_id for a in approved] + change_ready_ids
                         )
-                        for a in approved
+                        if (candidate := _ready_action_candidate(action_id, remediation_out, decisions)) is not None
                     ]
                     executor_out = await run_executor(
                         ready_candidates,
@@ -340,6 +346,51 @@ def _find_tool_name(action_id: str, remediation_out) -> str | None:
     for c in remediation_out.action_candidates:
         if c.action_id == action_id:
             return c.tool_name
+    return None
+
+
+def _dedupe_action_ids(action_ids: list[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for action_id in action_ids:
+        if action_id in seen:
+            continue
+        seen.add(action_id)
+        deduped.append(action_id)
+    return deduped
+
+
+def _ready_action_candidate(action_id: str, remediation_out, policy_decisions) -> ActionCandidate | None:
+    """실제 remediation/policy 결과를 사용해 executor-ready ActionCandidate를 만든다."""
+    if remediation_out is not None:
+        for candidate in remediation_out.action_candidates:
+            if candidate.action_id == action_id:
+                return ActionCandidate(
+                    action_id=candidate.action_id,
+                    action_type=candidate.action_type,
+                    action_name=candidate.action_name,
+                    root_cause_id=candidate.root_cause_id,
+                    risk=candidate.risk,
+                    reason="gate verified",
+                    expected_effect=candidate.expected_effect,
+                    rollback_plan=candidate.rollback_plan,
+                    estimated_duration=candidate.estimated_duration,
+                    tool_name=candidate.tool_name,
+                    status=ActionStatus.READY,
+                )
+
+    for decision in policy_decisions:
+        if decision.action_id == action_id:
+            return ActionCandidate(
+                action_id=decision.action_id,
+                action_type=decision.action_type,
+                action_name=decision.action_id,
+                risk=decision.risk,
+                reason=decision.reason,
+                tool_name=decision.tool_name,
+                status=ActionStatus.READY,
+            )
+
     return None
 
 
