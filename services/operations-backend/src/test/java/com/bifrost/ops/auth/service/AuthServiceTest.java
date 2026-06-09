@@ -12,6 +12,9 @@ import com.bifrost.ops.auth.persistence.entity.UserEntity;
 import com.bifrost.ops.auth.persistence.repository.UserRepository;
 import com.bifrost.ops.provisioning.dto.TenantProvisionRequest;
 import com.bifrost.ops.provisioning.port.TenantProvisionerPort;
+import com.bifrost.ops.workspace.Role;
+import com.bifrost.ops.workspace.persistence.entity.ProjectMemberEntity;
+import com.bifrost.ops.workspace.persistence.repository.ProjectMemberRepository;
 import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -23,6 +26,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -44,6 +48,9 @@ class AuthServiceTest {
     private WorkspaceRepository workspaceRepository;
 
     @Mock
+    private ProjectMemberRepository memberRepository;
+
+    @Mock
     private PasswordEncoder passwordEncoder;
 
     @Mock
@@ -59,6 +66,7 @@ class AuthServiceTest {
         authService = new AuthService(
             userRepository,
             workspaceRepository,
+            memberRepository,
             passwordEncoder,
             jwtService,
             tenantProvisioner
@@ -97,12 +105,40 @@ class AuthServiceTest {
         verify(userRepository).saveAndFlush(userCaptor.capture());
         assertThat(userCaptor.getValue().getTenantId()).isEqualTo(workspaceId);
         assertThat(userCaptor.getValue().getEmail()).isEqualTo("user@example.com");
+        assertThat(userCaptor.getValue().getName()).isEqualTo("User Name");
         assertThat(userCaptor.getValue().getPasswordHash()).isEqualTo("encoded-password");
+
+        ArgumentCaptor<ProjectMemberEntity> memberCaptor = ArgumentCaptor.forClass(ProjectMemberEntity.class);
+        verify(memberRepository).saveAndFlush(memberCaptor.capture());
+        assertThat(memberCaptor.getValue().getWorkspaceId()).isEqualTo(workspaceId);
+        assertThat(memberCaptor.getValue().getUserId()).isEqualTo(userId);
+        assertThat(memberCaptor.getValue().getRole()).isEqualTo(Role.OWNER);
 
         ArgumentCaptor<TenantProvisionRequest> provisionCaptor = ArgumentCaptor.forClass(TenantProvisionRequest.class);
         verify(tenantProvisioner).provision(provisionCaptor.capture());
         assertThat(provisionCaptor.getValue().tenantId()).isEqualTo(workspaceId);
         assertThat(provisionCaptor.getValue().namespace()).isEqualTo("team-a");
+    }
+
+    @Test
+    void registerDefaultsNameToEmailLocalPartWhenNameMissing() {
+        RegisterRequest request = new RegisterRequest("default@example.com", null, "password123", "Team A", "team-a");
+        UUID workspaceId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        stubAvailableRegistration(request);
+        when(passwordEncoder.encode("password123")).thenReturn("encoded-password");
+        when(workspaceRepository.saveAndFlush(any(WorkspaceEntity.class)))
+            .thenAnswer(invocation -> withWorkspaceId(invocation.getArgument(0), workspaceId));
+        when(userRepository.saveAndFlush(any(UserEntity.class)))
+            .thenAnswer(invocation -> withUserId(invocation.getArgument(0), userId));
+        when(jwtService.issue(userId, workspaceId, "default@example.com")).thenReturn("access-token");
+        when(jwtService.ttl()).thenReturn(Duration.ofHours(2));
+
+        authService.register(request);
+
+        ArgumentCaptor<UserEntity> userCaptor = ArgumentCaptor.forClass(UserEntity.class);
+        verify(userRepository).saveAndFlush(userCaptor.capture());
+        assertThat(userCaptor.getValue().getName()).isEqualTo("default");
     }
 
     @Test
@@ -175,6 +211,10 @@ class AuthServiceTest {
         assertThat(response.expiresInSeconds()).isEqualTo(3600);
         assertThat(response.userId()).isEqualTo(userId);
         assertThat(response.workspaceId()).isEqualTo(tenantId);
+        ArgumentCaptor<UserEntity> userCaptor = ArgumentCaptor.forClass(UserEntity.class);
+        verify(userRepository).saveAndFlush(userCaptor.capture());
+        assertThat(userCaptor.getValue().getLastLoginAt()).isNotNull();
+        assertThat(userCaptor.getValue().getLastLoginAt()).isBetween(Instant.now().minusSeconds(5), Instant.now().plusSeconds(1));
     }
 
     @Test
@@ -205,6 +245,7 @@ class AuthServiceTest {
     void meThrowsUnauthorizedWhenWorkspaceMissing() {
         UUID userId = UUID.randomUUID();
         UUID workspaceId = UUID.randomUUID();
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user(userId, workspaceId, "user@example.com", "encoded-password")));
         when(workspaceRepository.findById(workspaceId)).thenReturn(Optional.empty());
 
         // 토큰은 유효하나 워크스페이스가 사라진 stale 세션 → 401(AUTH_TOKEN_INVALID)
@@ -219,20 +260,61 @@ class AuthServiceTest {
         UUID userId = UUID.randomUUID();
         UUID workspaceId = UUID.randomUUID();
         WorkspaceEntity workspace = workspace(workspaceId, "Team A", "team-a", WorkspaceEntity.Status.ACTIVE);
+        workspace.setOwnerUserId(userId);
+        UserEntity user = user(userId, workspaceId, "user@example.com", "encoded-password");
+        user.setName("User Name");
+        user.setLastLoginAt(Instant.parse("2026-06-08T01:02:03Z"));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
         when(workspaceRepository.findById(workspaceId)).thenReturn(Optional.of(workspace));
+        when(memberRepository.findByIdWorkspaceIdAndIdUserId(workspaceId, userId))
+                .thenReturn(Optional.of(new ProjectMemberEntity(workspaceId, userId, Role.ADMIN)));
 
         MeResponse response = authService.me(new AuthenticatedUser(userId, workspaceId, "user@example.com"));
 
         assertThat(response.userId()).isEqualTo(userId);
         assertThat(response.email()).isEqualTo("user@example.com");
+        assertThat(response.name()).isEqualTo("User Name");
+        assertThat(response.role()).isEqualTo("ADMIN");
+        assertThat(response.joinedAt()).isEqualTo(user.getCreatedAt());
+        assertThat(response.lastLoginAt()).isEqualTo(Instant.parse("2026-06-08T01:02:03Z"));
         assertThat(response.workspaceId()).isEqualTo(workspaceId);
         assertThat(response.workspaceName()).isEqualTo("Team A");
         assertThat(response.namespace()).isEqualTo("team-a");
         assertThat(response.workspaceStatus()).isEqualTo(WorkspaceEntity.Status.ACTIVE);
     }
 
+    @Test
+    void meReturnsMemberRoleWhenUserDoesNotOwnWorkspace() {
+        UUID userId = UUID.randomUUID();
+        UUID workspaceId = UUID.randomUUID();
+        WorkspaceEntity workspace = workspace(workspaceId, "Team A", "team-a", WorkspaceEntity.Status.ACTIVE);
+        workspace.setOwnerUserId(UUID.randomUUID());
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user(userId, workspaceId, "user@example.com", "encoded-password")));
+        when(workspaceRepository.findById(workspaceId)).thenReturn(Optional.of(workspace));
+        when(memberRepository.findByIdWorkspaceIdAndIdUserId(workspaceId, userId)).thenReturn(Optional.empty());
+
+        MeResponse response = authService.me(new AuthenticatedUser(userId, workspaceId, "user@example.com"));
+
+        assertThat(response.role()).isEqualTo("MEMBER");
+    }
+
+    @Test
+    void meFallsBackToOwnerWhenMembershipMissing() {
+        UUID userId = UUID.randomUUID();
+        UUID workspaceId = UUID.randomUUID();
+        WorkspaceEntity workspace = workspace(workspaceId, "Team A", "team-a", WorkspaceEntity.Status.ACTIVE);
+        workspace.setOwnerUserId(userId);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user(userId, workspaceId, "user@example.com", "encoded-password")));
+        when(workspaceRepository.findById(workspaceId)).thenReturn(Optional.of(workspace));
+        when(memberRepository.findByIdWorkspaceIdAndIdUserId(workspaceId, userId)).thenReturn(Optional.empty());
+
+        MeResponse response = authService.me(new AuthenticatedUser(userId, workspaceId, "user@example.com"));
+
+        assertThat(response.role()).isEqualTo("OWNER");
+    }
+
     private static RegisterRequest registerRequest() {
-        return new RegisterRequest("user@example.com", "password123", "Team A", "team-a");
+        return new RegisterRequest("user@example.com", "User Name", "password123", "Team A", "team-a");
     }
 
     private void stubAvailableRegistration(RegisterRequest request) {

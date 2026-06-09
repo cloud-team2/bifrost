@@ -27,6 +27,19 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class AlertGroup(StrictModel):
+    group_id: str
+    alert_ids: list[str] = Field(default_factory=list)
+    common_labels: dict[str, str] = Field(default_factory=dict)
+
+
+class CorrelationOutput(StrictModel):
+    correlation_id: str
+    scope: IncidentScope
+    groups: list[AlertGroup] = Field(default_factory=list)
+    related_alert_ids: list[str] = Field(default_factory=list)
+
+
 class RouteDecision(StrictModel):
     mode: AgentMode
     remediation_requested: bool = False
@@ -150,6 +163,29 @@ class ExecutionResultOutput(StrictModel):
 
 class ExecutorOutput(StrictModel):
     execution_results: list[ExecutionResultOutput]
+
+
+class ApprovedActionOutput(StrictModel):
+    approval_id: str
+    action_id: str
+    params_hash: str
+    approved_by: str | None = None
+
+
+class ApprovalGateOutput(StrictModel):
+    approved_actions: list[ApprovedActionOutput] = Field(default_factory=list)
+    run_status: str
+
+
+class ChangeManagementRecordOutput(StrictModel):
+    change_ticket_id: str
+    action_id: str
+    status: str
+
+
+class ChangeManagementOutput(StrictModel):
+    change_management_records: list[ChangeManagementRecordOutput] = Field(default_factory=list)
+    run_status: str
 
 
 class VerificationResultOutput(StrictModel):

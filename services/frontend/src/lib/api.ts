@@ -74,10 +74,23 @@ export interface WorkspaceResponse {
   id: string
   name: string
   projectKey: string
+  /** 일반 설정 timezone(#145). 미설정 시 null. */
+  timezone: string | null
   status: string
   createdAt: string
   pipelineCount: number
   activePipelineCount: number
+}
+
+/** 워크스페이스 멤버 역할(#145). OWNER는 단일·강등/제거 불가. */
+export type WorkspaceMemberRole = 'OWNER' | 'ADMIN' | 'MEMBER'
+/** 프로젝트 멤버(#145). */
+export interface ProjectMemberResponse {
+  workspaceId: string
+  userId: string
+  email: string | null
+  role: WorkspaceMemberRole
+  joinedAt: string
 }
 export type FailureReason =
   | 'CONNECTION_REFUSED' | 'AUTH_FAILED' | 'DB_NOT_FOUND' | 'TIMEOUT' | 'UNKNOWN' | null
@@ -97,6 +110,10 @@ export interface DatabaseResponse {
   username: string
   password: string
   cdcReadinessStatus: 'OK' | 'WARNING' | 'BLOCKED' | null
+  /** 연결 헬스 주기 프로브(#179). null=아직 미프로브. */
+  connectionStatus: 'HEALTHY' | 'UNREACHABLE' | null
+  connectionError: string | null
+  connectionCheckedAt: string | null
   roles: string[]
   createdAt: string
 }
@@ -193,6 +210,57 @@ export interface EventDistPoint {
   update: number
   delete: number
 }
+
+/* ── Cluster 화면(#213) ───────────────────────────────────────────── */
+export interface BrokerInfo {
+  id: number
+  host: string
+  port: number
+  controller: boolean
+  leaderPartitions: number
+  logDirBytes: number
+  cpuPct: number | null
+  diskUsedPct: number | null
+  netInBytesPerSec: number | null
+  netOutBytesPerSec: number | null
+  status: 'healthy' | 'warning' | 'error'
+}
+export interface KafkaClusterResponse {
+  controllerId: number
+  brokerCount: number
+  totalPartitions: number
+  underReplicated: number
+  offlinePartitions: number
+  brokers: BrokerInfo[]
+}
+export interface ConnectWorker {
+  name: string
+  host: string | null
+  state: string
+  heapUsedBytes: number | null
+  heapMaxBytes: number | null
+  cpuPct: number | null
+  gcSeconds: number | null
+  version: string | null
+}
+export interface ConnectConnectorRow {
+  name: string
+  kind: string
+  status: string
+  pipeline: string
+  tasks: number
+}
+export interface ConnectPlugin {
+  className: string
+  type: string
+  version: string
+}
+export interface ConnectClusterResponse {
+  workers: ConnectWorker[]
+  connectors: ConnectConnectorRow[]
+  plugins: ConnectPlugin[]
+  config: Record<string, string>
+}
 /** 파이프라인 커넥터(#107). state/lastError/updatedAt는 watcher가 갱신(미반영 시 null). */
 export interface ConnectorInfo {
   name: string
@@ -251,6 +319,19 @@ export const api = {
   createWorkspace: (name: string) =>
     request<WorkspaceResponse>('POST', '/api/v1/workspaces', { name }),
   getWorkspace: (wsId: string) => request<WorkspaceResponse>('GET', `/api/v1/workspaces/${wsId}`),
+  // 일반 설정(#145): name/timezone PATCH (OWNER/ADMIN)
+  updateWorkspace: (wsId: string, body: { name?: string; timezone?: string | null }) =>
+    request<WorkspaceResponse>('PATCH', `/api/v1/workspaces/${wsId}`, body),
+
+  // members (#145) — 멤버 작업은 OWNER/ADMIN만
+  listMembers: (wsId: string) =>
+    request<ProjectMemberResponse[]>('GET', `/api/v1/workspaces/${wsId}/members`),
+  addMember: (wsId: string, email: string, role: WorkspaceMemberRole) =>
+    request<ProjectMemberResponse>('POST', `/api/v1/workspaces/${wsId}/members`, { email, role }),
+  updateMemberRole: (wsId: string, userId: string, role: WorkspaceMemberRole) =>
+    request<ProjectMemberResponse>('PATCH', `/api/v1/workspaces/${wsId}/members/${userId}`, { role }),
+  removeMember: (wsId: string, userId: string) =>
+    request<void>('DELETE', `/api/v1/workspaces/${wsId}/members/${userId}`),
 
   // databases (FR-013~016)
   listDatabases: (wsId: string) =>
@@ -298,6 +379,12 @@ export const api = {
     request<MetricPoint[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/metrics/unsynced?minutes=${minutes}`),
   pipelineEventDist: (wsId: string, id: string, minutes = 60) =>
     request<EventDistPoint[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/metrics/event-distribution?minutes=${minutes}`),
+  // cluster (#213) — 워크스페이스 공유 인프라, 스코프 없음
+  clusterKafka: () => request<KafkaClusterResponse>('GET', `/api/v1/clusters/kafka`),
+  clusterThroughput: (minutes = 30) =>
+    request<ThroughputPoint[]>('GET', `/api/v1/clusters/kafka/throughput?minutes=${minutes}`),
+  clusterConnect: () => request<ConnectClusterResponse>('GET', `/api/v1/clusters/connect`),
+
   pausePipeline: (wsId: string, id: string) =>
     request<PipelineResponse>('POST', `/api/v1/workspaces/${wsId}/pipelines/${id}/pause`),
   resumePipeline: (wsId: string, id: string) =>

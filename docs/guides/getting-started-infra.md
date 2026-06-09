@@ -240,14 +240,15 @@ tenantdb
 ├── tenant-postgres                    # PostgreSQL 15 (고객 source, wal_level=logical)
 └── tenant-mariadb                     # MariaDB 10.11 (고객 sink, binlog ROW)
 
-bifrost-system                       # 앱 (helm 차트 준비 완료, 실배포는 CICD #123 대기)
-├── ai-service                       # FastAPI  (helm: gitops branch charts/ai-service, ClusterIP 내부)
-├── operations-backend               # Spring Boot (helm: gitops charts/operations-backend) — ALB /api·/ws
-└── frontend                         # React/nginx (helm: gitops charts/frontend) — ALB / (사용자 진입점)
+bifrost-system                       # 앱 (ArgoCD 배포·가동 중, #123 CICD)
+├── ai-service                       # FastAPI  (gitops charts/ai-service, ClusterIP 내부 전용)
+├── operations-backend               # Spring Boot (gitops charts/operations-backend) — nginx /api·/ws 프록시 대상
+└── frontend                         # React/nginx (gitops charts/frontend) — ALB 진입점 + /api 프록시
 ```
 
-> **앱 이미지 레지스트리 = Harbor (in-cluster)**. push: Jenkins CI(Kaniko/buildah)→Harbor. pull: `harbor.harbor.svc.cluster.local/library/bifrost-<svc>` + `harbor-push-secret`. Docker Hub 아님.
-> **외부 노출**: `bifrost-app` ALB 그룹 path 라우팅 — `/api`·`/ws`→operations-backend, `/`→frontend. ai-service는 내부 전용.
+> **앱 접속(외부)**: `http://bifrost-app-alb-1898177525.ap-northeast-2.elb.amazonaws.com` (ALB, HTTP :80) — 사용자 진입점.
+> **앱 이미지 레지스트리 = Harbor (in-cluster)**. push: Jenkins CI(Kaniko)→Harbor. pull: `harbor.harbor.svc.cluster.local/library/bifrost-<svc>` + `harbor-push-secret`. Docker Hub 아님.
+> **라우팅(실제)**: 단일 Ingress(`frontend`)가 `/`→frontend, **`/api`·`/ws`는 frontend nginx가 operations-backend로 프록시**(별도 ALB path 규칙 아님). ai-service는 내부(ClusterIP) 전용.
 
 ---
 

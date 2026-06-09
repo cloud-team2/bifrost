@@ -1,6 +1,8 @@
 # Spring Boot Operations Backend — Pipeline Domain (생성·생명주기·상태 머신)
 
 > 요약은 [overview.md](./overview.md). 이 파일은 `pipeline` **도메인**(검증·생성 오케스트레이션·생명주기·**상태 머신**)을 다룬다. 실제 Kafka CR 생성은 [provisioning.md](./provisioning.md), lag/지표 산정은 [monitoring.md](./monitoring.md), 상태값 정의는 [부록 B.1](../../spec.md#b1-pipeline-상태값). `pipeline`은 이들을 **오케스트레이션**할 뿐 CR/지표를 직접 만들지 않는다.
+>
+> **라이프사이클·실패 attribution·삭제 정책의 정본은 [lifecycle.md](./lifecycle.md)**(DB 헬스→파이프라인 전파 #179, 삭제 시 토픽·consumer group 정리 #200, creating 타임아웃 등). 이 문서의 상태 머신·생명주기 표는 요약이며 상세·근거는 lifecycle.md를 따른다.
 
 ## 8. Pipeline Domain
 

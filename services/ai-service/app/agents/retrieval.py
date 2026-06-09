@@ -1,4 +1,4 @@
-"""Retrieval agent — fan-out tool calls, mock fallback when Spring unavailable."""
+"""Retrieval agent — fan-out tool calls, real Spring call with TOOL_CALL_FAILED on error."""
 from __future__ import annotations
 
 import asyncio
@@ -9,7 +9,7 @@ from app.persistence.event_repository import AnyEventRepo, InMemoryEventReposito
 from app.schemas.events import StreamingEvent, StreamingEventType
 from app.schemas.outputs import PlannerOutput, RetrievalOutput
 from app.schemas.state import EvidenceItem, EvidenceType, RedactionStatus
-from app.schemas.tools import ToolContext
+from app.schemas.tools import ToolContext, ToolStatus
 from app.streaming.event_bus import EventBus
 from app.tools.registry import ToolClientRegistry
 
@@ -44,32 +44,67 @@ async def run_retrieval(
 
         result = await registry.call_tool(step.tool_name, step.params, context)
 
-        if result.status.value == "success":
+        if result.status == ToolStatus.SUCCESS:
             summary = result.summary
             store_ref = f"evidence://{run_id}/{step.step_id}"
+            evidence = EvidenceItem(
+                evidence_id=str(uuid4()),
+                type=EvidenceType.TOOL_RESULT,
+                store_ref=store_ref,
+                summary=summary,
+                redaction_status=RedactionStatus.REDACTED,
+                collected_by="retrieval",
+                collected_at=datetime.now(timezone.utc),
+            )
+            await _pub(bus, event_repo, run_id, StreamingEvent(
+                event_id=str(uuid4()),
+                run_id=run_id,
+                timestamp=datetime.now(timezone.utc),
+                type=StreamingEventType.TOOL_CALL_COMPLETED,
+                agent="retrieval",
+                message=summary,
+                payload={"tool": step.tool_name, "step_id": step.step_id, "summary": summary},
+            ))
+            await _pub(bus, event_repo, run_id, StreamingEvent(
+                event_id=str(uuid4()),
+                run_id=run_id,
+                timestamp=datetime.now(timezone.utc),
+                type=StreamingEventType.EVIDENCE_COLLECTED,
+                agent="retrieval",
+                message=f"근거 수집: {summary[:80]}",
+                payload={
+                    "evidence_id": evidence.evidence_id,
+                    "evidence_type": evidence.type.value,
+                    "summary": summary[:80],
+                    "redaction_status": evidence.redaction_status.value,
+                },
+            ))
         else:
-            summary = f"[mock] {step.tool_name}: Spring 미연결, 시뮬레이션 결과 반환"
-            store_ref = f"evidence://{run_id}/{step.step_id}_mock"
-
-        evidence = EvidenceItem(
-            evidence_id=str(uuid4()),
-            type=EvidenceType.TOOL_RESULT,
-            store_ref=store_ref,
-            summary=summary,
-            redaction_status=RedactionStatus.REDACTED,
-            collected_by="retrieval",
-            collected_at=datetime.now(timezone.utc),
-        )
-
-        await _pub(bus, event_repo, run_id, StreamingEvent(
-            event_id=str(uuid4()),
-            run_id=run_id,
-            timestamp=datetime.now(timezone.utc),
-            type=StreamingEventType.TOOL_CALL_COMPLETED,
-            agent="retrieval",
-            message=summary,
-            payload={"tool": step.tool_name, "step_id": step.step_id, "summary": summary},
-        ))
+            error_msg = result.error.message if result.error else "조회 실패"
+            summary = f"{step.tool_name}: {error_msg}"
+            store_ref = f"evidence://{run_id}/{step.step_id}/failed"
+            await _pub(bus, event_repo, run_id, StreamingEvent(
+                event_id=str(uuid4()),
+                run_id=run_id,
+                timestamp=datetime.now(timezone.utc),
+                type=StreamingEventType.TOOL_CALL_FAILED,
+                agent="retrieval",
+                message=f"{step.tool_name} 호출 실패: {error_msg}",
+                payload={
+                    "tool": step.tool_name,
+                    "step_id": step.step_id,
+                    "error": result.error.model_dump() if result.error else {},
+                },
+            ))
+            evidence = EvidenceItem(
+                evidence_id=str(uuid4()),
+                type=EvidenceType.TOOL_RESULT,
+                store_ref=store_ref,
+                summary=summary,
+                redaction_status=RedactionStatus.REDACTED,
+                collected_by="retrieval",
+                collected_at=datetime.now(timezone.utc),
+            )
 
         return evidence
 

@@ -22,6 +22,9 @@ public record DatabaseResponse(
         String password,
         String cdcReadinessStatus,
         String sinkReadinessStatus,
+        String connectionStatus,
+        String connectionError,
+        Instant connectionCheckedAt,
         List<String> roles,
         Instant createdAt
 ) {
@@ -40,6 +43,9 @@ public record DatabaseResponse(
                 MASKED,
                 e.getCdcReadinessStatus(),
                 e.getSinkReadinessStatus(),
+                e.getConnectionStatus(),
+                e.getConnectionError(),
+                e.getConnectionCheckedAt(),
                 roles,
                 e.getCreatedAt()
         );

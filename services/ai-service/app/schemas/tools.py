@@ -59,9 +59,10 @@ class ToolContext(StrictModel):
     user_id: str | None = None
     incident_id: str | None = None
     pipeline_id: str | None = None
+    idempotency_key: str | None = None
 
     def spring_headers(self, actor_id: str = "bifrost-agent") -> dict[str, str]:
-        return {
+        headers: dict[str, str] = {
             "X-Agent-Run-Id": self.run_id,
             "X-Agent-Step-Id": self.step_id,
             "X-Agent-Name": self.agent_name,
@@ -69,6 +70,12 @@ class ToolContext(StrictModel):
             "X-Actor-Type": "agent",
             "X-Actor-Id": actor_id,
         }
+        if self.idempotency_key:
+            headers["X-Idempotency-Key"] = self.idempotency_key
+        return headers
+
+    def with_idempotency_key(self, key: str) -> "ToolContext":
+        return self.model_copy(update={"idempotency_key": key})
 
 
 class ToolCallRequest(StrictModel):
@@ -251,3 +258,19 @@ class DeploymentChangeSummary(StrictModel):
 
 class DeploymentsData(StrictModel):
     changes: list[DeploymentChangeSummary] = Field(default_factory=list)
+
+
+# ── catalog §8.6 Mutation (write) actions ─────────────────────────────────────
+
+class ConnectorActionData(StrictModel):
+    connector_name: str
+    action: str
+    status: str
+    message: str | None = None
+
+
+class ConsumerGroupActionData(StrictModel):
+    consumer_group: str
+    action: str
+    status: str
+    message: str | None = None

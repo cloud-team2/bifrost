@@ -13,7 +13,10 @@ import com.bifrost.ops.auth.persistence.entity.UserEntity;
 import com.bifrost.ops.auth.persistence.repository.UserRepository;
 import com.bifrost.ops.provisioning.dto.TenantProvisionRequest;
 import com.bifrost.ops.provisioning.port.TenantProvisionerPort;
+import com.bifrost.ops.workspace.Role;
+import com.bifrost.ops.workspace.persistence.entity.ProjectMemberEntity;
 import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
+import com.bifrost.ops.workspace.persistence.repository.ProjectMemberRepository;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +25,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.UUID;
 
 @Service
@@ -31,17 +35,20 @@ public class AuthService {
 
     private final UserRepository userRepository;
     private final WorkspaceRepository workspaceRepository;
+    private final ProjectMemberRepository memberRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final TenantProvisionerPort tenantProvisioner;
 
     public AuthService(UserRepository userRepository,
                        WorkspaceRepository workspaceRepository,
+                       ProjectMemberRepository memberRepository,
                        PasswordEncoder passwordEncoder,
                        JwtService jwtService,
                        TenantProvisionerPort tenantProvisioner) {
         this.userRepository = userRepository;
         this.workspaceRepository = workspaceRepository;
+        this.memberRepository = memberRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.tenantProvisioner = tenantProvisioner;
@@ -69,6 +76,7 @@ public class AuthService {
         // workspace 저장 전에 user id가 필요하므로 미리 생성한다(추가 write 없이 단일 save 유지).
         user.setId(UUID.randomUUID());
         user.setEmail(req.email());
+        user.setName(resolveName(req));
         user.setPasswordHash(passwordEncoder.encode(req.password()));
         workspace.setOwnerUserId(user.getId());
 
@@ -76,6 +84,7 @@ public class AuthService {
             workspace = workspaceRepository.saveAndFlush(workspace);
             user.setTenantId(workspace.getId());
             user = userRepository.saveAndFlush(user);
+            memberRepository.saveAndFlush(new ProjectMemberEntity(workspace.getId(), user.getId(), Role.OWNER));
         } catch (DataIntegrityViolationException e) {
             throw mapRegistrationConflict(req, e);
         }
@@ -105,12 +114,16 @@ public class AuthService {
         return new ApiException(ErrorCode.EMAIL_ALREADY_USED, "이미 사용 중인 값이 있습니다");
     }
 
+    @Transactional
     public AuthTokensResponse login(LoginRequest req) {
         UserEntity user = userRepository.findByEmail(req.email()).orElse(null);
         if (user == null || !passwordEncoder.matches(req.password(), user.getPasswordHash())) {
             OpsLog.fail("User", "로그인 실패", "email=" + req.email() + ", reason=이메일 또는 비밀번호 불일치");
             throw new ApiException(ErrorCode.INVALID_CREDENTIALS, "이메일 또는 비밀번호가 올바르지 않습니다");
         }
+
+        user.setLastLoginAt(Instant.now());
+        userRepository.saveAndFlush(user);
 
         String token = jwtService.issue(user.getId(), user.getTenantId(), user.getEmail());
         OpsLog.ok("User", "로그인 성공", "email=" + req.email());
@@ -125,20 +138,39 @@ public class AuthService {
             token, "Bearer", jwtService.ttl().toSeconds(), principal.userId(), principal.tenantId());
     }
 
+    @Transactional(readOnly = true)
     public MeResponse me(AuthenticatedUser principal) {
+        UserEntity user = userRepository.findById(principal.userId())
+            .orElseThrow(() -> new ApiException(ErrorCode.AUTH_TOKEN_INVALID,
+                    "세션이 더 이상 유효하지 않습니다. 다시 로그인해주세요"));
         // 토큰 서명은 유효하나 가리키는 워크스페이스가 없으면(예: DB 초기화 후 옛 토큰) 세션 무효로 본다.
         // 404가 아니라 401을 반환해 프론트가 자연스럽게 재로그인으로 떨어지게 한다.
         WorkspaceEntity workspace = workspaceRepository.findById(principal.tenantId())
             .orElseThrow(() -> new ApiException(ErrorCode.AUTH_TOKEN_INVALID,
                     "세션이 더 이상 유효하지 않습니다. 다시 로그인해주세요"));
+        Role role = memberRepository.findByIdWorkspaceIdAndIdUserId(workspace.getId(), principal.userId())
+                .map(ProjectMemberEntity::getRole)
+                .orElseGet(() -> principal.userId().equals(workspace.getOwnerUserId()) ? Role.OWNER : Role.MEMBER);
         return new MeResponse(
             principal.userId(),
             principal.email(),
+            user.getName(),
+            role.name(),
+            user.getCreatedAt(),
+            user.getLastLoginAt(),
             workspace.getId(),
             workspace.getName(),
             workspace.getNamespace(),
             workspace.getStatus()
         );
+    }
+
+    private String resolveName(RegisterRequest req) {
+        if (req.name() != null && !req.name().isBlank()) {
+            return req.name().trim();
+        }
+        int at = req.email().indexOf('@');
+        return at > 0 ? req.email().substring(0, at) : req.email();
     }
 
     private void triggerProvisioning(WorkspaceEntity workspace) {

@@ -4,12 +4,20 @@ import com.bifrost.ops.auth.jwt.AuthenticatedUser;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
 import com.bifrost.ops.workspace.dto.WorkspaceCreateRequest;
+import com.bifrost.ops.workspace.dto.ProjectMemberAddRequest;
+import com.bifrost.ops.workspace.dto.ProjectMemberResponse;
+import com.bifrost.ops.workspace.dto.ProjectMemberUpdateRequest;
 import com.bifrost.ops.workspace.dto.WorkspaceResponse;
+import com.bifrost.ops.workspace.dto.WorkspaceUpdateRequest;
+import com.bifrost.ops.workspace.service.ProjectMemberService;
 import com.bifrost.ops.workspace.service.WorkspaceService;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -27,9 +35,12 @@ import java.util.UUID;
 public class WorkspaceController {
 
     private final WorkspaceService workspaceService;
+    private final ProjectMemberService memberService;
 
-    public WorkspaceController(WorkspaceService workspaceService) {
+    public WorkspaceController(WorkspaceService workspaceService,
+                               ProjectMemberService memberService) {
         this.workspaceService = workspaceService;
+        this.memberService = memberService;
     }
 
     /** 로그인 사용자가 소유한 워크스페이스 목록. */
@@ -53,6 +64,47 @@ public class WorkspaceController {
                                  @AuthenticationPrincipal AuthenticatedUser principal) {
         requireAuth(principal);
         return workspaceService.get(wsId, principal);
+    }
+
+    @PatchMapping("/{wsId}")
+    public WorkspaceResponse update(@PathVariable UUID wsId,
+                                    @AuthenticationPrincipal AuthenticatedUser principal,
+                                    @Valid @RequestBody WorkspaceUpdateRequest req) {
+        requireAuth(principal);
+        return workspaceService.update(wsId, principal, req);
+    }
+
+    @GetMapping("/{wsId}/members")
+    public List<ProjectMemberResponse> listMembers(@PathVariable UUID wsId,
+                                                   @AuthenticationPrincipal AuthenticatedUser principal) {
+        requireAuth(principal);
+        return memberService.list(wsId, principal);
+    }
+
+    @PostMapping("/{wsId}/members")
+    public ResponseEntity<ProjectMemberResponse> addMember(@PathVariable UUID wsId,
+                                                           @AuthenticationPrincipal AuthenticatedUser principal,
+                                                           @Valid @RequestBody ProjectMemberAddRequest req) {
+        requireAuth(principal);
+        return ResponseEntity.status(HttpStatus.CREATED).body(memberService.add(wsId, principal, req));
+    }
+
+    @PatchMapping("/{wsId}/members/{userId}")
+    public ProjectMemberResponse updateMember(@PathVariable UUID wsId,
+                                              @PathVariable UUID userId,
+                                              @AuthenticationPrincipal AuthenticatedUser principal,
+                                              @Valid @RequestBody ProjectMemberUpdateRequest req) {
+        requireAuth(principal);
+        return memberService.update(wsId, userId, principal, req);
+    }
+
+    @DeleteMapping("/{wsId}/members/{userId}")
+    public ResponseEntity<Void> removeMember(@PathVariable UUID wsId,
+                                             @PathVariable UUID userId,
+                                             @AuthenticationPrincipal AuthenticatedUser principal) {
+        requireAuth(principal);
+        memberService.remove(wsId, userId, principal);
+        return ResponseEntity.noContent().build();
     }
 
     private static void requireAuth(AuthenticatedUser principal) {

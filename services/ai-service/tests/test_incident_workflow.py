@@ -1,0 +1,275 @@
+"""run_workflow() e2e integration tests for incident_analysis flow."""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from app.persistence.event_repository import InMemoryEventRepository
+from app.schemas.events import StreamingEventType
+from app.schemas.outputs import (
+    Classification,
+    ClassifierOutput,
+    IncidentTypeOutput,
+    PlannerOutput,
+    PolicyGuardOutput,
+    RcaOutput,
+    RemediationOutput,
+    ActionCandidateOutput,
+    RetrievalOutput,
+    RetrievalPlanStep,
+    RouteDecision,
+    RouterOutput,
+    VerificationResultOutput,
+    VerifierOutput,
+)
+from app.schemas.state import (
+    ActionStatus,
+    ActionType,
+    AgentMode,
+    EvidenceItem,
+    EvidenceType,
+    IncidentScope,
+    PolicyDecisionType,
+    RedactionStatus,
+    RiskLevel,
+    RootCauseCandidate,
+    VerificationStatus,
+)
+from app.streaming.event_bus import EventBus
+from app.supervisor.graph import Supervisor
+from app.supervisor.retry_policy import RetryPolicy
+from app.supervisor.state_store import InMemoryStateStore
+from app.workflow.runner import run_workflow
+
+
+def _router_out(
+    mode: AgentMode = AgentMode.INCIDENT_ANALYSIS,
+    remediation_requested: bool = False,
+) -> RouterOutput:
+    return RouterOutput(
+        route_decision=RouteDecision(
+            mode=mode,
+            remediation_requested=remediation_requested,
+            reason="test",
+            required_flow=[],
+        )
+    )
+
+
+def _planner_out() -> PlannerOutput:
+    return PlannerOutput(
+        retrieval_plan=[
+            RetrievalPlanStep(
+                step_id="s1",
+                tool_name="get_metrics",
+                params={},
+                purpose="test",
+                depends_on=[],
+                plan_hash="abc",
+            )
+        ]
+    )
+
+
+def _retrieval_out() -> RetrievalOutput:
+    return RetrievalOutput(
+        evidence_items=[
+            EvidenceItem(
+                evidence_id="ev1",
+                type=EvidenceType.TOOL_RESULT,
+                store_ref="evidence://run/s1",
+                summary="test metric",
+                redaction_status=RedactionStatus.REDACTED,
+                collected_by="retrieval",
+                collected_at=datetime.now(timezone.utc),
+            )
+        ]
+    )
+
+
+def _classifier_out() -> ClassifierOutput:
+    return ClassifierOutput(
+        classification=Classification(
+            incident_scope=IncidentScope.SINGLE,
+            incident_types=[IncidentTypeOutput(type="unknown", confidence=0.0)],
+            needs_incident_group_analysis=False,
+        )
+    )
+
+
+def _rca_out() -> RcaOutput:
+    return RcaOutput(
+        root_cause_candidates=[
+            RootCauseCandidate(
+                root_cause_id="rc_001",
+                confidence=0.8,
+                required_evidence_satisfied=True,
+                evidence_gap=[],
+                explanation="test root cause",
+            )
+        ]
+    )
+
+
+def _verifier_out() -> VerifierOutput:
+    return VerifierOutput(
+        verification_results=[
+            VerificationResultOutput(
+                verification_id="v1",
+                target="report",
+                status=VerificationStatus.PASS,
+                approved_for_final_response=True,
+                reason="ok",
+            )
+        ]
+    )
+
+
+def _remediation_out() -> RemediationOutput:
+    return RemediationOutput(
+        action_candidates=[
+            ActionCandidateOutput(
+                action_id="act_001",
+                action_type=ActionType.ESCALATION,
+                action_name="escalate_to_operator",
+                risk=RiskLevel.LOW,
+                reason="test",
+                expected_effect="manual review",
+            )
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_incident_analysis_run_emits_expected_event_sequence() -> None:
+    bus = EventBus()
+    published = []
+
+    async def _capture(run_id: str, evt):
+        published.append(evt)
+
+    bus.publish = _capture  # type: ignore[method-assign]
+    run_repo = AsyncMock()
+    registry = AsyncMock()
+    event_repo = InMemoryEventRepository()
+
+    with (
+        patch("app.workflow.runner.router_agent.run_router", new_callable=AsyncMock) as mock_router,
+        patch("app.workflow.runner.planner_agent.run_planner", new_callable=AsyncMock) as mock_planner,
+        patch("app.workflow.runner.retrieval_agent.run_retrieval", new_callable=AsyncMock) as mock_retrieval,
+        patch("app.workflow.runner.classifier_agent.run_classifier", new_callable=AsyncMock) as mock_classifier,
+        patch("app.workflow.runner.rca_agent.run_rca", new_callable=AsyncMock) as mock_rca,
+        patch("app.workflow.runner.verifier_agent.run_verifier", new_callable=AsyncMock) as mock_verifier,
+        patch("app.workflow.runner.report_agent.run_report", new_callable=AsyncMock) as mock_report,
+        patch("app.workflow.runner.get_supervisor") as mock_get_sup,
+        patch("app.workflow.runner.get_event_repo") as mock_get_repo,
+        patch("app.workflow.runner.get_llm_provider"),
+    ):
+        mock_get_sup.return_value = Supervisor(store=InMemoryStateStore(), policy=RetryPolicy())
+        mock_get_repo.return_value = event_repo
+        mock_router.return_value = _router_out()
+        mock_planner.return_value = _planner_out()
+        mock_retrieval.return_value = _retrieval_out()
+        mock_classifier.return_value = _classifier_out()
+        mock_rca.return_value = _rca_out()
+        mock_verifier.return_value = _verifier_out()
+        mock_report.return_value = "분석 완료"
+
+        await run_workflow(
+            run_id="run_001",
+            user_message="서버 장애가 발생했습니다",
+            project_id="proj_001",
+            bus=bus,
+            run_repo=run_repo,
+            registry=registry,
+        )
+
+    types = [e.type for e in published]
+
+    # 기본 이벤트 존재
+    assert StreamingEventType.RUN_STARTED in types
+    assert StreamingEventType.RUN_COMPLETED in types
+
+    # 7단계 AGENT_STARTED 순서
+    started_agents = [e.agent for e in published if e.type == StreamingEventType.AGENT_STARTED]
+    for stage in ["correlation", "planner", "retrieval", "classifier", "rca", "verifier", "report"]:
+        assert stage in started_agents
+    assert started_agents.index("rca") < started_agents.index("verifier")
+
+    # PARTIAL_RESULT: planner·classifier·rca 각 발행
+    pr_stages = [e.payload.get("stage") for e in published if e.type == StreamingEventType.PARTIAL_RESULT]
+    assert "planner" in pr_stages
+    assert "classifier" in pr_stages
+    assert "rca" in pr_stages
+
+    # REPORT_PREVIEW_AVAILABLE: verified=False이고 VERIFICATION_COMPLETED 전에 발행
+    rpa_events = [e for e in published if e.type == StreamingEventType.REPORT_PREVIEW_AVAILABLE]
+    assert len(rpa_events) == 1
+    assert rpa_events[0].payload["verified"] is False
+    assert rpa_events[0].payload["root_cause_id"] == "rc_001"
+
+    rpa_idx = types.index(StreamingEventType.REPORT_PREVIEW_AVAILABLE)
+    vc_idx = types.index(StreamingEventType.VERIFICATION_COMPLETED)
+    assert rpa_idx < vc_idx
+
+
+@pytest.mark.asyncio
+async def test_incident_analysis_remediation_emits_approval_required() -> None:
+    bus = EventBus()
+    published = []
+
+    async def _capture(run_id: str, evt):
+        published.append(evt)
+
+    bus.publish = _capture  # type: ignore[method-assign]
+    run_repo = AsyncMock()
+    registry = AsyncMock()
+    event_repo = InMemoryEventRepository()
+
+    with (
+        patch("app.workflow.runner.router_agent.run_router", new_callable=AsyncMock) as mock_router,
+        patch("app.workflow.runner.planner_agent.run_planner", new_callable=AsyncMock) as mock_planner,
+        patch("app.workflow.runner.retrieval_agent.run_retrieval", new_callable=AsyncMock) as mock_retrieval,
+        patch("app.workflow.runner.classifier_agent.run_classifier", new_callable=AsyncMock) as mock_classifier,
+        patch("app.workflow.runner.rca_agent.run_rca", new_callable=AsyncMock) as mock_rca,
+        patch("app.workflow.runner.remediation_agent.run_remediation", new_callable=AsyncMock) as mock_remediation,
+        patch("app.workflow.runner.verifier_agent.run_verifier", new_callable=AsyncMock) as mock_verifier,
+        patch("app.workflow.runner.report_agent.run_report", new_callable=AsyncMock) as mock_report,
+        patch("app.workflow.runner.get_supervisor") as mock_get_sup,
+        patch("app.workflow.runner.get_event_repo") as mock_get_repo,
+        patch("app.workflow.runner.get_llm_provider"),
+    ):
+        mock_get_sup.return_value = Supervisor(store=InMemoryStateStore(), policy=RetryPolicy())
+        mock_get_repo.return_value = event_repo
+        mock_router.return_value = _router_out(remediation_requested=True)
+        mock_planner.return_value = _planner_out()
+        mock_retrieval.return_value = _retrieval_out()
+        mock_classifier.return_value = _classifier_out()
+        mock_rca.return_value = _rca_out()
+        mock_remediation.return_value = _remediation_out()
+        mock_verifier.return_value = _verifier_out()
+        mock_report.return_value = "분석 완료"
+
+        await run_workflow(
+            run_id="run_002",
+            user_message="서버 장애 — 조치 요청",
+            project_id="proj_001",
+            bus=bus,
+            run_repo=run_repo,
+            registry=registry,
+        )
+
+    types = [e.type for e in published]
+
+    # remediation·policy_guard 단계 포함 9단계
+    started_agents = [e.agent for e in published if e.type == StreamingEventType.AGENT_STARTED]
+    assert "remediation" in started_agents
+    assert "policy_guard" in started_agents
+
+    # APPROVAL_REQUIRED 발행
+    approval_events = [e for e in published if e.type == StreamingEventType.APPROVAL_REQUIRED]
+    assert len(approval_events) >= 1
+    assert "action_id" in approval_events[0].payload
+    assert approval_events[0].payload["action_id"] == "act_001"

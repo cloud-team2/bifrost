@@ -122,6 +122,29 @@ function ActBtn({ icon, label, onClick, danger }: {
   )
 }
 
+/* 시계열 차트 시간 범위 선택기(Prometheus 스타일). 짧은 창일수록 백엔드 step이 촘촘해진다. */
+const RANGE_OPTIONS: { label: string; minutes: number }[] = [
+  { label: '5m',  minutes: 5 },
+  { label: '15m', minutes: 15 },
+  { label: '30m', minutes: 30 },
+  { label: '1h',  minutes: 60 },
+  { label: '3h',  minutes: 180 },
+]
+
+function RangeSelector({ value, onChange }: { value: number; onChange: (m: number) => void }) {
+  return (
+    <div className="flex items-center gap-0.5 rounded-md border border-gray-200 bg-gray-50 p-0.5">
+      {RANGE_OPTIONS.map((o) => (
+        <button key={o.minutes} onClick={() => onChange(o.minutes)}
+          className={cn('rounded px-2 py-0.5 text-[11px] font-medium transition-colors',
+            value === o.minutes ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700')}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 /* ---------------------------------------------------------------- Overview tab */
 
 function OverviewTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
@@ -133,18 +156,24 @@ function OverviewTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
   const [metrics, setMetrics] = useState<PipelineMetricsResponse | null>(null)
   const [groups, setGroups] = useState<ConsumerGroupInfo[]>([])
   const [throughput, setThroughput] = useState<ThroughputPoint[]>([])
+  const [rangeMin, setRangeMin] = useState(15)   // 시계열 차트 시간 범위(기본 15분 — 실시간 변동이 잘 보임)
 
   useEffect(() => {
     if (!wsId) return
     let cancelled = false
-    api.pipelineTopicInfo(wsId, edge.id).then((t) => { if (!cancelled) setTopicInfo(t) }).catch(() => {})
-    api.pipelineMetrics(wsId, edge.id).then((m) => { if (!cancelled) setMetrics(m) }).catch(() => {})
-    api.pipelineThroughput(wsId, edge.id, 30).then((t) => { if (!cancelled) setThroughput(t) }).catch(() => {})
-    if (isEda) {
-      api.pipelineConsumerGroups(wsId, edge.id).then((g) => { if (!cancelled) setGroups(g) }).catch(() => {})
+    // 실시간 갱신(#200): 마운트 시 1회 + 주기 폴링으로 Prometheus 대시보드처럼 그래프가 움직인다.
+    const load = () => {
+      api.pipelineTopicInfo(wsId, edge.id).then((t) => { if (!cancelled) setTopicInfo(t) }).catch(() => {})
+      api.pipelineMetrics(wsId, edge.id).then((m) => { if (!cancelled) setMetrics(m) }).catch(() => {})
+      api.pipelineThroughput(wsId, edge.id, rangeMin).then((t) => { if (!cancelled) setThroughput(t) }).catch(() => {})
+      if (isEda) {
+        api.pipelineConsumerGroups(wsId, edge.id).then((g) => { if (!cancelled) setGroups(g) }).catch(() => {})
+      }
     }
-    return () => { cancelled = true }
-  }, [wsId, edge.id, isEda])
+    load()
+    const timer = setInterval(load, 5000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [wsId, edge.id, isEda, rangeMin])
 
   const m = {
     produce_rate: metrics?.produceRate ?? 0,
@@ -166,7 +195,7 @@ function OverviewTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
   // 실데이터(Prometheus range)만 사용. 비어있으면 빈 차트(더미 위장 금지, #175).
   const throughputData = useMemo(() =>
     throughput.map((p) => ({
-      t: new Date(p.timestamp).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
+      t: p.timestamp,   // epoch ms — timeAxis가 실제 시간 간격으로 배치(Grafana식)
       produced: Math.round(p.produceRate * 100) / 100,
       consumed: Math.round(p.consumeRate * 100) / 100,
     })), [throughput])
@@ -201,10 +230,11 @@ function OverviewTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
             <div className="flex items-center gap-1.5 text-[11.5px] text-gray-500">
               <span className="h-2 w-2 rounded-full" style={{ background: CHART_COLORS.emerald }} />Consumed
             </div>
+            <RangeSelector value={rangeMin} onChange={setRangeMin} />
           </div>
         }>
         <div className="px-3 py-3">
-          <TrendChart data={throughputData} type="area" height={160}
+          <TrendChart data={throughputData} type="area" height={160} timeAxis
             series={[
               { key: 'produced', label: 'Produced', color: CHART_COLORS.brand },
               { key: 'consumed', label: 'Consumed', color: CHART_COLORS.emerald },
@@ -579,26 +609,31 @@ function SyncTab({ edge }: { edge: Edge }) {
   // 실제 source/sink 행수(#107). -1은 접속 실패/테이블 미존재(생성 중).
   const [sync, setSync]       = useState<SyncStatusResponse | null>(null)
   const [syncErr, setSyncErr] = useState(false)
-  // 추세 차트 실데이터(#126, Prometheus range): 소스지연·미동기화·이벤트분포.
+  // 추세 차트 실데이터(#126, Prometheus range): 전송 시간·이벤트분포.
+  // (consumer lag 추이는 60초 커밋 톱니파라 행 동기화와 무관해 오독되므로 노출하지 않는다, #200)
   const [delaySeries, setDelaySeries] = useState<MetricPoint[]>([])
-  const [unsyncedSeries, setUnsyncedSeries] = useState<MetricPoint[]>([])
   const [eventSeries, setEventSeries] = useState<EventDistPoint[]>([])
+  const [rangeMin, setRangeMin] = useState(15)   // 시계열 차트 시간 범위(기본 15분)
   useEffect(() => {
     if (!wsId) return
     let cancelled = false
-    setSync(null)
+    setSync(null)      // 최초 진입만 로딩 표시(폴링 갱신 때는 깜빡임 없이 값만 교체)
     setSyncErr(false)
-    api
-      .pipelineSyncStatus(wsId, edge.id)
-      .then((s) => { if (!cancelled) setSync(s) })
-      .catch(() => { if (!cancelled) setSyncErr(true) })
-    api.pipelineSourceDelay(wsId, edge.id).then((d) => { if (!cancelled) setDelaySeries(d) }).catch(() => {})
-    api.pipelineUnsynced(wsId, edge.id).then((d) => { if (!cancelled) setUnsyncedSeries(d) }).catch(() => {})
-    api.pipelineEventDist(wsId, edge.id).then((d) => { if (!cancelled) setEventSeries(d) }).catch(() => {})
-    return () => { cancelled = true }
-  }, [wsId, edge.id])
+    // 실시간 갱신(#200): 동기화율·전송시간·이벤트분포를 주기 폴링해 실시간으로 움직인다.
+    const load = () => {
+      api.pipelineSyncStatus(wsId, edge.id)
+        .then((s) => { if (!cancelled) setSync(s) })
+        .catch(() => { if (!cancelled) setSyncErr(true) })
+      api.pipelineSourceDelay(wsId, edge.id, rangeMin).then((d) => { if (!cancelled) setDelaySeries(d) }).catch(() => {})
+      api.pipelineEventDist(wsId, edge.id, rangeMin).then((d) => { if (!cancelled) setEventSeries(d) }).catch(() => {})
+    }
+    load()
+    const timer = setInterval(load, 5000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [wsId, edge.id, rangeMin])
 
   const hhmm = (ts: number) => new Date(ts).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
+  const rangeLabel = rangeMin >= 60 ? `최근 ${rangeMin / 60}시간` : `최근 ${rangeMin}분`
 
   const tableName  = edge.table ? `${edge.table.schema}.${edge.table.name}` : '—'
   const sinkReady  = !!sync && sync.sourceRows >= 0 && sync.sinkRows >= 0
@@ -611,13 +646,11 @@ function SyncTab({ edge }: { edge: Edge }) {
   const pctColor   = isHealthy ? 'text-emerald-600' : syncPct >= 99.0 ? 'text-amber-600' : 'text-rose-600'
 
   // 실데이터(Prometheus)만 사용. 비어있으면 빈 차트(더미 위장 금지, #175).
-  // 소스지연은 Debezium이 idle일 때 -1을 주므로 음수는 0으로 클램프.
+  // 소스지연은 Debezium이 전달할 데이터가 없을 때(idle) -1을 준다. 이때는 "지연 0"이 아니라
+  // 측정값이 없는 것이므로 null로 두어 그래프를 끊는다(Prometheus처럼). 0으로 클램프하면 거짓 0.
   const sourceDelay = useMemo(() =>
-    delaySeries.map((p) => ({ t: hhmm(p.timestamp), delay: Math.max(0, Math.round(p.value)) })),
+    delaySeries.map((p) => ({ t: p.timestamp, delay: p.value < 0 ? null : Math.round(p.value) })),
     [delaySeries])
-  const deltaTrend  = useMemo(() =>
-    unsyncedSeries.map((p) => ({ t: hhmm(p.timestamp), delta: Math.max(0, Math.round(p.value)) })),
-    [unsyncedSeries])
   const eventDist   = useMemo(() =>
     eventSeries.map((p) => {
       const ts = hhmm(p.timestamp)
@@ -650,7 +683,7 @@ function SyncTab({ edge }: { edge: Edge }) {
               </div>
 
               <span className={cn('text-[22px] font-bold tabular-nums leading-none', pctColor)}>
-                {syncPct.toFixed(3)}%
+                {syncPct.toFixed(1)}%
               </span>
 
               <div className="w-full overflow-hidden rounded-full bg-gray-100" style={{ height: 7 }}>
@@ -699,26 +732,18 @@ function SyncTab({ edge }: { edge: Edge }) {
       </Panel>
 
       {/* ── 차트 패널 ─────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-3">
-        <Panel title="소스 지연 추이 (ms)" right={<span className="text-[12px] text-gray-400">최근 2시간</span>}>
-          <div className="px-3 py-3">
-            <TrendChart
-              data={sourceDelay} type="area" height={130}
-              series={[{ key: 'delay', label: '지연 (ms)', color: CHART_COLORS.violet }]}
-            />
-          </div>
-        </Panel>
-        <Panel title="미동기화 Rows 추이" right={<span className="text-[12px] text-gray-400">최근 2시간</span>}>
-          <div className="px-3 py-3">
-            <TrendChart
-              data={deltaTrend} type="area" height={130}
-              series={[{ key: 'delta', label: 'Δ rows', color: CHART_COLORS.amber }]}
-            />
-          </div>
-        </Panel>
-      </div>
+      {/* consumer lag 차트는 의도적으로 제거: 60초 offset 커밋 주기의 톱니파라 행 동기화(100%)와
+          무관한데도 '미동기화'로 오독된다. 동기화 여부는 상단 행 기준(Δ)·전송 시간으로 답한다. */}
+      <Panel title="데이터 전송 시간 (ms)" right={<RangeSelector value={rangeMin} onChange={setRangeMin} />}>
+        <div className="px-3 py-3">
+          <TrendChart
+            data={sourceDelay} type="area" height={140} timeAxis
+            series={[{ key: 'delay', label: '전송 시간 (ms)', color: CHART_COLORS.violet }]}
+          />
+        </div>
+      </Panel>
 
-      <Panel title="이벤트 타입 분포" right={<span className="text-[12px] text-gray-400">최근 1시간</span>}>
+      <Panel title="이벤트 타입 분포" right={<span className="text-[12px] text-gray-400">{rangeLabel}</span>}>
         <div className="px-4 py-3">
           <ResponsiveChart width="100%" height={140}>
             <BarChart data={eventDist} barSize={10} margin={{ top: 4, right: 8, left: -28, bottom: 0 }}>
@@ -804,7 +829,7 @@ function MessagesTab({ edge }: { edge: Edge }) {
     return () => { cancelled = true }
   }, [wsId, edge.id])
   const [partition, setPartition] = useState<'all' | number>('all')
-  const [live, setLive] = useState(false)
+  const [live, setLive] = useState(true)   // 기본 live: 진입 즉시 실시간으로 메시지가 쌓이는 걸 본다(#200)
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<number | null>(null)
   const [rawView, setRawView] = useState(false)

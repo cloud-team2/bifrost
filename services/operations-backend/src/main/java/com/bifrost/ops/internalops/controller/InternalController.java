@@ -1,5 +1,7 @@
 package com.bifrost.ops.internalops.controller;
 
+import com.bifrost.ops.internalops.AgentHeaders;
+import com.bifrost.ops.internalops.dto.OpsEnvelope;
 import com.bifrost.ops.provisioning.PipelineProvisioningService;
 import com.bifrost.ops.provisioning.dto.PipelineProvisionCommand;
 import com.bifrost.ops.provisioning.dto.PipelineProvisionResult;
@@ -8,6 +10,7 @@ import com.bifrost.ops.provisioning.dto.PipelineResourceRef;
 import com.bifrost.ops.provisioning.dto.TenantProvisionRequest;
 import com.bifrost.ops.provisioning.dto.TenantProvisionResponse;
 import com.bifrost.ops.provisioning.impl.strimzi.TenantProvisioner;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -65,13 +68,16 @@ public class InternalController {
 
     /**
      * Canonical connector 상태 조회 (설계 §6, smoke script 및 Agent read tool 계약).
-     * {@code /internal/pipelines/status}와 동일한 서비스를 사용하며 경로만 표준화.
+     * 공통 OpsEnvelope로 감싸 FastAPI get_connector_status tool과 계약 일치.
      */
     @GetMapping("/ops/projects/{projectId}/kafka/connectors/{connectorName}/status")
-    public ResponseEntity<PipelineProvisionStatus> getConnectorStatus(
+    public ResponseEntity<OpsEnvelope<PipelineProvisionStatus>> getConnectorStatus(
             @PathVariable String projectId,
-            @PathVariable String connectorName) {
-        return ResponseEntity.ok(pipelineService.status(projectId, connectorName));
+            @PathVariable String connectorName,
+            HttpServletRequest request) {
+        String requestId = AgentHeaders.requestId(request);
+        PipelineProvisionStatus status = pipelineService.status(projectId, connectorName);
+        return ResponseEntity.ok(OpsEnvelope.ok(requestId, "get_connector_status", status));
     }
 
     @DeleteMapping("/pipelines")

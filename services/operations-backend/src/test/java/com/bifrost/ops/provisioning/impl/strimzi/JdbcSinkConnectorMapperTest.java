@@ -56,8 +56,9 @@ class JdbcSinkConnectorMapperTest {
         assertThat(config).containsEntry("transforms", "unwrap,route");
         assertThat(config).containsEntry("transforms.unwrap.type",
                 "io.debezium.transforms.ExtractNewRecordState");
-        assertThat(config).containsEntry("transforms.unwrap.delete.handling.mode", "none");
-        assertThat(config).containsEntry("transforms.unwrap.drop.tombstones", "true");
+        // mirror: delete 이벤트를 tombstone으로 남기고 sink가 DELETE 수행(#175)
+        assertThat(config).containsEntry("transforms.unwrap.delete.tombstone.handling.mode", "tombstone");
+        assertThat(config).containsEntry("delete.enabled", "true");
         assertThat(config).containsEntry("transforms.route.type",
                 "org.apache.kafka.connect.transforms.RegexRouter");
         assertThat(config).containsEntry("transforms.route.regex", ".*\\.([^.]+)$");
