@@ -16,6 +16,9 @@ depends_on = None
 from alembic import op
 
 
+# NOTE: app.core.config.Settings.embedding_dimensions(기본 1536)와 동일해야 한다.
+# 마이그레이션은 결정적이어야 하므로 config를 import하지 않고 고정값을 둔다.
+# 차원을 바꾸려면 이 값과 config를 함께 고치고 새 마이그레이션을 추가할 것.
 _VECTOR_DIMENSIONS = 1536
 
 
