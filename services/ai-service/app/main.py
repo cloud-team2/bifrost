@@ -48,6 +48,7 @@ def create_app() -> FastAPI:
     app.include_router(routes_events.router, prefix="/api/v1/agent", tags=["events"])
     app.include_router(routes_actions.router, prefix="/api/v1/agent", tags=["actions"])
     app.include_router(routes_approvals.router, prefix="/api/v1/agent", tags=["approvals"])
+    app.include_router(routes_approvals.decision_router, prefix="/api/v1", tags=["approvals"])
     app.include_router(routes_change.router, prefix="/api/v1/agent", tags=["change"])
     app.include_router(routes_reports.router, prefix="/api/v1", tags=["reports"])
 
