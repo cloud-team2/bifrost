@@ -1,6 +1,8 @@
 package com.bifrost.ops.migration;
 
 import org.flywaydb.core.Flyway;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.DockerClientFactory;
@@ -8,6 +10,7 @@ import org.testcontainers.DockerClientFactory;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -22,41 +25,80 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  */
 class FlywayMigrationIT {
 
-    @Test
-    void migratesCleanlyAndCreatesConnectorsTable() throws Exception {
+    private static final String POSTGRES_IMAGE = "postgres:16-alpine";
+    private static final String DOCKER_UNAVAILABLE_MESSAGE = "Docker 미가용 — Flyway 마이그레이션 IT skip";
+    private static final String MIGRATION_LOCATION = "classpath:db/migration";
+    private static final String PUBLIC_SCHEMA = "public";
+    private static final String CONNECTORS_TABLE = "connectors";
+    private static final List<String> CONNECTORS_COLUMNS = List.of(
+            "pipeline_id",
+            "cr_name",
+            "state",
+            "tasks_max");
+
+    private static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>(POSTGRES_IMAGE);
+
+    @BeforeAll
+    static void migratePostgres() {
         assumeTrue(DockerClientFactory.instance().isDockerAvailable(),
-                "Docker 미가용 — Flyway 마이그레이션 IT skip");
+                DOCKER_UNAVAILABLE_MESSAGE);
 
-        try (PostgreSQLContainer<?> pg = new PostgreSQLContainer<>("postgres:16-alpine")) {
-            pg.start();
+        POSTGRES.start();
 
-            Flyway flyway = Flyway.configure()
-                    .dataSource(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword())
-                    .locations("classpath:db/migration")
-                    .load();
+        // 중복 V3가 남아 있으면 여기서 FlywayException이 발생한다.
+        flyway().migrate();
+    }
 
-            // 중복 V3가 남아 있으면 여기서 FlywayException이 발생한다.
-            flyway.migrate();
-
-            try (Connection conn = DriverManager.getConnection(
-                    pg.getJdbcUrl(), pg.getUsername(), pg.getPassword())) {
-                assertThat(tableExists(conn, "connectors")).isTrue();
-                assertThat(columnExists(conn, "connectors", "pipeline_id")).isTrue();
-                assertThat(columnExists(conn, "connectors", "cr_name")).isTrue();
-                assertThat(columnExists(conn, "connectors", "state")).isTrue();
-                assertThat(columnExists(conn, "connectors", "tasks_max")).isTrue();
-            }
+    @AfterAll
+    static void stopPostgres() {
+        if (POSTGRES.isRunning()) {
+            POSTGRES.stop();
         }
     }
 
-    private boolean tableExists(Connection conn, String table) throws Exception {
-        try (ResultSet rs = conn.getMetaData().getTables(null, null, table, new String[]{"TABLE"})) {
+    @Test
+    void migratesCleanlyAndCreatesConnectorsSchema() throws Exception {
+        try (Connection conn = connection()) {
+            assertTableWithColumns(conn, PUBLIC_SCHEMA, CONNECTORS_TABLE, CONNECTORS_COLUMNS);
+        }
+    }
+
+    private static Flyway flyway() {
+        return Flyway.configure()
+                .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+                .locations(MIGRATION_LOCATION)
+                .defaultSchema(PUBLIC_SCHEMA)
+                .schemas(PUBLIC_SCHEMA)
+                .load();
+    }
+
+    private static Connection connection() throws Exception {
+        return DriverManager.getConnection(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+    }
+
+    private static void assertTableWithColumns(
+            Connection conn,
+            String schema,
+            String table,
+            List<String> columns
+    ) throws Exception {
+        assertThat(tableExists(conn, schema, table)).as("%s.%s table", schema, table).isTrue();
+        for (String column : columns) {
+            assertThat(columnExists(conn, schema, table, column))
+                    .as("%s.%s.%s column", schema, table, column)
+                    .isTrue();
+        }
+    }
+
+    private static boolean tableExists(Connection conn, String schema, String table) throws Exception {
+        try (ResultSet rs = conn.getMetaData().getTables(null, schema, table, new String[]{"TABLE"})) {
             return rs.next();
         }
     }
 
-    private boolean columnExists(Connection conn, String table, String column) throws Exception {
-        try (ResultSet rs = conn.getMetaData().getColumns(null, null, table, column)) {
+    private static boolean columnExists(Connection conn, String schema, String table, String column) throws Exception {
+        try (ResultSet rs = conn.getMetaData().getColumns(null, schema, table, column)) {
             return rs.next();
         }
     }
