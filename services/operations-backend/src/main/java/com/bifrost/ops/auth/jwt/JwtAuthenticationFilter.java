@@ -22,6 +22,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private static final String AUTH_HEADER = "Authorization";
     private static final String BEARER = "Bearer ";
+    private static final String AGENT_RUN_EVENTS_PREFIX = "/api/v1/agent/runs/";
+    private static final String AGENT_RUN_EVENTS_SUFFIX = "/events";
 
     private final JwtService jwtService;
 
@@ -69,12 +71,36 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         if (header != null && header.startsWith(BEARER)) {
             return header.substring(BEARER.length());
         }
-        if (request.getRequestURI().endsWith("/events/stream")) {
+        if (allowsAccessTokenQuery(request)) {
             String param = request.getParameter("access_token");
             if (param != null && !param.isBlank()) {
                 return param;
             }
         }
         return null;
+    }
+
+    private static boolean allowsAccessTokenQuery(HttpServletRequest request) {
+        String path = pathWithinApplication(request);
+        return path.endsWith("/events/stream") || isAgentRunEventsPath(path);
+    }
+
+    private static String pathWithinApplication(HttpServletRequest request) {
+        String uri = request.getRequestURI();
+        String contextPath = request.getContextPath();
+        if (contextPath != null && !contextPath.isBlank() && uri.startsWith(contextPath)) {
+            return uri.substring(contextPath.length());
+        }
+        return uri;
+    }
+
+    private static boolean isAgentRunEventsPath(String path) {
+        if (!path.startsWith(AGENT_RUN_EVENTS_PREFIX) || !path.endsWith(AGENT_RUN_EVENTS_SUFFIX)) {
+            return false;
+        }
+        String runId = path.substring(
+            AGENT_RUN_EVENTS_PREFIX.length(),
+            path.length() - AGENT_RUN_EVENTS_SUFFIX.length());
+        return !runId.isBlank() && !runId.contains("/");
     }
 }
