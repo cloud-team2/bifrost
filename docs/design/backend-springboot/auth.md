@@ -8,29 +8,32 @@
 
 이메일·비밀번호 로그인으로 콘솔에 진입(FR-001)하고, 발급한 JWT로 **플랫폼 API·Agent API·플랫폼 SSE**를 모두 인증한다. v1은 단일 콘솔이라 **권한 분기는 없고**, "어떤 사용자가 어떤 워크스페이스에 접근 가능한가"만 `project_member`로 판정한다.
 
-### 2. 로그인·토큰
+### 2. 로그인·토큰·내 계정
 
 | Method | Path | 설명 |
 | --- | --- | --- |
-| `POST` | `/api/v1/auth/login` | `{email, password}` → `{token, user}`. `password_hash`(bcrypt) 검증 |
-| `POST` | `/api/v1/auth/refresh` | refresh → 새 access token |
+| `POST` | `/api/v1/auth/register` | 사용자와 최초 워크스페이스 생성, access token 발급 |
+| `POST` | `/api/v1/auth/login` | `{email, password}` → access token. `password_hash`(bcrypt) 검증 |
+| `POST` | `/api/v1/auth/refresh` | 유효한 Bearer token 기반 새 access token |
+| `GET` | `/api/v1/auth/me` | name/email/role/joinedAt/lastLoginAt + workspace context |
 
-- access token은 **단명**(예: 15분) + refresh token(장수명, httpOnly). SSE용으로는 더 짧은 토큰을 쿼리로 전달(§5).
+- access token은 API 응답의 `accessToken`으로 발급한다. SSE용으로는 더 짧은 토큰을 쿼리로 전달할 수 있다(§5).
+- `/api/auth/**` legacy alias는 v1 계약이 아니다. 클라이언트는 `/api/v1/auth/**`만 호출한다.
 
 ### 3. JWT 구조·공유 검증
 
-- **claims**: `sub`(app_user.id)·`email`·`iat`·`exp`. 워크스페이스는 토큰에 넣지 않고 요청마다 `project_member`로 검증(워크스페이스 가입/탈퇴가 토큰 재발급 없이 반영되도록).
+- **claims**: `sub`(app_user.id)·`email`·`tid`(home workspace)·`iat`·`exp`. 경로의 워크스페이스 권한은 요청마다 `project_member`/소유권으로 검증한다(워크스페이스 가입/탈퇴가 토큰 재발급 없이 반영되도록).
 - **공유 검증**: Spring이 발급(서명), Spring·FastAPI가 **같은 키로 검증**한다 — 대칭(공유 secret) 또는 비대칭(Spring 서명 + JWKS 공개키 노출). FastAPI는 검증만(발급 안 함). 별도 로그인·세션 동기화 없음([frontend §11 확정](../frontend.md)).
 
 ### 4. 스코프·인가
 
 ```text
 요청 → JWT 검증(sub) → currentUser
-  → workspace 범위 호출이면 project_member(workspace_id, app_user_id) 존재 확인
+  → workspace 범위 호출이면 project_member(workspace_id, user_id) 또는 owner_user_id 확인
      없으면 WORKSPACE_FORBIDDEN / 403
 ```
 
-- `role_hint`(`ta`/`aa`/`developer`/`operator`)는 **화면 동선 강조용 라벨**일 뿐 인가 근거가 아니다([data-model §3.2](./data-model.md#4-data-model)).
+- `project_member.role`은 `OWNER`/`ADMIN`/`MEMBER`다. 멤버 목록 조회는 세 역할 모두 가능하고, workspace 수정·멤버 추가/수정/삭제·settings 수정은 `OWNER`/`ADMIN`만 가능하다.
 - 내부 운영 API(`/internal/ops`)는 사용자 JWT가 아니라 **FastAPI service identity**로 인증하고, 사용자 권한은 FastAPI 전달값을 믿지 않고 재확인한다([governance §8](./governance.md#7-governance-engine)).
 
 ### 5. 시드·보안
@@ -42,5 +45,5 @@
 
 ### 6. 구현 메모
 
-- 패키지 `auth`(controller·service) + `global.config` SecurityConfig(필터 체인). JWT 필터가 `/api/v1/**`에 적용되고 `/api/v1/auth/login`·`/refresh`는 예외.
+- 패키지 `auth`(controller·service) + `auth.security` SecurityConfig(필터 체인). JWT 필터가 `/api/v1/**`에 적용되고 `/api/v1/auth/register`·`/login`은 permitAll이다.
 - 테스트: 자격증명 불일치→실패, 만료 토큰→401, 비멤버 워크스페이스 접근→403, FastAPI 발급 JWT 검증 성공(공유키), SSE 쿼리 토큰 검증.

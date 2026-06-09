@@ -35,7 +35,8 @@ public enum ErrorCode {
 
     INTERNAL_ERROR(50001, HttpStatus.INTERNAL_SERVER_ERROR),
 
-    VALIDATION_FAILED(90001, HttpStatus.BAD_REQUEST);
+    VALIDATION_FAILED(90001, HttpStatus.BAD_REQUEST),
+    RESOURCE_NOT_FOUND(90006, HttpStatus.NOT_FOUND);
 
     private final int code;
     private final HttpStatus status;

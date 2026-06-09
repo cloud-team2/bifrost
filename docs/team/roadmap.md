@@ -44,7 +44,7 @@
 **목표**: 생성에서 끝나지 않고 **운영 가시성**까지. real 파이프라인 안정화 + 모니터링 탭 + 프론트 실연동.
 
 - 이성민/백강민(SB-Fabric8): real provisioner 안정화(EDA 토픽 적재, CDC sink 반영), 부분 실패 코드, Connect 재구독.
-- 권세빈/이성민(SB-코어): 모니터링·이벤트·인시던트 조회 API(FR-006~009·019~021) — metrics/consumer-groups/connectors/sync/messages/connection-guide(stub→실데이터), 이벤트 로그, 인시던트 자동 생성(부록 B.6/B.7), DB metrics·schema·pipelines 실데이터, `/internal/ops` DB·pipeline read tool(계약 #31 기반).
+- 권세빈/이성민(SB-코어): 모니터링·이벤트·인시던트 조회 API(FR-006~009·019~021) — metrics/consumer-groups/connectors/sync/messages/connection-guide(stub→실데이터), 이벤트 로그, 인시던트 자동 생성(부록 B.6/B.7), DB metrics·schema·pipelines 실데이터, `/internal/ops` DB·pipeline read tool(계약 #31 기반). 권세빈 account/workspace/members/settings API는 6/8 구현 완료, 이후 Swagger/docs와 FE 연결 정합성 유지.
 - 백강민/권세빈(FastAPI-런타임): FastAPI Agent 골격 착수 — run/SSE/State/Tool Client Registry, `/internal/ops` 클라이언트, diagnose-only 흐름 배선.
 - 김연수/정재환(FastAPI-판단): catalog(failure type·root cause·evidence matrix) 초안, 프롬프트·output schema, RCA/Verifier 골격.
 - 정재환/김연수(인프라·FE): monitoring 스택(Prometheus/Grafana, Loki/Tempo) + Kafka Connect replicas 2 + KafkaConnector/KafkaUser real + FE 실연동(SSE 상태 갱신, 파이프라인/DB 상세 탭, AlertsView). ⚠️ 노드 용량(현재 CPU 요청 ~81%) 부족 → monitoring 올리기 전 노드 확장/인스턴스 상향 선행([../design/infra.md](../design/infra.md#11-클러스터-용량-분석-및-대응안-2026-06-02)).
