@@ -215,14 +215,18 @@ public class PipelineTopicService {
         PipelineEntity p = loadPipeline(wsId, principal, id);
         String server = debeziumServer(p);
         if (server == null || !kafkaMetricsQuery.isEnabled()) return List.of();
-        long[] win = window(minutes);
-        // increase(metric[step])는 윈도우에 샘플이 2개 이상 있어야 계산된다. step이 scrape 간격(15s)과
-        // 같으면 샘플 1개라 빈 결과가 나오므로(예: 15분 범위), 이벤트 분포 step은 최소 30s(2 scrape)로 둔다.
-        long evStep = Math.max(30L, win[2]);
+        // 버킷을 wall-clock의 step 배수에 고정하지 않으면 매 폴링마다 now 기준으로 창이 밀려
+        // 같은 "HH:mm" 버킷이 다른 구간을 가리키고(과거 값이 계속 바뀜), step이 1분 미만이면 한 분에
+        // 버킷이 둘이라 같은 라벨 막대가 2개 뜬다. step을 최소 60s(1분, 분당 막대 1개)로 두고
+        // endSec을 step 경계로 내림해 과거 버킷을 고정한다. (카운터 차분엔 분당 4 scrape로 충분)
+        long evStep   = Math.max(60L, stepFor(minutes));
+        long endSec   = (System.currentTimeMillis() / 1000L / evStep) * evStep;
+        long startSec = endSec - Math.max(1, minutes) * 60L;
         try {
-            Map<Long, Double> ins = kafkaMetricsQuery.eventCountSeries(server, "create", win[0], win[1], evStep);
-            Map<Long, Double> upd = kafkaMetricsQuery.eventCountSeries(server, "update", win[0], win[1], evStep);
-            Map<Long, Double> del = kafkaMetricsQuery.eventCountSeries(server, "delete", win[0], win[1], evStep);
+            // 첫 버킷도 차분 가능하도록 한 스텝 앞(startSec-evStep)부터 조회
+            Map<Long, Double> ins = kafkaMetricsQuery.eventCountSeries(server, "create", startSec - evStep, endSec, evStep);
+            Map<Long, Double> upd = kafkaMetricsQuery.eventCountSeries(server, "update", startSec - evStep, endSec, evStep);
+            Map<Long, Double> del = kafkaMetricsQuery.eventCountSeries(server, "delete", startSec - evStep, endSec, evStep);
             java.util.TreeSet<Long> stamps = new java.util.TreeSet<>();
             stamps.addAll(ins.keySet());
             stamps.addAll(upd.keySet());

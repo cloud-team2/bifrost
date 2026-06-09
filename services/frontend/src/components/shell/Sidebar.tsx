@@ -17,7 +17,7 @@ interface NavItem {
 export function Sidebar({ onCreateProject }: { onCreateProject: () => void }) {
   const app = useApp()
   const { currentUser, view, incidents } = app
-  const openIncidents = incidents.filter((i) => i.status !== 'resolved').length
+  const openIncidents = incidents.filter((i) => i.status.toUpperCase() !== 'RESOLVED').length
 
   const nav: NavItem[] = [
     { view: 'pipelines', label: 'Pipeline', icon: 'route' },

@@ -39,7 +39,7 @@ async def create_run(req: CreateRunRequest, background_tasks: BackgroundTasks) -
     user_message = req.message or ""
 
     run_repo = get_run_repo()
-    run_repo.create(
+    await run_repo.create(
         run_id,
         req.mode or "simple_query",
         project_id=req.project_id,
@@ -64,9 +64,9 @@ async def create_run(req: CreateRunRequest, background_tasks: BackgroundTasks) -
 
 
 @router.get("/runs/{run_id}")
-def get_run(run_id: str) -> ApiResponse:
+async def get_run(run_id: str) -> ApiResponse:
     request_id = _request_id()
-    rec = get_run_repo().get(run_id)
+    rec = await get_run_repo().get(run_id)
     if rec is None:
         return ApiResponse.failure(request_id, ErrorCode.RUN_NOT_FOUND, f"run not found: {run_id}")
     return ApiResponse.success(request_id, rec.model_dump())

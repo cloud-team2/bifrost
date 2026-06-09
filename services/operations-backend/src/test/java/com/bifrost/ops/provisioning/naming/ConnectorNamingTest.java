@@ -15,17 +15,26 @@ class ConnectorNamingTest {
 
     private static final String PROJECT_KEY = "team2";
     private static final String DB_NAME = "shop";
+    // 토픽 슬러그는 datasource id 앞 8 hex를 dbName 뒤에 붙인다(#265)
+    private static final UUID DS_ID = UUID.fromString("a1b2c3d4-0000-0000-0000-000000000000");
 
     @Test
     void buildsTopicPrefix() {
-        assertThat(ConnectorNaming.topicPrefix(PROJECT_KEY, DB_NAME))
-                .isEqualTo("cdc.table.team2.shop");
+        assertThat(ConnectorNaming.topicPrefix(PROJECT_KEY, DB_NAME, DS_ID))
+                .isEqualTo("cdc.table.team2.shop-a1b2c3d4");
     }
 
     @Test
     void buildsTableCentricTopicName() {
-        assertThat(ConnectorNaming.topicName(PROJECT_KEY, DB_NAME, "public", "orders"))
-                .isEqualTo("cdc.table.team2.shop.public.orders");
+        assertThat(ConnectorNaming.topicName(PROJECT_KEY, DB_NAME, DS_ID, "public", "orders"))
+                .isEqualTo("cdc.table.team2.shop-a1b2c3d4.public.orders");
+    }
+
+    @Test
+    void differentDatasourceIdsAvoidCollisionForSameDbName() {
+        UUID other = UUID.fromString("ffffffff-0000-0000-0000-000000000000");
+        assertThat(ConnectorNaming.topicPrefix(PROJECT_KEY, DB_NAME, DS_ID))
+                .isNotEqualTo(ConnectorNaming.topicPrefix(PROJECT_KEY, DB_NAME, other));
     }
 
     @Test
@@ -51,7 +60,9 @@ class ConnectorNamingTest {
 
     @Test
     void rejectsBlankInputs() {
-        assertThatThrownBy(() -> ConnectorNaming.topicPrefix("", DB_NAME))
+        assertThatThrownBy(() -> ConnectorNaming.topicPrefix("", DB_NAME, DS_ID))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ConnectorNaming.topicPrefix(PROJECT_KEY, DB_NAME, null))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> ConnectorNaming.sourceConnectorName(null))
                 .isInstanceOf(IllegalArgumentException.class);

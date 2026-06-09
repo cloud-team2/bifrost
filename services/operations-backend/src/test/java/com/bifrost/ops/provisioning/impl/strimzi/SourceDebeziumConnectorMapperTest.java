@@ -26,7 +26,8 @@ class SourceDebeziumConnectorMapperTest {
                 "team2",
                 PipelinePattern.FAN_OUT,
                 new PipelineProvisionCommand.Endpoint(
-                        engine, "db.internal", 5432, "shop", "public", "orders", "ref-source"),
+                        engine, "db.internal", 5432, "shop",
+                        UUID.fromString("12345678-aaaa-bbbb-cccc-000000000000"), "public", "orders", "ref-source"),
                 null);
     }
 
@@ -45,7 +46,7 @@ class SourceDebeziumConnectorMapperTest {
         assertThat(cr.getSpec().getTasksMax()).isEqualTo(1);
 
         Map<String, Object> config = cr.getSpec().getConfig();
-        assertThat(config).containsEntry("topic.prefix", "cdc.table.team2.shop");
+        assertThat(config).containsEntry("topic.prefix", "cdc.table.team2.shop-12345678");
         assertThat(config).containsEntry("table.include.list", "public.orders");
         assertThat(config).containsEntry("database.hostname", "db.internal");
         assertThat(config).containsEntry("database.user", "svc");

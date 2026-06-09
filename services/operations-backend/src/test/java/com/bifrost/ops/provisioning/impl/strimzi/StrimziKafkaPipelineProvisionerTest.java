@@ -69,7 +69,7 @@ class StrimziKafkaPipelineProvisionerTest {
 
     private PipelineProvisionCommand.Endpoint pgEndpoint(String table) {
         return new PipelineProvisionCommand.Endpoint(
-                DbType.POSTGRESQL, "db-host", 5432, "shop", "public", table, "secret://src");
+                DbType.POSTGRESQL, "db-host", 5432, "shop", UUID.randomUUID(), "public", table, "secret://src");
     }
 
     private PipelineProvisionCommand edaCommand() {
@@ -79,7 +79,7 @@ class StrimziKafkaPipelineProvisionerTest {
 
     private PipelineProvisionCommand cdcCommand() {
         PipelineProvisionCommand.Endpoint sink = new PipelineProvisionCommand.Endpoint(
-                DbType.POSTGRESQL, "sink-host", 5432, "warehouse", null, null, "secret://sink");
+                DbType.POSTGRESQL, "sink-host", 5432, "warehouse", UUID.randomUUID(), null, null, "secret://sink");
         return new PipelineProvisionCommand(
                 UUID.randomUUID(), "team2", PipelinePattern.DIRECT, pgEndpoint("orders"), sink);
     }

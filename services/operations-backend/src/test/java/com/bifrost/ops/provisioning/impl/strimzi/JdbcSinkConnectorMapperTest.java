@@ -25,9 +25,11 @@ class JdbcSinkConnectorMapperTest {
                 "team2",
                 PipelinePattern.DIRECT,
                 new PipelineProvisionCommand.Endpoint(
-                        DbType.POSTGRESQL, "src.internal", 5432, "shop", "public", "orders", "ref-src"),
+                        DbType.POSTGRESQL, "src.internal", 5432, "shop",
+                        UUID.fromString("12345678-aaaa-bbbb-cccc-000000000000"), "public", "orders", "ref-src"),
                 new PipelineProvisionCommand.Endpoint(
-                        DbType.MARIADB, "sink.internal", 3306, "warehouse", null, null, "ref-sink"));
+                        DbType.MARIADB, "sink.internal", 3306, "warehouse",
+                        UUID.fromString("87654321-dddd-eeee-ffff-000000000000"), null, null, "ref-sink"));
     }
 
     @Test
@@ -42,7 +44,7 @@ class JdbcSinkConnectorMapperTest {
 
         Map<String, Object> config = cr.getSpec().getConfig();
         // source가 적재하는 토픽을 구독
-        assertThat(config).containsEntry("topics", "cdc.table.team2.shop.public.orders");
+        assertThat(config).containsEntry("topics", "cdc.table.team2.shop-12345678.public.orders");
         assertThat(config).containsEntry("connection.url", "jdbc:mariadb://sink.internal:3306/warehouse");
         assertThat(config).containsEntry("connection.user", "sinker");
         assertThat(config).containsEntry("insert.mode", "upsert");

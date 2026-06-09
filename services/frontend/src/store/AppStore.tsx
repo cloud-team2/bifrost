@@ -1,9 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import type {
   Edge,
-  IncidentReport,
-  KafkaSecret,
-  KafkaUser,
   Member,
   Node,
   Project,
@@ -15,12 +12,19 @@ import {
   CLUSTER_CONNECTORS,
   CLUSTER_TOPICS,
   CONSUMER_GROUPS,
-  INCIDENTS,
-  KAFKA_SECRETS,
-  KAFKA_USERS,
   MEMBERS,
 } from '../data/mock'
-import { api, getToken, setToken, type PipelineCreateInput } from '../lib/api'
+import {
+  api,
+  getToken,
+  setToken,
+  type AuthTokens,
+  type EventResponse,
+  type IncidentResponse,
+  type PipelineCreateInput,
+  type RegisterInput,
+  type ResourceEventResponse,
+} from '../lib/api'
 import { datasourceToNode, pipelineToEdge, workspaceToProject } from '../lib/mappers'
 
 export type View =
@@ -31,6 +35,17 @@ export type View =
   | 'alerts'
   | 'cluster'
   | 'settings'
+
+
+export type AgentRunSseStatus = 'idle' | 'starting' | 'running' | 'waiting_for_approval' | 'completed' | 'failed'
+
+export interface AgentRunSseState {
+  runId: string | null
+  status: AgentRunSseStatus
+  lastEventType: string | null
+  lastMessage: string | null
+  updatedAt: string | null
+}
 
 /** An AI recommended action handed off from an incident to the agent panel. */
 export interface AgentTask {
@@ -75,6 +90,7 @@ interface Store {
   selectedDatabaseId: string | null
   opSelectedIncidentId: string | null
   login: (email: string, password: string) => Promise<boolean>
+  register: (input: RegisterInput) => Promise<void>
   logout: () => void
   setProject: (p: Project | null) => void
   setView: (v: View) => void
@@ -87,14 +103,18 @@ interface Store {
   agentTask: AgentTask | null
   dispatchAgentTask: (task: AgentTask) => void
   consumeAgentTask: () => void
+  agentRunState: AgentRunSseState
+  setAgentRunState: (patch: Partial<AgentRunSseState>) => void
   /* data */
   projects: Project[]
   nodes: Node[]
   edges: Edge[]
-  incidents: IncidentReport[]
+  incidents: IncidentResponse[]
+  events: EventResponse[]
+  resourceEvents: ResourceEventResponse[]
+  monitoringLoading: boolean
+  monitoringError: string | null
   members: Member[]
-  kafkaUsers: KafkaUser[]
-  kafkaSecrets: KafkaSecret[]
   settings: AppSettings
   visibleProjects: Project[]
   /* actions */
@@ -108,21 +128,23 @@ interface Store {
   setPipelineStatus: (id: string, status: Edge['status']) => void
   deletePipeline: (id: string) => Promise<void>
   runIncidentAction: (incidentId: string, actionId: string) => void
+  reloadMonitoring: () => Promise<void>
   addMember: (email: string, role: Role) => void
   removeMember: (email: string) => void
   changeMemberRole: (email: string, role: Role) => void
-  addKafkaUser: (principal: string, auth: KafkaUser['auth'], secret: string) => void
-  removeKafkaUser: (id: string) => void
-  toggleKafkaUser: (id: string) => void
-  revokeSecret: (id: string) => void
-  addSecret: (name: string, type: KafkaSecret['type']) => void
   updateSettings: (patch: Partial<AppSettings>) => void
 }
 
 const Ctx = createContext<Store | null>(null)
 const today = () => new Date().toISOString().slice(0, 10)
-const clock = () =>
-  new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+
+const emptyAgentRunState = (): AgentRunSseState => ({
+  runId: null,
+  status: 'idle',
+  lastEventType: null,
+  lastMessage: null,
+  updatedAt: null,
+})
 
 function userFromEmail(email: string): User {
   return {
@@ -142,17 +164,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [opSelectedIncidentId, setOpSelectedIncidentId] = useState<string | null>(null)
   const [aiPanelOpen, setAiPanelOpen] = useState(false)
   const [agentTask, setAgentTask] = useState<AgentTask | null>(null)
+  const [agentRunState, setAgentRunStateRaw] = useState<AgentRunSseState>(() => emptyAgentRunState())
   const [authReady, setAuthReady] = useState(false)
 
   /* 실데이터: 로그인/워크스페이스 선택 시 백엔드에서 로드 */
   const [projects, setProjects] = useState<Project[]>([])
   const [nodes, setNodes] = useState<Node[]>([])
   const [edges, setEdges] = useState<Edge[]>([])
-  /* 아직 미연동(W2/W3): mock 유지 */
-  const [incidents, setIncidents] = useState<IncidentReport[]>(INCIDENTS)
+  const [incidents, setIncidents] = useState<IncidentResponse[]>([])
+  const [events, setEvents] = useState<EventResponse[]>([])
+  const [resourceEvents, setResourceEvents] = useState<ResourceEventResponse[]>([])
+  const [monitoringLoading, setMonitoringLoading] = useState(false)
+  const [monitoringError, setMonitoringError] = useState<string | null>(null)
+  /* 아직 미연동: 멤버 mock state는 Settings 멤버 탭의 실 API와 별도이며 화면에서 사용하지 않는다. */
   const [members, setMembers] = useState<Member[]>(MEMBERS)
-  const [kafkaUsers, setKafkaUsers] = useState<KafkaUser[]>(KAFKA_USERS)
-  const [kafkaSecrets, setKafkaSecrets] = useState<KafkaSecret[]>(KAFKA_SECRETS)
   const [settings, setSettings] = useState<AppSettings>({
     projectName: 'Bifrost',
     timezone: 'Asia/Seoul (GMT+9)',
@@ -218,6 +243,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
         /* malformed payload — ignore */
       }
     })
+    const onIncident = (e: Event) => {
+      try {
+        const data = JSON.parse((e as MessageEvent).data) as IncidentResponse
+        setIncidents((prev) => {
+          const exists = prev.some((incident) => incident.id === data.id)
+          const next = exists
+            ? prev.map((incident) => (incident.id === data.id ? data : incident))
+            : [data, ...prev]
+          return next.sort((a, b) => b.openedAt.localeCompare(a.openedAt))
+        })
+      } catch {
+        /* malformed payload — ignore */
+      }
+    }
+    es.addEventListener('incident_opened', onIncident)
+    es.addEventListener('incident_updated', onIncident)
     // onerror 시 EventSource가 자동 재연결한다(워크스페이스 변경/언마운트 시 close).
     return () => es.close()
   }, [currentProject?.id])
@@ -230,6 +271,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setProjects(list.map((w) => workspaceToProject(w)))
     } catch {
       setProjects([])
+    }
+  }
+
+  async function loadMonitoringData(wsId: string) {
+    setMonitoringLoading(true)
+    setMonitoringError(null)
+    try {
+      const [incidentRows, eventRows, resourceRows] = await Promise.all([
+        api.listIncidents(wsId),
+        api.listEvents(wsId),
+        api.listResourceEvents(wsId),
+      ])
+      setIncidents(incidentRows)
+      setEvents(eventRows)
+      setResourceEvents(resourceRows)
+    } catch (e) {
+      setIncidents([])
+      setEvents([])
+      setResourceEvents([])
+      setMonitoringError(e instanceof Error ? e.message : '모니터링 데이터를 불러오지 못했습니다')
+    } finally {
+      setMonitoringLoading(false)
     }
   }
 
@@ -280,6 +343,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setNodes([])
       setEdges([])
     }
+    await loadMonitoringData(wsId)
+  }
+
+  async function applyAuth(tokens: AuthTokens) {
+    setToken(tokens.accessToken)
+    const me = await api.me()
+    setCurrentUser(userFromEmail(me.email))
+    setCurrentProject(null)
+    await loadWorkspaces()
+    seedNav({
+      projectId: null,
+      view: 'pipelines',
+      selectedPipelineId: null,
+      selectedDatabaseId: null,
+      opSelectedIncidentId: null,
+    })
   }
 
   const value: Store = {
@@ -294,22 +373,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     async login(email, password) {
       try {
         const tokens = await api.login(email, password)
-        setToken(tokens.accessToken)
-        const me = await api.me()
-        setCurrentUser(userFromEmail(me.email))
-        setCurrentProject(null)
-        await loadWorkspaces()
-        seedNav({
-          projectId: null,
-          view: 'pipelines',
-          selectedPipelineId: null,
-          selectedDatabaseId: null,
-          opSelectedIncidentId: null,
-        })
+        await applyAuth(tokens)
         return true
       } catch {
         setToken(null)
         return false
+      }
+    },
+    async register(input) {
+      try {
+        const tokens = await api.register(input)
+        await applyAuth(tokens)
+      } catch (e) {
+        setToken(null)
+        throw e
       }
     },
     logout() {
@@ -319,9 +396,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setProjects([])
       setNodes([])
       setEdges([])
+      setIncidents([])
+      setEvents([])
+      setResourceEvents([])
+      setMonitoringError(null)
       setSelectedPipelineId(null)
       setSelectedDatabaseId(null)
       setAiPanelOpen(false)
+      setAgentRunStateRaw(emptyAgentRunState())
     },
     setProject(p) {
       setCurrentProject(p)
@@ -330,7 +412,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setSelectedPipelineId(null)
         setSelectedDatabaseId(null)
         setOpSelectedIncidentId(null)
+        setAgentRunStateRaw(emptyAgentRunState())
         loadProjectData(p.id)
+      } else {
+        setIncidents([])
+        setEvents([])
+        setResourceEvents([])
+        setMonitoringError(null)
       }
       pushNav(
         snapshot({
@@ -374,14 +462,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     consumeAgentTask() {
       setAgentTask(null)
     },
+    agentRunState,
+    setAgentRunState(patch) {
+      setAgentRunStateRaw((prev) => ({ ...prev, ...patch, updatedAt: new Date().toISOString() }))
+    },
 
     projects,
     nodes,
     edges,
     incidents,
+    events,
+    resourceEvents,
+    monitoringLoading,
+    monitoringError,
     members,
-    kafkaUsers,
-    kafkaSecrets,
     settings,
     visibleProjects: projects,
 
@@ -397,6 +491,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setOpSelectedIncidentId(null)
         setNodes([])
         setEdges([])
+        setIncidents([])
+        setEvents([])
+        setResourceEvents([])
+        setMonitoringError(null)
+        setAgentRunStateRaw(emptyAgentRunState())
         pushNav(
           snapshot({
             projectId: p.id,
@@ -518,23 +617,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setCurrentProject((w) => (w ? adjust(w) : w))
     },
 
-    runIncidentAction(incidentId, actionId) {
-      setIncidents((p) =>
-        p.map((inc) => {
-          if (inc.id !== incidentId) return inc
-          const action = inc.aiActions.find((a) => a.id === actionId)
-          if (!action) return inc
-          return {
-            ...inc,
-            status: 'investigating',
-            updatedAt: `${today()} ${clock()}`,
-            actionLog: [
-              ...inc.actionLog,
-              { time: clock(), actor: currentUser?.name ?? 'Operator', action: `Ran: ${action.label}` },
-            ],
-          }
-        }),
-      )
+    runIncidentAction() {
+      // IncidentResponse에는 실행 이력/상태 변경 API가 없다. 실제 백엔드 업데이트 전까지
+      // 클라이언트가 mock-only 필드를 합성하지 않는다.
+    },
+
+    async reloadMonitoring() {
+      if (currentProject) await loadMonitoringData(currentProject.id)
     },
 
     addMember(email, role) {
@@ -548,49 +637,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     changeMemberRole(email, role) {
       setMembers((p) => p.map((m) => (m.email === email ? { ...m, role } : m)))
-    },
-
-    addKafkaUser(principal, auth, secret) {
-      const p = principal.startsWith('User:') ? principal : `User:${principal}`
-      setKafkaUsers((prev) => [
-        ...prev,
-        {
-          id: `ku-${Date.now()}`,
-          principal: p,
-          auth,
-          secret,
-          acl: { read: true, write: false, admin: false },
-          status: 'active',
-          lastActive: 'just now',
-        },
-      ])
-    },
-    removeKafkaUser(id) {
-      setKafkaUsers((p) => p.filter((u) => u.id !== id))
-    },
-    toggleKafkaUser(id) {
-      setKafkaUsers((p) =>
-        p.map((u) =>
-          u.id === id ? { ...u, status: u.status === 'active' ? 'inactive' : 'active' } : u,
-        ),
-      )
-    },
-    revokeSecret(id) {
-      setKafkaSecrets((p) => p.map((s) => (s.id === id ? { ...s, status: 'revoked' } : s)))
-    },
-    addSecret(name, type) {
-      setKafkaSecrets((p) => [
-        ...p,
-        {
-          id: `ks-${Date.now()}`,
-          name,
-          type,
-          cluster: 'primary',
-          connections: 0,
-          lastRotated: today(),
-          status: 'active',
-        },
-      ])
     },
     updateSettings(patch) {
       setSettings((s) => ({ ...s, ...patch }))

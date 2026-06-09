@@ -5,7 +5,8 @@ import { Modal } from '../components/Modal'
 import { useToast } from '../components/Toast'
 import { useApp } from '../store/AppStore'
 import { cn } from '../lib/format'
-import type { Edge, IncidentReport, Project } from '../data/types'
+import type { Edge, Project } from '../data/types'
+import type { IncidentResponse } from '../lib/api'
 
 /* ---------------------------------------------------- Project List */
 
@@ -95,7 +96,7 @@ function ProjectCard({
 }: {
   project: Project
   edges: Edge[]
-  incidents: IncidentReport[]
+  incidents: IncidentResponse[]
   onClick: () => void
 }) {
   const pEdges = edges.filter((e) => project.pipelineIds.includes(e.id))
@@ -105,9 +106,9 @@ function ProjectCard({
   const pipelineCount = project.pipelineCount
   const activeCount = project.activeCount
   const openInc = incidents.filter(
-    (i) => i.status !== 'resolved' && i.affectedPipelines.some((pid) => project.pipelineIds.includes(pid)),
+    (i) => i.tenantId === project.id && i.status.toUpperCase() !== 'RESOLVED',
   )
-  const critInc = openInc.filter((i) => i.severity === 'critical')
+  const critInc = openInc.filter((i) => ['CRITICAL', 'ERROR'].includes(i.severity.toUpperCase()))
   const health =
     pEdges.some((e) => e.status === 'error') || critInc.length > 0
       ? 'error'

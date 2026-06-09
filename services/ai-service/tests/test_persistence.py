@@ -10,7 +10,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.persistence.change_ticket_repository import (
+    InMemoryChangeTicketRepository,
+    PostgresChangeTicketRepository,
+    STATUS_CHANGE_WINDOW_REQUIRED,
+    STATUS_VERIFIED,
+)
 from app.persistence.event_repository import PostgresEventRepository
+from app.persistence.report_repository import InMemoryReportRepository, PostgresReportRepository, ReportSnapshot
 from app.persistence.run_repository import PostgresRunRepository, RunRecord
 from app.persistence.state_repository import PostgresStateRepository, StatePatchRecord
 from app.schemas.events import StreamingEvent, StreamingEventType
@@ -198,3 +205,144 @@ async def test_event_repository_get_after_none():
     assert len(events) == 2
     assert events[0].event_id == "evt-001"
     assert events[1].type == StreamingEventType.RUN_COMPLETED
+
+
+# ---------------------------------------------------------------------------
+# test 6: ReportRepository create → get_latest
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_report_repository_create_and_get_latest():
+    row_data = {
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "run_id": "run-006",
+        "incident_id": None,
+        "root_cause_id": "rc_001",
+        "confidence": 0.8,
+        "verified": True,
+        "body": {"answer": "done"},
+        "created_at": _now(),
+    }
+    pool, conn = _make_pool(fetchrow_return=row_data)
+    repo = PostgresReportRepository(pool=pool)
+
+    created = await repo.create(
+        "run-006",
+        {"answer": "done"},
+        root_cause_id="rc_001",
+        confidence=0.8,
+        verified=True,
+    )
+    latest = await repo.get_latest("run-006")
+
+    assert isinstance(created, ReportSnapshot)
+    assert latest is not None
+    assert latest.body["answer"] == "done"
+    assert latest.verified is True
+
+
+@pytest.mark.asyncio
+async def test_in_memory_report_repository_reloads_final_report():
+    repo = InMemoryReportRepository()
+
+    await repo.create("run-007", {"answer": "final"}, verified=True)
+    snapshot = await repo.get_latest("run-007")
+
+    assert snapshot is not None
+    assert snapshot.body["answer"] == "final"
+
+
+@pytest.mark.asyncio
+async def test_change_ticket_repository_upsert_list_and_status_update():
+    repo = InMemoryChangeTicketRepository()
+
+    created = await repo.upsert(
+        "run-change-001",
+        "act-change-001",
+        "CHG-001",
+        window="2026-06-09T10:00Z/2026-06-09T11:00Z",
+        rollback_plan="rollback connector config",
+    )
+    updated = await repo.update_status("run-change-001", "act-change-001", STATUS_VERIFIED)
+    listed = await repo.list_by_run("run-change-001")
+
+    assert updated is not None
+    assert created.id == updated.id
+    assert updated.status == STATUS_VERIFIED
+    assert [ticket.action_id for ticket in listed] == ["act-change-001"]
+
+
+@pytest.mark.asyncio
+async def test_change_ticket_repository_rejects_unknown_status():
+    repo = InMemoryChangeTicketRepository()
+    await repo.upsert("run-change-status", "act-change-status", "CHG-STATUS")
+
+    with pytest.raises(ValueError, match="unknown change ticket status"):
+        await repo.update_status("run-change-status", "act-change-status", "unknown")
+
+
+@pytest.mark.asyncio
+async def test_postgres_change_ticket_repository_upsert_uses_conflict_key():
+    row_data = {
+        "id": "550e8400-e29b-41d4-a716-446655440001",
+        "run_id": "run-change-002",
+        "action_id": "act-change-002",
+        "ticket_id": "CHG-002",
+        "window": "maintenance-window",
+        "rollback_plan": "rollback",
+        "status": "submitted",
+        "created_at": _now(),
+        "updated_at": _now(),
+    }
+    pool, conn = _make_pool(fetchrow_return=row_data)
+    repo = PostgresChangeTicketRepository(pool=pool)
+
+    ticket = await repo.upsert(
+        "run-change-002",
+        "act-change-002",
+        "CHG-002",
+        window="maintenance-window",
+        rollback_plan="rollback",
+    )
+
+    assert ticket.ticket_id == "CHG-002"
+    assert ticket.action_id == "act-change-002"
+    sql = conn.fetchrow.call_args.args[0]
+    assert "ON CONFLICT (run_id, action_id)" in sql
+
+
+@pytest.mark.asyncio
+async def test_postgres_change_ticket_repository_read_and_update_paths():
+    base_row = {
+        "id": "550e8400-e29b-41d4-a716-446655440002",
+        "run_id": "run-change-003",
+        "action_id": "act-change-003",
+        "ticket_id": "CHG-003",
+        "window": "maintenance-window",
+        "rollback_plan": "rollback",
+        "status": "submitted",
+        "created_at": _now(),
+        "updated_at": _now(),
+    }
+    updated_row = {**base_row, "status": STATUS_CHANGE_WINDOW_REQUIRED}
+    pool, conn = _make_pool(fetchrow_return=base_row, fetch_return=[base_row])
+    repo = PostgresChangeTicketRepository(pool=pool)
+
+    fetched = await repo.get_by_action("run-change-003", "act-change-003")
+    listed = await repo.list_by_run("run-change-003")
+    conn.fetchrow.return_value = updated_row
+    updated = await repo.update_status(
+        "run-change-003",
+        "act-change-003",
+        STATUS_CHANGE_WINDOW_REQUIRED,
+    )
+
+    assert fetched is not None
+    assert fetched.ticket_id == "CHG-003"
+    assert [ticket.action_id for ticket in listed] == ["act-change-003"]
+    assert updated is not None
+    assert updated.status == STATUS_CHANGE_WINDOW_REQUIRED
+    assert conn.fetchrow.call_args.args[1:] == (
+        "run-change-003",
+        "act-change-003",
+        STATUS_CHANGE_WINDOW_REQUIRED,
+    )

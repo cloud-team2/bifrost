@@ -2,6 +2,8 @@ package com.bifrost.ops.provisioning.persistence.repository;
 
 import com.bifrost.ops.provisioning.persistence.entity.ConnectorEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Optional;
@@ -18,4 +20,23 @@ public interface ConnectorRepository extends JpaRepository<ConnectorEntity, UUID
     Optional<ConnectorEntity> findByCrName(String crName);
 
     List<ConnectorEntity> findByPipelineId(UUID pipelineId);
+
+    @Query(value = """
+            SELECT count(*)
+            FROM connectors c
+            JOIN pipelines p ON p.id = c.pipeline_id
+            WHERE p.tenant_id = :tenantId
+            """, nativeQuery = true)
+    long countByTenantId(@Param("tenantId") UUID tenantId);
+
+    @Query(value = """
+            SELECT count(*)
+            FROM connectors c
+            JOIN pipelines p ON p.id = c.pipeline_id
+            WHERE p.tenant_id = :tenantId
+              AND c.state IN (:failedState, :partiallyFailedState)
+            """, nativeQuery = true)
+    long countByTenantIdAndStateIn(@Param("tenantId") UUID tenantId,
+                                   @Param("failedState") String failedState,
+                                   @Param("partiallyFailedState") String partiallyFailedState);
 }

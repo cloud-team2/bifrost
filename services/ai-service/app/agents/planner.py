@@ -25,6 +25,10 @@ _KEYWORD_TOOL_MAP: list[tuple[set[str], str, dict]] = [
     ({"lag", "컨슈머", "consumer", "지연"}, "get_consumer_lag", {"consumer_group": "default-group"}),
     # incident/장애 → log search for error evidence
     ({"인시던트", "incident", "장애", "오류", "에러"}, "search_logs", _INCIDENT_LOG_PARAMS),
+    # tool-catalog §8.1 Observability — get_traces (connector task trace)
+    ({"trace", "span", "latency", "스택", "스택트레이스"}, "get_traces", {"connector_name": "default-connector"}),
+    # tool-catalog §8.1 Observability — get_alerts
+    ({"alert", "알람", "알럿", "경보"}, "get_alerts", {}),
 ]
 _DEFAULT_TOOL = ("search_logs", _LOG_PARAMS)
 

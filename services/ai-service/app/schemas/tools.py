@@ -247,6 +247,49 @@ class MetricsData(StrictModel):
     data_points: list[MetricsDataPoint] = Field(default_factory=list)
 
 
+class GetTracesParams(StrictModel):
+    connector_name: str
+    limit: int | None = None
+
+
+class TraceEntry(StrictModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    task_id: int | None = Field(default=None, alias="taskId")
+    state: str | None = None
+    trace: str
+
+
+class TracesData(StrictModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    connector_name: str | None = Field(default=None, alias="connector")
+    traces: list[TraceEntry] = Field(default_factory=list)
+    summary: str | None = None
+    note: str | None = None
+
+
+class GetAlertsParams(StrictModel):
+    status: str | None = None
+    severity: str | None = None
+    limit: int | None = None
+
+
+class AlertSummaryData(StrictModel):
+    alert_id: str
+    severity: str
+    status: str
+    summary: str
+    labels: dict[str, str] = Field(default_factory=dict)
+    occurred_at: datetime | None = None
+    incident_id: str | None = None
+
+
+class AlertsData(StrictModel):
+    alerts: list[AlertSummaryData] = Field(default_factory=list)
+    summary: str | None = None
+
+
 # ── catalog §8.2 Pipeline / Change ───────────────────────────────────────────
 
 class DeploymentChangeSummary(StrictModel):

@@ -25,6 +25,17 @@ def health() -> ApiResponse:
 @router.get("/ready")
 async def ready() -> ApiResponse:
     """의존성(LLM, Spring Boot, State/Evidence Store) 준비 상태."""
+    from app.core.db import _pool
+
+    db_status = "unknown"
+    if _pool is not None:
+        try:
+            async with _pool.acquire() as conn:
+                await conn.execute("SELECT 1")
+            db_status = "ok"
+        except Exception:
+            db_status = "unavailable"
+
     try:
         spring_ok = await get_tool_registry().health()
         spring_status = "ok" if spring_ok else "unavailable"
@@ -38,7 +49,7 @@ async def ready() -> ApiResponse:
             "dependencies": {
                 "spring_operations": spring_status,
                 "llm_provider": "unknown",
-                "agent_run_store": "unknown",
+                "agent_run_store": db_status,
                 "vector_store": "unknown",
                 "evidence_store": "unknown",
             },
