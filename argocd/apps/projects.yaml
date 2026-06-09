@@ -58,5 +58,6 @@ spec:
   sourceRepos: ['*']
   destinations:
     - { server: https://kubernetes.default.svc, namespace: monitoring }
+    - { server: https://kubernetes.default.svc, namespace: kube-system }   # kps coreDNS/kubelet 스크랩 Service
   clusterResourceWhitelist:
     - { group: '*', kind: '*' }   # kube-prometheus-stack CRD·ClusterRole 다수
