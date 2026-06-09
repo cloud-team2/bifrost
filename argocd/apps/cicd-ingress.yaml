@@ -4,7 +4,7 @@ metadata:
   name: cicd-ingress
   namespace: argocd
 spec:
-  project: platform
+  project: default
   source:
     repoURL: https://github.com/cloud-team2/bifrost.git
     targetRevision: gitops

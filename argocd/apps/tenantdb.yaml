@@ -5,7 +5,7 @@ metadata:
   namespace: argocd
   finalizers: [resources-finalizer.argocd.argoproj.io]
 spec:
-  project: data
+  project: default
   # 고객사(tenant) DB — Postgres+MariaDB. databases 앱에서 분리 (독립 수명주기).
   source:
     repoURL: https://github.com/cloud-team2/bifrost.git

@@ -5,7 +5,7 @@ metadata:
   namespace: argocd
   finalizers: [resources-finalizer.argocd.argoproj.io]
 spec:
-  project: observability
+  project: default
   # kube-prometheus-stack(메트릭/Grafana/Alertmanager) + loki(로그) + tempo(trace)를 단일 앱으로 통합 (#124, ArgoCD 앱 정리)
   sources:
     - repoURL: https://prometheus-community.github.io/helm-charts
