@@ -5,9 +5,9 @@ import { MetricCard, Panel, StatusBadge } from '../../components/blocks'
 import { TrendChart, CHART_COLORS, ResponsiveChart } from '../../components/Charts'
 import { TechIcon, nodeKind } from '../../components/TechIcon'
 import { useToast } from '../../components/Toast'
-import { useApp, CLUSTER } from '../../store/AppStore'
+import { useApp } from '../../store/AppStore'
 import { pipelineLabel } from '../../data/helpers'
-import { BOOTSTRAP_SERVER, LAG_THRESHOLD } from '../../data/mock'
+import { BOOTSTRAP_SERVER } from '../../data/mock'
 import type { Edge, Node } from '../../data/types'
 import {
   api,
@@ -278,6 +278,8 @@ function ConsumersTab({ edge }: { edge: Edge }) {
   const app = useApp()
   const wsId = app.currentProject?.id
   const [groups, setGroups] = useState<ConsumerGroupInfo[]>([])
+  const [lagWarningThreshold, setLagWarningThreshold] = useState<number | null>(null)
+  const [lagThresholdError, setLagThresholdError] = useState(false)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -291,10 +293,38 @@ function ConsumersTab({ edge }: { edge: Edge }) {
     return () => { cancelled = true }
   }, [wsId, edge.id])
 
+  useEffect(() => {
+    if (!wsId) {
+      setLagWarningThreshold(null)
+      setLagThresholdError(false)
+      return
+    }
+    let cancelled = false
+    setLagWarningThreshold(null)
+    setLagThresholdError(false)
+    api
+      .getThresholdSettings(wsId)
+      .then((settings) => { if (!cancelled) setLagWarningThreshold(settings.warning) })
+      .catch(() => {
+        if (!cancelled) {
+          setLagWarningThreshold(null)
+          setLagThresholdError(true)
+        }
+      })
+    return () => { cancelled = true }
+  }, [wsId])
+
   const [openGroup, setOpenGroup] = useState<string | null>(null)
 
   const lagChartData = groups.map((g) => ({ name: g.name, lag: g.totalLag }))
   const axis = { fontSize: 10, fill: '#94a3b8' }
+  const lagTone = (lag: number): 'unknown' | 'warning' | 'ok' => {
+    if (lagWarningThreshold == null) return 'unknown'
+    return lag >= lagWarningThreshold ? 'warning' : 'ok'
+  }
+  const thresholdLabel = lagWarningThreshold == null
+    ? lagThresholdError ? '조회 실패' : '불러오는 중…'
+    : formatNum(lagWarningThreshold)
 
   return (
     <div className="space-y-4">
@@ -303,7 +333,9 @@ function ConsumersTab({ edge }: { edge: Edge }) {
       <Panel title="Consumer Group Lag"
         right={
           <span className="text-[12px] text-gray-400">
-            임계값 <span className="font-semibold text-amber-600">{formatNum(LAG_THRESHOLD)}</span>
+            임계값 <span className={cn('font-semibold', lagThresholdError ? 'text-rose-600' : 'text-amber-600')}>
+              {thresholdLabel}
+            </span>
           </span>
         }>
         {loading ? (
@@ -332,7 +364,13 @@ function ConsumersTab({ edge }: { edge: Edge }) {
                     {lagChartData.map((entry) => (
                       <Cell
                         key={entry.name}
-                        fill={entry.lag >= LAG_THRESHOLD ? CHART_COLORS.amber : CHART_COLORS.emerald}
+                        fill={
+                          lagTone(entry.lag) === 'unknown'
+                            ? CHART_COLORS.slate
+                            : lagTone(entry.lag) === 'warning'
+                              ? CHART_COLORS.amber
+                              : CHART_COLORS.emerald
+                        }
                         opacity={openGroup && openGroup !== entry.name ? 0.35 : 1}
                         cursor="pointer"
                       />
@@ -372,7 +410,9 @@ function ConsumersTab({ edge }: { edge: Edge }) {
                     <td className="px-4 py-2.5"><StatusBadge status={g.state} /></td>
                     <td className="px-4 py-2.5 text-gray-600">{g.members}</td>
                     <td className={cn('px-4 py-2.5 text-right font-mono font-semibold tabular-nums',
-                      g.totalLag >= LAG_THRESHOLD ? 'text-amber-600' : 'text-gray-700')}>
+                      lagTone(g.totalLag) === 'unknown'
+                        ? 'text-slate-500'
+                        : lagTone(g.totalLag) === 'warning' ? 'text-amber-600' : 'text-gray-700')}>
                       {formatNum(g.totalLag)}
                     </td>
                     <td className="px-4 py-2.5 text-gray-500">
@@ -418,7 +458,11 @@ function ConsumersTab({ edge }: { edge: Edge }) {
                                     <td className="py-1.5 pr-4 text-right font-mono tabular-nums text-gray-500">{formatNum(o.committed)}</td>
                                     <td className="py-1.5 pr-4 text-right font-mono tabular-nums text-gray-500">{formatNum(o.endOffset)}</td>
                                     <td className={cn('py-1.5 text-right font-mono font-semibold tabular-nums',
-                                      lag >= LAG_THRESHOLD ? 'text-amber-600' : lag > 0 ? 'text-gray-700' : 'text-emerald-500')}>
+                                      lagTone(lag) === 'unknown'
+                                        ? 'text-slate-500'
+                                        : lagTone(lag) === 'warning'
+                                          ? 'text-amber-600'
+                                          : lag > 0 ? 'text-gray-700' : 'text-emerald-500')}>
                                       {formatNum(lag)}
                                     </td>
                                   </tr>

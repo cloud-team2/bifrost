@@ -1,19 +1,10 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import type {
   Edge,
-  Member,
   Node,
   Project,
-  Role,
   User,
 } from '../data/types'
-import {
-  BROKERS,
-  CLUSTER_CONNECTORS,
-  CLUSTER_TOPICS,
-  CONSUMER_GROUPS,
-  MEMBERS,
-} from '../data/mock'
 import {
   api,
   getToken,
@@ -67,19 +58,6 @@ interface NavSnapshot {
   opSelectedIncidentId: string | null
 }
 
-export interface AppSettings {
-  projectName: string
-  timezone: string
-  slackWebhook: string
-  slackEnabled: boolean
-  emailRecipients: string[]
-  severity: 'all' | 'warning' | 'error'
-  aiAutonomous: boolean
-  aiApprovalWait: string
-  aiProdLock: boolean
-  lagThresholds: { warning: number; critical: number }
-}
-
 interface Store {
   /* auth + nav */
   authReady: boolean
@@ -114,8 +92,6 @@ interface Store {
   resourceEvents: ResourceEventResponse[]
   monitoringLoading: boolean
   monitoringError: string | null
-  members: Member[]
-  settings: AppSettings
   visibleProjects: Project[]
   /* actions */
   createProject: (name: string) => Promise<Project | null>
@@ -129,14 +105,9 @@ interface Store {
   deletePipeline: (id: string) => Promise<void>
   runIncidentAction: (incidentId: string, actionId: string) => void
   reloadMonitoring: () => Promise<void>
-  addMember: (email: string, role: Role) => void
-  removeMember: (email: string) => void
-  changeMemberRole: (email: string, role: Role) => void
-  updateSettings: (patch: Partial<AppSettings>) => void
 }
 
 const Ctx = createContext<Store | null>(null)
-const today = () => new Date().toISOString().slice(0, 10)
 
 const emptyAgentRunState = (): AgentRunSseState => ({
   runId: null,
@@ -158,6 +129,8 @@ function userFromEmail(email: string): User {
 export function AppProvider({ children }: { children: ReactNode }) {
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [currentProject, setCurrentProject] = useState<Project | null>(null)
+  const currentProjectIdRef = useRef<string | null>(null)
+  const monitoringLoadIdRef = useRef(0)
   const [view, setViewRaw] = useState<View>('pipelines')
   const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(null)
   const [selectedDatabaseId, setSelectedDatabaseId] = useState<string | null>(null)
@@ -176,20 +149,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [resourceEvents, setResourceEvents] = useState<ResourceEventResponse[]>([])
   const [monitoringLoading, setMonitoringLoading] = useState(false)
   const [monitoringError, setMonitoringError] = useState<string | null>(null)
-  /* 아직 미연동: 멤버 mock state는 Settings 멤버 탭의 실 API와 별도이며 화면에서 사용하지 않는다. */
-  const [members, setMembers] = useState<Member[]>(MEMBERS)
-  const [settings, setSettings] = useState<AppSettings>({
-    projectName: 'Bifrost',
-    timezone: 'Asia/Seoul (GMT+9)',
-    slackWebhook: '',
-    slackEnabled: false,
-    emailRecipients: ['oncall@bifrost.io'],
-    severity: 'warning',
-    aiAutonomous: false,
-    aiApprovalWait: '10분',
-    aiProdLock: true,
-    lagThresholds: { warning: 5000, critical: 20000 },
-  })
+
+  const selectProject = (project: Project | null) => {
+    currentProjectIdRef.current = project?.id ?? null
+    setCurrentProject(project)
+  }
+
+  const clearMonitoringData = () => {
+    monitoringLoadIdRef.current += 1
+    setIncidents([])
+    setEvents([])
+    setResourceEvents([])
+    setMonitoringLoading(false)
+    setMonitoringError(null)
+  }
+
+  useEffect(() => {
+    currentProjectIdRef.current = currentProject?.id ?? null
+  }, [currentProject?.id])
 
   /** A snapshot of the current navigable position, with optional overrides. */
   const snapshot = (o: Partial<NavSnapshot> = {}): NavSnapshot => ({
@@ -204,7 +181,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   /** Restore a saved position when the browser back/forward buttons fire. */
   const applySnapshot = (s: NavSnapshot) => {
     const proj = s.projectId ? projects.find((p) => p.id === s.projectId) ?? null : null
-    setCurrentProject(proj)
+    const nextProjectId = proj?.id ?? null
+    const projectChanged = currentProjectIdRef.current !== nextProjectId
+    selectProject(proj)
+    if (projectChanged) clearMonitoringData()
     if (proj) loadProjectData(proj.id)
     setViewRaw(s.view)
     setSelectedPipelineId(s.selectedPipelineId)
@@ -275,24 +255,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }
 
   async function loadMonitoringData(wsId: string) {
+    const targetWsId = wsId
+    if (currentProjectIdRef.current !== targetWsId) return
+    const loadId = ++monitoringLoadIdRef.current
+    const isActiveLoad = () =>
+      monitoringLoadIdRef.current === loadId && currentProjectIdRef.current === targetWsId
+
     setMonitoringLoading(true)
     setMonitoringError(null)
     try {
       const [incidentRows, eventRows, resourceRows] = await Promise.all([
-        api.listIncidents(wsId),
-        api.listEvents(wsId),
-        api.listResourceEvents(wsId),
+        api.listIncidents(targetWsId),
+        api.listEvents(targetWsId),
+        api.listResourceEvents(targetWsId),
       ])
+      if (!isActiveLoad()) return
       setIncidents(incidentRows)
       setEvents(eventRows)
       setResourceEvents(resourceRows)
     } catch (e) {
+      if (!isActiveLoad()) return
       setIncidents([])
       setEvents([])
       setResourceEvents([])
       setMonitoringError(e instanceof Error ? e.message : '모니터링 데이터를 불러오지 못했습니다')
     } finally {
-      setMonitoringLoading(false)
+      if (isActiveLoad()) setMonitoringLoading(false)
     }
   }
 
@@ -350,7 +338,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setToken(tokens.accessToken)
     const me = await api.me()
     setCurrentUser(userFromEmail(me.email))
-    setCurrentProject(null)
+    selectProject(null)
+    clearMonitoringData()
     await loadWorkspaces()
     seedNav({
       projectId: null,
@@ -392,21 +381,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     logout() {
       setToken(null)
       setCurrentUser(null)
-      setCurrentProject(null)
+      selectProject(null)
       setProjects([])
       setNodes([])
       setEdges([])
-      setIncidents([])
-      setEvents([])
-      setResourceEvents([])
-      setMonitoringError(null)
+      clearMonitoringData()
       setSelectedPipelineId(null)
       setSelectedDatabaseId(null)
       setAiPanelOpen(false)
       setAgentRunStateRaw(emptyAgentRunState())
     },
     setProject(p) {
-      setCurrentProject(p)
+      const nextProjectId = p?.id ?? null
+      const projectChanged = currentProjectIdRef.current !== nextProjectId
+      selectProject(p)
+      if (projectChanged) clearMonitoringData()
       if (p) {
         setViewRaw('pipelines')
         setSelectedPipelineId(null)
@@ -414,11 +403,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setOpSelectedIncidentId(null)
         setAgentRunStateRaw(emptyAgentRunState())
         loadProjectData(p.id)
-      } else {
-        setIncidents([])
-        setEvents([])
-        setResourceEvents([])
-        setMonitoringError(null)
       }
       pushNav(
         snapshot({
@@ -475,8 +459,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     resourceEvents,
     monitoringLoading,
     monitoringError,
-    members,
-    settings,
     visibleProjects: projects,
 
     async createProject(name) {
@@ -484,17 +466,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const ws = await api.createWorkspace(name)
         const p = workspaceToProject(ws)
         setProjects((prev) => [...prev, p])
-        setCurrentProject(p)
+        selectProject(p)
         setViewRaw('pipelines')
         setSelectedPipelineId(null)
         setSelectedDatabaseId(null)
         setOpSelectedIncidentId(null)
         setNodes([])
         setEdges([])
-        setIncidents([])
-        setEvents([])
-        setResourceEvents([])
-        setMonitoringError(null)
+        clearMonitoringData()
         setAgentRunStateRaw(emptyAgentRunState())
         pushNav(
           snapshot({
@@ -625,22 +604,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     async reloadMonitoring() {
       if (currentProject) await loadMonitoringData(currentProject.id)
     },
-
-    addMember(email, role) {
-      setMembers((p) => [
-        ...p,
-        { name: email.split('@')[0], email, role, joinedAt: today() },
-      ])
-    },
-    removeMember(email) {
-      setMembers((p) => p.filter((m) => m.email !== email))
-    },
-    changeMemberRole(email, role) {
-      setMembers((p) => p.map((m) => (m.email === email ? { ...m, role } : m)))
-    },
-    updateSettings(patch) {
-      setSettings((s) => ({ ...s, ...patch }))
-    },
   }
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
@@ -651,5 +614,3 @@ export function useApp(): Store {
   if (!ctx) throw new Error('useApp must be used within AppProvider')
   return ctx
 }
-
-export const CLUSTER = { BROKERS, CLUSTER_TOPICS, CONSUMER_GROUPS, CLUSTER_CONNECTORS }

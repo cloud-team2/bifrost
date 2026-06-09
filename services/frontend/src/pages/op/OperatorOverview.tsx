@@ -1,6 +1,6 @@
 import { Icon } from '../../components/Icon'
 import { MetricCard, PageHead, Panel, StatusBadge } from '../../components/blocks'
-import { useApp, CLUSTER } from '../../store/AppStore'
+import { useApp } from '../../store/AppStore'
 import { pipelineLabel } from '../../data/helpers'
 import { cn } from '../../lib/format'
 
