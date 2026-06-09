@@ -30,6 +30,13 @@ public class EventEntity {
     @Column(columnDefinition = "text")
     private String message;
 
+    /** 거버넌스 연결 컬럼(S2 — V16). */
+    @Column(name = "incident_id")
+    private UUID incidentId;
+
+    @Column(length = 50)
+    private String category;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -51,5 +58,9 @@ public class EventEntity {
     public void setType(String type) { this.type = type; }
     public String getMessage() { return message; }
     public void setMessage(String message) { this.message = message; }
+    public UUID getIncidentId() { return incidentId; }
+    public void setIncidentId(UUID incidentId) { this.incidentId = incidentId; }
+    public String getCategory() { return category; }
+    public void setCategory(String category) { this.category = category; }
     public Instant getCreatedAt() { return createdAt; }
 }
