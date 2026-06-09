@@ -10,5 +10,6 @@ import java.util.UUID;
 public interface IncidentRepository extends JpaRepository<IncidentEntity, UUID> {
     List<IncidentEntity> findByTenantIdOrderByOpenedAtDesc(UUID tenantId);
     List<IncidentEntity> findByTenantIdAndStatusOrderByOpenedAtDesc(UUID tenantId, String status);
+    long countByTenantIdAndStatus(UUID tenantId, String status);
     Optional<IncidentEntity> findByTenantIdAndGroupingKeyAndStatus(UUID tenantId, String groupingKey, String status);
 }
