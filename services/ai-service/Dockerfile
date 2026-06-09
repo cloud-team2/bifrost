@@ -11,5 +11,10 @@ COPY pyproject.toml ./
 COPY app app
 RUN pip install --no-cache-dir .
 
+# DB 마이그레이션 (alembic). 파드/initContainer에서 `alembic upgrade head` 실행에 필요.
+# pip 레이어 캐시 보존을 위해 install 이후에 복사한다.
+COPY alembic.ini ./
+COPY alembic alembic
+
 EXPOSE 8082
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8082"]
