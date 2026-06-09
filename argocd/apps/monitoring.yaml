@@ -136,6 +136,14 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: monitoring
+  # loki-stack StatefulSet는 kube-controller-manager가 일부 필드를 defaulting/co-own → SSA 환경에서 영구 OutOfSync 유발.
+  # 해당 매니저 소유 필드는 비교에서 제외 (표준 패턴).
+  ignoreDifferences:
+    - group: apps
+      kind: StatefulSet
+      name: loki
+      managedFieldsManagers:
+        - kube-controller-manager
   syncPolicy:
     automated: { prune: true, selfHeal: true }
     syncOptions:
