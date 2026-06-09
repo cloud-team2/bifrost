@@ -40,27 +40,7 @@ flowchart TB
 
 `platform-kafka`(Kafka·Connect·CR) · `bifrost-system`(FE·FastAPI·SpringBoot) · `registry`(Harbor) · `cicd`(Jenkins) · `argocd` · `monitoring`(Prometheus·Alertmanager·Grafana·Loki·Tempo·exporters) · `metadb`(Spring 메타·evidence) · `agentdb`(FastAPI run·pgvector 벡터) · `tenantdb`(고객 source/sink)
 
-## 현재 상태 (2026-06-09)
-
-전 구성요소가 **GitOps(ArgoCD app-of-apps)로 배포·관리**된다. 수동 배포 단계는 끝났고, ArgoCD `bifrost-root`가 gitops 브랜치를 단일 진실로 reconcile한다.
-
-| 영역 | 상태 |
-| --- | --- |
-| 클러스터 | EKS 5노드 단일 풀(t3.xlarge, #119), gp3 default, metrics-server. 용량 ~30%로 여유 |
-| Kafka | Strimzi `platform-kafka` Ready(3 broker/controller, PVC 3), 내부 topic 3, Kafka Connect `platform-connect`(JMX 메트릭) |
-| Delivery | Harbor · Jenkins(JCasC #194) · Argo CD — **전부 GitOps 연동**. CI(Jenkins)→Harbor push→gitops tag 갱신→ArgoCD 배포(#123) 파이프라인 가동 |
-| 외부 노출 | **NLB + ingress-nginx + cert-manager(Let's Encrypt)** — `bifrost`/`jenkins`/`harbor`/`argocd`.skala-ai.com (HTTPS, #232). 구 ALB+ACM 폐기 |
-| 앱 | frontend · operations-backend · ai-service(agentdb persistence·alembic initContainer #255) → `bifrost-system` |
-| DB | metadb · agentdb(pgvector #120) · tenantdb |
-| Observability | kube-prometheus-stack · Loki · Tempo · kafka-exporter (#124), 단일 `monitoring` 앱 |
-
-**남은 작업**: KafkaConnector/KafkaUser CR(IaC) · Kafka Connect 2 replica + 커스텀 plugin 이미지 · Evidence/Audit Store 스키마 · Loki 로그 소비처(ops-backend `search_logs` 실연동) · Tempo OTLP 앱 계측(다음 라운드).
-
-## 점검 필요 (운영 전)
-
-`auto.create.topics.enable=true` 끄기 · plain listener 제한(scram 표준화) · tenantdb 노출 재검토 · Kafka PDB/anti-affinity · gp3 Retain(orphan PV) 정책 · **수동 시크릿(`operations-backend-secrets`·`ai-llm-secret`·복제 `harbor-push-secret`)의 GitOps화**(현재 GitOps 밖이라 네임스페이스 삭제 시 소멸 — SealedSecrets/External Secrets 권장).
-
-> **앱 이미지 배포 경로**: ai-service 등 앱은 **Harbor(in-cluster)** 에 올린다(Docker Hub 아님). 정석 플로우 = Jenkins CI 빌드(Kaniko, docker 미사용)→Harbor push→gitops `image.tag` 갱신→ArgoCD 배포(#123). Harbor 외부 UI는 `https://harbor.skala-ai.com`, CI push·노드 pull은 내부 DNS `harbor.harbor.svc.cluster.local/library/<image>`(externalURL은 CI Kaniko 토큰 realm 보존 위해 `http://harbor.local` 유지), `harbor-push-secret`(dockerconfigjson) imagePullSecret.
+> 현재 배포·진행 상태와 운영 점검 항목은 [§2 리소스 계획·현황](#2-리소스-계획현황-resource-plan)이 단일 출처다(요약에서 중복 기술하지 않는다).
 
 ## 더 읽기 → [DETAILS.md](#)
 
@@ -223,9 +203,9 @@ Harbor의 역할:
 주의:
 
 - Harbor PVC는 Retain 정책을 사용한다.
-- TLS 또는 내부 CA 정책을 정해야 한다.
-- 모든 application namespace에 imagePullSecret을 배포한다.
-- Harbor를 외부 공개해야 한다면 기존 EKS/VPC 안의 LoadBalancer 또는 Ingress만 사용한다.
+- 모든 application namespace에 `harbor-push-secret`(dockerconfigjson) imagePullSecret을 배포한다.
+- **외부 UI는 `https://harbor.skala-ai.com`**(NLB→ingress-nginx→cert-manager LE, #232). **단 Harbor `externalURL`은 `http://harbor.local`로 유지** — CI Kaniko push 토큰 realm 보존(변경 시 내부 push 인증이 깨진다).
+- **CI push·노드 pull은 내부 DNS** `harbor.harbor.svc.cluster.local/library/<image>`. 노트북 docker 수동 push는 지양(정석 = Jenkins Kaniko 빌드 → Harbor push → gitops `image.tag` 갱신 → ArgoCD).
 
 ### 7. CI/CD
 
