@@ -108,5 +108,3 @@ export const CLUSTER_CONNECTORS: ClusterConnector[] = [
   { name: 'txn-source', kind: 'Source', status: 'RUNNING', project: '이상거래 탐지 시스템', pipeline: 'txn-fraud-events', tasks: 3, recordsPerSec: 3120 },
   { name: 'events-source', kind: 'Source', status: 'RUNNING', project: '반도체 생산 분석 허브', pipeline: 'events-warehouse-cdc', tasks: 2, recordsPerSec: 980 },
 ]
-
-export const BOOTSTRAP_SERVER = 'pkc-bifrost.ap-northeast-2.aws.confluent.cloud:9092'
