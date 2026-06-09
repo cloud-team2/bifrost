@@ -2,10 +2,16 @@ package com.bifrost.ops.internalops.controller;
 
 import com.bifrost.ops.adapters.logstore.LokiClient;
 import com.bifrost.ops.internalops.AgentHeaders;
+import com.bifrost.ops.internalops.dto.AlertListResult;
+import com.bifrost.ops.internalops.dto.AlertSummaryResult;
 import com.bifrost.ops.internalops.dto.ConsumerLagResult;
 import com.bifrost.ops.internalops.dto.IncidentSummaryResult;
 import com.bifrost.ops.internalops.dto.LogSearchResult;
 import com.bifrost.ops.internalops.dto.OpsEnvelope;
+import com.bifrost.ops.incident.persistence.entity.IncidentEntity;
+import com.bifrost.ops.incident.persistence.repository.IncidentRepository;
+import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
+import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
@@ -15,6 +21,8 @@ import org.apache.kafka.common.TopicPartition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -23,6 +31,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -30,6 +39,8 @@ import org.springframework.web.client.RestClientException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -43,21 +54,29 @@ public class InternalOpsObservabilityController {
     private static final Logger log = LoggerFactory.getLogger(InternalOpsObservabilityController.class);
     private static final long ADMIN_TIMEOUT_SEC = 5L;
     private static final int DEFAULT_LOG_LIMIT = 100;
+    private static final int DEFAULT_ALERT_LIMIT = 50;
+    private static final int MAX_ALERT_LIMIT = 200;
 
     private final AdminClient adminClient;
     private final LokiClient lokiClient;
     private final JdbcTemplate jdbcTemplate;
+    private final WorkspaceRepository workspaceRepository;
+    private final IncidentRepository incidentRepository;
     private final RestClient connectRestClient;
 
     public InternalOpsObservabilityController(
             AdminClient adminClient,
             LokiClient lokiClient,
             JdbcTemplate jdbcTemplate,
+            WorkspaceRepository workspaceRepository,
+            IncidentRepository incidentRepository,
             @Value("${kafka-connect.rest-url:http://platform-connect-connect-api.platform-kafka.svc:8083}")
             String connectRestUrl) {
         this.adminClient = adminClient;
         this.lokiClient = lokiClient;
         this.jdbcTemplate = jdbcTemplate;
+        this.workspaceRepository = workspaceRepository;
+        this.incidentRepository = incidentRepository;
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(2000);
         factory.setReadTimeout(3000);
@@ -103,6 +122,49 @@ public class InternalOpsObservabilityController {
 
         List<Map<String, Object>> logs = lokiClient.queryRange(query, startNs, endNs, limit);
         return ResponseEntity.ok(OpsEnvelope.ok(requestId, "search_logs", LogSearchResult.of(logs)));
+    }
+
+    /**
+     * list_alerts — 별도 alert 테이블 없이 incident 저장소를 agent alert view로 노출한다.
+     * FastAPI get_alerts tool의 Spring endpoint 계약이다.
+     */
+    @GetMapping("/projects/{projectId}/observability/alerts")
+    public ResponseEntity<OpsEnvelope<AlertListResult>> listAlerts(
+            @PathVariable String projectId,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String severity,
+            @RequestParam(required = false) String limit,
+            HttpServletRequest request) {
+        String requestId = AgentHeaders.requestId(request);
+        Optional<WorkspaceEntity> workspace = findWorkspace(projectId);
+        if (workspace.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(OpsEnvelope.error(requestId, "list_alerts", "RESOURCE_NOT_FOUND",
+                            "프로젝트를 찾을 수 없습니다: " + projectId, false));
+        }
+
+        Integer parsedLimit = parseAlertLimit(limit);
+        if (parsedLimit != null && parsedLimit <= 0) {
+            return ResponseEntity.badRequest()
+                    .body(OpsEnvelope.error(requestId, "list_alerts", "VALIDATION_FAILED",
+                            "limit은 1 이상이어야 합니다", false));
+        }
+        if (limit != null && parsedLimit == null) {
+            return ResponseEntity.badRequest()
+                    .body(OpsEnvelope.error(requestId, "list_alerts", "VALIDATION_FAILED",
+                            "limit은 정수여야 합니다", false));
+        }
+
+        String normalizedStatus = normalizeFilter(status);
+        String normalizedSeverity = normalizeFilter(severity);
+        int max = effectiveAlertLimit(parsedLimit);
+
+        List<AlertSummaryResult> alerts = listIncidents(workspace.get().getId(), normalizedStatus, normalizedSeverity, max)
+                .stream()
+                .map(AlertSummaryResult::fromIncident)
+                .toList();
+
+        return ResponseEntity.ok(OpsEnvelope.ok(requestId, "list_alerts", AlertListResult.of(alerts)));
     }
 
     /**
@@ -178,6 +240,56 @@ public class InternalOpsObservabilityController {
         if (val instanceof Number n) return n.longValue();
         try { return Long.parseLong(String.valueOf(val)); } catch (NumberFormatException e) {
             return Instant.parse(String.valueOf(val)).toEpochMilli() * 1_000_000L;
+        }
+    }
+
+    private Optional<WorkspaceEntity> findWorkspace(String projectId) {
+        try {
+            Optional<WorkspaceEntity> byId = workspaceRepository.findById(UUID.fromString(projectId));
+            if (byId.isPresent()) {
+                return byId;
+            }
+        } catch (IllegalArgumentException ignored) {
+            // projectId may be a namespace slug.
+        }
+        return workspaceRepository.findByNamespace(projectId);
+    }
+
+    private static String normalizeFilter(String value) {
+        return value == null || value.isBlank() ? null : value.trim().toUpperCase();
+    }
+
+    private static int effectiveAlertLimit(Integer limit) {
+        return Math.min(limit == null ? DEFAULT_ALERT_LIMIT : limit, MAX_ALERT_LIMIT);
+    }
+
+    private List<IncidentEntity> listIncidents(
+            UUID tenantId,
+            String status,
+            String severity,
+            int limit) {
+        PageRequest page = PageRequest.of(0, limit);
+        if (status != null && severity != null) {
+            return incidentRepository.findByTenantIdAndStatusAndSeverityOrderByOpenedAtDesc(
+                    tenantId, status, severity, page);
+        }
+        if (status != null) {
+            return incidentRepository.findByTenantIdAndStatusOrderByOpenedAtDesc(tenantId, status, page);
+        }
+        if (severity != null) {
+            return incidentRepository.findByTenantIdAndSeverityOrderByOpenedAtDesc(tenantId, severity, page);
+        }
+        return incidentRepository.findByTenantIdOrderByOpenedAtDesc(tenantId, page);
+    }
+
+    private static Integer parseAlertLimit(String limit) {
+        if (limit == null || limit.isBlank()) {
+            return null;
+        }
+        try {
+            return Integer.valueOf(limit);
+        } catch (NumberFormatException e) {
+            return null;
         }
     }
 

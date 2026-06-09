@@ -1,6 +1,7 @@
 package com.bifrost.ops.internalops.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.List;
 
@@ -13,18 +14,31 @@ import java.util.List;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record OpsEnvelope<T>(
         boolean ok,
+        @JsonProperty("request_id")
         String requestId,
         String operation,
         T result,
         List<String> evidence,
-        String auditEventId
+        @JsonProperty("audit_event_id")
+        String auditEventId,
+        OpsError error
 ) {
 
     public static <T> OpsEnvelope<T> ok(String requestId, String operation, T result) {
-        return new OpsEnvelope<>(true, requestId, operation, result, List.of(), null);
+        return new OpsEnvelope<>(true, requestId, operation, result, List.of(), null, null);
     }
 
     public static <T> OpsEnvelope<T> error(String requestId, String operation, String message) {
-        return new OpsEnvelope<>(false, requestId, operation, null, List.of(), null);
+        return error(requestId, operation, "INTERNAL_ERROR", message, false);
+    }
+
+    public static <T> OpsEnvelope<T> error(
+            String requestId,
+            String operation,
+            String code,
+            String message,
+            boolean retryable) {
+        return new OpsEnvelope<>(false, requestId, operation, null, List.of(), null,
+                new OpsError(code, message, retryable, null));
     }
 }
