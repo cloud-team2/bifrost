@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: ingress-nginx
+  name: 1-platform-ingress-nginx
   namespace: argocd
   finalizers: [resources-finalizer.argocd.argoproj.io]
 spec:
