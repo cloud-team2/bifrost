@@ -3,6 +3,7 @@ package com.bifrost.ops.auth.security;
 import com.bifrost.ops.auth.jwt.JwtAuthenticationFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -35,16 +36,12 @@ public class SecurityConfig {
             .formLogin(AbstractHttpConfigurer::disable)
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers(
-                    "/api/v1/auth/register",
-                    "/api/v1/auth/login",
-                    "/actuator/health",
-                    "/actuator/info",
-                    "/v3/api-docs/**",
-                    "/swagger-ui/**",
-                    "/swagger-ui.html",
-                    "/internal/ops/**"
-                ).permitAll()
+                .requestMatchers(HttpMethod.POST, SecurityPaths.PUBLIC_AUTH_POST_PATHS).permitAll()
+                .requestMatchers(HttpMethod.POST, SecurityPaths.PROTECTED_AUTH_POST_PATHS).authenticated()
+                .requestMatchers(HttpMethod.GET, SecurityPaths.PROTECTED_AUTH_GET_PATHS).authenticated()
+                .requestMatchers(SecurityPaths.ACTUATOR_PATHS).permitAll()
+                .requestMatchers(SecurityPaths.OPEN_API_PATHS).permitAll()
+                .requestMatchers(SecurityPaths.INTERNAL_OPS_PATHS).permitAll()
                 .anyRequest().authenticated()
             )
             .exceptionHandling(eh -> eh.authenticationEntryPoint(entryPoint))

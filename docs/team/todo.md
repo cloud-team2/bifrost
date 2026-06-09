@@ -3,7 +3,7 @@
 ## 현재 기준
 
 - `workspace -> DB 등록 -> pipeline 생성` 흐름은 **디버깅 완료**로 본다.
-- 이번 라운드의 메인 목표는 **모니터링 데이터 -> agent -> 운영 화면 연결**과 **wireframe 기준 settings/account Spring Boot 구현**이다.
+- 이번 라운드의 메인 목표는 **모니터링 데이터 -> agent -> 운영 화면 연결**과 **wireframe 기준 settings/account Spring Boot 잔여 gap 정리**이다.
 - 오늘부터는 파이프라인 생성 신규 기능보다 다음 3축을 우선한다.
   - Spring Boot monitoring / incidents public API
   - Spring `/internal/ops` + FastAPI agent 실제 연동
@@ -24,13 +24,13 @@
 ### Spring Boot
 
 - 이미 되는 것
-  - auth / workspace / database / pipeline / workspace SSE
+  - auth / account me / workspace / members / settings / database / pipeline / workspace SSE
   - pipeline detail 관련 일부 read API(topic, consumer group, messages, metrics, sync)
 
 - 아직 비어 있는 것
   - `overview`, `cluster`, `resource-events`, `incidents` 같은 운영/모니터링 public API
   - `/internal/ops` 공통 envelope와 agent read tool API
-  - settings / account / members / notifications / thresholds / AI policy API
+  - account/settings API의 frontend 최종 연결과 문서/Swagger 정합성 유지
 
 ### FastAPI
 
@@ -154,27 +154,27 @@
 
 ### 오늘/이번 라운드 TODO
 
-- [ ] `/internal/ops/health`, `/internal/ops/ready`, `/internal/ops/version`을 구현한다.
-- [ ] 내부 운영 공통 응답 봉투를 도입한다.
-  - `{ ok, request_id, operation, result, evidence[], audit_event_id }`
-- [ ] 내부 운영 공통 에러 봉투를 정리한다.
-- [ ] agent 헤더를 받는 공통 규칙을 정리한다.
+- [x] `/internal/ops/health`, `/internal/ops/ready`, `/internal/ops/version`을 구현한다.
+- [x] 내부 운영 공통 응답 봉투를 도입한다.
+  - 현재 Spring JSON field는 `requestId`, `auditEventId`다. FastAPI 기대값 `request_id`, `audit_event_id`와의 정합은 WIP.
+- [ ] 내부 운영 공통 에러 봉투를 정리한다. (WIP)
+- [~] agent 헤더를 받는 공통 규칙을 정리한다. (partial)
   - `X-Agent-Run-Id`
   - `X-Agent-Step-Id`
   - `X-Agent-Name`
   - `X-Request-Id`
   - `X-Actor-Type`
   - `X-Actor-Id`
-- [ ] FastAPI용 최소 read tool API를 구현한다.
-  - `list_project_pipelines`
-  - `get_pipeline_topology`
-  - `get_connector_status`
-  - `get_consumer_lag`
-  - `search_logs`
-  - `get_incident_summary`
-- [ ] 실제 데이터가 아직 어렵다면 stub 응답이라도 path와 result schema는 먼저 고정한다.
-- [ ] FastAPI가 기대하는 path와 실제 Spring path 차이를 흡수한다.
-- [ ] `docs/api/internal-ops-read-tools.md`를 새로 만들고, tool 이름 / path / params / result / error mapping을 남긴다.
+- [~] FastAPI용 최소 read tool API를 구현한다.
+  - [x] `list_project_pipelines`
+  - [x] `get_pipeline_topology`
+  - [x] `get_connector_status`
+  - [~] `get_consumer_lag` — total lag만 반환(partial)
+  - [~] `search_logs` — stub
+  - [~] `get_incident_summary` — stub
+- [~] 실제 데이터가 아직 어렵다면 stub 응답이라도 path와 result schema는 먼저 고정한다. (path는 고정, 일부 result schema mismatch 남음)
+- [ ] FastAPI가 기대하는 path와 실제 Spring path 차이를 흡수한다. (WIP)
+- [x] `docs/api/internal-ops-read-tools.md`를 새로 만들고, tool 이름 / path / params / result / error mapping을 남긴다.
 
 ### GitHub issue로 쪼갤 때의 추천 단위
 
@@ -245,42 +245,42 @@
 
 ### 구현 기준 섹션
 
-- [ ] `내 계정`
-- [ ] `일반`
-- [ ] `멤버`
-- [ ] `알림`
-- [ ] `임계값`
-- [ ] `AI 자동복구`
+- [x] `내 계정`
+- [x] `일반`
+- [x] `멤버`
+- [x] `알림`
+- [x] `임계값`
+- [x] `AI 자동복구`
 - [ ] `Kafka 사용자` / `Kafka 시크릿`은 후순위 백로그로 둔다.
 
 ### 오늘/이번 라운드 TODO
 
-- [ ] `내 계정` 섹션용 API를 정리한다.
+- [x] `내 계정` 섹션용 API를 정리한다.
   - `me`
   - 이름 / 이메일 / 역할
   - 가입일
   - 마지막 로그인
-- [ ] `일반` 섹션용 API를 구현한다.
+- [x] `일반` 섹션용 API를 구현한다.
   - 프로젝트 이름 조회 / 수정
   - 시간대 조회 / 수정
   - 슬러그는 읽기 전용 유지
-- [ ] `멤버` 섹션용 API를 구현한다.
+- [x] `멤버` 섹션용 API를 구현한다.
   - 멤버 목록
   - 초대
   - 역할 변경
   - 제거
-- [ ] `알림` 섹션용 API를 구현한다.
+- [x] `알림` 섹션용 API를 구현한다.
   - Slack webhook
   - 이메일 수신자
   - severity 정책
-- [ ] `임계값` 섹션용 API를 구현한다.
+- [x] `임계값` 섹션용 API를 구현한다.
   - lag warning threshold
   - lag critical threshold
-- [ ] `AI 자동복구` 섹션용 API를 구현한다.
+- [x] `AI 자동복구` 섹션용 API를 구현한다.
   - autonomous
   - approval wait
   - prod lock
-- [ ] 설정 저장용 persistence 전략을 정한다.
+- [x] 설정 저장용 persistence 전략을 정한다.
   - 테이블 추가 또는 임시 저장 전략
 - [ ] `Kafka 사용자`, `Kafka 시크릿`은 후순위 관리 API로 분리해 백로그화한다.
 
