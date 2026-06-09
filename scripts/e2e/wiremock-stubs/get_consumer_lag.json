@@ -1,0 +1,38 @@
+{
+  "request": {
+    "method": "GET",
+    "urlPattern": "/internal/ops/projects/[^/]+/kafka/consumer-groups/[^/]+/lag.*"
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "ok": true,
+      "request_id": "req_e2e_001",
+      "operation": "get_consumer_lag",
+      "result": {
+        "consumer_group": "default-group",
+        "total_lag": 12345,
+        "partitions": [
+          {
+            "topic": "orders",
+            "partition": 0,
+            "lag": 5000,
+            "current_offset": 1000,
+            "log_end_offset": 6000
+          }
+        ],
+        "observed_at": "2026-06-09T12:00:00Z"
+      },
+      "evidence": [
+        {
+          "evidence_id": "ev_lag_001",
+          "store_ref": "evidence://e2e/ev_lag_001",
+          "summary": "consumer lag 급증: lag p95 증가 total lag 12345",
+          "redaction_status": "redacted",
+          "type": "metric"
+        }
+      ],
+      "audit_event_id": "audit_e2e_001"
+    }
+  }
+}
