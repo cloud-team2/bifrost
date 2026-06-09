@@ -10,7 +10,9 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from app.core.config import settings
 from app.schemas.state import RiskLevel
 from app.schemas.tools import (
+    ConnectorActionData,
     ConnectorStatusData,
+    ConsumerGroupActionData,
     ConsumerLagData,
     DeploymentsData,
     IncidentSummaryData,
@@ -65,6 +67,22 @@ class PipelineTopologyParams(ToolParams):
 
 class GetIncidentSummaryParams(ToolParams):
     incident_id: str
+
+
+class RestartConnectorParams(ToolParams):
+    connector_name: str
+
+
+class PauseConnectorParams(ToolParams):
+    connector_name: str
+
+
+class ResumeConnectorParams(ToolParams):
+    connector_name: str
+
+
+class RestartConsumerGroupParams(ToolParams):
+    consumer_group: str
 
 
 @dataclass(frozen=True)
@@ -200,6 +218,51 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
             result_model=IncidentSummaryData,
             path_params=("incident_id",),
         ),
+        # ── catalog §8.6 Mutation — Kafka Connect 운영 조치 ──────────────────
+        ToolDefinition(
+            name="restart_connector",
+            operation="restart_connector",
+            method="POST",
+            path_template="/internal/ops/projects/{project_id}/connectors/{connector_name}/restart",
+            risk=RiskLevel.HIGH,
+            params_model=RestartConnectorParams,
+            result_model=ConnectorActionData,
+            path_params=("connector_name",),
+            requires_approval=True,
+        ),
+        ToolDefinition(
+            name="pause_connector",
+            operation="pause_connector",
+            method="POST",
+            path_template="/internal/ops/projects/{project_id}/connectors/{connector_name}/pause",
+            risk=RiskLevel.MEDIUM,
+            params_model=PauseConnectorParams,
+            result_model=ConnectorActionData,
+            path_params=("connector_name",),
+            requires_approval=True,
+        ),
+        ToolDefinition(
+            name="resume_connector",
+            operation="resume_connector",
+            method="POST",
+            path_template="/internal/ops/projects/{project_id}/connectors/{connector_name}/resume",
+            risk=RiskLevel.MEDIUM,
+            params_model=ResumeConnectorParams,
+            result_model=ConnectorActionData,
+            path_params=("connector_name",),
+            requires_approval=True,
+        ),
+        ToolDefinition(
+            name="restart_consumer_group",
+            operation="restart_consumer_group",
+            method="POST",
+            path_template="/internal/ops/projects/{project_id}/kafka/consumer-groups/{consumer_group}/restart",
+            risk=RiskLevel.HIGH,
+            params_model=RestartConsumerGroupParams,
+            result_model=ConsumerGroupActionData,
+            path_params=("consumer_group",),
+            requires_approval=True,
+        ),
     ]
     return {definition.name: definition for definition in definitions}
 
@@ -253,6 +316,15 @@ class ToolClientRegistry:
                 risk=RiskLevel.FORBIDDEN,
                 code=SpringErrorCode.POLICY_DENIED,
                 message=f"Tool is not registered: {tool_name}",
+                status=ToolStatus.BLOCKED,
+            )
+
+        if definition.requires_approval and not context.idempotency_key:
+            return failed_tool_result(
+                tool_name=tool_name,
+                risk=definition.risk,
+                code=SpringErrorCode.APPROVAL_REQUIRED,
+                message=f"Tool '{tool_name}' requires approval. 멱등키 없이 직접 호출할 수 없습니다.",
                 status=ToolStatus.BLOCKED,
             )
 
