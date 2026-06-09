@@ -3,7 +3,7 @@
 ## 현재 기준
 
 - `workspace -> DB 등록 -> pipeline 생성` 흐름은 **디버깅 완료**로 본다.
-- 이번 라운드의 메인 목표는 **모니터링 데이터 -> agent -> 운영 화면 연결**과 **wireframe 기준 settings/account Spring Boot 구현**이다.
+- 이번 라운드의 메인 목표는 **모니터링 데이터 -> agent -> 운영 화면 연결**과 **wireframe 기준 settings/account Spring Boot 잔여 gap 정리**이다.
 - 오늘부터는 파이프라인 생성 신규 기능보다 다음 3축을 우선한다.
   - Spring Boot monitoring / incidents public API
   - Spring `/internal/ops` + FastAPI agent 실제 연동
@@ -24,13 +24,13 @@
 ### Spring Boot
 
 - 이미 되는 것
-  - auth / workspace / database / pipeline / workspace SSE
+  - auth / account me / workspace / members / settings / database / pipeline / workspace SSE
   - pipeline detail 관련 일부 read API(topic, consumer group, messages, metrics, sync)
 
 - 아직 비어 있는 것
   - `overview`, `cluster`, `resource-events`, `incidents` 같은 운영/모니터링 public API
   - `/internal/ops` 공통 envelope와 agent read tool API
-  - settings / account / members / notifications / thresholds / AI policy API
+  - account/settings API의 frontend 최종 연결과 문서/Swagger 정합성 유지
 
 ### FastAPI
 
@@ -245,42 +245,42 @@
 
 ### 구현 기준 섹션
 
-- [ ] `내 계정`
-- [ ] `일반`
-- [ ] `멤버`
-- [ ] `알림`
-- [ ] `임계값`
-- [ ] `AI 자동복구`
+- [x] `내 계정`
+- [x] `일반`
+- [x] `멤버`
+- [x] `알림`
+- [x] `임계값`
+- [x] `AI 자동복구`
 - [ ] `Kafka 사용자` / `Kafka 시크릿`은 후순위 백로그로 둔다.
 
 ### 오늘/이번 라운드 TODO
 
-- [ ] `내 계정` 섹션용 API를 정리한다.
+- [x] `내 계정` 섹션용 API를 정리한다.
   - `me`
   - 이름 / 이메일 / 역할
   - 가입일
   - 마지막 로그인
-- [ ] `일반` 섹션용 API를 구현한다.
+- [x] `일반` 섹션용 API를 구현한다.
   - 프로젝트 이름 조회 / 수정
   - 시간대 조회 / 수정
   - 슬러그는 읽기 전용 유지
-- [ ] `멤버` 섹션용 API를 구현한다.
+- [x] `멤버` 섹션용 API를 구현한다.
   - 멤버 목록
   - 초대
   - 역할 변경
   - 제거
-- [ ] `알림` 섹션용 API를 구현한다.
+- [x] `알림` 섹션용 API를 구현한다.
   - Slack webhook
   - 이메일 수신자
   - severity 정책
-- [ ] `임계값` 섹션용 API를 구현한다.
+- [x] `임계값` 섹션용 API를 구현한다.
   - lag warning threshold
   - lag critical threshold
-- [ ] `AI 자동복구` 섹션용 API를 구현한다.
+- [x] `AI 자동복구` 섹션용 API를 구현한다.
   - autonomous
   - approval wait
   - prod lock
-- [ ] 설정 저장용 persistence 전략을 정한다.
+- [x] 설정 저장용 persistence 전략을 정한다.
   - 테이블 추가 또는 임시 저장 전략
 - [ ] `Kafka 사용자`, `Kafka 시크릿`은 후순위 관리 API로 분리해 백로그화한다.
 

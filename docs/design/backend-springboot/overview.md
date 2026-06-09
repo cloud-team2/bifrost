@@ -60,14 +60,14 @@ erDiagram
     pipeline   ||--o{ event          : "관련"
 ```
 
-- `workspace`(`project_key`) · `app_user`·`project_member`(멤버십) · `database`(`secret_ref`·`health_status`) · `pipeline`(status creating/active/lag/error/paused) · `connector`(state RUNNING/PARTIALLY_FAILED/FAILED/PAUSED/UNASSIGNED) · `event`(INFO/WARN/ERROR) · `incident`(severity WARNING/CRITICAL, status open/investigating/resolved) · `audit_event`·`evidence_ref`(append-only). 거버넌스용 `approval`·`change_ticket`·`idempotency_key`는 [governance.md §9](./governance.md#7-governance-engine).
+- `workspace`(`namespace`/`projectKey`) · `app_user`·`project_member`(멤버십과 `OWNER`/`ADMIN`/`MEMBER` 역할) · `workspace_settings` · `database`(`secret_ref`·`health_status`) · `pipeline`(status creating/active/lag/error/paused) · `connector`(state RUNNING/PARTIALLY_FAILED/FAILED/PAUSED/UNASSIGNED) · `event`(INFO/WARN/ERROR) · `incident`(severity WARNING/CRITICAL, status open/investigating/resolved) · `audit_event`·`evidence_ref`(append-only). 거버넌스용 `approval`·`change_ticket`·`idempotency_key`는 [governance.md §9](./governance.md#7-governance-engine).
 - 전체 컬럼·제약·DDL은 [data-model.md §4](./data-model.md#4-data-model). enum·임계값은 [부록 B](../../spec.md#부록-b--리소스-상태값-정의-및-자동-기준-단일-출처) 단일 출처.
 
 ## 핵심 결정
 
 | 항목 | 결정 |
 | --- | --- |
-| 식별자 | `workspace_id`=`project_id`(uuid) ≠ **`project_key`**(슬러그, Kafka 리소스명) |
+| 식별자 | `workspace_id`=`project_id`(uuid) ≠ **`namespace`/`projectKey`**(슬러그, Kafka 리소스명) |
 | 파이프라인 | **단일 테이블 1개**. EDA(`fan_out`, Source만) / CDC(`direct`, Source Debezium + Sink JDBC) |
 | 토픽 | Debezium 자동 생성 `cdc.table.{project_key}.{dbName}.{schema}.{table}`(part 6/RF 3) |
 | DB 자격증명 | **secretRef만** 메타DB 저장. 생성 시점에만 `secretStore.resolve()` |
