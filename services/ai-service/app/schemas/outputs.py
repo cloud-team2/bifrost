@@ -27,6 +27,19 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class AlertGroup(StrictModel):
+    group_id: str
+    alert_ids: list[str] = Field(default_factory=list)
+    common_labels: dict[str, str] = Field(default_factory=dict)
+
+
+class CorrelationOutput(StrictModel):
+    correlation_id: str
+    scope: IncidentScope
+    groups: list[AlertGroup] = Field(default_factory=list)
+    related_alert_ids: list[str] = Field(default_factory=list)
+
+
 class RouteDecision(StrictModel):
     mode: AgentMode
     remediation_requested: bool = False

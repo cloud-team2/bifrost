@@ -40,6 +40,38 @@ data:
           - target_label: cluster
             replacement: platform-kafka
 
+      # node-exporter (노드 OS 메트릭: CPU·메모리·디스크·네트워크) — pod SD(#212)
+      - job_name: node-exporter
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces: { names: [platform-kafka] }
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: node-exporter
+          - source_labels: [__meta_kubernetes_pod_ip]
+            replacement: '${1}:9100'
+            target_label: __address__
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label: node
+          - target_label: cluster
+            replacement: platform-kafka
+
+      # cAdvisor (컨테이너 CPU/메모리) — pod SD(#212)
+      - job_name: cadvisor
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces: { names: [platform-kafka] }
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: cadvisor
+          - source_labels: [__meta_kubernetes_pod_ip]
+            replacement: '${1}:8080'
+            target_label: __address__
+          - target_label: cluster
+            replacement: platform-kafka
+
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -58,6 +90,7 @@ spec:
       labels:
         app: prometheus
     spec:
+      serviceAccountName: prometheus   # pod SD(node-exporter·cAdvisor) 조회용 RBAC(#212)
       containers:
         - name: prometheus
           image: prom/prometheus:v2.53.0
@@ -138,3 +171,35 @@ spec:
     - name: metrics
       port: 9404
       targetPort: 9404
+
+---
+# Prometheus RBAC — kubernetes_sd_configs(pod role)로 node-exporter·cAdvisor 파드를 발견하기 위함(#212).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: platform-kafka
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus-platform-kafka
+rules:
+  - apiGroups: [""]
+    resources: [nodes, nodes/metrics, services, endpoints, pods]
+    verbs: [get, list, watch]
+  - nonResourceURLs: ["/metrics"]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus-platform-kafka
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus-platform-kafka
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: platform-kafka

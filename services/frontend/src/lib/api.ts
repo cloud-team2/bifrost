@@ -210,6 +210,57 @@ export interface EventDistPoint {
   update: number
   delete: number
 }
+
+/* ── Cluster 화면(#213) ───────────────────────────────────────────── */
+export interface BrokerInfo {
+  id: number
+  host: string
+  port: number
+  controller: boolean
+  leaderPartitions: number
+  logDirBytes: number
+  cpuPct: number | null
+  diskUsedPct: number | null
+  netInBytesPerSec: number | null
+  netOutBytesPerSec: number | null
+  status: 'healthy' | 'warning' | 'error'
+}
+export interface KafkaClusterResponse {
+  controllerId: number
+  brokerCount: number
+  totalPartitions: number
+  underReplicated: number
+  offlinePartitions: number
+  brokers: BrokerInfo[]
+}
+export interface ConnectWorker {
+  name: string
+  host: string | null
+  state: string
+  heapUsedBytes: number | null
+  heapMaxBytes: number | null
+  cpuPct: number | null
+  gcSeconds: number | null
+  version: string | null
+}
+export interface ConnectConnectorRow {
+  name: string
+  kind: string
+  status: string
+  pipeline: string
+  tasks: number
+}
+export interface ConnectPlugin {
+  className: string
+  type: string
+  version: string
+}
+export interface ConnectClusterResponse {
+  workers: ConnectWorker[]
+  connectors: ConnectConnectorRow[]
+  plugins: ConnectPlugin[]
+  config: Record<string, string>
+}
 /** 파이프라인 커넥터(#107). state/lastError/updatedAt는 watcher가 갱신(미반영 시 null). */
 export interface ConnectorInfo {
   name: string
@@ -328,6 +379,12 @@ export const api = {
     request<MetricPoint[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/metrics/unsynced?minutes=${minutes}`),
   pipelineEventDist: (wsId: string, id: string, minutes = 60) =>
     request<EventDistPoint[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/metrics/event-distribution?minutes=${minutes}`),
+  // cluster (#213) — 워크스페이스 공유 인프라, 스코프 없음
+  clusterKafka: () => request<KafkaClusterResponse>('GET', `/api/v1/clusters/kafka`),
+  clusterThroughput: (minutes = 30) =>
+    request<ThroughputPoint[]>('GET', `/api/v1/clusters/kafka/throughput?minutes=${minutes}`),
+  clusterConnect: () => request<ConnectClusterResponse>('GET', `/api/v1/clusters/connect`),
+
   pausePipeline: (wsId: string, id: string) =>
     request<PipelineResponse>('POST', `/api/v1/workspaces/${wsId}/pipelines/${id}/pause`),
   resumePipeline: (wsId: string, id: string) =>

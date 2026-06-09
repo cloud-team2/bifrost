@@ -6,6 +6,7 @@ import com.bifrost.ops.auth.persistence.repository.UserRepository;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
 import com.bifrost.ops.workspace.Role;
+import com.bifrost.ops.workspace.WorkspaceAccessGuard;
 import com.bifrost.ops.workspace.dto.ProjectMemberAddRequest;
 import com.bifrost.ops.workspace.dto.ProjectMemberResponse;
 import com.bifrost.ops.workspace.dto.ProjectMemberUpdateRequest;
@@ -26,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doThrow;
 
 @ExtendWith(MockitoExtension.class)
 class ProjectMemberServiceTest {
@@ -33,14 +35,72 @@ class ProjectMemberServiceTest {
     @Mock private ProjectMemberRepository memberRepository;
     @Mock private WorkspaceRepository workspaceRepository;
     @Mock private UserRepository userRepository;
+    @Mock private WorkspaceAccessGuard accessGuard;
 
     private ProjectMemberService service() {
-        return new ProjectMemberService(memberRepository, workspaceRepository, userRepository);
+        return new ProjectMemberService(memberRepository, workspaceRepository, userRepository, accessGuard);
     }
 
     private final UUID workspaceId = UUID.randomUUID();
     private final UUID managerId = UUID.randomUUID();
     private final AuthenticatedUser manager = new AuthenticatedUser(managerId, workspaceId, "owner@bifrost.io");
+
+    @Test
+    void listAllowsOwner() {
+        UUID ownerId = UUID.randomUUID();
+        AuthenticatedUser owner = new AuthenticatedUser(ownerId, workspaceId, "owner@bifrost.io");
+        ProjectMemberEntity member = new ProjectMemberEntity(workspaceId, ownerId, Role.OWNER);
+        when(memberRepository.findByIdWorkspaceIdOrderByJoinedAtAsc(workspaceId)).thenReturn(List.of(member));
+        when(userRepository.findAllById(List.of(ownerId))).thenReturn(List.of(user(ownerId, "owner@bifrost.io")));
+
+        List<ProjectMemberResponse> out = service().list(workspaceId, owner);
+
+        assertThat(out).hasSize(1);
+        assertThat(out.get(0).role()).isEqualTo(Role.OWNER);
+        verify(accessGuard).requireMember(workspaceId, owner);
+    }
+
+    @Test
+    void listAllowsAdmin() {
+        UUID adminId = UUID.randomUUID();
+        AuthenticatedUser admin = new AuthenticatedUser(adminId, workspaceId, "admin@bifrost.io");
+        ProjectMemberEntity member = new ProjectMemberEntity(workspaceId, adminId, Role.ADMIN);
+        when(memberRepository.findByIdWorkspaceIdOrderByJoinedAtAsc(workspaceId)).thenReturn(List.of(member));
+        when(userRepository.findAllById(List.of(adminId))).thenReturn(List.of(user(adminId, "admin@bifrost.io")));
+
+        List<ProjectMemberResponse> out = service().list(workspaceId, admin);
+
+        assertThat(out).hasSize(1);
+        assertThat(out.get(0).role()).isEqualTo(Role.ADMIN);
+        verify(accessGuard).requireMember(workspaceId, admin);
+    }
+
+    @Test
+    void listAllowsMember() {
+        UUID memberId = UUID.randomUUID();
+        AuthenticatedUser memberPrincipal = new AuthenticatedUser(memberId, workspaceId, "member@bifrost.io");
+        ProjectMemberEntity member = new ProjectMemberEntity(workspaceId, memberId, Role.MEMBER);
+        when(memberRepository.findByIdWorkspaceIdOrderByJoinedAtAsc(workspaceId)).thenReturn(List.of(member));
+        when(userRepository.findAllById(List.of(memberId))).thenReturn(List.of(user(memberId, "member@bifrost.io")));
+
+        List<ProjectMemberResponse> out = service().list(workspaceId, memberPrincipal);
+
+        assertThat(out).hasSize(1);
+        assertThat(out.get(0).role()).isEqualTo(Role.MEMBER);
+        verify(accessGuard).requireMember(workspaceId, memberPrincipal);
+    }
+
+    @Test
+    void listRejectsNonMember() {
+        UUID outsiderId = UUID.randomUUID();
+        AuthenticatedUser outsider = new AuthenticatedUser(outsiderId, UUID.randomUUID(), "outsider@bifrost.io");
+        doThrow(new ApiException(ErrorCode.WORKSPACE_FORBIDDEN, "워크스페이스 접근 권한이 없습니다"))
+                .when(accessGuard).requireMember(workspaceId, outsider);
+
+        assertThatThrownBy(() -> service().list(workspaceId, outsider))
+                .isInstanceOfSatisfying(ApiException.class, e ->
+                        assertThat(e.code()).isEqualTo(ErrorCode.WORKSPACE_FORBIDDEN));
+    }
 
     @Test
     void addCreatesMemberByEmailWhenManager() {

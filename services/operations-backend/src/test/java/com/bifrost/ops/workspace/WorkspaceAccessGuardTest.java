@@ -68,6 +68,27 @@ class WorkspaceAccessGuardTest {
     }
 
     @Test
+    void requireMemberAllowsProjectMember() {
+        UUID wsId = UUID.randomUUID();
+        AuthenticatedUser user = new AuthenticatedUser(UUID.randomUUID(), UUID.randomUUID(), "u@bifrost.io");
+        when(memberRepo.existsByIdWorkspaceIdAndIdUserId(wsId, user.userId())).thenReturn(true);
+
+        assertThatCode(() -> guard.requireMember(wsId, user)).doesNotThrowAnyException();
+        verify(repo, never()).existsByIdAndOwnerUserId(wsId, user.userId());
+    }
+
+    @Test
+    void requireMemberRejectsNonMember() {
+        UUID wsId = UUID.randomUUID();
+        AuthenticatedUser user = new AuthenticatedUser(UUID.randomUUID(), wsId, "u@bifrost.io");
+        when(memberRepo.existsByIdWorkspaceIdAndIdUserId(wsId, user.userId())).thenReturn(false);
+
+        assertThatThrownBy(() -> guard.requireMember(wsId, user))
+                .isInstanceOfSatisfying(ApiException.class, e ->
+                        assertThat(e.code()).isEqualTo(ErrorCode.WORKSPACE_FORBIDDEN));
+    }
+
+    @Test
     void rejectsUnauthenticated() {
         assertThatThrownBy(() -> guard.requireAccess(UUID.randomUUID(), null))
                 .isInstanceOfSatisfying(ApiException.class, e ->

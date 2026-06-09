@@ -119,3 +119,40 @@ async def test_retrieval_timeout_emits_tool_call_failed() -> None:
     assert StreamingEventType.TOOL_CALL_FAILED in types
     assert StreamingEventType.TOOL_CALL_COMPLETED not in types
     assert "/failed" in out.evidence_items[0].store_ref
+
+
+@pytest.mark.asyncio
+async def test_evidence_collected_emitted_per_retrieval_step() -> None:
+    registry = AsyncMock()
+    registry.call_tool.return_value = ToolResult(
+        tool_name="get_metrics",
+        status=ToolStatus.SUCCESS,
+        risk=RiskLevel.READ_ONLY,
+        summary="data",
+        evidence_ids=[],
+    )
+    bus = EventBus()
+    published = []
+    bus.publish = AsyncMock(side_effect=lambda run_id, evt: published.append(evt))
+    event_repo = InMemoryEventRepository()
+
+    plan = PlannerOutput(
+        retrieval_plan=[
+            RetrievalPlanStep(
+                step_id=f"s{i}",
+                tool_name="get_metrics",
+                params={},
+                purpose="test",
+                depends_on=[],
+                plan_hash="abc",
+            )
+            for i in range(3)
+        ]
+    )
+    out = await run_retrieval("r1", plan, _context(), registry, bus, event_repo)
+
+    ec_events = [e for e in published if e.type == StreamingEventType.EVIDENCE_COLLECTED]
+    assert len(ec_events) == 3
+    collected_ids = {e.payload["evidence_id"] for e in ec_events}
+    item_ids = {item.evidence_id for item in out.evidence_items}
+    assert collected_ids == item_ids

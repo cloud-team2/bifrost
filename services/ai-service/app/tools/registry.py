@@ -207,7 +207,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
             result_model=PipelineTopologyData,
             path_params=("pipeline_id",),
         ),
-        # ── catalog §8.5 Incident (Spring PR #157) ───────────────────────────
+        # ── catalog §8.5 Incident summary (Spring PR #157) ───────────────────
         ToolDefinition(
             name="get_incident_summary",
             operation="get_incident_summary",
