@@ -4,7 +4,7 @@ metadata:
   name: bifrost-root
   namespace: argocd
 spec:
-  project: default
+  project: root
   source:
     repoURL: https://github.com/cloud-team2/bifrost.git
     targetRevision: gitops

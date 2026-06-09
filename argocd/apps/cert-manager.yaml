@@ -5,7 +5,7 @@ metadata:
   namespace: argocd
   finalizers: [resources-finalizer.argocd.argoproj.io]
 spec:
-  project: default
+  project: platform
   source:
     repoURL: https://charts.jetstack.io
     chart: cert-manager

@@ -5,7 +5,7 @@ metadata:
   namespace: argocd
   finalizers: [resources-finalizer.argocd.argoproj.io]
 spec:
-  project: default
+  project: bifrost
   # 우리 애플리케이션 3종(frontend·operations-backend·ai-service)을 단일 앱으로 통합. 전부 bifrost-system ns.
   sources:
     - repoURL: https://github.com/cloud-team2/bifrost.git
