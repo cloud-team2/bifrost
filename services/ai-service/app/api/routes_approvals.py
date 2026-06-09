@@ -8,10 +8,31 @@ from app.persistence.approval_link_repository import get_approval_repo
 from app.schemas import ApiResponse, ErrorCode
 
 router = APIRouter()
+decision_router = APIRouter()
 
 
 class ApproveRequest(BaseModel):
     approved_by: str = "operator"
+
+
+class ApprovalDecisionRequest(BaseModel):
+    decision: str
+    comment: str | None = None
+
+
+@decision_router.post("/approvals/{approval_id}/decision")
+def decide_approval(approval_id: str, req: ApprovalDecisionRequest) -> ApiResponse:
+    repo = get_approval_repo()
+    if req.decision == "approved":
+        link = repo.approve(approval_id)
+    elif req.decision == "rejected":
+        link = repo.reject(approval_id)
+    else:
+        raise HTTPException(status_code=400, detail=f"unknown decision: {req.decision}")
+
+    if link is None:
+        raise HTTPException(status_code=404, detail=f"approval not found: {approval_id}")
+    return ApiResponse.success("", {"approval_id": approval_id, "status": link.status})
 
 
 @router.post("/approvals/{approval_id}/approve")

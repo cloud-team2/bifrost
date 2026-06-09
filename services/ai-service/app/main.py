@@ -40,6 +40,7 @@ def create_app() -> FastAPI:
     app.include_router(routes_events.router, prefix="/api/v1/agent", tags=["events"])
     app.include_router(routes_actions.router, prefix="/api/v1/agent", tags=["actions"])
     app.include_router(routes_approvals.router, prefix="/api/v1/agent", tags=["approvals"])
+    app.include_router(routes_approvals.decision_router, prefix="/api/v1", tags=["approvals"])
     app.include_router(routes_change.router, prefix="/api/v1/agent", tags=["change"])
 
     # K8s liveness/readiness probe용 경량 엔드포인트 (helm deployment에서 사용)

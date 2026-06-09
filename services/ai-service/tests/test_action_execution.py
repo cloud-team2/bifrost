@@ -5,7 +5,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
+from app.main import app
+from app.persistence.approval_link_repository import get_approval_repo
 from app.schemas.outputs import (
     ActionCandidateOutput,
     PolicyDecisionOutput,
@@ -29,6 +32,8 @@ from app.workflow.stages.change_gate import run_change_gate
 from app.workflow.stages.executor import run_executor
 from app.workflow.stages.policy_guard import run_policy_guard
 from app.tools.registry import ToolClientRegistry
+
+client = TestClient(app)
 
 
 def _context() -> ToolContext:
@@ -79,6 +84,70 @@ def test_approval_decision_advances_through_stages():
     state = store.get("run_002")
     assert state is not None
     assert state.run.status == RunStatus.COMPLETED
+
+
+# ── Approval Decision API ─────────────────────────────────────────────────────
+
+def test_approval_decision_api_approves():
+    repo = get_approval_repo()
+    link = repo.create("run_api_approved", "act_api_approved", {})
+
+    resp = client.post(
+        f"/api/v1/approvals/{link.approval_id}/decision",
+        json={"decision": "approved", "comment": "ok"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {
+        "ok": True,
+        "request_id": "",
+        "data": {"approval_id": link.approval_id, "status": "approved"},
+        "error": None,
+    }
+    assert repo.get(link.approval_id).status == "approved"
+
+
+def test_approval_decision_api_rejects():
+    repo = get_approval_repo()
+    link = repo.create("run_api_rejected", "act_api_rejected", {})
+
+    resp = client.post(
+        f"/api/v1/approvals/{link.approval_id}/decision",
+        json={"decision": "rejected"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {
+        "ok": True,
+        "request_id": "",
+        "data": {"approval_id": link.approval_id, "status": "rejected"},
+        "error": None,
+    }
+    assert repo.get(link.approval_id).status == "rejected"
+
+
+def test_approval_decision_api_rejects_unknown_decision():
+    repo = get_approval_repo()
+    link = repo.create("run_api_unknown", "act_api_unknown", {})
+
+    resp = client.post(
+        f"/api/v1/approvals/{link.approval_id}/decision",
+        json={"decision": "deferred"},
+    )
+
+    assert resp.status_code == 400
+    assert repo.get(link.approval_id).status == "pending"
+
+
+def test_approval_decision_api_returns_404_for_missing_approval():
+    resp = client.post(
+        "/api/v1/approvals/missing-approval/decision",
+        json={"decision": "approved"},
+    )
+
+    assert resp.status_code == 404
 
 
 # ── Policy Guard ──────────────────────────────────────────────────────────────
