@@ -42,7 +42,7 @@ public class MonitoringController {
     public ResponseEntity<OverviewResponse> overview(
             @PathVariable UUID wsId,
             @AuthenticationPrincipal AuthenticatedUser principal) {
-        accessGuard.requireMember(wsId, principal);
+        accessGuard.requireAccess(wsId, principal);
         return ResponseEntity.ok(monitoringReadService.overview(wsId));
     }
 
@@ -51,7 +51,7 @@ public class MonitoringController {
     public ResponseEntity<List<ResourceEventResponse>> resourceEvents(
             @PathVariable UUID wsId,
             @AuthenticationPrincipal AuthenticatedUser principal) {
-        accessGuard.requireMember(wsId, principal);
+        accessGuard.requireAccess(wsId, principal);
         return ResponseEntity.ok(monitoringReadService.resourceEvents(wsId));
     }
 
@@ -61,7 +61,7 @@ public class MonitoringController {
             @PathVariable UUID wsId,
             @RequestParam(required = false) String status,
             @AuthenticationPrincipal AuthenticatedUser principal) {
-        accessGuard.requireMember(wsId, principal);
+        accessGuard.requireAccess(wsId, principal);
         return ResponseEntity.ok(incidentService.list(wsId, status));
     }
 
@@ -71,7 +71,7 @@ public class MonitoringController {
             @PathVariable UUID wsId,
             @PathVariable UUID incidentId,
             @AuthenticationPrincipal AuthenticatedUser principal) {
-        accessGuard.requireMember(wsId, principal);
+        accessGuard.requireAccess(wsId, principal);
         return ResponseEntity.ok(incidentService.get(wsId, incidentId));
     }
 }
