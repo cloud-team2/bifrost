@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react'
 import { useApp, type View } from './store/AppStore'
 import { Login } from './pages/Login'
+import { Register } from './pages/Register'
 import { ProjectListView } from './pages/Projects'
 import { ConsoleShell } from './components/shell/ConsoleShell'
 import { Pipelines } from './pages/dev/Pipelines'
@@ -22,10 +24,19 @@ const VIEW_LABEL: Record<View, string> = {
 
 export default function App() {
   const app = useApp()
+  const [authView, setAuthView] = useState<'login' | 'register'>('login')
+
+  useEffect(() => {
+    if (app.currentUser) setAuthView('login')
+  }, [app.currentUser])
 
   // 세션 복원(토큰→me()) 완료 전엔 로그인 화면 깜빡임을 피하려 빈 화면 유지.
   if (!app.authReady) return null
-  if (!app.currentUser) return <Login />
+  if (!app.currentUser) {
+    return authView === 'register'
+      ? <Register onSignIn={() => setAuthView('login')} />
+      : <Login onRegister={() => setAuthView('register')} />
+  }
   if (!app.currentProject) return <ProjectListView />
 
   return <ConsoleShell viewLabel={VIEW_LABEL[app.view] ?? app.view}>{renderView(app.view)}</ConsoleShell>
