@@ -91,6 +91,8 @@ Bifrost API가 반환하는 에러 코드의 단일 출처. 코드 추가/변경
 |---|---|---|---|---|
 | 90001 | 400 | `VALIDATION_FAILED` | 요청 본문이 Bean Validation 검증 실패 | `details` 배열의 `field`/`reason`을 폼 위에 표시 |
 | 90006 | 404 | `RESOURCE_NOT_FOUND` | 매핑되지 않은 경로 호출 | 요청 경로 확인 |
+| 90007 | 405 | `METHOD_NOT_ALLOWED` | 매핑된 경로에 지원하지 않는 HTTP 메서드 호출 | API 문서의 메서드 확인 |
+| 90008 | 415 | `UNSUPPORTED_MEDIA_TYPE` | 지원하지 않는 요청 Content-Type 사용 | `Content-Type` 헤더 확인 |
 
 ## 아카이브 (사용 금지)
 
