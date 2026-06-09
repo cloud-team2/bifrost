@@ -55,7 +55,7 @@ flowchart TB
 
 ## 점검 필요 (운영 전)
 
-`auto.create.topics.enable=true` 끄기 · plain listener 제한(scram 표준화) · tenantdb LoadBalancer 노출 재검토 · PDB/anti-affinity · gp3 Retain(orphan PV) 정책 · **클러스터 용량: 3×t3.large CPU 요청 ~81%로 포화 임박, 남은 스택(monitoring·앱) 수용 불가 → 노드 확장/인스턴스 상향 필요([§2 §11 용량 분석](#11-클러스터-용량-분석-및-대응안-2026-06-02))**.
+`auto.create.topics.enable=true` 끄기 · plain listener 제한(scram 표준화) · tenantdb LoadBalancer 노출 재검토 · PDB/anti-affinity · gp3 Retain(orphan PV) 정책 · **클러스터 용량: 3×t3.large CPU 요청 ~81%로 포화 임박, 남은 스택(monitoring·앱) 수용 불가 → 노드 확장/인스턴스 상향 필요([§2 §11 용량 분석](#11-클러스터-용량-분석-및-대응안-2026-06-02--해소됨119))**.
 
 ## 더 읽기 → [DETAILS.md](#)
 

@@ -154,27 +154,27 @@
 
 ### 오늘/이번 라운드 TODO
 
-- [ ] `/internal/ops/health`, `/internal/ops/ready`, `/internal/ops/version`을 구현한다.
-- [ ] 내부 운영 공통 응답 봉투를 도입한다.
-  - `{ ok, request_id, operation, result, evidence[], audit_event_id }`
-- [ ] 내부 운영 공통 에러 봉투를 정리한다.
-- [ ] agent 헤더를 받는 공통 규칙을 정리한다.
+- [x] `/internal/ops/health`, `/internal/ops/ready`, `/internal/ops/version`을 구현한다.
+- [x] 내부 운영 공통 응답 봉투를 도입한다.
+  - 현재 Spring JSON field는 `requestId`, `auditEventId`다. FastAPI 기대값 `request_id`, `audit_event_id`와의 정합은 WIP.
+- [ ] 내부 운영 공통 에러 봉투를 정리한다. (WIP)
+- [~] agent 헤더를 받는 공통 규칙을 정리한다. (partial)
   - `X-Agent-Run-Id`
   - `X-Agent-Step-Id`
   - `X-Agent-Name`
   - `X-Request-Id`
   - `X-Actor-Type`
   - `X-Actor-Id`
-- [ ] FastAPI용 최소 read tool API를 구현한다.
-  - `list_project_pipelines`
-  - `get_pipeline_topology`
-  - `get_connector_status`
-  - `get_consumer_lag`
-  - `search_logs`
-  - `get_incident_summary`
-- [ ] 실제 데이터가 아직 어렵다면 stub 응답이라도 path와 result schema는 먼저 고정한다.
-- [ ] FastAPI가 기대하는 path와 실제 Spring path 차이를 흡수한다.
-- [ ] `docs/api/internal-ops-read-tools.md`를 새로 만들고, tool 이름 / path / params / result / error mapping을 남긴다.
+- [~] FastAPI용 최소 read tool API를 구현한다.
+  - [x] `list_project_pipelines`
+  - [x] `get_pipeline_topology`
+  - [x] `get_connector_status`
+  - [~] `get_consumer_lag` — total lag만 반환(partial)
+  - [~] `search_logs` — stub
+  - [~] `get_incident_summary` — stub
+- [~] 실제 데이터가 아직 어렵다면 stub 응답이라도 path와 result schema는 먼저 고정한다. (path는 고정, 일부 result schema mismatch 남음)
+- [ ] FastAPI가 기대하는 path와 실제 Spring path 차이를 흡수한다. (WIP)
+- [x] `docs/api/internal-ops-read-tools.md`를 새로 만들고, tool 이름 / path / params / result / error mapping을 남긴다.
 
 ### GitHub issue로 쪼갤 때의 추천 단위
 

@@ -84,12 +84,12 @@ PipelineStatusService.recompute(pipelineId):
 
 ### 6. SSE 배선
 
-전이 시 `streaming`이 `pipeline_status_changed`를 push(상세 토글은 `connector_state_changed`). 채널·인증은 [monitoring.md §7](./monitoring.md#6-monitoring-and-incident-engine)·[api A.8](../../api/springboot.md).
+전이 시 `streaming`이 `pipeline_status_changed`를 push(상세 토글은 `connector_state_changed`). 채널·인증은 [monitoring.md §7](./monitoring.md#6-monitoring-and-incident-engine)·[Spring Boot API: Workspace Event Stream](../../api/springboot.md#workspace-event-stream).
 
 ### 7. 데이터·API
 
 - 테이블 `pipeline`·`connector` — [data-model §3.4·§3.5](./data-model.md#4-data-model).
-- API: `GET/POST .../pipelines`·`{id}/pause|resume`·`DELETE` ([api A.4](../../api/springboot.md)). 상세 탭 read 중 metrics/consumer-groups/connectors/sync/messages는 `monitoring.query` 위임, **connection-guide(FR-011: topic alias·bootstrap·group·언어별 스니펫)·table-mapping(FR-012: 컬럼→Kafka 필드)** 은 pipeline/connector 메타데이터·schema에서 직접 구성.
+- API: `GET/POST .../pipelines`·`{id}/pause|resume`·`DELETE`는 [Spring Boot API Controller Coverage](../../api/springboot.md#controller-coverage)의 `PipelineController` family를 따른다. 상세 탭 read 중 metrics/consumer-groups/connectors/sync/messages는 `monitoring.query` 위임, **connection-guide(FR-011: topic alias·bootstrap·group·언어별 스니펫)·table-mapping(FR-012: 컬럼→Kafka 필드)** 은 pipeline/connector 메타데이터·schema에서 직접 구성.
 
 ### 8. 구현 메모
 

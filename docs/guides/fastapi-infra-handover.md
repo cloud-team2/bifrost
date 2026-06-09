@@ -189,8 +189,8 @@ helm upgrade ai-service services/ai-service/helm \
 | **ai-service** | bifrost-system | 200m | 256Mi | Helm values.yaml |
 | **agentdb** (PostgreSQL + pgvector) | agentdb | 100m | 256Mi | 02-postgres.yaml |
 
-> 두 Pod 합산 기준: CPU **300m**, Memory **512Mi**.  
-> 현재 클러스터(t3.xlarge 5노드)에서 CPU 요청 포화 우려가 있다([infra.md §11](../design/infra.md#11-클러스터-용량-분석-및-대응안-2026-06-02)).  
+> 두 Pod 합산 기준: CPU **300m**, Memory **512Mi**.
+> 현재 클러스터(t3.xlarge 5노드)에서 CPU 요청 포화 우려가 있다([infra.md §11](../design/infra.md#11-클러스터-용량-분석-및-대응안-2026-06-02---해소됨119)).
 > ai-service + agentdb 추가 시 노드 여유 용량을 사전 확인하고 필요하면 노드 스펙업/추가를 진행한다.
 
 ---
@@ -201,7 +201,7 @@ helm upgrade ai-service services/ai-service/helm \
 | --- | --- |
 | Persistence 설계 | [server-design.md §9](../design/backend-fastapi/server-design.md#9-persistence-data-model) |
 | 보안 정책 | [server-design.md §10](../design/backend-fastapi/server-design.md#10-보안) |
-| 클러스터 용량 분석 | [infra.md §11](../design/infra.md#11-클러스터-용량-분석-및-대응안-2026-06-02) |
+| 클러스터 용량 분석 | [infra.md §11](../design/infra.md#11-클러스터-용량-분석-및-대응안-2026-06-02---해소됨119) |
 | 기존 인프라 가이드 | [getting-started-infra.md](./getting-started-infra.md) |
 | agentdb K8s 매니페스트 | `gitops 브랜치 databases/agentdb/` (#139로 develop에서 제거됨) |
 | ai-service Helm | `services/ai-service/helm/` (#121 미완성 — 인프라 팀원 생성 필요) |

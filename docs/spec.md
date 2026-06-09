@@ -50,8 +50,8 @@
 - **사전 조건**: 유효한 계정이 시스템에 등록되어 있어야 한다.
 - **기본 흐름**: 1) 이메일·비밀번호 입력 → 2) 시스템이 자격증명 검증 → 3) `currentUser` 설정 후 WorkspaceListView 이동.
 - **예외 흐름**: ① 자격증명 불일치 → 로그인 실패 메시지 ② 필드 미입력 → 입력 오류 메시지.
-- **API**: `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `POST /api/v1/auth/refresh`, `GET /api/v1/auth/me`.
-- **비고**: 데모 계정 `ta@bifrost.io / ta1234`(시드 계정명일 뿐, 액터 역할을 고정하지 않음). FR-002의 선행 조건. `/api/auth/**` alias는 지원하지 않고 `/api/v1/auth/**`만 사용한다.
+- **API**: `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `POST /api/v1/auth/refresh`, `GET /api/v1/auth/me`. `/me` 응답 필드는 `userId, email, name, role, joinedAt, lastLoginAt, workspaceId, workspaceName, namespace, workspaceStatus`다([Spring Boot API](./api/springboot.md#auth--account)).
+- **비고**: 데모 계정 `ta@bifrost.io / ta1234`(시드 계정명일 뿐, 액터 역할을 고정하지 않음). FR-002의 선행 조건. `/api/auth/**` alias는 404 `RESOURCE_NOT_FOUND` envelope으로 거부하고 `/api/v1/auth/**`만 사용한다.
 
 ### FR-002 — 워크스페이스 생성 및 선택
 - **액터**: 사용자
@@ -418,4 +418,4 @@
 | `investigating` | 사용자 확인·조치 중 |
 | `resolved` | 원인 해소 확인됨(사용자 수동 전이) |
 
-**인시던트 심각도**: `WARNING` / `CRITICAL` 2단계. (에이전트 내부 분석은 동일 2단계를 사용하며, 정책 에스컬레이션 시에만 가산한다 — [design/backend-fastapi/catalogs.md §12.6 Severity 보정](./design/backend-fastapi/catalog/catalog-policy-matrix.md#6-severity-보정) 참조.)
+**인시던트 심각도**: `WARNING` / `CRITICAL` 2단계. (에이전트 내부 분석은 동일 2단계를 사용하며, 정책 에스컬레이션 시에만 가산한다 — [catalog-policy-matrix.md §6 Severity 보정](./design/backend-fastapi/catalog/catalog-policy-matrix.md#6-severity-보정) 참조.)
