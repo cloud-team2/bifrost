@@ -6,7 +6,7 @@ import { TrendChart, CHART_COLORS, ResponsiveChart } from '../../components/Char
 import { TechIcon, nodeKind } from '../../components/TechIcon'
 import { useToast } from '../../components/Toast'
 import { useApp, CLUSTER } from '../../store/AppStore'
-import { pipelineConsumers, pipelineLabel } from '../../data/helpers'
+import { pipelineLabel } from '../../data/helpers'
 import { BOOTSTRAP_SERVER, LAG_THRESHOLD } from '../../data/mock'
 import type { Edge, Node } from '../../data/types'
 import {
@@ -38,16 +38,16 @@ export function PipelineDetail() {
   const isEda = edge?.pattern === 'fan-out'
 
   // Connector 탭은 EDA/CDC 모두 표시(실제 커넥터는 ConnectorTab이 백엔드에서 조회, #107)
+  // (#266) Sync 내용을 Overview로 이동, Topic & Partition은 별도 'Topic' 탭으로 분리.
   const tabs = isEda
     ? ['Overview', 'Consumers', 'Connector', 'Messages', 'Connection Guide']
-    : ['Overview', 'Connector', 'Sync', 'Messages', 'Table Mapping']
+    : ['Overview', 'Topic', 'Connector', 'Messages', 'Table Mapping']
 
   const [tab, setTab] = useState(tabs[0])
 
   if (!edge) return <div className="px-6 py-10 text-sm text-gray-500">Pipeline not found.</div>
   const source    = app.nodes.find((n) => n.id === edge.source)!
   const sink      = edge.sink ? app.nodes.find((n) => n.id === edge.sink) ?? null : null
-  const consumers = pipelineConsumers(edge, app.nodes)
 
   return (
     <div className="px-6 py-5">
@@ -96,10 +96,11 @@ export function PipelineDetail() {
       </div>
 
       <div className="mt-4">
-        {tab === 'Overview'          && <OverviewTab edge={edge} consumers={consumers} />}
+        {/* (#266) Overview = 동기화 뷰(CDC) / 토픽(EDA, sink 없음) · Topic = 토픽&파티션 */}
+        {tab === 'Overview'          && (isEda ? <TopicTab edge={edge} /> : <SyncTab edge={edge} />)}
+        {tab === 'Topic'             && <TopicTab edge={edge} />}
         {tab === 'Consumers'         && <ConsumersTab edge={edge} />}
         {tab === 'Connector'         && <ConnectorTab edge={edge} />}
-        {tab === 'Sync'              && <SyncTab edge={edge} />}
         {tab === 'Messages'          && <MessagesTab edge={edge} />}
         {tab === 'Connection Guide'  && <GuideTab edge={edge} />}
         {tab === 'Table Mapping'     && <MappingTab edge={edge} />}
@@ -145,42 +146,25 @@ function RangeSelector({ value, onChange }: { value: number; onChange: (m: numbe
   )
 }
 
-/* ---------------------------------------------------------------- Overview tab */
+/* ---------------------------------------------------------------- Topic tab (토픽 & 파티션) */
+/* (#266) 기존 Overview에서 Topic & Partition만 분리한 탭. 처리량·메트릭 카드는 폐기(API는 유지). */
 
-function OverviewTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
+function TopicTab({ edge }: { edge: Edge }) {
   const app = useApp()
   const wsId = app.currentProject?.id
-  const isEda = edge.pattern === 'fan-out'
 
   const [topicInfo, setTopicInfo] = useState<TopicInfoResponse | null>(null)
-  const [metrics, setMetrics] = useState<PipelineMetricsResponse | null>(null)
-  const [groups, setGroups] = useState<ConsumerGroupInfo[]>([])
-  const [throughput, setThroughput] = useState<ThroughputPoint[]>([])
-  const [rangeMin, setRangeMin] = useState(15)   // 시계열 차트 시간 범위(기본 15분 — 실시간 변동이 잘 보임)
 
   useEffect(() => {
     if (!wsId) return
     let cancelled = false
-    // 실시간 갱신(#200): 마운트 시 1회 + 주기 폴링으로 Prometheus 대시보드처럼 그래프가 움직인다.
     const load = () => {
       api.pipelineTopicInfo(wsId, edge.id).then((t) => { if (!cancelled) setTopicInfo(t) }).catch(() => {})
-      api.pipelineMetrics(wsId, edge.id).then((m) => { if (!cancelled) setMetrics(m) }).catch(() => {})
-      api.pipelineThroughput(wsId, edge.id, rangeMin).then((t) => { if (!cancelled) setThroughput(t) }).catch(() => {})
-      if (isEda) {
-        api.pipelineConsumerGroups(wsId, edge.id).then((g) => { if (!cancelled) setGroups(g) }).catch(() => {})
-      }
     }
     load()
     const timer = setInterval(load, 5000)
     return () => { cancelled = true; clearInterval(timer) }
-  }, [wsId, edge.id, isEda, rangeMin])
-
-  const m = {
-    produce_rate: metrics?.produceRate ?? 0,
-    consume_rate: metrics?.consumeRate ?? 0,
-    lag: metrics?.lagMessages ?? 0,
-    error_pct: metrics?.errorPct ?? 0,
-  }
+  }, [wsId, edge.id])
 
   const partitions = topicInfo?.partitions ?? []
   const retentionMs = topicInfo?.retentionMs ?? -1
@@ -190,57 +174,8 @@ function OverviewTab({ edge, consumers }: { edge: Edge; consumers: Node[] }) {
   const isrPct = topicInfo?.isrPct ?? 100
   const isrOk = isrPct >= 100
 
-  const maxLagGroup = groups.length > 0 ? groups.reduce((a, b) => b.totalLag > a.totalLag ? b : a) : null
-
-  // 실데이터(Prometheus range)만 사용. 비어있으면 빈 차트(더미 위장 금지, #175).
-  const throughputData = useMemo(() =>
-    throughput.map((p) => ({
-      t: p.timestamp,   // epoch ms — timeAxis가 실제 시간 간격으로 배치(Grafana식)
-      produced: Math.round(p.produceRate * 100) / 100,
-      consumed: Math.round(p.consumeRate * 100) / 100,
-    })), [throughput])
-
   return (
     <div className="space-y-4">
-
-      {/* metric cards */}
-      <div className="grid grid-cols-4 gap-4">
-        <MetricCard label="Produced"    value={formatNum(m.produce_rate)} sub="msg / sec" />
-        <MetricCard label="Consumed"    value={formatNum(m.consume_rate)} sub="msg / sec" />
-        {isEda ? (
-          <MetricCard
-            label="Max consumer lag"
-            value={maxLagGroup ? formatNum(maxLagGroup.totalLag) : '—'}
-            sub={maxLagGroup?.name ?? 'no groups'}
-            tone={maxLagGroup && maxLagGroup.totalLag >= LAG_THRESHOLD ? 'warn' : 'good'}
-          />
-        ) : (
-          <MetricCard label="Consumer lag" value={formatNum(m.lag)} sub="messages" tone={m.lag > 1000 ? 'warn' : 'good'} />
-        )}
-        <MetricCard label="Error rate"  value={`${m.error_pct}%`} tone={m.error_pct > 0.5 ? 'bad' : 'good'} />
-      </div>
-
-      {/* throughput chart */}
-      <Panel title="처리량 추이"
-        right={
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-1.5 text-[11.5px] text-gray-500">
-              <span className="h-2 w-2 rounded-full" style={{ background: CHART_COLORS.brand }} />Produced
-            </div>
-            <div className="flex items-center gap-1.5 text-[11.5px] text-gray-500">
-              <span className="h-2 w-2 rounded-full" style={{ background: CHART_COLORS.emerald }} />Consumed
-            </div>
-            <RangeSelector value={rangeMin} onChange={setRangeMin} />
-          </div>
-        }>
-        <div className="px-3 py-3">
-          <TrendChart data={throughputData} type="area" height={160} timeAxis
-            series={[
-              { key: 'produced', label: 'Produced', color: CHART_COLORS.brand },
-              { key: 'consumed', label: 'Consumed', color: CHART_COLORS.emerald },
-            ]} />
-        </div>
-      </Panel>
 
       {/* topic & partitions */}
       <Panel title="Topic & Partitions">
@@ -609,9 +544,8 @@ function SyncTab({ edge }: { edge: Edge }) {
   // 실제 source/sink 행수(#107). -1은 접속 실패/테이블 미존재(생성 중).
   const [sync, setSync]       = useState<SyncStatusResponse | null>(null)
   const [syncErr, setSyncErr] = useState(false)
-  // 추세 차트 실데이터(#126, Prometheus range): 전송 시간·이벤트분포.
+  // 추세 차트 실데이터(#126, Prometheus range): 전송된 데이터 개수·이벤트분포.
   // (consumer lag 추이는 60초 커밋 톱니파라 행 동기화와 무관해 오독되므로 노출하지 않는다, #200)
-  const [delaySeries, setDelaySeries] = useState<MetricPoint[]>([])
   const [eventSeries, setEventSeries] = useState<EventDistPoint[]>([])
   const [rangeMin, setRangeMin] = useState(15)   // 시계열 차트 시간 범위(기본 15분)
   useEffect(() => {
@@ -619,12 +553,11 @@ function SyncTab({ edge }: { edge: Edge }) {
     let cancelled = false
     setSync(null)      // 최초 진입만 로딩 표시(폴링 갱신 때는 깜빡임 없이 값만 교체)
     setSyncErr(false)
-    // 실시간 갱신(#200): 동기화율·전송시간·이벤트분포를 주기 폴링해 실시간으로 움직인다.
+    // 실시간 갱신(#200): 동기화율·전송 레코드 수·이벤트분포를 주기 폴링해 실시간으로 움직인다.
     const load = () => {
       api.pipelineSyncStatus(wsId, edge.id)
         .then((s) => { if (!cancelled) setSync(s) })
         .catch(() => { if (!cancelled) setSyncErr(true) })
-      api.pipelineSourceDelay(wsId, edge.id, rangeMin).then((d) => { if (!cancelled) setDelaySeries(d) }).catch(() => {})
       api.pipelineEventDist(wsId, edge.id, rangeMin).then((d) => { if (!cancelled) setEventSeries(d) }).catch(() => {})
     }
     load()
@@ -642,20 +575,31 @@ function SyncTab({ edge }: { edge: Edge }) {
     ? Math.min(100, sync!.sourceRows > 0 ? (sync!.sinkRows / sync!.sourceRows) * 100 : 100)
     : 0
   const isHealthy  = sinkReady && syncPct >= 99.9
-  const barColor   = isHealthy ? 'bg-emerald-400' : syncPct >= 99.0 ? 'bg-amber-400' : 'bg-rose-400'
   const pctColor   = isHealthy ? 'text-emerald-600' : syncPct >= 99.0 ? 'text-amber-600' : 'text-rose-600'
+  const barColor   = isHealthy ? 'bg-emerald-400' : syncPct >= 99.0 ? 'bg-amber-400' : 'bg-rose-400'
 
   // 실데이터(Prometheus)만 사용. 비어있으면 빈 차트(더미 위장 금지, #175).
   // 소스지연은 Debezium이 전달할 데이터가 없을 때(idle) -1을 준다. 이때는 "지연 0"이 아니라
   // 측정값이 없는 것이므로 null로 두어 그래프를 끊는다(Prometheus처럼). 0으로 클램프하면 거짓 0.
-  const sourceDelay = useMemo(() =>
-    delaySeries.map((p) => ({ t: p.timestamp, delay: p.value < 0 ? null : Math.round(p.value) })),
-    [delaySeries])
-  const eventDist   = useMemo(() =>
-    eventSeries.map((p) => {
-      const ts = hhmm(p.timestamp)
-      return { t: ts, ts, insert: p.insert, update: p.update, delete: p.delete }
-    }), [eventSeries])
+  // t = epoch ms → 실제 시간축(scale=time)으로 배치. 데이터 없는 구간은 빈 공간(균등 시각 눈금).
+  // 백엔드는 값이 있는 버킷만 반환 → 빈 구간을 step(=max(30,minutes)s) 간격으로 0-채움해
+  // 균등 간격 연속 막대(Grafana 스타일)로 만든다. 마지막 점을 앵커로 잡아 데이터가 그리드에 정렬되게 함.
+  const eventDist   = useMemo(() => {
+    const stepMs = Math.max(60, rangeMin) * 1000 // 백엔드 evStep(분당 1버킷, 분 경계 고정)과 동일
+    const pts    = [...eventSeries].sort((a, b) => a.timestamp - b.timestamp)
+    const end    = pts.length ? pts[pts.length - 1].timestamp : Math.floor(Date.now() / stepMs) * stepMs
+    const start  = end - rangeMin * 60_000
+    const byTs   = new Map(pts.map((p) => [p.timestamp, p]))
+    const grid: { t: number; insert: number; update: number; delete: number; count: number }[] = []
+    for (let t = end; t >= start; t -= stepMs) {
+      const p = byTs.get(t)
+      const insert = p?.insert ?? 0, update = p?.update ?? 0, del = p?.delete ?? 0
+      grid.push({ t, insert, update, delete: del, count: insert + update + del })
+    }
+    return grid.reverse()
+  }, [eventSeries, rangeMin])
+  // 약 6개 라벨만 노출(나머지 버킷은 솎음) → 균등 간격 시각 눈금
+  const tickEvery = Math.max(0, Math.ceil(eventDist.length / 6) - 1)
   const axis = { fontSize: 10, fill: '#94a3b8' }
 
   return (
@@ -668,7 +612,7 @@ function SyncTab({ edge }: { edge: Edge }) {
             {/* Source DB */}
             <DBNodeCard node={sourceNode} role="Source" />
 
-            {/* Center: sync status */}
+            {/* Center: 동기화율 (선형) */}
             <div className="flex flex-col items-center gap-3">
               <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-0.5 font-mono text-[10.5px] font-semibold text-gray-500">
                 {tableName}
@@ -682,23 +626,25 @@ function SyncTab({ edge }: { edge: Edge }) {
                 <div className="h-px flex-1 border-t border-dashed border-gray-300" />
               </div>
 
-              <span className={cn('text-[22px] font-bold tabular-nums leading-none', pctColor)}>
-                {syncPct.toFixed(1)}%
+              <span className={cn('text-[24px] font-bold tabular-nums leading-none',
+                sync === null ? 'text-gray-300' : pctColor)}>
+                {sync === null ? '—' : `${syncPct.toFixed(1)}%`}
               </span>
 
               <div className="w-full overflow-hidden rounded-full bg-gray-100" style={{ height: 7 }}>
-                <div
-                  className={cn('h-full rounded-full transition-all', barColor)}
-                  style={{ width: `${Math.min(syncPct, 100)}%` }}
-                />
+                <div className={cn('h-full rounded-full transition-all', barColor)}
+                  style={{ width: `${Math.min(syncPct, 100)}%` }} />
               </div>
 
-              <span className={cn('text-[11.5px] font-medium', isHealthy ? 'text-emerald-600' : 'text-amber-600')}>
-                {!sinkReady
-                  ? 'sink 준비중'
-                  : isHealthy
-                    ? '동기화 완료'
-                    : `Δ +${formatNum(Math.max(0, sync?.delta ?? 0))} rows`}
+              <span className={cn('text-[11.5px] font-medium',
+                sync === null ? 'text-gray-400' : isHealthy ? 'text-emerald-600' : 'text-amber-600')}>
+                {sync === null
+                  ? '불러오는 중…'
+                  : !sinkReady
+                    ? 'sink 준비중'
+                    : isHealthy
+                      ? '동기화 완료'
+                      : `Δ +${formatNum(Math.max(0, sync?.delta ?? 0))} rows`}
               </span>
             </div>
 
@@ -732,25 +678,31 @@ function SyncTab({ edge }: { edge: Edge }) {
       </Panel>
 
       {/* ── 차트 패널 ─────────────────────────────────────────────── */}
-      {/* consumer lag 차트는 의도적으로 제거: 60초 offset 커밋 주기의 톱니파라 행 동기화(100%)와
-          무관한데도 '미동기화'로 오독된다. 동기화 여부는 상단 행 기준(Δ)·전송 시간으로 답한다. */}
-      <Panel title="데이터 전송 시간 (ms)" right={<RangeSelector value={rangeMin} onChange={setRangeMin} />}>
-        <div className="px-3 py-3">
-          <TrendChart
-            data={sourceDelay} type="area" height={140} timeAxis
-            series={[{ key: 'delay', label: '전송 시간 (ms)', color: CHART_COLORS.violet }]}
-          />
+      {/* 전송 레코드 현황 — 분당 변경 이벤트 수(insert+update+delete). 누적 행 수가 아닌 throughput 지표 */}
+      <Panel title="전송 레코드 현황" right={<RangeSelector value={rangeMin} onChange={setRangeMin} />}>
+        <div className="px-4 py-3">
+          <ResponsiveChart width="100%" height={140}>
+            <BarChart data={eventDist} maxBarSize={22} barCategoryGap="8%" margin={{ top: 4, right: 8, left: -28, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+              <XAxis dataKey="t" tickFormatter={hhmm} interval={tickEvery}
+                     tick={axis} tickLine={false} axisLine={false} />
+              <YAxis tick={axis} tickLine={false} axisLine={false} allowDecimals={false} />
+              <Tooltip contentStyle={tooltipStyle} labelFormatter={(v) => hhmm(Number(v))} />
+              <Bar dataKey="count" fill={CHART_COLORS.brand} name="전송 레코드" radius={[2, 2, 0, 0]} />
+            </BarChart>
+          </ResponsiveChart>
         </div>
       </Panel>
 
       <Panel title="이벤트 타입 분포" right={<span className="text-[12px] text-gray-400">{rangeLabel}</span>}>
         <div className="px-4 py-3">
           <ResponsiveChart width="100%" height={140}>
-            <BarChart data={eventDist} barSize={10} margin={{ top: 4, right: 8, left: -28, bottom: 0 }}>
+            <BarChart data={eventDist} maxBarSize={22} barCategoryGap="8%" margin={{ top: 4, right: 8, left: -28, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-              <XAxis dataKey="ts" tick={axis} tickLine={false} axisLine={false} />
-              <YAxis tick={axis} tickLine={false} axisLine={false} />
-              <Tooltip contentStyle={tooltipStyle} />
+              <XAxis dataKey="t" tickFormatter={hhmm} interval={tickEvery}
+                     tick={axis} tickLine={false} axisLine={false} />
+              <YAxis tick={axis} tickLine={false} axisLine={false} allowDecimals={false} />
+              <Tooltip contentStyle={tooltipStyle} labelFormatter={(v) => hhmm(Number(v))} />
               <Bar dataKey="insert" stackId="a" fill={CHART_COLORS.emerald} name="INSERT" radius={[0,0,0,0]} />
               <Bar dataKey="update" stackId="a" fill={CHART_COLORS.amber}   name="UPDATE" radius={[0,0,0,0]} />
               <Bar dataKey="delete" stackId="a" fill={CHART_COLORS.red}     name="DELETE" radius={[2,2,0,0]} />
