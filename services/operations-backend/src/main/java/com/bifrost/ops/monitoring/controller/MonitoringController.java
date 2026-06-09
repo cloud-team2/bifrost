@@ -1,6 +1,8 @@
 package com.bifrost.ops.monitoring.controller;
 
 import com.bifrost.ops.auth.jwt.AuthenticatedUser;
+import com.bifrost.ops.incident.IncidentService;
+import com.bifrost.ops.incident.dto.IncidentResponse;
 import com.bifrost.ops.monitoring.dto.OverviewResponse;
 import com.bifrost.ops.monitoring.dto.ResourceEventResponse;
 import com.bifrost.ops.monitoring.service.MonitoringReadService;
@@ -14,23 +16,24 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 /**
  * 모니터링 read API — overview·resource-events·incidents(S5).
- * incidents 엔드포인트는 S2(#258) merge 후 IncidentService로 교체 예정.
  */
 @RestController
 @RequestMapping("/api/v1/workspaces/{wsId}/monitoring")
 public class MonitoringController {
 
     private final MonitoringReadService monitoringReadService;
+    private final IncidentService incidentService;
     private final WorkspaceAccessGuard accessGuard;
 
     public MonitoringController(MonitoringReadService monitoringReadService,
+                                IncidentService incidentService,
                                 WorkspaceAccessGuard accessGuard) {
         this.monitoringReadService = monitoringReadService;
+        this.incidentService = incidentService;
         this.accessGuard = accessGuard;
     }
 
@@ -52,31 +55,23 @@ public class MonitoringController {
         return ResponseEntity.ok(monitoringReadService.resourceEvents(wsId));
     }
 
-    /**
-     * incident 목록 stub — S2(#258) merge 후 IncidentService 연결 예정.
-     * response shape 계약용으로 먼저 노출.
-     */
+    /** incident 목록. */
     @GetMapping("/incidents")
-    public ResponseEntity<List<Map<String, Object>>> incidents(
+    public ResponseEntity<List<IncidentResponse>> incidents(
             @PathVariable UUID wsId,
             @RequestParam(required = false) String status,
             @AuthenticationPrincipal AuthenticatedUser principal) {
         accessGuard.requireMember(wsId, principal);
-        return ResponseEntity.ok(List.of());
+        return ResponseEntity.ok(incidentService.list(wsId, status));
     }
 
-    /**
-     * incident 상세 stub — S2(#258) merge 후 IncidentService 연결 예정.
-     */
+    /** incident 상세. */
     @GetMapping("/incidents/{incidentId}")
-    public ResponseEntity<Map<String, Object>> incident(
+    public ResponseEntity<IncidentResponse> incident(
             @PathVariable UUID wsId,
             @PathVariable UUID incidentId,
             @AuthenticationPrincipal AuthenticatedUser principal) {
         accessGuard.requireMember(wsId, principal);
-        return ResponseEntity.ok(Map.of(
-                "id", incidentId,
-                "status", "stub — pending S2 merge",
-                "wsId", wsId));
+        return ResponseEntity.ok(incidentService.get(wsId, incidentId));
     }
 }

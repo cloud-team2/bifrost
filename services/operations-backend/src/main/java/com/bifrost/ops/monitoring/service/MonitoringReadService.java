@@ -3,10 +3,13 @@ package com.bifrost.ops.monitoring.service;
 import com.bifrost.ops.database.persistence.entity.DatasourceEntity;
 import com.bifrost.ops.database.persistence.repository.DatasourceRepository;
 import com.bifrost.ops.database.health.DatabaseHealthProbeJob;
+import com.bifrost.ops.incident.persistence.repository.IncidentRepository;
 import com.bifrost.ops.monitoring.dto.OverviewResponse;
 import com.bifrost.ops.monitoring.dto.ResourceEventResponse;
+import com.bifrost.ops.pipeline.ConnectorRuntimeState;
 import com.bifrost.ops.pipeline.PipelineLifecycle;
 import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
+import com.bifrost.ops.provisioning.persistence.repository.ConnectorRepository;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.ListPartitionReassignmentsResult;
 import org.slf4j.Logger;
@@ -28,13 +31,19 @@ public class MonitoringReadService {
 
     private final PipelineRepository pipelineRepository;
     private final DatasourceRepository datasourceRepository;
+    private final IncidentRepository incidentRepository;
+    private final ConnectorRepository connectorRepository;
     private final AdminClient adminClient;
 
     public MonitoringReadService(PipelineRepository pipelineRepository,
                                   DatasourceRepository datasourceRepository,
+                                  IncidentRepository incidentRepository,
+                                  ConnectorRepository connectorRepository,
                                   AdminClient adminClient) {
         this.pipelineRepository = pipelineRepository;
         this.datasourceRepository = datasourceRepository;
+        this.incidentRepository = incidentRepository;
+        this.connectorRepository = connectorRepository;
         this.adminClient = adminClient;
     }
 
@@ -51,11 +60,17 @@ public class MonitoringReadService {
         long unreachable = datasources.stream()
                 .filter(d -> DatabaseHealthProbeJob.UNREACHABLE.equals(d.getConnectionStatus()))
                 .count();
+        long openIncidents = incidentRepository.countByTenantIdAndStatus(tenantId, "OPEN");
+        long totalConnectors = connectorRepository.countByTenantId(tenantId);
+        long failedConnectors = connectorRepository.countByTenantIdAndStateIn(
+                tenantId,
+                ConnectorRuntimeState.FAILED.name(),
+                ConnectorRuntimeState.PARTIALLY_FAILED.name());
 
         return new OverviewResponse(total, running, error, healthy, unreachable,
-                0L, // openIncidents: S2 merge 후 IncidentRepository로 교체 예정
-                0L, // totalConnectors: ConnectRestPoller 캐시 연결 예정
-                0L);
+                openIncidents,
+                totalConnectors,
+                failedConnectors);
     }
 
     public List<ResourceEventResponse> resourceEvents(UUID tenantId) {

@@ -2,6 +2,8 @@ package com.bifrost.ops.incident;
 
 import com.bifrost.ops.event.EventLevel;
 import com.bifrost.ops.event.EventService;
+import com.bifrost.ops.global.common.error.ApiException;
+import com.bifrost.ops.global.common.error.ErrorCode;
 import com.bifrost.ops.incident.dto.IncidentResponse;
 import com.bifrost.ops.incident.persistence.entity.IncidentEntity;
 import com.bifrost.ops.incident.persistence.repository.IncidentRepository;
@@ -133,6 +135,7 @@ public class IncidentService {
         return incidentRepository.findById(incidentId)
                 .filter(e -> e.getTenantId().equals(tenantId))
                 .map(IncidentResponse::from)
-                .orElseThrow(() -> new IllegalArgumentException("incident not found: " + incidentId));
+                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND,
+                        "incident not found: " + incidentId));
     }
 }
