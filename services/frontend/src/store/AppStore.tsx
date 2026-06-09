@@ -19,6 +19,7 @@ import {
 import { datasourceToNode, pipelineToEdge, workspaceToProject } from '../lib/mappers'
 
 export type View =
+  | 'overview'
   | 'pipelines'
   | 'pipeline-detail'
   | 'databases'
@@ -75,6 +76,7 @@ interface Store {
   openPipeline: (id: string) => void
   openDatabase: (id: string) => void
   openIncident: (id: string) => void
+  clearOpSelectedIncident: () => void
   /* ai panel */
   aiPanelOpen: boolean
   setAIPanel: (open: boolean) => void
@@ -433,6 +435,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setOpSelectedIncidentId(id)
       setViewRaw('alerts')
       pushNav(snapshot({ view: 'alerts', opSelectedIncidentId: id }))
+    },
+    clearOpSelectedIncident() {
+      setOpSelectedIncidentId(null)
     },
     aiPanelOpen,
     setAIPanel(open) {
