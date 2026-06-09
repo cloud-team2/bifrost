@@ -5,6 +5,7 @@ import com.bifrost.ops.pipeline.dto.PipelineCreateRequest;
 import com.bifrost.ops.pipeline.dto.PipelineResponse;
 import com.bifrost.ops.pipeline.service.PipelineService;
 import com.bifrost.ops.pipeline.service.PipelineSyncService;
+import com.bifrost.ops.pipeline.runtime.PipelineRuntimeMetadataService;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.ResponseEntity;
 
@@ -27,8 +28,10 @@ class PipelineControllerTest {
             mock(com.bifrost.ops.pipeline.service.PipelineTopicService.class);
     private final com.bifrost.ops.pipeline.service.PipelineMessageService messageService =
             mock(com.bifrost.ops.pipeline.service.PipelineMessageService.class);
+    private final PipelineRuntimeMetadataService runtimeMetadataService =
+            mock(PipelineRuntimeMetadataService.class);
     private final PipelineController controller =
-            new PipelineController(service, syncService, topicService, messageService);
+            new PipelineController(service, syncService, topicService, messageService, runtimeMetadataService);
 
     private final UUID wsId = UUID.randomUUID();
     private final AuthenticatedUser principal = new AuthenticatedUser(UUID.randomUUID(), wsId, "u@bifrost.io");

@@ -3,11 +3,13 @@ package com.bifrost.ops.workspace.kafka;
 import com.bifrost.ops.auth.jwt.AuthenticatedUser;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
+import com.bifrost.ops.governance.audit.AuditService;
 import com.bifrost.ops.workspace.Role;
 import com.bifrost.ops.workspace.WorkspaceAccessGuard;
 import com.bifrost.ops.workspace.kafka.dto.KafkaPrincipalCreateRequest;
 import com.bifrost.ops.workspace.persistence.repository.ProjectMemberRepository;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
+import io.fabric8.kubernetes.client.KubernetesClient;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -30,13 +32,16 @@ class KafkaPrincipalServiceTest {
     @Mock private WorkspaceRepository workspaceRepository;
     @Mock private ProjectMemberRepository memberRepository;
     @Mock private WorkspaceAccessGuard accessGuard;
+    @Mock private KubernetesClient k8s;
+    @Mock private AuditService auditService;
 
     private final UUID wsId = UUID.randomUUID();
     private final UUID userId = UUID.randomUUID();
     private final AuthenticatedUser principal = new AuthenticatedUser(userId, wsId, "admin@bifrost.io");
 
     private KafkaPrincipalService service() {
-        return new KafkaPrincipalService(principalRepository, workspaceRepository, memberRepository, accessGuard);
+        return new KafkaPrincipalService(principalRepository, workspaceRepository, memberRepository, accessGuard,
+                k8s, auditService, "platform-kafka");
     }
 
     @Test
@@ -139,6 +144,19 @@ class KafkaPrincipalServiceTest {
 
         assertThatThrownBy(() -> service().create(wsId, principal,
                 new KafkaPrincipalCreateRequest("team", null)))
+                .isInstanceOfSatisfying(ApiException.class, e ->
+                        assertThat(e.code()).isEqualTo(ErrorCode.WORKSPACE_FORBIDDEN));
+    }
+
+    @Test
+    void secretEndpointRejectsMemberRoleBeforeReadingKubernetes() {
+        UUID id = UUID.randomUUID();
+        when(workspaceRepository.existsById(wsId)).thenReturn(true);
+        when(memberRepository.existsByIdWorkspaceIdAndIdUserIdAndRoleIn(wsId, userId, List.of(Role.OWNER, Role.ADMIN)))
+                .thenReturn(false);
+        when(workspaceRepository.existsByIdAndOwnerUserId(wsId, userId)).thenReturn(false);
+
+        assertThatThrownBy(() -> service().secret(wsId, principal, id))
                 .isInstanceOfSatisfying(ApiException.class, e ->
                         assertThat(e.code()).isEqualTo(ErrorCode.WORKSPACE_FORBIDDEN));
     }

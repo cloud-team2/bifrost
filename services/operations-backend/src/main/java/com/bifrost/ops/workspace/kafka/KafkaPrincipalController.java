@@ -3,6 +3,7 @@ package com.bifrost.ops.workspace.kafka;
 import com.bifrost.ops.auth.jwt.AuthenticatedUser;
 import com.bifrost.ops.workspace.kafka.dto.KafkaPrincipalCreateRequest;
 import com.bifrost.ops.workspace.kafka.dto.KafkaPrincipalResponse;
+import com.bifrost.ops.workspace.kafka.dto.KafkaPrincipalSecretResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -58,5 +59,12 @@ public class KafkaPrincipalController {
                                          @PathVariable UUID id,
                                          @AuthenticationPrincipal AuthenticatedUser principal) {
         return principalService.rotate(wsId, principal, id);
+    }
+
+    @GetMapping("/{id}/secret")
+    public KafkaPrincipalSecretResponse secret(@PathVariable UUID wsId,
+                                               @PathVariable UUID id,
+                                               @AuthenticationPrincipal AuthenticatedUser principal) {
+        return principalService.secret(wsId, principal, id);
     }
 }

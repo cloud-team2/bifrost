@@ -3,6 +3,7 @@ package com.bifrost.ops.workspace.kafka;
 import com.bifrost.ops.auth.jwt.AuthenticatedUser;
 import com.bifrost.ops.workspace.kafka.dto.KafkaPrincipalCreateRequest;
 import com.bifrost.ops.workspace.kafka.dto.KafkaPrincipalResponse;
+import com.bifrost.ops.workspace.kafka.dto.KafkaPrincipalSecretResponse;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.ResponseEntity;
 
@@ -57,6 +58,20 @@ class KafkaPrincipalControllerTest {
         verify(service).deactivate(wsId, principal, id);
         verify(service).revoke(wsId, principal, id);
         verify(service).rotate(wsId, principal, id);
+    }
+
+    @Test
+    void secretEndpointDelegatesToService() {
+        KafkaPrincipalSecretResponse resp = new KafkaPrincipalSecretResponse(
+                id, "team", "ACTIVE", "platform-kafka", "proj-team-a-user", List.of("sasl.password"),
+                "********", Instant.now(), "MASKED_REFERENCE_ONLY");
+        when(service.secret(wsId, principal, id)).thenReturn(resp);
+
+        KafkaPrincipalSecretResponse out = controller.secret(wsId, id, principal);
+
+        assertThat(out.exposurePolicy()).isEqualTo("MASKED_REFERENCE_ONLY");
+        assertThat(out.passwordMasked()).isEqualTo("********");
+        verify(service).secret(wsId, principal, id);
     }
 
     private KafkaPrincipalResponse sample(String status) {
