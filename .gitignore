@@ -74,3 +74,6 @@ coverage/
 # ─── Helm ───
 **/charts/
 **/Chart.lock
+
+# ─── MCP (local secrets) ───
+.mcp.json
