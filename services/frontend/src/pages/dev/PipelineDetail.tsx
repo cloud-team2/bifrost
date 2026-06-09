@@ -45,9 +45,28 @@ export function PipelineDetail() {
 
   const [tab, setTab] = useState(tabs[0])
 
+  // (#267) 탭별 에러 위치 표시용 — 커넥터 상태를 폴링해 FAILED/lastError를 감지(복구 시 자동 해제).
+  const wsId = app.currentProject?.id
+  const [connectors, setConnectors] = useState<ConnectorInfo[] | null>(null)
+  useEffect(() => {
+    if (!wsId || !edge) return
+    let cancelled = false
+    const load = () => api.listPipelineConnectors(wsId, edge.id)
+      .then((cs) => { if (!cancelled) setConnectors(cs) })
+      .catch(() => { /* 일시적 조회 실패는 점 표시에 영향 주지 않음 */ })
+    load()
+    const timer = setInterval(load, 5000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [wsId, edge?.id])
+
   if (!edge) return <div className="px-6 py-10 text-sm text-gray-500">Pipeline not found.</div>
   const source    = app.nodes.find((n) => n.id === edge.source)!
   const sink      = edge.sink ? app.nodes.find((n) => n.id === edge.sink) ?? null : null
+
+  // (#267) 원인 attribution → 탭 매핑: DB(연결 끊김/차단) → Overview, 커넥터 FAILED/에러 → Connector.
+  const connectorErr = !!connectors?.some((c) => c.state === 'FAILED' || (c.lastError != null && c.lastError !== ''))
+  const dbErr        = source.status === 'error' || sink?.status === 'error'
+  const tabErrors: Record<string, boolean> = { Overview: dbErr, Connector: connectorErr }
 
   return (
     <div className="px-6 py-5">
@@ -91,6 +110,10 @@ export function PipelineDetail() {
             className={cn('-mb-px border-b-2 px-3 pb-2 text-[13px] font-medium transition-colors',
               tab === t ? 'border-brand-600 text-brand-700' : 'border-transparent text-gray-500 hover:text-gray-700')}>
             {t}
+            {tabErrors[t] && (
+              <span title="이 영역에 에러가 있습니다"
+                className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-rose-500 align-middle" />
+            )}
           </button>
         ))}
       </div>
