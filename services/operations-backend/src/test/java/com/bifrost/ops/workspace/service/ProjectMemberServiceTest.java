@@ -28,6 +28,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.ArgumentMatchers.any;
 
 @ExtendWith(MockitoExtension.class)
 class ProjectMemberServiceTest {
@@ -125,6 +126,37 @@ class ProjectMemberServiceTest {
     }
 
     @Test
+    void addDowngradesOwnerRequestToAdmin() {
+        UUID userId = UUID.randomUUID();
+        UserEntity user = user(userId, "owner-request@bifrost.io");
+        when(memberRepository.existsByIdWorkspaceIdAndIdUserIdAndRoleIn(workspaceId, managerId, List.of(Role.OWNER, Role.ADMIN)))
+                .thenReturn(true);
+        when(userRepository.findByEmail("owner-request@bifrost.io")).thenReturn(Optional.of(user));
+        when(memberRepository.existsByIdWorkspaceIdAndIdUserId(workspaceId, userId)).thenReturn(false);
+        when(memberRepository.saveAndFlush(any(ProjectMemberEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        ProjectMemberResponse response = service().add(
+                workspaceId, manager, new ProjectMemberAddRequest("owner-request@bifrost.io", Role.OWNER));
+
+        assertThat(response.role()).isEqualTo(Role.ADMIN);
+    }
+
+    @Test
+    void addRejectsDuplicateMember() {
+        UUID userId = UUID.randomUUID();
+        UserEntity user = user(userId, "member@bifrost.io");
+        when(memberRepository.existsByIdWorkspaceIdAndIdUserIdAndRoleIn(workspaceId, managerId, List.of(Role.OWNER, Role.ADMIN)))
+                .thenReturn(true);
+        when(userRepository.findByEmail("member@bifrost.io")).thenReturn(Optional.of(user));
+        when(memberRepository.existsByIdWorkspaceIdAndIdUserId(workspaceId, userId)).thenReturn(true);
+
+        assertThatThrownBy(() -> service().add(
+                workspaceId, manager, new ProjectMemberAddRequest("member@bifrost.io", Role.MEMBER)))
+                .isInstanceOfSatisfying(ApiException.class, e ->
+                        assertThat(e.code()).isEqualTo(ErrorCode.MEMBER_ALREADY_EXISTS));
+    }
+
+    @Test
     void addRejectsUnknownEmail() {
         when(memberRepository.existsByIdWorkspaceIdAndIdUserIdAndRoleIn(workspaceId, managerId, List.of(Role.OWNER, Role.ADMIN)))
                 .thenReturn(true);
@@ -148,6 +180,23 @@ class ProjectMemberServiceTest {
                 workspaceId, ownerId, manager, new ProjectMemberUpdateRequest(Role.MEMBER)))
                 .isInstanceOfSatisfying(ApiException.class, e ->
                         assertThat(e.code()).isEqualTo(ErrorCode.OWNER_DEMOTION_FORBIDDEN));
+    }
+
+    @Test
+    void updateChangesNonOwnerRole() {
+        UUID userId = UUID.randomUUID();
+        ProjectMemberEntity member = new ProjectMemberEntity(workspaceId, userId, Role.MEMBER);
+        UserEntity user = user(userId, "member@bifrost.io");
+        when(memberRepository.existsByIdWorkspaceIdAndIdUserIdAndRoleIn(workspaceId, managerId, List.of(Role.OWNER, Role.ADMIN)))
+                .thenReturn(true);
+        when(memberRepository.findByIdWorkspaceIdAndIdUserId(workspaceId, userId)).thenReturn(Optional.of(member));
+        when(memberRepository.saveAndFlush(member)).thenReturn(member);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        ProjectMemberResponse response = service().update(
+                workspaceId, userId, manager, new ProjectMemberUpdateRequest(Role.ADMIN));
+
+        assertThat(response.role()).isEqualTo(Role.ADMIN);
     }
 
     @Test

@@ -140,6 +140,33 @@ class WorkspaceServiceTest {
         assertThat(out.timezone()).isEqualTo("Asia/Seoul");
     }
 
+    @Test
+    void updateRejectsNonManager() {
+        UUID wsId = UUID.randomUUID();
+        when(memberRepository.existsByIdWorkspaceIdAndIdUserIdAndRoleIn(wsId, userId, List.of(Role.OWNER, Role.ADMIN)))
+                .thenReturn(false);
+        when(workspaceRepository.existsByIdAndOwnerUserId(wsId, userId)).thenReturn(false);
+
+        assertThatThrownBy(() -> service().update(wsId, principal, new WorkspaceUpdateRequest("Team B", null)))
+                .isInstanceOfSatisfying(ApiException.class, e ->
+                        assertThat(e.code()).isEqualTo(ErrorCode.WORKSPACE_FORBIDDEN));
+    }
+
+    @Test
+    void updateClearsBlankTimezone() {
+        UUID wsId = UUID.randomUUID();
+        WorkspaceEntity workspace = entity(wsId, "Team A", "team-a");
+        workspace.setTimezone("Asia/Seoul");
+        when(memberRepository.existsByIdWorkspaceIdAndIdUserIdAndRoleIn(wsId, userId, List.of(Role.OWNER, Role.ADMIN)))
+                .thenReturn(true);
+        when(workspaceRepository.findById(wsId)).thenReturn(Optional.of(workspace));
+        when(workspaceRepository.saveAndFlush(workspace)).thenReturn(workspace);
+
+        WorkspaceResponse out = service().update(wsId, principal, new WorkspaceUpdateRequest(null, "   "));
+
+        assertThat(out.timezone()).isNull();
+    }
+
     private static WorkspaceEntity entity(UUID id, String name, String namespace) {
         WorkspaceEntity w = new WorkspaceEntity();
         w.setId(id);

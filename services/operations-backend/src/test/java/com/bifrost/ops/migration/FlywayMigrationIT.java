@@ -49,6 +49,35 @@ class FlywayMigrationIT {
         }
     }
 
+    @Test
+    void createsUserWorkspaceAndProjectMemberColumns() throws Exception {
+        assumeTrue(DockerClientFactory.instance().isDockerAvailable(),
+                "Docker 미가용 — Flyway 마이그레이션 IT skip");
+
+        try (PostgreSQLContainer<?> pg = new PostgreSQLContainer<>("postgres:16-alpine")) {
+            pg.start();
+
+            Flyway flyway = Flyway.configure()
+                    .dataSource(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword())
+                    .locations("classpath:db/migration")
+                    .load();
+            flyway.migrate();
+
+            try (Connection conn = DriverManager.getConnection(
+                    pg.getJdbcUrl(), pg.getUsername(), pg.getPassword())) {
+                assertThat(columnExists(conn, "users", "name")).isTrue();
+                assertThat(columnExists(conn, "users", "last_login_at")).isTrue();
+                assertThat(columnExists(conn, "tenants", "timezone")).isTrue();
+                assertThat(columnExists(conn, "tenants", "owner_user_id")).isTrue();
+                assertThat(tableExists(conn, "project_member")).isTrue();
+                assertThat(columnExists(conn, "project_member", "workspace_id")).isTrue();
+                assertThat(columnExists(conn, "project_member", "user_id")).isTrue();
+                assertThat(columnExists(conn, "project_member", "role")).isTrue();
+                assertThat(columnExists(conn, "project_member", "joined_at")).isTrue();
+            }
+        }
+    }
+
     private boolean tableExists(Connection conn, String table) throws Exception {
         try (ResultSet rs = conn.getMetaData().getTables(null, null, table, new String[]{"TABLE"})) {
             return rs.next();
