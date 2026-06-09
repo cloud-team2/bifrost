@@ -13,8 +13,10 @@ from app.api import (
     routes_actions,
     routes_agent,
     routes_approvals,
+    routes_admin,
     routes_change,
     routes_events,
+    routes_feedback,
     routes_health,
     routes_reports,
 )
@@ -51,6 +53,8 @@ def create_app() -> FastAPI:
     app.include_router(routes_approvals.decision_router, prefix="/api/v1", tags=["approvals"])
     app.include_router(routes_change.router, prefix="/api/v1/agent", tags=["change"])
     app.include_router(routes_reports.router, prefix="/api/v1", tags=["reports"])
+    app.include_router(routes_feedback.router, prefix="/api/v1/agent", tags=["feedback"])
+    app.include_router(routes_admin.router, prefix="/api/v1/admin", tags=["admin"])
 
     # K8s liveness/readiness probe용 경량 엔드포인트 (helm deployment에서 사용)
     @app.get("/health", tags=["health"])
