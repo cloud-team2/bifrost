@@ -31,6 +31,16 @@ public class AuditEventEntity {
     @Column(columnDefinition = "text")
     private String detail;
 
+    /** 거버넌스 게이트 보강 필드(S3 — V15) */
+    @Column(name = "policy_decision", length = 30)
+    private String policyDecision;
+
+    @Column(name = "approval_id")
+    private UUID approvalId;
+
+    @Column(name = "evidence_id")
+    private UUID evidenceId;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -54,5 +64,11 @@ public class AuditEventEntity {
     public void setTargetId(UUID targetId) { this.targetId = targetId; }
     public String getDetail() { return detail; }
     public void setDetail(String detail) { this.detail = detail; }
+    public String getPolicyDecision() { return policyDecision; }
+    public void setPolicyDecision(String policyDecision) { this.policyDecision = policyDecision; }
+    public UUID getApprovalId() { return approvalId; }
+    public void setApprovalId(UUID approvalId) { this.approvalId = approvalId; }
+    public UUID getEvidenceId() { return evidenceId; }
+    public void setEvidenceId(UUID evidenceId) { this.evidenceId = evidenceId; }
     public Instant getCreatedAt() { return createdAt; }
 }
