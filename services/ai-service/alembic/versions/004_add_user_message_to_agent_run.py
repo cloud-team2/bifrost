@@ -1,7 +1,7 @@
 """add user_message column to agent_run
 
-Revision ID: 002
-Revises: 001
+Revision ID: 004
+Revises: 003
 Create Date: 2026-06-07
 """
 from __future__ import annotations
@@ -9,8 +9,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "002"
-down_revision = "001"
+revision = "004"
+down_revision = "003"
 branch_labels = None
 depends_on = None
 
