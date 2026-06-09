@@ -1,15 +1,16 @@
 """create change_ticket table
 
-Revision ID: 004
-Revises: 003
+Revision ID: 005
+Revises: 004
+
 Create Date: 2026-06-09
 
 Ref: FastAPI routes_change real persistence for issue #251
 """
 from __future__ import annotations
 
-revision = "004"
-down_revision = "003"
+revision = "005"
+down_revision = "004"
 branch_labels = None
 depends_on = None
 
