@@ -21,13 +21,10 @@ public class ChangeTicketValidator {
 
     @Transactional(readOnly = true)
     public ChangeTicketEntity validate(UUID ticketId, UUID tenantId) {
-        ChangeTicketEntity ticket = repository.findById(ticketId)
-                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND, "change ticket not found: " + ticketId));
-        if (!tenantId.equals(ticket.getTenantId())) {
-            throw new ApiException(ErrorCode.WORKSPACE_FORBIDDEN, "change ticket tenant mismatch");
-        }
+        ChangeTicketEntity ticket = repository.findByIdAndTenantId(ticketId, tenantId)
+                .orElseThrow(() -> new ApiException(ErrorCode.CHANGE_TICKET_NOT_FOUND, "change ticket not found: " + ticketId));
         if (!"OPEN".equals(ticket.getStatus())) {
-            throw new ApiException(ErrorCode.WORKSPACE_FORBIDDEN, "change ticket not OPEN: " + ticket.getStatus());
+            throw new ApiException(ErrorCode.CHANGE_TICKET_REQUIRED, "change ticket not OPEN: " + ticket.getStatus());
         }
         return ticket;
     }
