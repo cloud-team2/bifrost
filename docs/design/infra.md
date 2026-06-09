@@ -44,7 +44,7 @@ flowchart TB
 
 | 완료 | 미구성 |
 | --- | --- |
-| **EKS 5노드 단일 풀(t3.xlarge, #119)**, Strimzi Operator, `platform-kafka` Ready(3 broker/controller, PVC 3), 내부 topic 3, **Kafka Connect `platform-connect`(1 replica)**, **Harbor**(8 pod), **Jenkins**, **Argo CD**(앱 0개), gp3 default, metadb/**agentdb(pgvector, #120)**/tenantdb, `bifrost-system` ns + ai-service helm·secret 준비 | Monitoring(Prometheus/Grafana/Loki/Tempo·exporter), 앱 **배포**(FastAPI/Spring/Frontend — 이미지 CICD 빌드 대기), Evidence/Audit Store **스키마**, KafkaConnector/KafkaUser, metrics-server, IngressClass |
+| **EKS 5노드 단일 풀(t3.xlarge, #119)**, Strimzi Operator, `platform-kafka` Ready(3 broker/controller, PVC 3), 내부 topic 3, **Kafka Connect `platform-connect`(1 replica, JMX 메트릭 #124)**, **Harbor**, **Jenkins(JCasC #194)**, **Argo CD(app-of-apps 가동)**, gp3 default, metadb/**agentdb(pgvector, #120)**/tenantdb, **앱 배포(frontend/ops-backend/ai-service, #123 CICD)**, **Monitoring 풀셋(kube-prometheus-stack·Loki·Tempo·kafka-exporter, #124)** | Evidence/Audit Store **스키마**, KafkaConnector/KafkaUser, metrics-server, Loki 로그 소비처(search_logs stub)·Tempo OTLP 계측 |
 
 > ⚠️ Harbor·Jenkins·Argo CD·Kafka Connect는 **수동 배포**되어 있고 **manifest가 repo에 YAML로 미반영**이다(Argo CD Application 0개 = GitOps 미연동). manifest 역추출·GitOps 연동은 후속 작업. 상세 스냅샷은 [§2 추가 배포 현황](#35-추가-배포-현황-2026-06-02-스냅샷-수동-배포).
 > ⚠️ **앱 이미지 배포 경로**: ai-service 등 앱은 **Harbor(in-cluster)** 에 올린다(Docker Hub 아님). 정석 플로우 = Jenkins CI 빌드(Kaniko/buildah, docker 미사용)→Harbor push→GitOps manifest tag 갱신→ArgoCD 배포(#123). 노트북 docker 수동 push는 지양. Harbor는 ALB(HTTP)·내부 DNS `harbor.harbor.svc.cluster.local/library/<image>` pull, `harbor-push-secret`(dockerconfigjson) imagePullSecret.
@@ -682,6 +682,10 @@ FastAPI Agent는 Kubernetes/Kafka credential을 갖지 않는다. Spring Boot Op
 
 #### 6.7 Observability
 
+> **✅ 배포 완료 (#124, gitops ArgoCD)**: `monitoring` namespace에 **kube-prometheus-stack**(Prometheus·Grafana·Alertmanager·node-exporter·kube-state-metrics·operator) + **Loki+Promtail**(loki-stack) + **Tempo**(OTLP 4317/4318). Strimzi **kafkaExporter** + Connect **JMX** 활성 → `kafka_*`·`debezium_metrics_*` 수집. ops-backend `PROMETHEUS_URL=http://kps-prometheus.monitoring:9090`로 연결되어 **#126 파이프라인 차트가 실데이터**. Grafana datasource = Prometheus·Loki·Tempo.
+> ArgoCD 앱: `monitoring-kube-prometheus-stack` / `monitoring-loki` / `monitoring-tempo` (gitops `argocd/apps/`). Prometheus는 전 namespace ServiceMonitor/PodMonitor 수집(`strimzi-metrics` PodMonitor 포함).
+> **잔여**: Loki 로그 소비처(ops-backend `search_logs`는 현재 stub — 이성민 log source 연동 후), Tempo는 앱 OTLP 계측 전이라 trace 비어있음(설계 반영 선배포).
+>
 > 배치: 전부 `monitoring` namespace, **`app` 노드풀**(taint 없음)에 스케줄. DaemonSet(node-exporter·Promtail)은 data 풀 taint를 toleration 처리해 전 노드에 배치.
 > **모니터링은 Spring Boot만이 아니라 클러스터 전체를 관측한다** — 노드·k8s 오브젝트·컨테이너·Kafka·DB·Spring·FastAPI·frontend가 모두 수집 대상이다.
 

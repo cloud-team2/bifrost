@@ -1,14 +1,22 @@
-"""Policy Guard skeleton — Policy Matrix 기반 결정론적 단계."""
+"""Policy Guard — Policy Matrix 기반 4판정 결정론적 단계."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from app.catalogs import policy_matrix
 from app.persistence.event_repository import AnyEventRepo, InMemoryEventRepository
 from app.schemas.events import StreamingEvent, StreamingEventType
 from app.schemas.outputs import ActionCandidateOutput, PolicyDecisionOutput, PolicyGuardOutput
 from app.schemas.state import ActionStatus, PolicyDecisionType
 from app.streaming.event_bus import EventBus
+
+_DECISION_TO_STATUS = {
+    PolicyDecisionType.ALLOW: ActionStatus.READY,
+    PolicyDecisionType.REQUIRE_APPROVAL: ActionStatus.PENDING_APPROVAL,
+    PolicyDecisionType.REQUIRE_CHANGE_MANAGEMENT: ActionStatus.PENDING_APPROVAL,
+    PolicyDecisionType.DENY: ActionStatus.BLOCKED,
+}
 
 
 async def _pub(bus: EventBus, repo: AnyEventRepo, run_id: str, event: StreamingEvent) -> None:
@@ -28,13 +36,16 @@ async def run_policy_guard(
 ) -> PolicyGuardOutput:
     decisions = []
     for c in action_candidates:
+        rule = policy_matrix.lookup(c.action_type, c.risk)
+        status = _DECISION_TO_STATUS[rule.decision]
+
         decision = PolicyDecisionOutput(
             action_id=c.action_id,
             action_type=c.action_type,
             risk=c.risk,
-            decision=PolicyDecisionType.REQUIRE_APPROVAL,
-            status=ActionStatus.PENDING_APPROVAL,
-            reason="skeleton: Policy Matrix 미구현 — require_approval",
+            decision=rule.decision,
+            status=status,
+            reason=rule.reason,
             tool_name=c.tool_name,
         )
         decisions.append(decision)
