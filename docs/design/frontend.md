@@ -149,10 +149,10 @@ PipelineDetail 헤더 (FR-005)
 | Overview (FR-006) | `GET .../pipelines/{id}/metrics` (produce/consume rate, lag, error rate) + SSE |
 | Consumers (FR-007) | `GET .../pipelines/{id}/consumer-groups` → 그룹/파티션 lag |
 | Connector (FR-008) | `GET .../pipelines/{id}/connectors` (상태·task·records/s·재시작·마지막 오류) |
-| Sync (FR-009, CDC) | `GET .../pipelines/{id}/sync` (source/sink row, 동기화율, 지연) |
+| Sync (FR-009, CDC) | `GET .../pipelines/{id}/sync-status` (source/sink row, 동기화율, 지연) |
 | Messages (FR-010) | `GET .../pipelines/{id}/messages` → Debezium before/after |
-| Connection Guide (FR-011) | `GET .../pipelines/{id}/connection-guide` (topic alias·bootstrap·group·코드 스니펫) |
-| Table Mapping (FR-012) | `GET .../pipelines/{id}/table-mapping` |
+| Connection Guide (FR-011) | 미구현(예정: [#303](https://github.com/cloud-team2/bifrost/issues/303)) — 현재 `PipelineController` mapping 없음; topic alias·bootstrap·group·코드 스니펫 |
+| Table Mapping (FR-012) | 미구현(예정: [#303](https://github.com/cloud-team2/bifrost/issues/303)) — 현재 `PipelineController` mapping 없음 |
 
 기본 표시는 흐름·지연 중심, Kafka 지표(lag 수치·connector state 원문)는 상세 토글에서 노출(§1.1).
 
@@ -160,17 +160,19 @@ PipelineDetail 헤더 (FR-005)
 
 ```text
 ActivityLogView (FR-019)     GET /api/v1/workspaces/{wsId}/events?level=&pipelineId=
-OperatorOverviewView (FR-020) GET /api/v1/workspaces/{wsId}/overview
-OperatorClusterView (FR-023)  GET /api/v1/workspaces/{wsId}/cluster   (Broker·Connect worker)
-OperatorResourceEventsView (FR-024) GET /api/v1/workspaces/{wsId}/resource-events
+OperatorOverviewView (FR-020) GET /api/v1/workspaces/{wsId}/monitoring/overview
+OperatorClusterView (FR-023)  GET /api/v1/clusters/kafka
+                              GET /api/v1/clusters/kafka/throughput?minutes=30
+                              GET /api/v1/clusters/connect   (Broker·Connect worker, workspace scope 없음)
+OperatorResourceEventsView (FR-024) GET /api/v1/workspaces/{wsId}/monitoring/resource-events
 ```
 
 ### 8. 인시던트 + AI Agent (FR-021, FR-022, FR-025, FR-026)
 
 ```text
 AlertsView (FR-021)  — 조회는 Spring Boot
-  GET /api/v1/workspaces/{wsId}/incidents
-  GET /api/v1/workspaces/{wsId}/incidents/{id}      (근본원인·영향·관련 이벤트 타임라인)
+  GET /api/v1/workspaces/{wsId}/monitoring/incidents?status=
+  GET /api/v1/workspaces/{wsId}/monitoring/incidents/{incidentId}      (근본원인·영향·관련 이벤트 타임라인)
 
 BifrostAgentPanel (FR-022/025/026) — AI는 FastAPI
   POST /api/v1/agent/runs            {project_id, mode?, message, incident_id?, alert_ids?}
