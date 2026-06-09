@@ -90,6 +90,7 @@ Bifrost API가 반환하는 에러 코드의 단일 출처. 코드 추가/변경
 | 코드 | HTTP | 이름 | 트리거 | 클라이언트 권장 처리 |
 |---|---|---|---|---|
 | 90001 | 400 | `VALIDATION_FAILED` | 요청 본문이 Bean Validation 검증 실패 | `details` 배열의 `field`/`reason`을 폼 위에 표시 |
+| 90006 | 404 | `RESOURCE_NOT_FOUND` | 매핑되지 않은 경로 호출 | 요청 경로 확인 |
 
 ## 아카이브 (사용 금지)
 
