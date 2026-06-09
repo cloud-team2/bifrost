@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: bifrost-services
+  namespace: argocd
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  # 우리 애플리케이션 3종(frontend·operations-backend·ai-service)을 단일 앱으로 통합. 전부 bifrost-system ns.
+  sources:
+    - repoURL: https://github.com/cloud-team2/bifrost.git
+      targetRevision: gitops
+      path: charts/frontend
+      helm: { releaseName: frontend }
+    - repoURL: https://github.com/cloud-team2/bifrost.git
+      targetRevision: gitops
+      path: charts/operations-backend
+      helm: { releaseName: operations-backend }
+    - repoURL: https://github.com/cloud-team2/bifrost.git
+      targetRevision: gitops
+      path: charts/ai-service
+      helm: { releaseName: ai-service }
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: bifrost-system
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=true]

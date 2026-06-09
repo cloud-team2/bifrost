@@ -6,14 +6,18 @@ metadata:
   finalizers: [resources-finalizer.argocd.argoproj.io]
 spec:
   project: default
-  source:
-    repoURL: https://github.com/cloud-team2/bifrost.git
-    targetRevision: gitops
-    path: databases
-    directory:
-      recurse: true
+  # 플랫폼 내부 DB(metadb·agentdb)만 관리. tenantdb는 별도 앱으로 분리.
+  sources:
+    - repoURL: https://github.com/cloud-team2/bifrost.git
+      targetRevision: gitops
+      path: databases/metadb
+      directory: { recurse: true }
+    - repoURL: https://github.com/cloud-team2/bifrost.git
+      targetRevision: gitops
+      path: databases/agentdb
+      directory: { recurse: true }
   destination:
     server: https://kubernetes.default.svc
-    namespace: default      # 각 리소스가 자체 metadata.namespace(metadb/agentdb/tenantdb) 지정
+    namespace: default        # 각 리소스가 자체 metadata.namespace(metadb/agentdb) 지정
   syncPolicy:
     automated: { prune: false, selfHeal: true }   # DB는 prune off (데이터 보호)

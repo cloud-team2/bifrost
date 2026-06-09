@@ -1,0 +1,19 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tenantdb
+  namespace: argocd
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  # 고객사(tenant) DB — Postgres+MariaDB. databases 앱에서 분리 (독립 수명주기).
+  source:
+    repoURL: https://github.com/cloud-team2/bifrost.git
+    targetRevision: gitops
+    path: databases/tenantdb
+    directory: { recurse: true }
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default        # 각 리소스가 자체 metadata.namespace(tenantdb) 지정
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }   # DB는 prune off
