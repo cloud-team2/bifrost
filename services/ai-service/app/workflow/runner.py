@@ -152,7 +152,14 @@ async def run_workflow(
                         request_id=str(uuid4()),
                     )
                     retrieval_out = await retrieval_agent.run_retrieval(
-                        run_id, planner_out, context, registry, bus, event_repo
+                        run_id,
+                        planner_out,
+                        context,
+                        registry,
+                        bus,
+                        event_repo,
+                        user_message=user_message,
+                        mode=mode,
                     )
                     await _publish(bus, event_repo, run_id, _evt(
                         run_id, StreamingEventType.AGENT_COMPLETED, "retrieval",

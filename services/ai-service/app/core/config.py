@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     embedding_api_key: str = ""
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = 1536
+    knowledge_search_limit: int = 3
+    knowledge_min_score: float = 0.05
 
     # Agent Run Store (agentdb — PostgreSQL)
     database_url: str = "postgresql+asyncpg://agent:agent@localhost:5432/agentdb"
