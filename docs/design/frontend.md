@@ -22,7 +22,7 @@ flowchart LR
 | scope | 로그인 토큰 두 백엔드 공통, 선택한 `workspace_id`(=내부 `project_id`)로 모든 호출 제한 |
 | raw 비노출 | evidence 원문·secret·connection string 미노출(password `****`). Topic 이름은 Connection Guide 탭에서만 |
 | 인증 | Spring Boot가 JWT 발급, **두 서비스가 같은 JWT 검증**(공유 서명키/JWKS) |
-| SSE | 플랫폼 SSE(workspace·장수명)와 Agent SSE(run·단명) **별도 EventSource 2개**. `EventSource`는 헤더 불가 → JWT는 `?access_token=` 쿼리(단명 토큰) 또는 fetch-SSE 폴리필 |
+| SSE | 플랫폼 SSE(workspace·장수명)와 Agent SSE(run·단명) **별도 EventSource 2개**. `EventSource`는 헤더 불가 → 현재 FE 구현은 JWT를 `?access_token=<jwt>` 쿼리로 붙임 |
 
 ## 백엔드 라우팅 (게이트웨이 — 경로 그룹 소유권)
 
@@ -176,8 +176,9 @@ AlertsView (FR-021)  — 조회는 Spring Boot
 
 BifrostAgentPanel (FR-022/025/026) — AI는 FastAPI
   POST /api/v1/agent/runs            {project_id, mode?, message, incident_id?, alert_ids?}
-  GET  /api/v1/agent/runs/{runId}/events    (SSE: agent_started, tool_call_completed,
-                                             approval_required, verification_completed, ...)
+  GET  /api/v1/agent/runs/{runId}/events?access_token=<jwt>
+                                             (SSE: agent_started, tool_call_completed,
+                                              approval_required, verification_completed, ...)
   POST /api/v1/approvals/{approvalId}/decision  {decision, comment}   # HITL
 ```
 
@@ -194,7 +195,7 @@ BifrostAgentPanel (FR-022/025/026) — AI는 FastAPI
 | Spring Boot | `incident_opened` / `incident_updated` | 사이드바 배지·알럿 |
 | FastAPI | `agent_started`/`agent_completed`/`tool_call_*`/`evidence_collected`/`report_preview_available`/`partial_result`/`approval_required`/`verification_completed`/`run_completed` | AI 진행 상태 + 부분 결과(검증 전 preview) ([FastAPI DETAILS §16](./backend-fastapi/contract/contract-streaming-events.md#16-contract-streaming-events)) |
 
-플랫폼 SSE 구독 엔드포인트(예): `GET /api/v1/workspaces/{wsId}/events/stream`.
+플랫폼 SSE 구독 엔드포인트(예): `GET /api/v1/workspaces/{wsId}/events/stream?access_token=<jwt>`.
 
 ### 10. 에러 처리
 
@@ -206,10 +207,11 @@ BifrostAgentPanel (FR-022/025/026) — AI는 FastAPI
 | CDC `BLOCKED` | 마법사에서 해당 DB를 Source 선택 불가 + hint 노출 |
 | `POLICY_DENIED` / 승인 필요 | 조치 차단 사유 + 대체/승인 경로 안내 |
 | `SPRING_BACKEND_ERROR` / `LLM_PROVIDER_ERROR` | 토스트 + 재시도 |
-| SSE 끊김 | `events/history`로 재동기화 후 재구독 |
+| SSE 끊김 | 현재 FE는 `EventSource` 자동 재연결/상태 메시지에 의존한다(`services/frontend/src/store/AppStore.tsx:211-244`, `services/frontend/src/pages/ai/AgentRunPanel.tsx:360-373`). FastAPI `/events/history`는 미구현(예정)이다([FastAPI API §7](../api/fastapi.md#7-event-streaming-api)). |
 
 ### 11. 확정 사항
 
 - **인증 토큰**: Spring Boot가 로그인/JWT를 발급하고 **두 서비스가 같은 JWT를 검증**한다(공유 서명키 또는 JWKS). 별도 로그인·세션 동기화는 두지 않으며, FastAPI는 Spring 발급 JWT를 검증만 한다.
 - **SSE 채널**: 플랫폼 SSE(workspace 범위·장수명)와 Agent SSE(run 단위·단명)는 수명·소스가 달라 **별도 구독**한다(EventSource 2개). 프론트가 UI 레벨에서 합쳐 표시한다.
-- **SSE 인증**: 브라우저 기본 `EventSource`는 커스텀 헤더(`Authorization`)를 붙일 수 없으므로, JWT는 **쿼리 파라미터 `?access_token=<jwt>`** 로 전달하고 백엔드가 이를 검증한다(짧은 만료 + workspace scope 확인). 헤더 주입이 필요하면 `fetch` 기반 SSE 폴리필(예: `@microsoft/fetch-event-source`)을 사용한다. 토큰은 URL 로깅에 남을 수 있으므로 단명 토큰을 쓰고 재연결 시 갱신한다.
+- **SSE 인증**: 브라우저 기본 `EventSource`는 커스텀 헤더(`Authorization`)를 붙일 수 없으므로, 현재 프론트는 Agent SSE URL과 플랫폼 SSE URL 모두에 `?access_token=<jwt>`를 붙인다. Spring `JwtAuthenticationFilter`는 `/events/stream`과 `/api/v1/agent/runs/{runId}/events` 단일 경로에서 쿼리 토큰을 읽고, 플랫폼 workspace 권한은 `SseController`의 `requireAccess`가 확인한다. 토큰은 URL 로깅에 남을 수 있으므로 재연결 시 갱신 정책은 별도 보강 대상이다.
+  - 정본 근거: Agent SSE URL 생성/구독은 `services/frontend/src/lib/api.ts:570-573`, `services/frontend/src/pages/ai/AgentRunPanel.tsx:352-353`; 플랫폼 SSE URL 생성/구독은 `services/frontend/src/lib/api.ts:589-592`, `services/frontend/src/store/AppStore.tsx:211-215`; query token 경로 판정은 `services/operations-backend/src/main/java/com/bifrost/ops/auth/jwt/JwtAuthenticationFilter.java:65-85`, `services/operations-backend/src/main/java/com/bifrost/ops/auth/jwt/JwtAuthenticationFilter.java:97-105`; 플랫폼 workspace 권한은 `services/operations-backend/src/main/java/com/bifrost/ops/streaming/SseController.java:34-38`.

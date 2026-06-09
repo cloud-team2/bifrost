@@ -21,7 +21,7 @@ Spring Boot 내부 운영 API는 [Spring Boot DETAILS](../design/backend-springb
 | Base path | `/api/v1` |
 | JSON field | snake_case |
 | timestamp | ISO-8601 UTC |
-| 인증 | 사용자 JWT 또는 session token |
+| 인증 | 사용자 JWT(Bearer). Agent run SSE는 EventSource용 `?access_token=<jwt>` query도 허용 |
 | streaming | SSE 우선, WebSocket은 확장 |
 | raw evidence | 반환하지 않음 |
 
@@ -213,16 +213,16 @@ run summary를 반환한다. raw evidence는 포함하지 않는다.
 
 ### 7. Event Streaming API
 
-정본 근거: `services/ai-service/app/main.py:48`, `services/ai-service/app/api/routes_events.py:14-26`.
+정본 근거: FastAPI mount/route는 `services/ai-service/app/main.py:48`, `services/ai-service/app/api/routes_events.py:14-26`; Agent run SSE `access_token` query 인증 허용은 Spring JWT filter의 SSE 경로 판정(`services/operations-backend/src/main/java/com/bifrost/ops/auth/jwt/JwtAuthenticationFilter.java:65-85`, `services/operations-backend/src/main/java/com/bifrost/ops/auth/jwt/JwtAuthenticationFilter.java:97-105`)과 Frontend URL 생성(`services/frontend/src/lib/api.ts:570-573`) 기준이다.
 
 | Method | Path | 구현 상태 | 설명 |
 | --- | --- | --- | --- |
-| `GET` | `/api/v1/agent/runs/{run_id}/events` | 구현됨 | run 진행 상태를 SSE로 구독한다. |
+| `GET` | `/api/v1/agent/runs/{run_id}/events` | 구현됨 | run 진행 상태를 SSE로 구독한다. 브라우저 `EventSource`용 `?access_token=<jwt>` query 인증을 허용한다. |
 | `GET` | `/api/v1/agent/runs/{run_id}/events/history` | 미구현(예정: [#312](https://github.com/cloud-team2/bifrost/issues/312)) | 재연결용 event history 조회 설계 표면. 현재 route 없음. |
 
 #### `GET /api/v1/agent/runs/{run_id}/events`
 
-SSE stream을 반환한다.
+SSE stream을 반환한다. 일반 HTTP client는 `Authorization: Bearer <jwt>`를 쓰고, 브라우저 `EventSource`는 헤더를 붙일 수 없으므로 `/api/v1/agent/runs/{run_id}/events?access_token=<jwt>`로 구독할 수 있다. 이 query token 허용은 `/api/v1/agent/runs/{run_id}/events` 단일 경로에 한정되며, `/events/history`나 nested `/steps/events` 경로는 허용 대상이 아니다(`services/operations-backend/src/main/java/com/bifrost/ops/auth/jwt/JwtAuthenticationFilter.java:65-85`, `services/operations-backend/src/main/java/com/bifrost/ops/auth/jwt/JwtAuthenticationFilter.java:97-105`). FastAPI route 자체는 `Last-Event-ID` header만 읽어 `StreamingResponse`를 반환한다(`services/ai-service/app/api/routes_events.py:14-26`).
 
 예시:
 

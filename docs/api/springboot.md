@@ -162,7 +162,7 @@ OWNER 정책의 현재 코드 사실:
 
 ## Monitoring
 
-정본 근거: `MonitoringController` base path/status/인가 호출은 `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/controller/MonitoringController.java:24-76`, `OverviewResponse` field는 `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/dto/OverviewResponse.java:4-13`, `ResourceEventResponse` field는 `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/dto/ResourceEventResponse.java:6-11`, `IncidentResponse` field는 `services/operations-backend/src/main/java/com/bifrost/ops/incident/dto/IncidentResponse.java:8-20`, 권한 검사는 `WorkspaceAccessGuard.requireAccess`(`services/operations-backend/src/main/java/com/bifrost/ops/workspace/WorkspaceAccessGuard.java:56-65`)다.
+정본 근거: `MonitoringController` base path/status/인가 호출은 `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/controller/MonitoringController.java:24-76`(4개 handler 모두 `accessGuard.requireAccess`: `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/controller/MonitoringController.java:45`, `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/controller/MonitoringController.java:54`, `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/controller/MonitoringController.java:64`, `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/controller/MonitoringController.java:74`), `OverviewResponse` field는 `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/dto/OverviewResponse.java:4-13`, `ResourceEventResponse` field는 `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/dto/ResourceEventResponse.java:6-11`, `IncidentResponse` field는 `services/operations-backend/src/main/java/com/bifrost/ops/incident/dto/IncidentResponse.java:8-20`, 권한 검사는 `WorkspaceAccessGuard.requireAccess`(`services/operations-backend/src/main/java/com/bifrost/ops/workspace/WorkspaceAccessGuard.java:39-54`)다.
 
 | Method | Path | Auth | 권한 | Status | Request | Response | 설명 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -173,8 +173,8 @@ OWNER 정책의 현재 코드 사실:
 
 권한/실패 상태:
 
-- `requireAccess`는 관리 권한을 요구하지 않고 `project_member` 소속만 확인한다. `requireAccess`의 owner fast-path가 아니라 member repository 존재 여부를 사용한다.
-- principal이 없으면 `UNAUTHENTICATED` -> `401`, 멤버가 아니면 `WORKSPACE_FORBIDDEN` -> `403`이다.
+- `requireAccess`는 관리 권한을 요구하지 않고, `wsId == principal.tenantId()` home 워크스페이스 fast-path, `project_member` 소속, 또는 `tenants.owner_user_id` 소유자 중 하나면 허용한다(`services/operations-backend/src/main/java/com/bifrost/ops/workspace/WorkspaceAccessGuard.java:39-54`).
+- principal이 없으면 `UNAUTHENTICATED` -> `401`, 위 접근 허용 조건에 모두 맞지 않으면 `WORKSPACE_FORBIDDEN` -> `403`이다.
 - incident 상세가 없거나 `{wsId}`와 incident tenant가 다르면 `RESOURCE_NOT_FOUND` -> `404`다.
 - `resource-events`는 Kafka AdminClient 조회 실패를 debug log로 무시하고 빈 배열을 반환할 수 있다(`MonitoringReadService.resourceEvents`).
 
@@ -293,7 +293,7 @@ Family catalog 요약:
 
 ## Workspace Event Stream
 
-`GET /api/v1/workspaces/{wsId}/events/stream`은 workspace SSE 채널이다. Browser `EventSource` 제약 때문에 Bearer header 대신 단명 `access_token` query parameter를 사용할 수 있다.
+`GET /api/v1/workspaces/{wsId}/events/stream`은 workspace SSE 채널이다. Browser `EventSource` 제약 때문에 Bearer header 대신 `access_token` query parameter를 사용할 수 있다. 이 query token 허용은 JWT filter의 SSE 경로 판정(`services/operations-backend/src/main/java/com/bifrost/ops/auth/jwt/JwtAuthenticationFilter.java:65-85`)에 의해 적용되며, 같은 filter는 Agent run SSE `/api/v1/agent/runs/{run_id}/events`도 허용한다(`services/operations-backend/src/main/java/com/bifrost/ops/auth/jwt/JwtAuthenticationFilter.java:97-105`; 상세는 [FastAPI Event Streaming API](./fastapi.md#7-event-streaming-api)).
 
 ## 18. Schema Registry API
 
