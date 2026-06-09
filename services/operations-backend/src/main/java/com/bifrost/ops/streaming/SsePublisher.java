@@ -55,6 +55,11 @@ public class SsePublisher {
                 Map.of("connectorName", connectorName, "state", state));
     }
 
+    /** 인시던트 생성·업데이트 알림(S2). */
+    public void incidentEvent(UUID wsId, String eventName, Object payload) {
+        publish(wsId, eventName, payload);
+    }
+
     private void publish(UUID wsId, String eventName, Object payload) {
         List<SseEmitter> list = emittersByWorkspace.get(wsId);
         if (list == null || list.isEmpty()) {
