@@ -1,5 +1,6 @@
 package com.bifrost.ops.auth.controller;
 
+import com.bifrost.ops.auth.AuthPaths;
 import com.bifrost.ops.auth.dto.AuthTokensResponse;
 import com.bifrost.ops.auth.dto.LoginRequest;
 import com.bifrost.ops.auth.dto.RegisterRequest;
@@ -9,22 +10,23 @@ import com.bifrost.ops.auth.security.JwtAuthenticationEntryPoint;
 import com.bifrost.ops.auth.security.SecurityConfig;
 import com.bifrost.ops.auth.service.AuthService;
 import com.bifrost.ops.global.common.error.ErrorCode;
+import com.bifrost.ops.global.common.error.ErrorMessages;
 import com.bifrost.ops.global.common.error.GlobalExceptionHandler;
-import io.jsonwebtoken.JwtException;
+import io.jsonwebtoken.Claims;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.ResultActions;
 
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -44,22 +46,22 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 })
 class AuthControllerTest {
 
-    private static final String REGISTER_PATH = "/api/v1/auth/register";
-    private static final String LOGIN_PATH = "/api/v1/auth/login";
-    private static final String LEGACY_AUTH_REGISTER_PATH = "/api/auth/register";
-    private static final String LEGACY_AUTH_LOGIN_PATH = "/api/auth/login";
-    private static final String LEGACY_AUTH_ME_PATH = "/api/auth/me";
-    private static final String USER_EMAIL = "user@test.com";
-    private static final String USER_PASSWORD = "password123";
-    private static final String WORKSPACE_NAME = "Team A";
-    private static final String WORKSPACE_NAMESPACE = "team-a";
-    private static final String ACCESS_TOKEN = "token";
+    private static final String JSON_CODE = "$.code";
+    private static final String JSON_MESSAGE = "$.message";
+    private static final String TOKEN_VALUE = "token";
     private static final String TOKEN_TYPE = "Bearer";
-    private static final int ACCESS_TOKEN_EXPIRES_IN_SECONDS = 3600;
-    private static final String LEGACY_TOKEN = "legacy-token";
-    private static final String BEARER_PREFIX = TOKEN_TYPE + " ";
-    private static final String INVALID_JWT_MESSAGE = "invalid";
-    private static final String RESOURCE_NOT_FOUND_MESSAGE = "요청한 경로를 찾을 수 없습니다";
+    private static final String VALID_TOKEN = "valid-token";
+    private static final String VALID_EMAIL = "user@bifrost.io";
+    private static final String LEGACY_ADMIN_ALIAS = AuthPaths.LEGACY_AUTH_BASE + "/admin";
+    private static final String LEGACY_REGISTER_ALIAS = AuthPaths.LEGACY_AUTH_BASE + AuthPaths.REGISTER;
+    private static final String EMPTY_JSON = "{}";
+    private static final String VALID_REGISTER_JSON = """
+        {"email":"user@test.com","password":"password123","workspaceName":"Team A","namespace":"team-a"}
+        """;
+    private static final String VALID_LOGIN_JSON = """
+        {"email":"user@test.com","password":"password123"}
+        """;
+    private static final long TOKEN_TTL_SECONDS = 3600L;
 
     @Autowired
     private MockMvc mockMvc;
@@ -71,66 +73,123 @@ class AuthControllerTest {
     private JwtService jwtService;
 
     @Test
-    void registerAndLoginOnlyUnderApiV1Auth() throws Exception {
+    void canonicalRegisterIsPublicAndDelegates() throws Exception {
         when(authService.register(any(RegisterRequest.class))).thenReturn(tokens());
+
+        mockMvc.perform(post(AuthPaths.API_V1_REGISTER)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(VALID_REGISTER_JSON))
+            .andExpect(status().isCreated());
+    }
+
+    @Test
+    void canonicalLoginIsPublicAndDelegates() throws Exception {
         when(authService.login(any(LoginRequest.class))).thenReturn(tokens());
 
-        mockMvc.perform(post(REGISTER_PATH)
-                        .contentType("application/json")
-                        .content(registerRequestBody()))
-                .andExpect(status().isCreated());
-        mockMvc.perform(post(LOGIN_PATH)
-                        .contentType("application/json")
-                        .content(loginRequestBody()))
-                .andExpect(status().isOk());
-        assertResourceNotFoundEnvelope(mockMvc.perform(post(LEGACY_AUTH_REGISTER_PATH)
-                        .contentType("application/json")
-                        .content(registerRequestBody())));
-        assertResourceNotFoundEnvelope(mockMvc.perform(post(LEGACY_AUTH_LOGIN_PATH)
-                        .contentType("application/json")
-                        .content(loginRequestBody())));
+        mockMvc.perform(post(AuthPaths.API_V1_LOGIN)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(VALID_LOGIN_JSON))
+            .andExpect(status().isOk());
     }
 
     @Test
-    void legacyAliasAuthMeReturns404WithoutBearer() throws Exception {
-        assertResourceNotFoundEnvelope(mockMvc.perform(get(LEGACY_AUTH_ME_PATH)));
+    void canonicalRefreshRequiresBearerAtMatcher() throws Exception {
+        mockMvc.perform(post(AuthPaths.API_V1_REFRESH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(EMPTY_JSON))
+            .andExpect(status().is(ErrorCode.UNAUTHENTICATED.status().value()))
+            .andExpect(jsonPath(JSON_CODE).value(code(ErrorCode.UNAUTHENTICATED)))
+            .andExpect(jsonPath(JSON_MESSAGE).value(ErrorMessages.AUTHENTICATION_REQUIRED));
     }
 
     @Test
-    void legacyAliasAuthMeReturns404WithBearer() throws Exception {
-        when(jwtService.parse(LEGACY_TOKEN)).thenThrow(new JwtException(INVALID_JWT_MESSAGE));
+    void canonicalMeRequiresBearerAtMatcher() throws Exception {
+        mockMvc.perform(get(AuthPaths.API_V1_ME))
+            .andExpect(status().is(ErrorCode.UNAUTHENTICATED.status().value()))
+            .andExpect(jsonPath(JSON_CODE).value(code(ErrorCode.UNAUTHENTICATED)))
+            .andExpect(jsonPath(JSON_MESSAGE).value(ErrorMessages.AUTHENTICATION_REQUIRED));
+    }
 
-        assertResourceNotFoundEnvelope(mockMvc.perform(get(LEGACY_AUTH_ME_PATH)
-                .header(HttpHeaders.AUTHORIZATION, BEARER_PREFIX + LEGACY_TOKEN)));
+    @Test
+    void legacyProtectedAuthMeRequiresBearerAtMatcher() throws Exception {
+        mockMvc.perform(get(AuthPaths.LEGACY_ME))
+            .andExpect(status().is(ErrorCode.UNAUTHENTICATED.status().value()))
+            .andExpect(jsonPath(JSON_CODE).value(code(ErrorCode.UNAUTHENTICATED)))
+            .andExpect(jsonPath(JSON_MESSAGE).value(ErrorMessages.AUTHENTICATION_REQUIRED));
+    }
+
+    @Test
+    void legacyProtectedAuthMeReturns404AfterValidBearer() throws Exception {
+        givenValidBearer();
+
+        mockMvc.perform(get(AuthPaths.LEGACY_ME)
+                .header(HttpHeaders.AUTHORIZATION, bearer()))
+            .andExpect(status().is(ErrorCode.RESOURCE_NOT_FOUND.status().value()))
+            .andExpect(jsonPath(JSON_CODE).value(code(ErrorCode.RESOURCE_NOT_FOUND)))
+            .andExpect(jsonPath(JSON_MESSAGE).value(ErrorMessages.RESOURCE_NOT_FOUND));
+    }
+
+    @Test
+    void legacyProtectedRefreshRequiresBearerAtMatcher() throws Exception {
+        mockMvc.perform(post(AuthPaths.LEGACY_REFRESH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(EMPTY_JSON))
+            .andExpect(status().is(ErrorCode.UNAUTHENTICATED.status().value()))
+            .andExpect(jsonPath(JSON_CODE).value(code(ErrorCode.UNAUTHENTICATED)))
+            .andExpect(jsonPath(JSON_MESSAGE).value(ErrorMessages.AUTHENTICATION_REQUIRED));
+    }
+
+    @Test
+    void legacyPublicLoginAliasReachesMvc404WithoutBearer() throws Exception {
+        mockMvc.perform(post(AuthPaths.LEGACY_LOGIN)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(EMPTY_JSON))
+            .andExpect(status().is(ErrorCode.RESOURCE_NOT_FOUND.status().value()))
+            .andExpect(jsonPath(JSON_CODE).value(code(ErrorCode.RESOURCE_NOT_FOUND)))
+            .andExpect(jsonPath(JSON_MESSAGE).value(ErrorMessages.RESOURCE_NOT_FOUND));
+    }
+
+    @Test
+    void legacyRegisterAliasNoLongerUsesBroadPermitAll() throws Exception {
+        mockMvc.perform(post(LEGACY_REGISTER_ALIAS)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(VALID_REGISTER_JSON))
+            .andExpect(status().is(ErrorCode.UNAUTHENTICATED.status().value()))
+            .andExpect(jsonPath(JSON_CODE).value(code(ErrorCode.UNAUTHENTICATED)))
+            .andExpect(jsonPath(JSON_MESSAGE).value(ErrorMessages.AUTHENTICATION_REQUIRED));
+    }
+
+    @Test
+    void legacyAuthPrefixNoLongerPermitsUnknownChildren() throws Exception {
+        mockMvc.perform(get(LEGACY_ADMIN_ALIAS))
+            .andExpect(status().is(ErrorCode.UNAUTHENTICATED.status().value()))
+            .andExpect(jsonPath(JSON_CODE).value(code(ErrorCode.UNAUTHENTICATED)))
+            .andExpect(jsonPath(JSON_MESSAGE).value(ErrorMessages.AUTHENTICATION_REQUIRED));
+    }
+
+    private void givenValidBearer() {
+        Claims claims = mock(Claims.class);
+        when(claims.getSubject()).thenReturn(UUID.randomUUID().toString());
+        when(claims.get("tid", String.class)).thenReturn(UUID.randomUUID().toString());
+        when(claims.get("email", String.class)).thenReturn(VALID_EMAIL);
+        when(jwtService.parse(VALID_TOKEN)).thenReturn(claims);
     }
 
     private static AuthTokensResponse tokens() {
         return new AuthTokensResponse(
-                ACCESS_TOKEN,
-                TOKEN_TYPE,
-                ACCESS_TOKEN_EXPIRES_IN_SECONDS,
-                UUID.randomUUID(),
-                UUID.randomUUID());
+            TOKEN_VALUE,
+            TOKEN_TYPE,
+            TOKEN_TTL_SECONDS,
+            UUID.randomUUID(),
+            UUID.randomUUID()
+        );
     }
 
-    private static String registerRequestBody() {
-        return """
-                {"email":"%s","password":"%s","workspaceName":"%s","namespace":"%s"}
-                """.formatted(USER_EMAIL, USER_PASSWORD, WORKSPACE_NAME, WORKSPACE_NAMESPACE);
+    private static String bearer() {
+        return TOKEN_TYPE + " " + VALID_TOKEN;
     }
 
-    private static String loginRequestBody() {
-        return """
-                {"email":"%s","password":"%s"}
-                """.formatted(USER_EMAIL, USER_PASSWORD);
-    }
-
-    private static ResultActions assertResourceNotFoundEnvelope(ResultActions actions) throws Exception {
-        return actions
-            .andExpect(status().is(HttpStatus.NOT_FOUND.value()))
-            .andExpect(jsonPath("$.code").value(String.valueOf(ErrorCode.RESOURCE_NOT_FOUND.code())))
-            .andExpect(jsonPath("$.message").value(RESOURCE_NOT_FOUND_MESSAGE))
-            .andExpect(jsonPath("$.details").isArray())
-            .andExpect(jsonPath("$.details").isEmpty());
+    private static String code(ErrorCode code) {
+        return String.valueOf(code.code());
     }
 }
