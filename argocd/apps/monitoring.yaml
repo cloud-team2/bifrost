@@ -1,0 +1,144 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring
+  namespace: argocd
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  # kube-prometheus-stack(메트릭/Grafana/Alertmanager) + loki(로그) + tempo(trace)를 단일 앱으로 통합 (#124, ArgoCD 앱 정리)
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: kube-prometheus-stack
+      targetRevision: 86.2.0
+      helm:
+        releaseName: kps
+        values: |
+          fullnameOverride: kps
+          # EKS 관리형 control plane은 스크랩 불가 → down 타겟 방지로 비활성
+          kubeEtcd: { enabled: false }
+          kubeControllerManager: { enabled: false }
+          kubeScheduler: { enabled: false }
+          kubeProxy: { enabled: false }
+      
+          prometheus:
+            prometheusSpec:
+              retention: 7d
+              # 모든 namespace의 ServiceMonitor/PodMonitor/Rule 수집 (kafka·connect·ops-backend 커스텀 타겟 포함)
+              serviceMonitorSelectorNilUsesHelmValues: false
+              podMonitorSelectorNilUsesHelmValues: false
+              ruleSelectorNilUsesHelmValues: false
+              probeSelectorNilUsesHelmValues: false
+              resources:
+                requests: { cpu: 300m, memory: 1Gi }
+                limits: { memory: 2Gi }
+              storageSpec:
+                volumeClaimTemplate:
+                  spec:
+                    storageClassName: gp3
+                    accessModes: ["ReadWriteOnce"]
+                    resources: { requests: { storage: 20Gi } }
+      
+          alertmanager:
+            alertmanagerSpec:
+              resources:
+                requests: { cpu: 50m, memory: 128Mi }
+              storage:
+                volumeClaimTemplate:
+                  spec:
+                    storageClassName: gp3
+                    accessModes: ["ReadWriteOnce"]
+                    resources: { requests: { storage: 2Gi } }
+      
+          grafana:
+            adminPassword: "admin"
+            resources:
+              requests: { cpu: 100m, memory: 256Mi }
+            persistence:
+              enabled: true
+              storageClassName: gp3
+              size: 5Gi
+            # Prometheus(기본) 외에 Loki(로그)·Tempo(trace) datasource 추가 (#124)
+            additionalDataSources:
+              - name: Loki
+                type: loki
+                access: proxy
+                url: http://loki.monitoring.svc.cluster.local:3100
+              - name: Tempo
+                type: tempo
+                access: proxy
+                url: http://tempo.monitoring.svc.cluster.local:3200
+      
+          prometheus-node-exporter:
+            resources:
+              requests: { cpu: 50m, memory: 64Mi }
+      
+          kube-state-metrics:
+            resources:
+              requests: { cpu: 50m, memory: 128Mi }
+      
+          prometheusOperator:
+            resources:
+              requests: { cpu: 100m, memory: 128Mi }
+    - repoURL: https://grafana.github.io/helm-charts
+      chart: loki-stack
+      targetRevision: 2.10.3
+      helm:
+        releaseName: loki
+        values: |
+          # Loki(로그 저장, filesystem 단일 인스턴스) + Promtail(전 노드 DaemonSet 로그 수집).
+          # Grafana/Prometheus는 kube-prometheus-stack 것을 사용 → 여기선 비활성.
+          loki:
+            enabled: true
+            persistence:
+              enabled: true
+              storageClassName: gp3
+              size: 10Gi
+            resources:
+              requests: { cpu: 250m, memory: 512Mi }
+              limits: { memory: 1Gi }
+          promtail:
+            enabled: true
+            resources:
+              requests: { cpu: 50m, memory: 128Mi }
+          grafana:
+            enabled: false
+          prometheus:
+            enabled: false
+    - repoURL: https://grafana.github.io/helm-charts
+      chart: tempo
+      targetRevision: 1.24.4
+      helm:
+        releaseName: tempo
+        values: |
+          # 단일 인스턴스 Tempo. OTLP(4317/4318) 수신 활성 — 앱이 OTLP로 trace 전송 시 수신.
+          # 현재 앱 OTLP 계측 전이라 비어있으나, 설계 §6.7 반영 + 향후 계측 대비 선배포.
+          tempo:
+            retention: 168h
+            storage:
+              trace:
+                backend: local
+                local:
+                  path: /var/tempo/traces
+            receivers:
+              otlp:
+                protocols:
+                  grpc:
+                    endpoint: 0.0.0.0:4317
+                  http:
+                    endpoint: 0.0.0.0:4318
+            resources:
+              requests: { cpu: 100m, memory: 256Mi }
+              limits: { memory: 512Mi }
+          persistence:
+            enabled: true
+            storageClassName: gp3
+            size: 10Gi
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true   # kube-prometheus-stack CRD가 커서 client-side apply 한계 회피
