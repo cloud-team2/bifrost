@@ -4,7 +4,7 @@
 > 기본 prefix: `/api/v1`
 > Swagger UI: `/swagger-ui.html`, OpenAPI JSON: `/v3/api-docs`
 
-이 문서는 프론트엔드가 호출하는 플랫폼 API 중 account/workspace/members/settings 표면을 상세 정리하고, 나머지 Spring `@RestController` 표면은 controller family 수준으로 빠짐없이 표시한다.
+이 문서는 프론트엔드가 호출하는 플랫폼 API 중 account/workspace/members/settings/monitoring 표면을 상세 정리하고, 나머지 Spring `@RestController` 표면은 controller family 수준으로 빠짐없이 표시한다.
 런타임 계약의 정본은 Spring controller/DTO와 런타임 OpenAPI 산출물(`/v3/api-docs`)이며, 이 문서는 사람이 읽는 수동 카탈로그다.
 
 수동 카탈로그와 자동 산출물의 경계: 이 파일은 권한, 상태 코드, 주요 DTO field, 운영상 주의점처럼 사람이 검토해야 하는 계약을 유지한다. 모든 endpoint의 전체 schema는 controller `@Operation`과 `/v3/api-docs` 산출물을 기준으로 확인한다. endpoint 추가 시 먼저 controller/DTO를 바꾸고, 이 문서에는 노출 범위와 사람이 해석해야 하는 정책만 동기화한다.
@@ -160,9 +160,56 @@ OWNER 정책의 현재 코드 사실:
 - 무결성 가드: principal이 ACTIVE가 아니면 `WORKSPACE_FORBIDDEN`, TenantProvisioner 네이밍(secretName==principal username) 불일치·Secret/password key 부재·Secret 내부 username alias 불일치 시 `KAFKA_PRINCIPAL_NOT_FOUND`(fail-closed).
 - 감사: 조회 성공 시 `AuditService.record(..., "KAFKA_PRINCIPAL_SECRET_VIEW", ...)`와 `OpsLog`를 남기되 detail/log에는 username·secretName만 포함하고 raw password는 어디에도 기록하지 않는다.
 
+## Monitoring
+
+정본 근거: `MonitoringController` base path/status/인가 호출은 `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/controller/MonitoringController.java:24-76`(4개 handler 모두 `accessGuard.requireAccess`: `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/controller/MonitoringController.java:45`, `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/controller/MonitoringController.java:54`, `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/controller/MonitoringController.java:64`, `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/controller/MonitoringController.java:74`), `OverviewResponse` field는 `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/dto/OverviewResponse.java:4-13`, `ResourceEventResponse` field는 `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/dto/ResourceEventResponse.java:6-11`, `IncidentResponse` field는 `services/operations-backend/src/main/java/com/bifrost/ops/incident/dto/IncidentResponse.java:8-20`, 권한 검사는 `WorkspaceAccessGuard.requireAccess`(`services/operations-backend/src/main/java/com/bifrost/ops/workspace/WorkspaceAccessGuard.java:39-54`)다.
+
+| Method | Path | Auth | 권한 | Status | Request | Response | 설명 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `GET` | `/api/v1/workspaces/{wsId}/monitoring/overview` | yes | `requireAccess` | `200` | 없음 | `OverviewResponse` | 워크스페이스 전체 health/운영 집계 |
+| `GET` | `/api/v1/workspaces/{wsId}/monitoring/resource-events` | yes | `requireAccess` | `200` | 없음 | `ResourceEventResponse[]` | Kafka AdminClient 기반 partition reassignment 등 리소스 이벤트 목록 |
+| `GET` | `/api/v1/workspaces/{wsId}/monitoring/incidents` | yes | `requireAccess` | `200` | query `status`(optional) | `IncidentResponse[]` | incident 목록. `status`가 있으면 repository가 해당 문자열로 필터링 |
+| `GET` | `/api/v1/workspaces/{wsId}/monitoring/incidents/{incidentId}` | yes | `requireAccess` | `200` | path `incidentId` UUID | `IncidentResponse` | incident 상세 |
+
+권한/실패 상태:
+
+- `requireAccess`는 관리 권한을 요구하지 않고, `wsId == principal.tenantId()` home 워크스페이스 fast-path, `project_member` 소속, 또는 `tenants.owner_user_id` 소유자 중 하나면 허용한다(`services/operations-backend/src/main/java/com/bifrost/ops/workspace/WorkspaceAccessGuard.java:39-54`).
+- principal이 없으면 `UNAUTHENTICATED` -> `401`, 위 접근 허용 조건에 모두 맞지 않으면 `WORKSPACE_FORBIDDEN` -> `403`이다.
+- incident 상세가 없거나 `{wsId}`와 incident tenant가 다르면 `RESOURCE_NOT_FOUND` -> `404`다.
+- `resource-events`는 Kafka AdminClient 조회 실패를 debug log로 무시하고 빈 배열을 반환할 수 있다(`MonitoringReadService.resourceEvents`).
+
+`OverviewResponse` field:
+
+| 필드 | 설명 |
+| --- | --- |
+| `totalPipelines`, `runningPipelines`, `errorPipelines` | 워크스페이스 파이프라인 전체/ACTIVE/ERROR 개수 |
+| `healthyDatabases`, `unreachableDatabases` | DB health probe 결과가 `HEALTHY`/`UNREACHABLE`인 datasource 개수 |
+| `openIncidents` | `status=OPEN` incident 개수 |
+| `totalConnectors`, `failedConnectors` | connector 전체 개수와 `FAILED`/`PARTIALLY_FAILED` 상태 개수 |
+
+`IncidentResponse` field:
+
+| 필드 | 설명 |
+| --- | --- |
+| `id`, `tenantId` | incident UUID, 워크스페이스 UUID |
+| `groupingKey` | event 임계 위반을 묶는 key(source DB, worker, consumer group 등) |
+| `severity`, `status`, `title` | 심각도 문자열, 상태 문자열(`OPEN`/`RESOLVED`), 제목 |
+| `rca` | RCA 요약(nullable) |
+| `sourceType`, `sourceId` | 원인 리소스 유형/UUID(nullable) |
+| `openedAt`, `resolvedAt` | open/resolve 시각. `resolvedAt`은 open 상태에서 nullable |
+
+`ResourceEventResponse` field:
+
+| 필드 | 설명 |
+| --- | --- |
+| `eventType` | 리소스 이벤트 유형(현재 partition reassignment 등) |
+| `resource` | topic-partition 등 이벤트 대상 |
+| `detail` | replicas/addingReplicas 같은 이벤트 상세 문자열 |
+| `occurredAt` | 이벤트 관측 시각 |
+
 ## Controller Coverage
 
-이 파일은 account/workspace/members/settings schema를 상세 관리하고, 아래 14개 `@RestController`는 endpoint family 수준으로 커버한다. `@RestControllerAdvice`인 `GlobalExceptionHandler`는 controller coverage 카운트에서 제외한다.
+이 파일은 account/workspace/members/settings/monitoring schema를 상세 관리하고, 아래 15개 `@RestController`는 endpoint family 수준으로 커버한다. `@RestControllerAdvice`인 `GlobalExceptionHandler`는 controller coverage 카운트에서 제외한다.
 
 | Controller | Base path | 상세 수준 | 근거 |
 | --- | --- | --- | --- |
@@ -174,6 +221,7 @@ OWNER 정책의 현재 코드 사실:
 | `DatabaseController` | `/api/v1/workspaces/{wsId}/databases` | family catalog | `services/operations-backend/src/main/java/com/bifrost/ops/database/controller/DatabaseController.java:41-152` |
 | `PipelineController` | `/api/v1/workspaces/{wsId}/pipelines` | family catalog + runtime metadata 상세 | `services/operations-backend/src/main/java/com/bifrost/ops/pipeline/controller/PipelineController.java:43-218` |
 | `KafkaPrincipalController` | `/api/v1/workspaces/{wsId}/kafka/principals` | family catalog + secret 상세 | `services/operations-backend/src/main/java/com/bifrost/ops/workspace/kafka/KafkaPrincipalController.java:21-72` |
+| `MonitoringController` | `/api/v1/workspaces/{wsId}/monitoring` | 상세 schema/status | `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/controller/MonitoringController.java:24-76` |
 | `ClusterController` | `/api/v1/clusters` | family catalog | `services/operations-backend/src/main/java/com/bifrost/ops/cluster/ClusterController.java:17-44` |
 | `InternalController` | `/internal` | family catalog | `services/operations-backend/src/main/java/com/bifrost/ops/internalops/controller/InternalController.java:26-88` |
 | `InternalOpsController` | `/internal/ops` | family catalog | `services/operations-backend/src/main/java/com/bifrost/ops/internalops/controller/InternalOpsController.java:24-72` |
@@ -189,6 +237,7 @@ Family catalog 요약:
 | Database | connection-test 200, register 201, list/get/schema/readiness/metrics/pipelines 200, delete 204 | workspace access guard |
 | Pipeline | list/get/read tabs/connection-guide/table-mapping/pause/resume 200, create 201, delete 204 | workspace access guard |
 | Kafka principals | list/secret 200, create 201, deactivate/revoke/rotate 200 | list은 workspace access, mutation/secret은 OWNER/ADMIN 또는 workspace owner |
+| Monitoring | overview/resource-events/incidents list/detail 200 | `WorkspaceAccessGuard.requireAccess` |
 | Cluster | Kafka/connect/throughput 조회 200 | 인증 사용자, workspace scope 없음 |
 | Internal `/internal` | tenant provision 200, tenant delete 202, pipeline provision 202 또는 422, status 200, delete 202 | internal control-plane surface |
 | Internal `/internal/ops` | health/version 200, ready 200 또는 503, connector status/list/topology/lag/log search/incident summary 200 | `SecurityConfig`상 `/internal/ops/**` permitAll, service identity 보강은 별도 정책 문서 대상 |
@@ -244,7 +293,7 @@ Family catalog 요약:
 
 ## Workspace Event Stream
 
-`GET /api/v1/workspaces/{wsId}/events/stream`은 workspace SSE 채널이다. Browser `EventSource` 제약 때문에 Bearer header 대신 단명 `access_token` query parameter를 사용할 수 있다.
+`GET /api/v1/workspaces/{wsId}/events/stream`은 workspace SSE 채널이다. Browser `EventSource` 제약 때문에 Bearer header 대신 `access_token` query parameter를 사용할 수 있다. 이 query token 허용은 JWT filter의 SSE 경로 판정(`services/operations-backend/src/main/java/com/bifrost/ops/auth/jwt/JwtAuthenticationFilter.java:65-85`)에 의해 적용되며, 같은 filter는 Agent run SSE `/api/v1/agent/runs/{run_id}/events`도 허용한다(`services/operations-backend/src/main/java/com/bifrost/ops/auth/jwt/JwtAuthenticationFilter.java:97-105`; 상세는 [FastAPI Event Streaming API](./fastapi.md#7-event-streaming-api)).
 
 ## 18. Schema Registry API
 
