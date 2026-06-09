@@ -292,7 +292,12 @@ async def run_workflow(
                 case "verifier":
                     await _publish(bus, event_repo, run_id,
                                    _evt(run_id, StreamingEventType.AGENT_STARTED, "verifier", "결과를 검증합니다"))
-                    verifier_out = await verifier_agent.run_verifier(mode)
+                    verifier_out = await verifier_agent.run_verifier(
+                        mode,
+                        rca_out=rca_out,
+                        retrieval_out=retrieval_out,
+                        classifier_out=classifier_out,
+                    )
                     v_status = verifier_out.verification_results[0].status.value if verifier_out.verification_results else "pass"
                     await _publish(bus, event_repo, run_id,
                                    _evt(run_id, StreamingEventType.VERIFICATION_COMPLETED, "verifier", f"검증: {v_status}"))
