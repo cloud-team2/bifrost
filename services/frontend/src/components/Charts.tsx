@@ -46,20 +46,42 @@ export interface SeriesDef {
   color: string
 }
 
+// 시간축(timeAxis) 포맷터: t가 epoch ms일 때 사용. Grafana처럼 실제 시간 간격으로 점을 배치한다.
+const fmtClock = (ms: number) =>
+  new Date(ms).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
+const fmtClockSec = (ms: number) =>
+  new Date(ms).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+
 export function TrendChart({
   data,
   series,
   type = 'line',
   height = 200,
   refLine,
+  timeAxis = false,
 }: {
   data: Point[]
   series: SeriesDef[]
   type?: 'line' | 'area'
   height?: number
   refLine?: { y: number; label: string }
+  /** t를 epoch ms로 보고 실제 시간 간격으로 배치(Grafana식). false면 t를 카테고리로 취급. */
+  timeAxis?: boolean
 }) {
   const axis = { fontSize: 10, fill: '#94a3b8' }
+
+  // 시간축이면 t(ms)를 숫자 시간 스케일로, 아니면 기존 카테고리 라벨로.
+  const xAxis = timeAxis ? (
+    <XAxis dataKey="t" type="number" scale="time" domain={['dataMin', 'dataMax']}
+      tickFormatter={fmtClock} tick={axis} tickLine={false} axisLine={false}
+      interval="preserveStartEnd" minTickGap={44} />
+  ) : (
+    <XAxis dataKey="t" tick={axis} tickLine={false} axisLine={false}
+      interval="preserveStartEnd" minTickGap={36} />
+  )
+  const tooltip = (
+    <Tooltip contentStyle={tooltipStyle} labelFormatter={timeAxis ? (v) => fmtClockSec(v as number) : undefined} />
+  )
 
   return (
     <div style={{ height }}>
@@ -75,9 +97,9 @@ export function TrendChart({
               ))}
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="#eef0f3" vertical={false} />
-            <XAxis dataKey="t" tick={axis} tickLine={false} axisLine={false} interval="preserveStartEnd" minTickGap={36} />
+            {xAxis}
             <YAxis tick={axis} tickLine={false} axisLine={false} width={44} />
-            <Tooltip contentStyle={tooltipStyle} />
+            {tooltip}
             {refLine && (
               <ReferenceLine y={refLine.y} stroke="#ef4444" strokeDasharray="4 3" label={refLabel(refLine.label)} />
             )}
@@ -90,15 +112,17 @@ export function TrendChart({
                 stroke={s.color}
                 strokeWidth={2}
                 fill={`url(#g-${s.key})`}
+                isAnimationActive={false}
+                connectNulls={false}
               />
             ))}
           </AreaChart>
         ) : (
           <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#eef0f3" vertical={false} />
-            <XAxis dataKey="t" tick={axis} tickLine={false} axisLine={false} interval="preserveStartEnd" minTickGap={36} />
+            {xAxis}
             <YAxis tick={axis} tickLine={false} axisLine={false} width={44} />
-            <Tooltip contentStyle={tooltipStyle} />
+            {tooltip}
             {refLine && (
               <ReferenceLine y={refLine.y} stroke="#ef4444" strokeDasharray="4 3" label={refLabel(refLine.label)} />
             )}
@@ -111,6 +135,8 @@ export function TrendChart({
                 stroke={s.color}
                 strokeWidth={2}
                 dot={false}
+                isAnimationActive={false}
+                connectNulls={false}
               />
             ))}
           </LineChart>

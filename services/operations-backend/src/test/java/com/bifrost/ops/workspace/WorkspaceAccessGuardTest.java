@@ -3,6 +3,7 @@ package com.bifrost.ops.workspace;
 import com.bifrost.ops.auth.jwt.AuthenticatedUser;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
+import com.bifrost.ops.workspace.persistence.repository.ProjectMemberRepository;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
 import org.junit.jupiter.api.Test;
 
@@ -19,7 +20,8 @@ import static org.mockito.Mockito.when;
 class WorkspaceAccessGuardTest {
 
     private final WorkspaceRepository repo = mock(WorkspaceRepository.class);
-    private final WorkspaceAccessGuard guard = new WorkspaceAccessGuard(repo);
+    private final ProjectMemberRepository memberRepo = mock(ProjectMemberRepository.class);
+    private final WorkspaceAccessGuard guard = new WorkspaceAccessGuard(repo, memberRepo);
 
     @Test
     void allowsHomeWorkspaceWithoutDbLookup() {
@@ -35,6 +37,7 @@ class WorkspaceAccessGuardTest {
         UUID home = UUID.randomUUID();
         UUID other = UUID.randomUUID();
         AuthenticatedUser user = new AuthenticatedUser(UUID.randomUUID(), home, "u@bifrost.io");
+        when(memberRepo.existsByIdWorkspaceIdAndIdUserId(other, user.userId())).thenReturn(false);
         when(repo.existsByIdAndOwnerUserId(other, user.userId())).thenReturn(true);
 
         assertThatCode(() -> guard.requireAccess(other, user)).doesNotThrowAnyException();
@@ -45,11 +48,44 @@ class WorkspaceAccessGuardTest {
         UUID home = UUID.randomUUID();
         UUID other = UUID.randomUUID();
         AuthenticatedUser user = new AuthenticatedUser(UUID.randomUUID(), home, "u@bifrost.io");
+        when(memberRepo.existsByIdWorkspaceIdAndIdUserId(other, user.userId())).thenReturn(false);
         when(repo.existsByIdAndOwnerUserId(other, user.userId())).thenReturn(false);
 
         assertThatThrownBy(() -> guard.requireAccess(other, user))
                 .isInstanceOfSatisfying(ApiException.class, e ->
-                        assertThat(e.code()).isEqualTo(ErrorCode.RESOURCE_NOT_OWNED_BY_PROJECT));
+                        assertThat(e.code()).isEqualTo(ErrorCode.WORKSPACE_FORBIDDEN));
+    }
+
+    @Test
+    void allowsMemberWorkspace() {
+        UUID home = UUID.randomUUID();
+        UUID other = UUID.randomUUID();
+        AuthenticatedUser user = new AuthenticatedUser(UUID.randomUUID(), home, "u@bifrost.io");
+        when(memberRepo.existsByIdWorkspaceIdAndIdUserId(other, user.userId())).thenReturn(true);
+
+        assertThatCode(() -> guard.requireAccess(other, user)).doesNotThrowAnyException();
+        verify(repo, never()).existsByIdAndOwnerUserId(other, user.userId());
+    }
+
+    @Test
+    void requireMemberAllowsProjectMember() {
+        UUID wsId = UUID.randomUUID();
+        AuthenticatedUser user = new AuthenticatedUser(UUID.randomUUID(), UUID.randomUUID(), "u@bifrost.io");
+        when(memberRepo.existsByIdWorkspaceIdAndIdUserId(wsId, user.userId())).thenReturn(true);
+
+        assertThatCode(() -> guard.requireMember(wsId, user)).doesNotThrowAnyException();
+        verify(repo, never()).existsByIdAndOwnerUserId(wsId, user.userId());
+    }
+
+    @Test
+    void requireMemberRejectsNonMember() {
+        UUID wsId = UUID.randomUUID();
+        AuthenticatedUser user = new AuthenticatedUser(UUID.randomUUID(), wsId, "u@bifrost.io");
+        when(memberRepo.existsByIdWorkspaceIdAndIdUserId(wsId, user.userId())).thenReturn(false);
+
+        assertThatThrownBy(() -> guard.requireMember(wsId, user))
+                .isInstanceOfSatisfying(ApiException.class, e ->
+                        assertThat(e.code()).isEqualTo(ErrorCode.WORKSPACE_FORBIDDEN));
     }
 
     @Test

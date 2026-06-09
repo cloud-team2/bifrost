@@ -45,6 +45,7 @@ Bifrost API가 반환하는 에러 코드의 단일 출처. 코드 추가/변경
 | 10003 | 401 | `UNAUTHENTICATED` | 인증이 필요한 API에 토큰 없이 접근 | 로그인 화면으로 리다이렉트 |
 | 10004 | 401 | `AUTH_TOKEN_INVALID` | JWT 서명 위변조·형식 오류·없는 issuer 등 | 토큰 폐기 후 재로그인 유도 |
 | 10005 | 401 | `AUTH_TOKEN_EXPIRED` | JWT 만료 | refresh 또는 재로그인 유도 |
+| 10006 | 404 | `USER_NOT_FOUND_BY_EMAIL` | 멤버 초대/추가 시 email에 해당하는 사용자가 없음 | 가입된 이메일인지 확인하도록 안내 |
 
 ### 워크스페이스(프로젝트) / 멤버 (20000~20999)
 
@@ -53,7 +54,10 @@ Bifrost API가 반환하는 에러 코드의 단일 출처. 코드 추가/변경
 | 20001 | 409 | `WORKSPACE_NAME_CONFLICT` | 회원가입 시 같은 워크스페이스 이름 존재 | "이미 사용 중인 이름입니다" 안내 |
 | 20002 | 409 | `WORKSPACE_NAMESPACE_CONFLICT` | 회원가입 시 같은 namespace 존재 | "이미 사용 중인 namespace입니다" 안내 |
 | 20003 | 404 | `WORKSPACE_NOT_FOUND` | 현재 사용자의 워크스페이스를 조회할 수 없음 | "워크스페이스를 찾을 수 없습니다" 안내, 로그인 재시도 권장 |
-| 20004 | 403 | `RESOURCE_NOT_OWNED_BY_PROJECT` | 요청 경로의 `wsId`가 사용자 소속 워크스페이스가 아님(scope 위반) | "접근 권한이 없습니다" 안내, 워크스페이스 선택 화면 유도 |
+| 20004 | 403 | `WORKSPACE_FORBIDDEN` | 요청 경로의 `wsId`가 사용자 소속 워크스페이스가 아니거나 관리 권한이 없음 | "접근 권한이 없습니다" 안내, 워크스페이스 선택 화면 유도 |
+| 20005 | 404 | `MEMBER_NOT_FOUND` | 멤버 수정/삭제 대상이 워크스페이스 멤버가 아님 | 멤버 목록 새로고침 |
+| 20006 | 409 | `MEMBER_ALREADY_EXISTS` | 이미 워크스페이스에 속한 사용자를 다시 추가 | 기존 멤버임을 안내 |
+| 20007 | 409 | `OWNER_DEMOTION_FORBIDDEN` | OWNER 역할 변경 또는 삭제 시도 | OWNER 이관 정책이 생기기 전까지 차단 안내 |
 
 ### 데이터베이스 (30000~30999)
 
@@ -68,6 +72,10 @@ Bifrost API가 반환하는 에러 코드의 단일 출처. 코드 추가/변경
 | 코드 | HTTP | 이름 | 트리거 | 클라이언트 권장 처리 |
 |---|---|---|---|---|
 | 40001 | 404 | `PIPELINE_NOT_FOUND` | `id`가 없거나 해당 워크스페이스 소유가 아님(상세·pause·resume·delete) | "파이프라인을 찾을 수 없습니다" 안내, 목록으로 복귀 |
+| 40002 | 404 | `KAFKA_PRINCIPAL_NOT_FOUND` | `id`가 없거나 해당 워크스페이스 소유 Kafka principal이 아님 | principal 목록 새로고침 |
+| 40003 | 400 | `KAFKA_PRINCIPAL_USERNAME_INVALID` | username이 1~255자 `[A-Za-z0-9_-]+` 형식이 아님 | username 입력값 수정 유도 |
+| 40004 | 409 | `KAFKA_PRINCIPAL_CONFLICT` | 같은 워크스페이스에 동일 username principal이 이미 존재 | "이미 사용 중인 username입니다" 안내 |
+| 40005 | 409 | `KAFKA_PRINCIPAL_ALREADY_REVOKED` | revoked principal에 deactivate/revoke/rotate 요청 | revoked 상태 표시 후 변경 버튼 비활성화 |
 
 > 생성 마법사 검증 실패(pattern↔sink 정합성·source/sink ownership·CDC readiness BLOCKED·중복 이름·동일 source+테이블+패턴)는 도메인 코드를 따로 두지 않고 `VALIDATION_FAILED`(90001)로 응답한다([pipeline.md §2](../design/backend-springboot/pipeline.md)). provisioner 부분 실패는 예외가 아니라 pipeline 상태를 `error`로 두고 `status_message`에 stage/errorCode를 남긴다.
 
@@ -82,6 +90,9 @@ Bifrost API가 반환하는 에러 코드의 단일 출처. 코드 추가/변경
 | 코드 | HTTP | 이름 | 트리거 | 클라이언트 권장 처리 |
 |---|---|---|---|---|
 | 90001 | 400 | `VALIDATION_FAILED` | 요청 본문이 Bean Validation 검증 실패 | `details` 배열의 `field`/`reason`을 폼 위에 표시 |
+| 90006 | 404 | `RESOURCE_NOT_FOUND` | 매핑되지 않은 경로 호출 | 요청 경로 확인 |
+| 90007 | 405 | `METHOD_NOT_ALLOWED` | 매핑된 경로에 지원하지 않는 HTTP 메서드 호출 | API 문서의 메서드 확인 |
+| 90008 | 415 | `UNSUPPORTED_MEDIA_TYPE` | 지원하지 않는 요청 Content-Type 사용 | `Content-Type` 헤더 확인 |
 
 ## 아카이브 (사용 금지)
 

@@ -1,6 +1,7 @@
 package com.bifrost.ops.auth.security;
 
 import com.bifrost.ops.global.common.error.ErrorCode;
+import com.bifrost.ops.global.common.error.ErrorMessages;
 import com.bifrost.ops.global.common.error.ErrorResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
@@ -30,7 +31,7 @@ public class JwtAuthenticationEntryPoint implements AuthenticationEntryPoint {
 
         response.setStatus(code.status().value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-        ErrorResponse body = ErrorResponse.of(code, "인증이 필요합니다");
+        ErrorResponse body = ErrorResponse.of(code, ErrorMessages.AUTHENTICATION_REQUIRED);
         objectMapper.writeValue(response.getOutputStream(), body);
     }
 }

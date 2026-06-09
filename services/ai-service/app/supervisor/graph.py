@@ -20,13 +20,16 @@ class Supervisor:
     ) -> None:
         self._store = store or get_state_store()
         self._policy = policy or default_retry_policy()
+        self._remediation_flags: dict[str, bool] = {}
 
     def start_run(
         self,
         run_id: str,
         mode: AgentMode,
         incident_id: str | None = None,
+        remediation_requested: bool = False,
     ) -> AgentState:
+        self._remediation_flags[run_id] = remediation_requested
         return self._store.create(run_id, mode, incident_id)
 
     def get_state(self, run_id: str) -> AgentState | None:
@@ -48,9 +51,10 @@ class Supervisor:
             self._store.patch(run_id, lambda s: _mark_failed(s))
             raise
 
-        mode = AgentMode(state.run.status) if False else _infer_mode(state)
+        mode = _infer_mode(state)
         current = state.run.current_agent
-        nxt = next_stage(mode, current)
+        remediation_requested = self._remediation_flags.get(run_id, False)
+        nxt = next_stage(mode, current, remediation_requested)
 
         def _apply(s: AgentState) -> AgentState:
             s.run.step_count += 1

@@ -59,6 +59,7 @@ public class PipelineService {
     private final WorkspaceAccessGuard accessGuard;
     private final EventService eventService;
     private final AuditService auditService;
+    private final com.bifrost.ops.pipeline.kafka.KafkaResourceCleaner kafkaResourceCleaner;
 
     public PipelineService(PipelineRepository pipelineRepository,
                            DatasourceRepository datasourceRepository,
@@ -67,7 +68,8 @@ public class PipelineService {
                            PipelineProvisioningService provisioningService,
                            WorkspaceAccessGuard accessGuard,
                            EventService eventService,
-                           AuditService auditService) {
+                           AuditService auditService,
+                           com.bifrost.ops.pipeline.kafka.KafkaResourceCleaner kafkaResourceCleaner) {
         this.pipelineRepository = pipelineRepository;
         this.datasourceRepository = datasourceRepository;
         this.workspaceRepository = workspaceRepository;
@@ -76,6 +78,7 @@ public class PipelineService {
         this.accessGuard = accessGuard;
         this.eventService = eventService;
         this.auditService = auditService;
+        this.kafkaResourceCleaner = kafkaResourceCleaner;
     }
 
     // ---------- 목록 / 상세 ----------
@@ -232,13 +235,22 @@ public class PipelineService {
     }
 
     @Transactional
-    public void delete(UUID wsId, AuthenticatedUser principal, UUID id) {
+    public void delete(UUID wsId, AuthenticatedUser principal, UUID id, boolean force) {
         accessGuard.requireAccess(wsId, principal);
         PipelineEntity p = load(wsId, id);
-        if (p.getStatus() == PipelineLifecycle.CREATING) {
-            throw validation("creating 상태에서는 삭제할 수 없습니다");
+        // 정상 삭제: creating(실제 프로비저닝 진행 중)은 in-flight race 방지로 금지. 실패는 error로
+        //   전이되므로 삭제 가능(상태 정확성 — #155 watcher/timeout이 보장).
+        // 강제 삭제(force): 상태 불문 best-effort 청소 — 상태 전이가 끝내 안 잡히는 경우의 안전판(#155).
+        if (!force && p.getStatus() == PipelineLifecycle.CREATING) {
+            throw validation("creating 상태에서는 삭제할 수 없습니다 (정리가 필요하면 force=true)");
         }
+        // 핵심 보장(#155): 파이프라인 행은 관련 CR이 모두 삭제된 뒤에만 제거된다.
+        // CR 정리는 force 여부와 무관하게 반드시 성공해야 하며, 실패하면 예외가 트랜잭션을 롤백시켜
+        // 행이 남는다(다음 시도에서 재정리) → 고아 CR이 절대 남지 않는다. force는 상태 가드만 우회한다.
         provisioningService.delete(new PipelineResourceRef(p.getId(), null, connectorNames(p)));
+        // Kafka 측 잔재(토픽·sink consumer group) 정리(#200). best-effort — 실패해도 삭제는 진행.
+        // CR이 모두 제거된 뒤 호출해야 Debezium source가 토픽을 재생성하지 않는다.
+        kafkaResourceCleaner.deleteTopicAndSinkGroup(p.getTopicName(), p.getId());
         connectorRepository.deleteAll(connectorRepository.findByPipelineId(p.getId()));
         pipelineRepository.delete(p);
         eventService.record(wsId, null, EventLevel.INFO, "PIPELINE_DELETED",

@@ -31,6 +31,20 @@ public class EventService {
         repository.save(e);
     }
 
+    /** incident_id·category 포함 이벤트 기록(S2). */
+    public void recordWithIncident(UUID tenantId, UUID pipelineId, EventLevel level, String type,
+                                   String message, UUID incidentId, String category) {
+        EventEntity e = new EventEntity();
+        e.setTenantId(tenantId);
+        e.setPipelineId(pipelineId);
+        e.setLevel(level);
+        e.setType(type);
+        e.setMessage(message);
+        e.setIncidentId(incidentId);
+        e.setCategory(category);
+        repository.save(e);
+    }
+
     /** 워크스페이스 이벤트 목록. level/pipelineId 선택 필터. */
     public List<EventResponse> list(UUID tenantId, EventLevel level, UUID pipelineId) {
         List<EventEntity> rows;

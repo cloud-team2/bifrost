@@ -7,10 +7,14 @@ import com.bifrost.ops.pipeline.PipelineLifecycle;
 import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
 import com.bifrost.ops.provisioning.dto.TenantProvisionRequest;
 import com.bifrost.ops.provisioning.port.TenantProvisionerPort;
+import com.bifrost.ops.workspace.Role;
 import com.bifrost.ops.workspace.WorkspaceAccessGuard;
 import com.bifrost.ops.workspace.dto.WorkspaceCreateRequest;
 import com.bifrost.ops.workspace.dto.WorkspaceResponse;
+import com.bifrost.ops.workspace.dto.WorkspaceUpdateRequest;
+import com.bifrost.ops.workspace.persistence.entity.ProjectMemberEntity;
 import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
+import com.bifrost.ops.workspace.persistence.repository.ProjectMemberRepository;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -32,12 +36,13 @@ import static org.mockito.Mockito.when;
 class WorkspaceServiceTest {
 
     @Mock private WorkspaceRepository workspaceRepository;
+    @Mock private ProjectMemberRepository memberRepository;
     @Mock private PipelineRepository pipelineRepository;
     @Mock private TenantProvisionerPort tenantProvisioner;
     @Mock private WorkspaceAccessGuard accessGuard;
 
     private WorkspaceService service() {
-        return new WorkspaceService(workspaceRepository, pipelineRepository, tenantProvisioner, accessGuard);
+        return new WorkspaceService(workspaceRepository, memberRepository, pipelineRepository, tenantProvisioner, accessGuard);
     }
 
     private final UUID userId = UUID.randomUUID();
@@ -46,7 +51,9 @@ class WorkspaceServiceTest {
     @Test
     void listReturnsOwnedWorkspacesWithPipelineCounts() {
         UUID wsId = UUID.randomUUID();
-        when(workspaceRepository.findByOwnerUserIdOrderByCreatedAt(userId))
+        when(memberRepository.findByIdUserIdOrderByJoinedAtAsc(userId))
+                .thenReturn(List.of(new ProjectMemberEntity(wsId, userId, Role.MEMBER)));
+        when(workspaceRepository.findByIdInOrderByCreatedAt(List.of(wsId)))
                 .thenReturn(List.of(entity(wsId, "Team A", "team-a")));
         when(pipelineRepository.countByTenantId(wsId)).thenReturn(5L);
         when(pipelineRepository.countByTenantIdAndStatus(wsId, PipelineLifecycle.ACTIVE)).thenReturn(3L);
@@ -76,6 +83,12 @@ class WorkspaceServiceTest {
         verify(workspaceRepository).saveAndFlush(saved.capture());
         assertThat(saved.getValue().getOwnerUserId()).isEqualTo(userId);
         assertThat(saved.getValue().getNamespace()).isEqualTo("orders-team");
+
+        ArgumentCaptor<ProjectMemberEntity> member = ArgumentCaptor.forClass(ProjectMemberEntity.class);
+        verify(memberRepository).saveAndFlush(member.capture());
+        assertThat(member.getValue().getWorkspaceId()).isEqualTo(out.id());
+        assertThat(member.getValue().getUserId()).isEqualTo(userId);
+        assertThat(member.getValue().getRole()).isEqualTo(Role.OWNER);
 
         ArgumentCaptor<TenantProvisionRequest> prov = ArgumentCaptor.forClass(TenantProvisionRequest.class);
         verify(tenantProvisioner).provision(prov.capture());
@@ -110,6 +123,48 @@ class WorkspaceServiceTest {
         assertThatThrownBy(() -> service().get(wsId, principal))
                 .isInstanceOfSatisfying(ApiException.class, e ->
                         assertThat(e.code()).isEqualTo(ErrorCode.WORKSPACE_NOT_FOUND));
+    }
+
+    @Test
+    void updateChangesNameAndTimezoneForManager() {
+        UUID wsId = UUID.randomUUID();
+        WorkspaceEntity workspace = entity(wsId, "Team A", "team-a");
+        when(memberRepository.existsByIdWorkspaceIdAndIdUserIdAndRoleIn(wsId, userId, List.of(Role.OWNER, Role.ADMIN)))
+                .thenReturn(true);
+        when(workspaceRepository.findById(wsId)).thenReturn(Optional.of(workspace));
+        when(workspaceRepository.saveAndFlush(workspace)).thenReturn(workspace);
+
+        WorkspaceResponse out = service().update(wsId, principal, new WorkspaceUpdateRequest("Team B", "Asia/Seoul"));
+
+        assertThat(out.name()).isEqualTo("Team B");
+        assertThat(out.timezone()).isEqualTo("Asia/Seoul");
+    }
+
+    @Test
+    void updateRejectsNonManager() {
+        UUID wsId = UUID.randomUUID();
+        when(memberRepository.existsByIdWorkspaceIdAndIdUserIdAndRoleIn(wsId, userId, List.of(Role.OWNER, Role.ADMIN)))
+                .thenReturn(false);
+        when(workspaceRepository.existsByIdAndOwnerUserId(wsId, userId)).thenReturn(false);
+
+        assertThatThrownBy(() -> service().update(wsId, principal, new WorkspaceUpdateRequest("Team B", null)))
+                .isInstanceOfSatisfying(ApiException.class, e ->
+                        assertThat(e.code()).isEqualTo(ErrorCode.WORKSPACE_FORBIDDEN));
+    }
+
+    @Test
+    void updateClearsBlankTimezone() {
+        UUID wsId = UUID.randomUUID();
+        WorkspaceEntity workspace = entity(wsId, "Team A", "team-a");
+        workspace.setTimezone("Asia/Seoul");
+        when(memberRepository.existsByIdWorkspaceIdAndIdUserIdAndRoleIn(wsId, userId, List.of(Role.OWNER, Role.ADMIN)))
+                .thenReturn(true);
+        when(workspaceRepository.findById(wsId)).thenReturn(Optional.of(workspace));
+        when(workspaceRepository.saveAndFlush(workspace)).thenReturn(workspace);
+
+        WorkspaceResponse out = service().update(wsId, principal, new WorkspaceUpdateRequest(null, "   "));
+
+        assertThat(out.timezone()).isNull();
     }
 
     private static WorkspaceEntity entity(UUID id, String name, String namespace) {

@@ -8,13 +8,30 @@
 pipeline {
   agent {
     kubernetes {
-      defaultContainer 'kaniko'
+      defaultContainer 'git'                     // Test/Detect/gitops = git 컨테이너(sh+git)
       yaml '''
 apiVersion: v1
 kind: Pod
 spec:
   containers:
-    - name: kaniko
+    # 서비스마다 별도 kaniko 컨테이너 — 한 컨테이너 재사용 시 kaniko가 빌드 중
+    # base rootfs를 / 에 unpack하며 /busybox(셸)을 덮어 다음 빌드 sh가 죽는다.
+    # 컨테이너를 분리하면 파일시스템이 독립이라 안전. (SERVICES와 1:1, 추가 시 함께 추가)
+    - name: kaniko-ai-service
+      image: gcr.io/kaniko-project/executor:v1.23.2-debug
+      command: ["/busybox/cat"]
+      tty: true
+      volumeMounts:
+        - name: harbor-auth
+          mountPath: /kaniko/.docker
+    - name: kaniko-operations-backend
+      image: gcr.io/kaniko-project/executor:v1.23.2-debug
+      command: ["/busybox/cat"]
+      tty: true
+      volumeMounts:
+        - name: harbor-auth
+          mountPath: /kaniko/.docker
+    - name: kaniko-frontend
       image: gcr.io/kaniko-project/executor:v1.23.2-debug
       command: ["/busybox/cat"]
       tty: true
@@ -39,13 +56,13 @@ spec:
   environment {
     HARBOR      = 'harbor.harbor.svc.cluster.local'
     PROJECT     = 'library'
-    TAG         = "${GIT_COMMIT.take(8)}"
+    TAG         = "${(env.GIT_COMMIT ?: 'latest').take(8)}"
     GITOPS_REPO = 'github.com/cloud-team2/bifrost.git'
     SERVICES    = 'ai-service operations-backend frontend'   // services/<svc> = 빌드 컨텍스트
   }
 
   options {
-    timestamps()
+    timestamps()                                      // timestamper 플러그인 설치됨 (#161, jenkins-values)
     disableConcurrentBuilds()
     buildDiscarder(logRotator(numToKeepStr: '20'))
   }
@@ -58,9 +75,9 @@ spec:
       }
     }
 
-    // main 머지에서만 동작. 변경된 서비스만 골라 빌드/배포.
-    stage('CD (main only)') {
-      when { branch 'main' }
+    // 이 job은 SCM이 */main 단일 브랜치라 항상 main 빌드 = CD 수행.
+    // (멀티브랜치가 아니라 BRANCH_NAME이 비므로 when{branch} 대신 job의 브랜치 설정으로 main 한정)
+    stage('CD') {
       stages {
         stage('Detect changes') {
           steps {
@@ -69,6 +86,7 @@ spec:
               def base = env.GIT_PREVIOUS_SUCCESSFUL_COMMIT
               def changed
               if (base) {
+                sh "git config --global --add safe.directory ${WORKSPACE}"   // git 컨테이너(root)↔워크스페이스 소유자 불일치 회피
                 changed = sh(returnStdout: true, script: "git diff --name-only ${base} ${GIT_COMMIT}").trim().split('\n') as List
               } else {
                 echo '직전 성공 빌드 없음 → 전체 빌드'
@@ -85,12 +103,18 @@ spec:
         stage('Build & Push') {
           when { expression { env.TO_BUILD?.trim() } }
           steps {
-            container('kaniko') {
-              script {
-                for (svc in env.TO_BUILD.trim().split(' ')) {
+            script {
+              // 빌드 컨텍스트는 서비스마다 다르다:
+              //  - operations-backend: 멀티모듈 Gradle → 컨텍스트=레포 루트(gradlew/settings.gradle/gradle 필요)
+              //  - ai-service/frontend: self-contained Dockerfile → 컨텍스트=서비스 디렉토리
+              // 각 서비스는 자기 전용 kaniko 컨테이너(kaniko-<svc>)에서 빌드 — 컨테이너 재사용 시
+              // kaniko가 rootfs를 덮어 다음 빌드 셸이 사라지는 문제를 컨테이너 격리로 회피.
+              for (svc in env.TO_BUILD.trim().split(' ')) {
+                def ctx = (svc == 'operations-backend') ? "${WORKSPACE}" : "${WORKSPACE}/services/${svc}"
+                container("kaniko-${svc}") {
                   sh """
                     /kaniko/executor \
-                      --context=dir://${WORKSPACE}/services/${svc} \
+                      --context=dir://${ctx} \
                       --dockerfile=${WORKSPACE}/services/${svc}/Dockerfile \
                       --destination=${HARBOR}/${PROJECT}/bifrost-${svc}:${TAG} \
                       --destination=${HARBOR}/${PROJECT}/bifrost-${svc}:latest \

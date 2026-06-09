@@ -7,6 +7,7 @@ from fastapi import APIRouter
 
 from app.core.config import settings
 from app.schemas import ApiResponse
+from app.tools.registry import get_tool_registry
 
 router = APIRouter()
 
@@ -35,12 +36,18 @@ async def ready() -> ApiResponse:
         except Exception:
             db_status = "unavailable"
 
+    try:
+        spring_ok = await get_tool_registry().health()
+        spring_status = "ok" if spring_ok else "unavailable"
+    except Exception:
+        spring_status = "unavailable"
+
     return ApiResponse.success(
         _request_id(),
         {
             "status": "ready",
             "dependencies": {
-                "spring_operations": "unknown",
+                "spring_operations": spring_status,
                 "llm_provider": "unknown",
                 "agent_run_store": db_status,
                 "vector_store": "unknown",

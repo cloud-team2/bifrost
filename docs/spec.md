@@ -50,7 +50,8 @@
 - **사전 조건**: 유효한 계정이 시스템에 등록되어 있어야 한다.
 - **기본 흐름**: 1) 이메일·비밀번호 입력 → 2) 시스템이 자격증명 검증 → 3) `currentUser` 설정 후 WorkspaceListView 이동.
 - **예외 흐름**: ① 자격증명 불일치 → 로그인 실패 메시지 ② 필드 미입력 → 입력 오류 메시지.
-- **비고**: 데모 계정 `ta@bifrost.io / ta1234`(시드 계정명일 뿐, 액터 역할을 고정하지 않음). FR-002의 선행 조건.
+- **API**: `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `POST /api/v1/auth/refresh`, `GET /api/v1/auth/me`. `/me` 응답 필드는 `userId, email, name, role, joinedAt, lastLoginAt, workspaceId, workspaceName, namespace, workspaceStatus`다([Spring Boot API](./api/springboot.md#auth--account)).
+- **비고**: 데모 계정 `ta@bifrost.io / ta1234`(시드 계정명일 뿐, 액터 역할을 고정하지 않음). FR-002의 선행 조건. `/api/auth/**` alias는 404 `RESOURCE_NOT_FOUND` envelope으로 거부하고 `/api/v1/auth/**`만 사용한다.
 
 ### FR-002 — 워크스페이스 생성 및 선택
 - **액터**: 사용자
@@ -58,7 +59,17 @@
 - **사전 조건**: `currentUser !== null && currentWorkspace === null`
 - **기본 흐름**: 1) 워크스페이스 카드 목록 확인 → 2) 카드 클릭 → `setCurrentWorkspace(ws)` → PipelinesView → 3) 신규는 "+ 새 워크스페이스" → WorkspaceCreateModal → 4) 이름 입력(**슬러그 자동 생성**) → "만들기" → 자동 선택 → PipelinesView.
 - **예외 흐름**: ① 워크스페이스 없음 → 빈 상태 + 생성 CTA ② 이름 미입력 → 생성 버튼 비활성화.
+- **API**: `GET/POST /api/v1/workspaces`, `GET/PATCH /api/v1/workspaces/{wsId}`, 멤버 API `GET/POST /api/v1/workspaces/{wsId}/members`, `PATCH/DELETE /api/v1/workspaces/{wsId}/members/{userId}`.
+- **권한**: 멤버 목록은 워크스페이스 소속 사용자 모두 조회 가능하다. 멤버 추가·역할 변경·삭제와 workspace 수정은 `OWNER`/`ADMIN`만 가능하다.
 - **비고**: **슬러그(projectKey)는 영소문자·숫자·하이픈으로 이름에서 자동 생성**한다. 이 슬러그가 Kafka 토픽/ACL/KafkaUser 이름의 기준이 된다.
+
+### FR-002A — Workspace Settings
+- **액터**: 워크스페이스 멤버, OWNER/ADMIN
+- **기능 설명**: Settings 화면에서 알림, 임계값, AI 자동복구 정책을 조회·수정한다.
+- **기본 흐름**: 1) Settings 진입 → 2) notifications/thresholds/ai-policy 섹션 조회 → 3) OWNER/ADMIN이 값을 수정 → 4) 저장 후 최신 설정 반환.
+- **예외 흐름**: ① 비멤버 접근 → 403 ② MEMBER 수정 시도 → 403 ③ Slack URL/threshold/approvalWaitMinutes 형식 오류 → 400.
+- **API**: `GET/PUT /api/v1/workspaces/{wsId}/settings/notifications`, `GET/PUT /settings/thresholds`, `GET/PUT /settings/ai-policy`.
+- **권한**: 조회는 워크스페이스 소속 사용자 모두 가능, 수정은 `OWNER`/`ADMIN`만 가능하다.
 
 ### FR-003 — Pipeline 목록 조회
 - **액터**: 사용자
@@ -407,4 +418,4 @@
 | `investigating` | 사용자 확인·조치 중 |
 | `resolved` | 원인 해소 확인됨(사용자 수동 전이) |
 
-**인시던트 심각도**: `WARNING` / `CRITICAL` 2단계. (에이전트 내부 분석은 동일 2단계를 사용하며, 정책 에스컬레이션 시에만 가산한다 — [design/backend-fastapi/catalogs.md §12.6 Severity 보정](./design/backend-fastapi/catalog/catalog-policy-matrix.md#6-severity-보정) 참조.)
+**인시던트 심각도**: `WARNING` / `CRITICAL` 2단계. (에이전트 내부 분석은 동일 2단계를 사용하며, 정책 에스컬레이션 시에만 가산한다 — [catalog-policy-matrix.md §6 Severity 보정](./design/backend-fastapi/catalog/catalog-policy-matrix.md#6-severity-보정) 참조.)

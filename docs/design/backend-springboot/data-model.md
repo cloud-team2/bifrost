@@ -33,19 +33,21 @@ erDiagram
     workspace {
         uuid   id PK
         text   name
-        text   project_key "슬러그(토픽·ACL 이름 기준, 유일)"
-        text   kafka_user_principal
-        uuid   created_by FK
+        text   namespace "슬러그(토픽·ACL 이름 기준, 유일)"
+        text   timezone
+        uuid   owner_user_id FK
     }
     app_user {
         uuid id PK
         text email UK
-        text role_hint
+        text name
+        timestamptz last_login_at
     }
     project_member {
         uuid workspace_id FK
-        uuid app_user_id FK
-        text role_hint
+        uuid user_id FK
+        text role "OWNER/ADMIN/MEMBER"
+        timestamptz joined_at
     }
     database {
         uuid id PK
@@ -107,25 +109,50 @@ erDiagram
 | --- | --- | --- |
 | `id` | uuid PK | = `project_id`(에이전트/내부 API), = `workspace_id`(프론트) |
 | `name` | text | 표시 이름 |
-| `project_key` | text unique | **슬러그**(영소문자·숫자·하이픈). 이름에서 자동 생성([기능명세서 FR-002](../../spec.md#fr-002--워크스페이스-생성-및-선택)). 토픽 `cdc.table.{project_key}...`·ACL·KafkaUser(`proj-{project_key}-user`) 이름의 기준. 워크스페이스 안에서 유일하며 생성 후 불변 |
-| `kafka_user_principal` | text | 프로비저닝된 KafkaUser(`proj-{project_key}-user`) |
-| `created_by` | uuid FK | app_user |
+| `namespace` | text unique | DB/Entity 컬럼명. API와 문서의 표시명은 `projectKey`이며, 토픽 `cdc.table.{projectKey}...`·ACL·KafkaUser 이름의 기준 |
+| `timezone` | text null | Settings 일반 영역의 표시 timezone |
+| `owner_user_id` | uuid FK | 최초 생성자. `project_member` OWNER와 함께 관리자 판정에 사용 |
 | `created_at` | timestamptz | |
 
-> `id`(uuid)는 scope·ownership 검증용 내부 키, `project_key`(슬러그)는 사람이 읽고 DNS-safe해야 하는 Kafka 리소스 이름용 식별자다. 둘을 혼동하지 않는다.
+> `id`(uuid)는 scope·ownership 검증용 내부 키이고 `namespace` 컬럼은 API의 `projectKey` field로 노출되는 DNS-safe 슬러그다. 실제 매핑은 `WorkspaceResponse.from()`이 `w.getNamespace()`를 `projectKey`로 넣는다(`services/operations-backend/src/main/java/com/bifrost/ops/workspace/dto/WorkspaceResponse.java:14-31`). 토픽 이름 정본은 `ConnectorNaming.topicName()`의 `cdc.table.{projectKey}.{dbName}.{schema}.{table}` 규칙이다(`services/operations-backend/src/main/java/com/bifrost/ops/provisioning/naming/ConnectorNaming.java:15-21`, `services/operations-backend/src/main/java/com/bifrost/ops/provisioning/naming/ConnectorNaming.java:40-57`).
 
 #### 3.1.1 `project_member` (워크스페이스 멤버십, FR-002)
 
-워크스페이스 ↔ 사용자 N:M. v1은 단일 콘솔이라 권한 분기는 없지만, **어떤 사용자가 어떤 워크스페이스에 접근 가능한지**를 이 테이블로 판정한다(plain·내부 운영 API의 user/project scope 검증 — [server.md §3 신뢰 경계](./server.md#3-신뢰-경계)).
+워크스페이스 ↔ 사용자 N:M. **어떤 사용자가 어떤 워크스페이스에 접근 가능한지**와 `OWNER`/`ADMIN`/`MEMBER` 역할을 이 테이블로 판정한다(plain·내부 운영 API의 user/project scope 검증 — [server.md §3 신뢰 경계](./server.md#3-신뢰-경계)).
 
 | 컬럼 | 타입 | 설명 |
 | --- | --- | --- |
 | `workspace_id` | uuid FK | |
-| `app_user_id` | uuid FK | |
-| `role_hint` | text | `ta`/`aa`/`developer`/`operator` (동선 강조용, 인가 근거 아님) |
-| `created_at` | timestamptz | |
+| `user_id` | uuid FK | |
+| `role` | text | `OWNER`/`ADMIN`/`MEMBER` |
+| `joined_at` | timestamptz | |
 
-PK는 (`workspace_id`, `app_user_id`). 워크스페이스 생성 시 `created_by`를 멤버로 자동 등록한다. 멤버 추가/삭제는 `audit_event`와 `event`(INFO)로 기록한다([부록 B.6.5](../../spec.md#b65-사용자-액션-이벤트-전부-info-인시던트-없음)).
+PK는 (`workspace_id`, `user_id`). 워크스페이스 생성 시 생성자를 `OWNER`로 자동 등록한다. 멤버 목록 조회는 모든 멤버에게 허용하고, 멤버 추가·역할 변경·삭제는 `OWNER`/`ADMIN`만 허용한다.
+
+#### 3.1.2 권한 매트릭스
+
+코드 정본: workspace 접근은 `WorkspaceAccessGuard.requireAccess()`/`requireMember()`가 판정한다(`services/operations-backend/src/main/java/com/bifrost/ops/workspace/WorkspaceAccessGuard.java:38-66`). 관리자 작업은 각 service의 `requireManager()`가 `OWNER`/`ADMIN` 또는 `owner_user_id`를 확인한다(`services/operations-backend/src/main/java/com/bifrost/ops/workspace/service/WorkspaceService.java:138-145`, `services/operations-backend/src/main/java/com/bifrost/ops/workspace/service/ProjectMemberService.java:95-108`, `services/operations-backend/src/main/java/com/bifrost/ops/workspace/service/WorkspaceSettingsService.java:136-149`, `services/operations-backend/src/main/java/com/bifrost/ops/workspace/kafka/KafkaPrincipalService.java:115-128`). Database/Pipeline/Event/SSE는 workspace access guard를 사용한다(`services/operations-backend/src/main/java/com/bifrost/ops/database/controller/DatabaseController.java:58-150`, `services/operations-backend/src/main/java/com/bifrost/ops/pipeline/service/PipelineService.java:86-260`, `services/operations-backend/src/main/java/com/bifrost/ops/event/controller/EventController.java:35-41`, `services/operations-backend/src/main/java/com/bifrost/ops/streaming/SseController.java:34-38`).
+
+| API family | Endpoint family | OWNER | ADMIN | MEMBER | 비멤버/미인증 | 근거 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Auth | `POST /api/v1/auth/register`, `POST /api/v1/auth/login` | 허용 | 허용 | 허용 | 허용 | `services/operations-backend/src/main/java/com/bifrost/ops/auth/security/SecurityConfig.java:37-49` |
+| Auth | `POST /api/v1/auth/refresh`, `GET /api/v1/auth/me` | 허용 | 허용 | 허용 | 401 | `services/operations-backend/src/main/java/com/bifrost/ops/auth/controller/AuthController.java:51-66` |
+| Workspace | `GET /api/v1/workspaces` | 허용 | 허용 | 허용 | 401 | `services/operations-backend/src/main/java/com/bifrost/ops/workspace/controller/WorkspaceController.java:49-55` |
+| Workspace | `POST /api/v1/workspaces` | 허용 | 허용 | 허용 | 401 | `services/operations-backend/src/main/java/com/bifrost/ops/workspace/controller/WorkspaceController.java:57-64` |
+| Workspace | `GET /api/v1/workspaces/{wsId}` | 허용 | 허용 | 허용 | 403/401 | `services/operations-backend/src/main/java/com/bifrost/ops/workspace/service/WorkspaceService.java:73-78` |
+| Workspace | `PATCH /api/v1/workspaces/{wsId}` | 허용 | 허용 | 403 | 403/401 | `services/operations-backend/src/main/java/com/bifrost/ops/workspace/service/WorkspaceService.java:120-145` |
+| Members | `GET /api/v1/workspaces/{wsId}/members` | 허용 | 허용 | 허용 | 403/401 | `services/operations-backend/src/main/java/com/bifrost/ops/workspace/service/ProjectMemberService.java:43-54` |
+| Members | `POST/PATCH/DELETE /api/v1/workspaces/{wsId}/members...` | 허용 | 허용 | 403 | 403/401 | `services/operations-backend/src/main/java/com/bifrost/ops/workspace/service/ProjectMemberService.java:56-108` |
+| Settings | `GET /api/v1/workspaces/{wsId}/settings/**` | 허용 | 허용 | 허용 | 403/401 | `services/operations-backend/src/main/java/com/bifrost/ops/workspace/service/WorkspaceSettingsService.java:49-52`, `services/operations-backend/src/main/java/com/bifrost/ops/workspace/service/WorkspaceSettingsService.java:77-101` |
+| Settings | `PUT /api/v1/workspaces/{wsId}/settings/**` | 허용 | 허용 | 403 | 403/401 | `services/operations-backend/src/main/java/com/bifrost/ops/workspace/service/WorkspaceSettingsService.java:55-121`, `services/operations-backend/src/main/java/com/bifrost/ops/workspace/service/WorkspaceSettingsService.java:136-149` |
+| Database | `/api/v1/workspaces/{wsId}/databases/**` | 허용 | 허용 | 허용 | 403/401 | `services/operations-backend/src/main/java/com/bifrost/ops/database/controller/DatabaseController.java:58-150` |
+| Pipeline | `/api/v1/workspaces/{wsId}/pipelines/**` | 허용 | 허용 | 허용 | 403/401 | `services/operations-backend/src/main/java/com/bifrost/ops/pipeline/service/PipelineService.java:86-260` |
+| Kafka principals | `GET /api/v1/workspaces/{wsId}/kafka/principals` | 허용 | 허용 | 허용 | 403/401 | `services/operations-backend/src/main/java/com/bifrost/ops/workspace/kafka/KafkaPrincipalService.java:41-47`, `services/operations-backend/src/main/java/com/bifrost/ops/workspace/kafka/KafkaPrincipalService.java:108-113` |
+| Kafka principals | `POST /api/v1/workspaces/{wsId}/kafka/principals`, `POST .../{id}/deactivate|revoke|rotate` | 허용 | 허용 | 403 | 403/401 | `services/operations-backend/src/main/java/com/bifrost/ops/workspace/kafka/KafkaPrincipalService.java:49-99`, `services/operations-backend/src/main/java/com/bifrost/ops/workspace/kafka/KafkaPrincipalService.java:115-128` |
+| Event/SSE | `GET /api/v1/workspaces/{wsId}/events`, `GET /events/stream` | 허용 | 허용 | 허용 | 403/401 | `services/operations-backend/src/main/java/com/bifrost/ops/event/controller/EventController.java:35-41`, `services/operations-backend/src/main/java/com/bifrost/ops/streaming/SseController.java:34-38` |
+| Cluster | `GET /api/v1/clusters/**` | 인증 사용자 허용 | 인증 사용자 허용 | 인증 사용자 허용 | 401 | `services/operations-backend/src/main/java/com/bifrost/ops/cluster/ClusterController.java:13-42`, `services/operations-backend/src/main/java/com/bifrost/ops/auth/security/SecurityConfig.java:37-49` |
+| Internal ops | `/internal/ops/**` | 사용자 role 행렬 밖 | 사용자 role 행렬 밖 | 사용자 role 행렬 밖 | 현재 permitAll | `services/operations-backend/src/main/java/com/bifrost/ops/auth/security/SecurityConfig.java:47-49` |
+| Internal PoC | `/internal/poc/kafka-connectors/**` | 사용자 role 행렬 밖 | 사용자 role 행렬 밖 | 사용자 role 행렬 밖 | 인증 필요(`anyRequest`) | `services/operations-backend/src/main/java/com/bifrost/ops/internalops/poc/KafkaConnectorPocController.java:23-55`, `services/operations-backend/src/main/java/com/bifrost/ops/auth/security/SecurityConfig.java:37-49` |
 
 #### 3.2 `app_user`
 
@@ -134,10 +161,27 @@ PK는 (`workspace_id`, `app_user_id`). 워크스페이스 생성 시 `created_by
 | `id` | uuid PK | |
 | `email` | text unique | |
 | `password_hash` | text | 로그인용 (FR-001) |
-| `display_name` | text | |
-| `role_hint` | text | `ta`/`aa`/`developer`/`operator` (v1은 단일 콘솔, 흐름 구분용 라벨) |
+| `name` | text | 표시 이름 |
+| `last_login_at` | timestamptz null | 최근 로그인 시각 |
 
-> v1은 단일 콘솔이라 권한 분기는 하지 않는다. `role_hint`는 화면 동선 강조용이며 인가의 근거로 쓰지 않는다.
+> 역할은 사용자 전역 속성이 아니라 `project_member.role`로 workspace별 부여한다.
+
+#### 3.2.1 `workspace_settings` (Settings)
+
+Workspace settings 화면의 notifications/thresholds/ai-policy 값을 저장한다.
+
+| 컬럼 | 타입 | 설명 |
+| --- | --- | --- |
+| `workspace_id` | uuid PK/FK | workspace |
+| `slack_enabled` | boolean | Slack 알림 사용 여부 |
+| `slack_webhook_url` | text null | Slack webhook URL |
+| `email_recipients` | text/json | 알림 수신 email 목록 |
+| `severity_policy` | text | DB column name. 값은 `all`/`warning`/`error`; API field는 `severity`이고 request alias로 `severityPolicy`를 받는다 |
+| `lag_warning_threshold` | bigint | consumer lag warning 임계값 |
+| `lag_critical_threshold` | bigint | consumer lag critical 임계값 |
+| `ai_autonomous` | boolean | AI 자동복구 허용 |
+| `ai_approval_wait_minutes` | int | 승인 대기 시간 |
+| `ai_prod_lock` | boolean | production lock |
 
 #### 3.3 `database` (FR-013 ~ FR-015)
 
@@ -257,13 +301,14 @@ State/audit가 참조하는 evidence 메타데이터만 둔다. 원문은 Eviden
 3. source/sink **고객 DB 데이터는 이 스키마에 복제하지 않는다** — 메타데이터/지표/참조만.
 4. 상태·임계값 정의는 에이전트 catalog와 단일 출처를 공유(중복 정의 금지).
 5. 스키마 변경은 Flyway/Liquibase 등 마이그레이션으로 관리.
-6. **Unique 제약**: `workspace(project_key)`, `database(workspace_id, alias)`, `pipeline(workspace_id, name)`은 유일(중복 이름 검증의 근거). `project_member`는 (`workspace_id`, `app_user_id`) 복합 PK.
+6. **Unique 제약**: 실제 마이그레이션 기준 `tenants(namespace)`, `datasources(tenant_id, name)`, `pipelines(tenant_id, name)`은 유일(중복 이름 검증의 근거). `project_member`는 (`workspace_id`, `user_id`) 복합 PK.
 7. **인시던트↔이벤트는 단일 링크**(`event.incident_id`)로만 관리하고 별도 배열로 중복 저장하지 않는다(§3.7).
 
 > **설계 ERD ↔ 실제 스캐폴드 divergence(공존, [#14] 결정)**: 위 개념 스키마는 설계 용어 기준이다. 실제 코드/마이그레이션은 `workspace=tenant`, `app_user=user`, `database=datasource`로 쓴다. 즉 이 ERD는 **목표 모델**이고, 코드 정합은 마이그레이션으로 점진 반영한다(이 문서는 코드와 1:1이 아님).
 >
-> **현재 스캐폴드 반영 현황(W1 기준, V5~V7 add-only):**
-> - **멤버십/소유**: `users.tenant_id`(가입 시 만들어지는 home 워크스페이스, 1:N)에 더해 **`tenants.owner_user_id`(V5)로 소유 기반 다중 워크스페이스**를 지원한다 — 한 사용자가 `POST /api/v1/workspaces`로 여러 워크스페이스를 생성·소유·운영할 수 있다. scope 인가는 `WorkspaceAccessGuard` 한 곳에서 판정한다(home fast-path `wsId == users.tenant_id` 또는 소유 `tenants.owner_user_id == userId`). 목표인 `project_member` N:M(임의 멤버 초대·역할)은 [#41]로 별도 진행하며, 그때까지 `owner_user_id`가 멤버십의 interim 출처다.
+> **현재 스캐폴드 반영 현황(W2 기준):**
+> - **멤버십/소유**: `users.tenant_id`(가입 시 만들어지는 home 워크스페이스)와 **`tenants.owner_user_id`**, **`project_member` N:M 역할 테이블**이 공존한다. scope 인가는 `WorkspaceAccessGuard` 한 곳에서 판정한다. 멤버 CRUD는 `GET/POST /api/v1/workspaces/{wsId}/members`, `PATCH/DELETE /members/{userId}`로 제공한다.
+> - **settings**: `workspace_settings`를 통해 notifications/thresholds/ai-policy 조회·수정을 제공한다. DB 컬럼은 `severity_policy`(`services/operations-backend/src/main/resources/db/migration/V12__workspace_settings.sql:7`, `services/operations-backend/src/main/java/com/bifrost/ops/workspace/persistence/entity/WorkspaceSettingsEntity.java:39-40`)이고 API field는 `severity`(`services/operations-backend/src/main/java/com/bifrost/ops/workspace/dto/NotificationSettingsRequest.java:7-12`, `services/operations-backend/src/main/java/com/bifrost/ops/workspace/dto/NotificationSettingsResponse.java:7-18`)다.
 > - **pipeline**: `pipelines`에 `pattern`(`FAN_OUT`/`DIRECT`)·`sink_datasource_id`·`schema_name`·`table_name`·`sink_connector_name`을 V6로 추가했다. `tables`는 JSONB(`["schema.table"]`)·legacy `type`(CDC/SYNC) 컬럼도 공존한다. 단일 topic·table 원칙은 `(tenant_id, source_datasource_id, schema_name, table_name, pattern)` unique 인덱스로 이중 방어한다.
 > - **event/audit**: 설계의 `event`/`audit_event` 최소 버전을 `events`·`audit_events`(V7, append-only)로 도입했다. 현재는 파이프라인 생성/상태전이/실패/사용자 액션 기록과 `GET .../events` 목록·SSE 발행에 쓰며, `incident`/`evidence_ref` 연계 컬럼(`incident_id`/`category` 등)은 후속(W2) add-only로 확장한다.
 > - **connector**: `connectors`(V4)는 위 §3.5와 동일하며 mock/real provisioner가 행을 만들고 watcher/simulator가 `state`를 갱신한다.

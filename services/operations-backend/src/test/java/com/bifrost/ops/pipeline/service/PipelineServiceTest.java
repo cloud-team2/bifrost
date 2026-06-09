@@ -51,10 +51,12 @@ class PipelineServiceTest {
     @Mock private WorkspaceAccessGuard accessGuard;
     @Mock private EventService eventService;
     @Mock private AuditService auditService;
+    @Mock private com.bifrost.ops.pipeline.kafka.KafkaResourceCleaner kafkaResourceCleaner;
 
     private PipelineService service() {
         return new PipelineService(pipelineRepository, datasourceRepository, workspaceRepository,
-                connectorRepository, provisioningService, accessGuard, eventService, auditService);
+                connectorRepository, provisioningService, accessGuard, eventService, auditService,
+                kafkaResourceCleaner);
     }
 
     private final UUID wsId = UUID.randomUUID();
@@ -192,7 +194,7 @@ class PipelineServiceTest {
         p.setSourceConnectorName("src");
         when(pipelineRepository.findByIdAndTenantId(id, wsId)).thenReturn(Optional.of(p));
 
-        service().delete(wsId, principal, id);
+        service().delete(wsId, principal, id, false);
 
         verify(provisioningService).delete(any());
         verify(pipelineRepository).delete(p);

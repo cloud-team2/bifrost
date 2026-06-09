@@ -106,8 +106,11 @@ public class PipelineMessageService {
             List<ConsumerRecord<String, String>> records = new ArrayList<>();
             polled.forEach(records::add);
 
+            // 최신순 = offset 내림차순. timestamp로 정렬하면 Debezium 스냅샷처럼 timestamp가
+            // 동일·근접한 이벤트들의 offset 순서가 뒤섞이므로 offset을 기준으로 한다(파티션 내 단조 증가).
             return records.stream()
-                    .sorted(Comparator.<ConsumerRecord<String, String>>comparingLong(ConsumerRecord::timestamp).reversed())
+                    .sorted(Comparator.comparingInt(ConsumerRecord<String, String>::partition)
+                            .thenComparingLong(ConsumerRecord::offset).reversed())
                     .limit(limit)
                     .map(this::toRecord)
                     .toList();

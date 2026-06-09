@@ -137,9 +137,33 @@ public class KafkaConnectorWatcher {
             if (cs instanceof java.util.Map<?, ?>) {
                 status.setConnectorStatus((java.util.Map<String, Object>) cs);
             }
+            // CR conditions(NotReady/Ready=False)도 옮긴다 — config invalid 등으로 operator가
+            // 커넥터 배포를 거부하면 connectorStatus는 비어있고 이 condition으로만 실패가 드러난다(#155).
+            Object conds = statusMap.get("conditions");
+            if (conds instanceof java.util.List<?> condList) {
+                java.util.List<io.strimzi.api.kafka.model.common.Condition> conditions = new java.util.ArrayList<>();
+                for (Object o : condList) {
+                    if (o instanceof java.util.Map<?, ?> cm) {
+                        io.strimzi.api.kafka.model.common.Condition c =
+                                new io.strimzi.api.kafka.model.common.Condition();
+                        c.setType(asString(cm.get("type")));
+                        c.setStatus(asString(cm.get("status")));
+                        c.setReason(asString(cm.get("reason")));
+                        c.setMessage(asString(cm.get("message")));
+                        conditions.add(c);
+                    }
+                }
+                if (!conditions.isEmpty()) {
+                    status.setConditions(conditions);
+                }
+            }
             builder.withStatus(status);
         }
         return builder.build();
+    }
+
+    private static String asString(Object o) {
+        return o != null ? o.toString() : null;
     }
 
     /**

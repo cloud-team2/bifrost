@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -38,12 +39,21 @@ class KafkaConnectorWatcherTest {
                 null, sink, service, new ConnectorStateMapper(), "platform-kafka", "platform-connect");
     }
 
+    /** applyConnectorStatus만 캡처하고 나머지는 no-op인 PipelineStatusService 어댑터(다중 메서드라 람다 불가). */
+    private static PipelineStatusService statusService(java.util.function.Consumer<ConnectorStatusUpdate> onApply) {
+        return new PipelineStatusService() {
+            @Override public void applyConnectorStatus(ConnectorStatusUpdate u) { onApply.accept(u); }
+            @Override public int failTimedOutCreating(java.time.Duration t) { return 0; }
+            @Override public void reevaluateForDatasource(java.util.UUID id) { }
+        };
+    }
+
     @Test
     void delegatesMappedUpdateToSinkAndStatusService() {
         AtomicReference<ConnectorStatusUpdate> sinkCaptured = new AtomicReference<>();
         AtomicReference<ConnectorStatusUpdate> serviceCaptured = new AtomicReference<>();
 
-        KafkaConnectorWatcher watcher = watcher(sinkCaptured::set, serviceCaptured::set);
+        KafkaConnectorWatcher watcher = watcher(sinkCaptured::set, statusService(serviceCaptured::set));
         watcher.handleEvent(Watcher.Action.MODIFIED, running());
 
         assertThat(sinkCaptured.get()).isNotNull();
@@ -57,7 +67,7 @@ class KafkaConnectorWatcherTest {
         AtomicReference<ConnectorStatusUpdate> sinkCaptured = new AtomicReference<>();
         AtomicReference<ConnectorStatusUpdate> serviceCaptured = new AtomicReference<>();
 
-        KafkaConnectorWatcher watcher = watcher(sinkCaptured::set, serviceCaptured::set);
+        KafkaConnectorWatcher watcher = watcher(sinkCaptured::set, statusService(serviceCaptured::set));
         watcher.handleEvent(Watcher.Action.DELETED, running());
 
         assertThat(sinkCaptured.get()).isNull();
@@ -69,7 +79,7 @@ class KafkaConnectorWatcherTest {
         AtomicReference<ConnectorStatusUpdate> serviceCaptured = new AtomicReference<>();
         ConnectorStatusSink failingSink = u -> { throw new RuntimeException("db down"); };
 
-        KafkaConnectorWatcher watcher = watcher(failingSink, serviceCaptured::set);
+        KafkaConnectorWatcher watcher = watcher(failingSink, statusService(serviceCaptured::set));
         watcher.handleEvent(Watcher.Action.MODIFIED, running());
 
         // 메타 sink가 실패해도 pipeline status writer는 호출되어야 한다
@@ -79,7 +89,7 @@ class KafkaConnectorWatcherTest {
 
     @Test
     void doesNotReconnectAfterStop() {
-        KafkaConnectorWatcher watcher = watcher(u -> {}, u -> {});
+        KafkaConnectorWatcher watcher = watcher(u -> {}, statusService(u -> {}));
 
         assertThat(watcher.shouldReconnect()).isTrue();
         watcher.stop();
@@ -90,7 +100,7 @@ class KafkaConnectorWatcherTest {
 
     @Test
     void healthyEventResetsBackoff() {
-        KafkaConnectorWatcher watcher = watcher(u -> {}, u -> {});
+        KafkaConnectorWatcher watcher = watcher(u -> {}, statusService(u -> {}));
         watcher.handleEvent(Watcher.Action.MODIFIED, running());
         assertThat(watcher.currentBackoffMs()).isEqualTo(1_000L);
     }

@@ -44,10 +44,10 @@
 **목표**: 생성에서 끝나지 않고 **운영 가시성**까지. real 파이프라인 안정화 + 모니터링 탭 + 프론트 실연동.
 
 - 이성민/백강민(SB-Fabric8): real provisioner 안정화(EDA 토픽 적재, CDC sink 반영), 부분 실패 코드, Connect 재구독.
-- 권세빈/이성민(SB-코어): 모니터링·이벤트·인시던트 조회 API(FR-006~009·019~021) — metrics/consumer-groups/connectors/sync/messages/connection-guide(stub→실데이터), 이벤트 로그, 인시던트 자동 생성(부록 B.6/B.7), DB metrics·schema·pipelines 실데이터, `/internal/ops` DB·pipeline read tool(계약 #31 기반).
+- 권세빈/이성민(SB-코어): 모니터링·이벤트·인시던트 조회 API(FR-006~009·019~021) — metrics/consumer-groups/connectors/sync/messages/connection-guide(stub→실데이터), 이벤트 로그, 인시던트 자동 생성(부록 B.6/B.7), DB metrics·schema·pipelines 실데이터, `/internal/ops` DB·pipeline read tool(계약 #31 기반). 권세빈 account/workspace/members/settings API는 6/8 구현 완료, 이후 Swagger/docs와 FE 연결 정합성 유지.
 - 백강민/권세빈(FastAPI-런타임): FastAPI Agent 골격 착수 — run/SSE/State/Tool Client Registry, `/internal/ops` 클라이언트, diagnose-only 흐름 배선.
 - 김연수/정재환(FastAPI-판단): catalog(failure type·root cause·evidence matrix) 초안, 프롬프트·output schema, RCA/Verifier 골격.
-- 정재환/김연수(인프라·FE): monitoring 스택(Prometheus/Grafana, Loki/Tempo) + Kafka Connect replicas 2 + KafkaConnector/KafkaUser real + FE 실연동(SSE 상태 갱신, 파이프라인/DB 상세 탭, AlertsView). ⚠️ 노드 용량(현재 CPU 요청 ~81%) 부족 → monitoring 올리기 전 노드 확장/인스턴스 상향 선행([../design/infra.md](../design/infra.md#11-클러스터-용량-분석-및-대응안-2026-06-02)).
+- 정재환/김연수(인프라·FE): monitoring 스택(Prometheus/Grafana, Loki/Tempo) + Kafka Connect replicas 2 + KafkaConnector/KafkaUser real + FE 실연동(SSE 상태 갱신, 파이프라인/DB 상세 탭, AlertsView). ⚠️ 노드 용량(현재 CPU 요청 ~81%) 부족 → monitoring 올리기 전 노드 확장/인스턴스 상향 선행([../design/infra.md](../design/infra.md#11-클러스터-용량-분석-및-대응안-2026-06-02---해소됨119)).
 
 **Exit**: real EDA/CDC 데이터 흐름 + 파이프라인 상세 모니터링·메시지·구독 가이드 동작. 임계 초과 시 인시던트 자동 생성.
 
@@ -90,7 +90,7 @@
 
 | 리스크 | 영향 | 대응 |
 | --- | --- | --- |
-| **클러스터 용량 부족**(3×t3.large, CPU 요청 ~81%) | W2 monitoring·앱 배포 시 `Pending` | 노드 확장/인스턴스 상향 선행([infra §11](../design/infra.md#11-클러스터-용량-분석-및-대응안-2026-06-02)) |
+| **클러스터 용량 부족**(3×t3.large, CPU 요청 ~81%) | W2 monitoring·앱 배포 시 `Pending` | 노드 확장/인스턴스 상향 선행([infra §11](../design/infra.md#11-클러스터-용량-분석-및-대응안-2026-06-02---해소됨119)) |
 | infra red(real 흐름 불가) | 데모 신뢰도 | mock E2E 경로 항상 유지(W1부터) |
 | AI Agent 일정 압박(W3 집중) | 차별 기능 미완 | diagnose-only(원인까지)만이라도 확정, 조치 실행은 stretch |
 | 수동 배포·GitOps 미연동 | 재현성 | W3에 manifest 역추출/Argo CD Application 등록 |

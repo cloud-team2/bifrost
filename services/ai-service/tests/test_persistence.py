@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.persistence.event_repository import PostgresEventRepository
+from app.persistence.report_repository import InMemoryReportRepository, PostgresReportRepository, ReportSnapshot
 from app.persistence.run_repository import PostgresRunRepository, RunRecord
 from app.persistence.state_repository import PostgresStateRepository, StatePatchRecord
 from app.schemas.events import StreamingEvent, StreamingEventType
@@ -198,3 +199,47 @@ async def test_event_repository_get_after_none():
     assert len(events) == 2
     assert events[0].event_id == "evt-001"
     assert events[1].type == StreamingEventType.RUN_COMPLETED
+
+
+# ---------------------------------------------------------------------------
+# test 6: ReportRepository create → get_latest
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_report_repository_create_and_get_latest():
+    row_data = {
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "run_id": "run-006",
+        "incident_id": None,
+        "root_cause_id": "rc_001",
+        "confidence": 0.8,
+        "verified": True,
+        "body": {"answer": "done"},
+        "created_at": _now(),
+    }
+    pool, conn = _make_pool(fetchrow_return=row_data)
+    repo = PostgresReportRepository(pool=pool)
+
+    created = await repo.create(
+        "run-006",
+        {"answer": "done"},
+        root_cause_id="rc_001",
+        confidence=0.8,
+        verified=True,
+    )
+    latest = await repo.get_latest("run-006")
+
+    assert isinstance(created, ReportSnapshot)
+    assert latest is not None
+    assert latest.body["answer"] == "done"
+    assert latest.verified is True
+
+
+@pytest.mark.asyncio
+async def test_in_memory_report_repository_reloads_final_report():
+    repo = InMemoryReportRepository()
+
+    await repo.create("run-007", {"answer": "final"}, verified=True)
+    snapshot = await repo.get_latest("run-007")
+
+    assert snapshot is not None
+    assert snapshot.body["answer"] == "final"

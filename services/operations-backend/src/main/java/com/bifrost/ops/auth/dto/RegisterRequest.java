@@ -7,10 +7,15 @@ import jakarta.validation.constraints.Size;
 
 public record RegisterRequest(
     @NotBlank @Email @Size(max = 255) String email,
+    @Size(max = 100) String name,
     @NotBlank @Size(min = 8, max = 128) String password,
     @NotBlank @Size(min = 2, max = 100) String workspaceName,
     @NotBlank @Size(min = 3, max = 63)
     @Pattern(regexp = "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
              message = "namespace는 소문자/숫자/하이픈만, 처음·끝은 영숫자")
     String namespace
-) {}
+) {
+    public RegisterRequest(String email, String password, String workspaceName, String namespace) {
+        this(email, null, password, workspaceName, namespace);
+    }
+}
