@@ -4,7 +4,7 @@ import { useApp } from '../store/AppStore'
 import { DEMO_ACCOUNTS } from '../data/mock'
 import { cn } from '../lib/format'
 
-export function Login() {
+export function Login({ onRegister }: { onRegister: () => void }) {
   const app = useApp()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -71,6 +71,17 @@ export function Login() {
           >
             {loading ? 'Signing in…' : 'Sign In'}
           </button>
+
+          <div className="mt-4 text-center text-[12px] text-gray-500">
+            계정이 없으신가요?{' '}
+            <button
+              type="button"
+              onClick={onRegister}
+              className="font-semibold text-brand-700 transition-colors hover:text-brand-800"
+            >
+              회원가입
+            </button>
+          </div>
 
           <div className="mt-6 border-t border-gray-100 pt-4">
             <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-400">

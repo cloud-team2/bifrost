@@ -62,6 +62,13 @@ export interface AuthTokens {
   userId: string
   workspaceId: string
 }
+export interface RegisterInput {
+  email: string
+  name: string | null
+  password: string
+  workspaceName: string
+  namespace: string
+}
 export interface MeResponse {
   userId: string
   email: string
@@ -392,6 +399,8 @@ export interface PipelineCreateInput {
 
 export const api = {
   // auth (FR-001)
+  register: (body: RegisterInput) =>
+    request<AuthTokens>('POST', '/api/v1/auth/register', body),
   login: (email: string, password: string) =>
     request<AuthTokens>('POST', '/api/v1/auth/login', { email, password }),
   me: () => request<MeResponse>('GET', '/api/v1/auth/me'),

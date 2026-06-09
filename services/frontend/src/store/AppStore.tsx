@@ -20,7 +20,7 @@ import {
   KAFKA_USERS,
   MEMBERS,
 } from '../data/mock'
-import { api, getToken, setToken, type PipelineCreateInput } from '../lib/api'
+import { api, getToken, setToken, type AuthTokens, type PipelineCreateInput, type RegisterInput } from '../lib/api'
 import { datasourceToNode, pipelineToEdge, workspaceToProject } from '../lib/mappers'
 
 export type View =
@@ -86,6 +86,7 @@ interface Store {
   selectedDatabaseId: string | null
   opSelectedIncidentId: string | null
   login: (email: string, password: string) => Promise<boolean>
+  register: (input: RegisterInput) => Promise<void>
   logout: () => void
   setProject: (p: Project | null) => void
   setView: (v: View) => void
@@ -304,6 +305,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  async function applyAuth(tokens: AuthTokens) {
+    setToken(tokens.accessToken)
+    const me = await api.me()
+    setCurrentUser(userFromEmail(me.email))
+    setCurrentProject(null)
+    await loadWorkspaces()
+    seedNav({
+      projectId: null,
+      view: 'pipelines',
+      selectedPipelineId: null,
+      selectedDatabaseId: null,
+      opSelectedIncidentId: null,
+    })
+  }
+
   const value: Store = {
     authReady,
     currentUser,
@@ -316,22 +332,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     async login(email, password) {
       try {
         const tokens = await api.login(email, password)
-        setToken(tokens.accessToken)
-        const me = await api.me()
-        setCurrentUser(userFromEmail(me.email))
-        setCurrentProject(null)
-        await loadWorkspaces()
-        seedNav({
-          projectId: null,
-          view: 'pipelines',
-          selectedPipelineId: null,
-          selectedDatabaseId: null,
-          opSelectedIncidentId: null,
-        })
+        await applyAuth(tokens)
         return true
       } catch {
         setToken(null)
         return false
+      }
+    },
+    async register(input) {
+      try {
+        const tokens = await api.register(input)
+        await applyAuth(tokens)
+      } catch (e) {
+        setToken(null)
+        throw e
       }
     },
     logout() {
