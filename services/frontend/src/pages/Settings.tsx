@@ -4,7 +4,6 @@ import { Panel, StatusBadge } from '../components/blocks'
 import { Switch } from '../components/ui'
 import { useToast } from '../components/Toast'
 import { useApp } from '../store/AppStore'
-import type { Role } from '../data/types'
 import {
   api,
   ApiError,
@@ -30,10 +29,12 @@ const SECTIONS: { id: string; label: string; icon: IconName }[] = [
   { id: 'kafka-secrets', label: 'Kafka 시크릿', icon: 'lock' },
 ]
 
-const ROLE_LABEL: Record<Role, string> = {
-  developer: '개발자',
-  operator: '운영자',
-  admin: '관리자',
+function accountDate(value: string | null): string {
+  return value ? value.slice(0, 10) : '—'
+}
+
+function accountDateTime(value: string | null): string {
+  return value ? value.replace('T', ' ').slice(0, 16) : '—'
 }
 
 export function Settings() {
@@ -92,7 +93,7 @@ function AccountSection() {
           <div
             className={cn(
               'flex h-12 w-12 items-center justify-center rounded-full text-[16px] font-semibold text-white',
-              u.role === 'developer'
+              u.role === 'MEMBER'
                 ? 'bg-gradient-to-br from-sky-400 to-indigo-500'
                 : 'bg-gradient-to-br from-violet-400 to-violet-600',
             )}
@@ -101,15 +102,15 @@ function AccountSection() {
           </div>
           <div>
             <div className="text-[15px] font-semibold text-gray-900">{u.name}</div>
-            <div className="text-[12.5px] text-gray-500">{ROLE_LABEL[u.role]}</div>
+            <div className="text-[12.5px] text-gray-500">{u.role}</div>
           </div>
         </div>
         <dl className="divide-y divide-gray-50">
           <Field label="이름" value={u.name} />
           <Field label="이메일" value={u.email} />
-          <Field label="역할" value={ROLE_LABEL[u.role]} />
-          <Field label="가입일" value="2026-02-11" />
-          <Field label="마지막 로그인" value="2026-05-22 09:02" />
+          <Field label="역할" value={u.role} />
+          <Field label="가입일" value={accountDate(u.joinedAt)} />
+          <Field label="마지막 로그인" value={accountDateTime(u.lastLoginAt)} />
         </dl>
       </Panel>
       <button

@@ -9,8 +9,10 @@ import type {
 export const CURRENT_USER: User = {
   name: '김민준',
   email: 'ta@bifrost.io',
-  role: 'admin',
+  role: 'ADMIN',
   initial: '김',
+  joinedAt: null,
+  lastLoginAt: null,
 }
 
 // 백엔드 dev seed 계정과 일치(DevDataSeeder: ta@bifrost.io / ta123456). 로그인 화면 자동입력용.

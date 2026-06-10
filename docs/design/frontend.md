@@ -156,11 +156,11 @@ PipelineDetail 헤더 (FR-005)
 
 기본 표시는 흐름·지연 중심, Kafka 지표(lag 수치·connector state 원문)는 상세 토글에서 노출(§1.1).
 
-### 7. 모니터링·이벤트 (FR-019, FR-020, FR-023, FR-024)
+### 7. 모니터링·이벤트 (FR-019, FR-023, FR-024)
 
 ```text
 ActivityLogView (FR-019)     GET /api/v1/workspaces/{wsId}/events?level=&pipelineId=
-OperatorOverviewView (FR-020) GET /api/v1/workspaces/{wsId}/monitoring/overview
+                              Sidebar '이벤트 로그'에서 진입
 OperatorClusterView (FR-023)  GET /api/v1/clusters/kafka
                               GET /api/v1/clusters/kafka/throughput?minutes=30
                               GET /api/v1/clusters/connect   (Broker·Connect worker, workspace scope 없음)
