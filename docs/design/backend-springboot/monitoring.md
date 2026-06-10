@@ -32,7 +32,7 @@
 | **ConnectRestPoller** | 10s | Connect REST `GET /connectors/{n}/status` | task failure/recovery event 기록. connector state 저장·pipeline 재계산은 현재 수행하지 않는다 |
 | **JmxPoller** | 60s | Prometheus `PrometheusClient`/PromQL | worker JVM heap·cpu·gc. connector-task poll batch·records/sec·error rate는 현재 수집하지 않는다 |
 | **DatabaseHealthProbeJob** | 60s | source/sink DB(동적 DataSource) | `connection_status`를 `HEALTHY` 또는 `UNREACHABLE`로 갱신, 영향 pipeline 재계산. 미점검 row는 nullable 상태다 |
-| **쿼리 어댑터** | on-demand | Prometheus/Loki/Connect REST | metric/log/trace 근거. 현재 `query_traces`는 Tempo가 아니라 Connect REST task `trace` field를 노출한다 |
+| **쿼리 어댑터** | on-demand | Prometheus/Loki/Connect REST | metric/log/trace 근거. ops-backend는 자체 작업 span을 OTLP로 Tempo에 송신한다(#366). `query_traces`는 아직 Tempo가 아니라 Connect REST task `trace` field를 노출하며(`get_connector_task_trace`로 분리 #368), Tempo 기반 교체는 #373 |
 
 구현 메모:
 - 폴링 수집기는 Spring `@Scheduled`(또는 ShedLock 분산 락) + project별 fan-out. 한 주기 실패가 다른 project를 막지 않도록 per-resource try/catch.
