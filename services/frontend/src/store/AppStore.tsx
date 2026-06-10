@@ -19,7 +19,6 @@ import {
 import { datasourceToNode, pipelineToEdge, workspaceToProject } from '../lib/mappers'
 
 export type View =
-  | 'overview'
   | 'pipelines'
   | 'pipeline-detail'
   | 'databases'
@@ -119,6 +118,20 @@ const emptyAgentRunState = (): AgentRunSseState => ({
   updatedAt: null,
 })
 
+const VIEWS = new Set<View>([
+  'pipelines',
+  'pipeline-detail',
+  'databases',
+  'database-detail',
+  'alerts',
+  'cluster',
+  'settings',
+])
+
+function normalizeView(view: unknown): View {
+  return typeof view === 'string' && VIEWS.has(view as View) ? (view as View) : 'pipelines'
+}
+
 function userFromEmail(email: string): User {
   return {
     name: email.split('@')[0],
@@ -188,7 +201,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     selectProject(proj)
     if (projectChanged) clearMonitoringData()
     if (proj) loadProjectData(proj.id)
-    setViewRaw(s.view)
+    setViewRaw(normalizeView(s.view))
     setSelectedPipelineId(s.selectedPipelineId)
     setSelectedDatabaseId(s.selectedDatabaseId)
     setOpSelectedIncidentId(s.opSelectedIncidentId)

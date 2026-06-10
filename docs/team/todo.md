@@ -28,7 +28,7 @@
   - pipeline detail 관련 일부 read API(topic, consumer group, messages, metrics, sync)
 
 - 아직 비어 있는 것
-  - `overview`, `cluster`, `resource-events`, `incidents` 같은 운영/모니터링 public API
+  - `cluster`, `resource-events`, `incidents` 같은 운영/모니터링 public API
   - `/internal/ops` 공통 envelope와 agent read tool API
   - account/settings API의 frontend 최종 연결과 문서/Swagger 정합성 유지
 
@@ -52,7 +52,7 @@
   - workspace SSE(`pipeline_status_changed`)
 
 - 아직 비어 있는 것
-  - `OperatorOverview`, `OperatorCluster`, `OperatorResourceEvents`, `Alerts` 실 API 연동
+  - `OperatorCluster`, `OperatorResourceEvents`, `Alerts` 실 API 연동
   - `BifrostAgent`, `OperatorAgentPanel`, `DevAIChatPanel`의 실제 FastAPI run/SSE 연동
   - `Settings` 화면의 서버 연동
 
@@ -61,7 +61,7 @@
 | 담당 | 메인 축 | 핵심 책임 |
 | --- | --- | --- |
 | 정재환 | 인프라 + 프론트엔드 | 운영 화면 API 연동, AI 패널 FastAPI/SSE 연동, 배포 환경값 정리 |
-| 이성민 | Spring Boot 모니터링 | overview / cluster / resource-events / incidents public API |
+| 이성민 | Spring Boot 모니터링 | cluster / resource-events / incidents public API |
 | 백강민 | Spring internalops | FastAPI가 읽는 `/internal/ops` read API, 공통 envelope, 계약 문서 |
 | 김연수 | FastAPI agent | supervisor 연결, monitoring read tool 연동, incident_analysis 흐름, SSE event 보강 |
 | 권세빈 | Spring Boot 설정/계정 | wireframe 기준 `Settings` / `Login` 서버 API 구현 |
@@ -71,7 +71,6 @@
 ## 정재환 - 인프라 + 프론트엔드
 
 참고 화면:
-- [OperatorOverview.tsx](../../services/frontend/src/pages/op/OperatorOverview.tsx)
 - [OperatorCluster.tsx](../../services/frontend/src/pages/op/OperatorCluster.tsx)
 - [OperatorResourceEvents.tsx](../../services/frontend/src/pages/op/OperatorResourceEvents.tsx)
 - [Alerts.tsx](../../services/frontend/src/pages/Alerts.tsx)
@@ -82,7 +81,6 @@
 ### 오늘/이번 라운드 TODO
 
 - [ ] `services/frontend/src/lib/api.ts`를 기준으로 platform API와 agent API를 논리적으로 분리한다.
-- [ ] `OperatorOverview`를 실제 monitoring overview API에 붙인다.
 - [ ] `OperatorCluster`, `OperatorResourceEvents`를 실제 API에 붙인다.
 - [ ] `Alerts`를 incidents API에 붙인다.
 - [ ] AI 패널 중 최소 1개에서 `POST /api/v1/agent/runs` + `GET /api/v1/agent/runs/{run_id}/events`가 실제로 동작하게 만든다.
@@ -97,7 +95,6 @@
 
 ### GitHub issue로 쪼갤 때의 추천 단위
 
-- [ ] `[FE] OperatorOverview 실 API 연동`
 - [ ] `[FE] OperatorCluster + ResourceEvents 실 API 연동`
 - [ ] `[FE] Alerts incidents API 연동`
 - [ ] `[FE] Agent panel run 생성 연동`
@@ -106,7 +103,7 @@
 
 ### 완료 기준
 
-- [ ] 운영 화면 4개가 mock 없이 실제 API 또는 고정 fixture adapter 기준으로 동작한다.
+- [ ] 운영 화면 3개가 mock 없이 실제 API 또는 고정 fixture adapter 기준으로 동작한다.
 - [ ] AI 패널 1개 이상이 실제 FastAPI run + SSE를 사용한다.
 - [ ] `npm run build`가 계속 통과한다.
 
@@ -120,7 +117,6 @@
 
 ### 오늘/이번 라운드 TODO
 
-- [ ] `GET /api/v1/workspaces/{wsId}/overview`를 구현한다.
 - [ ] `GET /api/v1/workspaces/{wsId}/cluster`를 구현한다.
 - [ ] `GET /api/v1/workspaces/{wsId}/resource-events`를 구현한다.
 - [ ] `GET /api/v1/workspaces/{wsId}/incidents`를 구현한다.
@@ -131,7 +127,6 @@
 
 ### GitHub issue로 쪼갤 때의 추천 단위
 
-- [ ] `[SB-Monitoring] workspace overview API 구현`
 - [ ] `[SB-Monitoring] cluster API 구현`
 - [ ] `[SB-Monitoring] resource-events API 구현`
 - [ ] `[SB-Incident] incidents 목록 API 구현`

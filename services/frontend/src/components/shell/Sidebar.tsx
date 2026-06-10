@@ -20,7 +20,6 @@ export function Sidebar({ onCreateProject }: { onCreateProject: () => void }) {
   const openIncidents = incidents.filter((i) => i.status.toUpperCase() !== 'RESOLVED').length
 
   const nav: NavItem[] = [
-    { view: 'overview', label: 'Overview', icon: 'chart' },
     { view: 'pipelines', label: 'Pipeline', icon: 'route' },
     { view: 'databases', label: 'Database', icon: 'database' },
     { view: 'cluster', label: '클러스터', icon: 'server' },

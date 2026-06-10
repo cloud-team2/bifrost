@@ -32,7 +32,7 @@
 | FR-017 | 중 | 일반 | 사용자가 Database의 TPS·쿼리 응답 시간·활성 연결 지표를 확인한다 | DatabaseDetail → Metrics 탭 |
 | FR-018 | 중 | 일반 | 사용자가 Database에 연결된 Pipeline 목록과 상태를 확인한다 | DatabaseDetail → Pipelines 탭 |
 | FR-019 | 중 | 일반 | 사용자가 Kafka 이벤트 로그를 레벨·파이프라인별로 필터링하여 조회한다 | ActivityLogView |
-| FR-020 | 상 | 일반 | 사용자가 전체 파이프라인의 건전성 지표와 최근 인시던트를 한 화면에서 파악한다 | OperatorOverviewView |
+| FR-020 | - | 일반 | v1 와이어프레임 기준 운영 현황 대시보드는 제공하지 않는다 | 제거됨 |
 | FR-021 | 상 | 일반 | 사용자가 인시던트 목록을 확인하고 상세 원인·영향 범위를 조회한다 | AlertsView |
 | FR-022 | 상 | 에이전트 | 사용자가 AI 추천 조치를 위험도·예상 소요시간과 함께 검토한 뒤 Run으로 승인 실행한다 (HITL) | AlertsView, BifrostAgentPanel |
 | FR-023 | 중 | 일반 | 사용자가 Kafka Broker·Kafka Connect Worker 현황을 클러스터 탭에서 확인한다 | OperatorClusterView |
@@ -178,8 +178,8 @@
 - **비고**: Kafka 브로커 내부 인프라 이벤트는 노출하지 않음.
 
 ### FR-020 — 운영 현황 대시보드
-- **기능 설명**: 활성·이상·총 처리량·평균 랙 + 이상 Pipeline 목록 + 최근 인시던트.
-- **기본 흐름**: 1) OperatorOverviewView → 2) 요약 카드 → 3) 이상 Pipeline 목록 → 4) 최근 인시던트.
+- **상태**: v1 와이어프레임 기준 제거됨.
+- **비고**: 파이프라인 현황은 PipelinesView/PipelineDetail, 인시던트 진입은 AlertsView에서 제공한다.
 
 ### FR-021 — 인시던트 목록 및 상세 조회
 - **기능 설명**: 미해결 인시던트를 배너로 인지, 통합 이벤트 스트림에서 이벤트-인시던트 연결 확인. 인시던트 클릭 시 우측 슬라이드 패널에서 근본 원인·영향 파이프라인·관련 이벤트 타임라인·추천 조치.
@@ -239,7 +239,7 @@
 | creating | blue(pulse) |
 
 ### 라우팅 맵
-`login` LoginView · `workspaces` WorkspaceListView · `pipelines` PipelinesView · `pipeline-detail` PipelineDetail · `databases` DatabasesView · `database-detail` DatabaseDetail · `activity` ActivityLogView · `operator-overview` OperatorOverviewView · `alerts` AlertsView · `cluster` OperatorClusterView · `resource-events` OperatorResourceEventsView · `settings` SettingsView
+`login` LoginView · `workspaces` WorkspaceListView · `pipelines` PipelinesView · `pipeline-detail` PipelineDetail · `databases` DatabasesView · `database-detail` DatabaseDetail · `activity` ActivityLogView · `alerts` AlertsView · `cluster` OperatorClusterView · `resource-events` OperatorResourceEventsView · `settings` SettingsView
 
 ---
 

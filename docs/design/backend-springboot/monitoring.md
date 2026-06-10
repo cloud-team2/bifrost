@@ -133,7 +133,7 @@ openOrAttach(severity):
 | FR-010 | Messages | `/pipelines/{id}/messages` | §6 bounded consume |
 | FR-017 | DB Metrics | `/databases/{id}/metrics` | §6 inspector |
 | FR-019 | Activity | `/events` | `event` 테이블 |
-| FR-020 | Overview(운영) | `/overview` | 집계 query |
+| - | Backend aggregate(프론트 라우트 없음) | `/monitoring/overview` | 집계 query |
 | FR-021 | Alerts | `/incidents`·`/incidents/{id}` | `incident`+역참조 `event` |
 | FR-023 | Cluster | `/cluster` | KafkaAdmin broker + JMX worker |
 | FR-024 | Resource events | `/resource-events` | KafkaAdmin(리밸런스·리더선출) |

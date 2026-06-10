@@ -164,6 +164,8 @@ OWNER 정책의 현재 코드 사실:
 
 정본 근거: `MonitoringController` base path/status/인가 호출은 `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/controller/MonitoringController.java:24-76`(4개 handler 모두 `accessGuard.requireAccess`: `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/controller/MonitoringController.java:45`, `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/controller/MonitoringController.java:54`, `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/controller/MonitoringController.java:64`, `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/controller/MonitoringController.java:74`), `OverviewResponse` field는 `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/dto/OverviewResponse.java:4-13`, `ResourceEventResponse` field는 `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/dto/ResourceEventResponse.java:6-11`, `IncidentResponse` field는 `services/operations-backend/src/main/java/com/bifrost/ops/incident/dto/IncidentResponse.java:8-20`, 권한 검사는 `WorkspaceAccessGuard.requireAccess`(`services/operations-backend/src/main/java/com/bifrost/ops/workspace/WorkspaceAccessGuard.java:39-54`)다.
 
+`/monitoring/overview`는 백엔드 집계 API로 유지하지만, v1 프론트 와이어프레임에는 별도 Overview 화면/라우트가 없다.
+
 | Method | Path | Auth | 권한 | Status | Request | Response | 설명 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `GET` | `/api/v1/workspaces/{wsId}/monitoring/overview` | yes | `requireAccess` | `200` | 없음 | `OverviewResponse` | 워크스페이스 전체 health/운영 집계 |
