@@ -95,6 +95,12 @@ spec:
           value: none
         - name: OTEL_LOGS_EXPORTER
           value: none
+        # 샘플링: 워커 Kafka 클라이언트 auto-instrumentation(poll 루프)이 trace를 폭주시켜
+        # Tempo OOM을 유발 → 5%만 송신해 플러드 차단. 특정 파이프라인 정밀 추적은 별도 토글.
+        - name: OTEL_TRACES_SAMPLER
+          value: parentbased_traceidratio
+        - name: OTEL_TRACES_SAMPLER_ARG
+          value: "0.05"
     buildPod:
       volumes:
         - name: registries-conf
