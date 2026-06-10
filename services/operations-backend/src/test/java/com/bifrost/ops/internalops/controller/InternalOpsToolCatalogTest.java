@@ -41,6 +41,7 @@ class InternalOpsToolCatalogTest {
                 .containsExactly(
                         "get_consumer_lag",
                         "search_logs",
+                        "query_metrics",
                         "query_traces",
                         "list_alerts",
                         "get_incident_summary",
@@ -51,6 +52,7 @@ class InternalOpsToolCatalogTest {
         assertThat(catalog).containsExactly(
                 tool("get_consumer_lag", "GET", "/internal/ops/projects/{projectId}/kafka/consumer-groups/{consumerGroup}/lag"),
                 tool("search_logs", "POST", "/internal/ops/projects/{projectId}/observability/logs/search"),
+                tool("query_metrics", "GET", "/internal/ops/projects/{projectId}/observability/metrics"),
                 tool("query_traces", "GET", "/internal/ops/projects/{projectId}/connectors/{connectorName}/traces"),
                 tool("list_alerts", "GET", "/internal/ops/projects/{projectId}/observability/alerts"),
                 tool("get_incident_summary", "GET", "/internal/ops/projects/{projectId}/incidents/{incidentId}/summary"),
@@ -114,6 +116,7 @@ class InternalOpsToolCatalogTest {
                 mock(PipelineRepository.class),
                 mock(ConnectorRepository.class),
                 mock(com.bifrost.ops.incident.persistence.repository.IncidentRepository.class),
+                mock(com.bifrost.ops.monitoring.query.ObservabilityMetricsQuery.class),
                 "http://connect.invalid");
     }
 
