@@ -158,31 +158,26 @@ Connection Guide 응답은 `pipelineId`, `pipelineName`, `bootstrapServers`, `re
 
 Table Mapping 응답은 `pipelineId`, `sourceConnector`, `sinkConnector`, `mappings[{sourceTable,kafkaTopic,sinkTable}]`다. KafkaConnector config에서 산출할 수 없는 값은 빈 mapping으로 반환한다.
 
-## 7. 모니터링·클러스터·이벤트 (FR-019, FR-020, FR-023, FR-024)
+## 7. 모니터링·이벤트 (FR-019, FR-023, FR-024)
 
 ```text
-Alerts / Overview data
-  GET /api/v1/workspaces/{wsId}/monitoring/resource-events
-  GET /api/v1/workspaces/{wsId}/monitoring/incidents?status=
-
-Workspace events
-  GET /api/v1/workspaces/{wsId}/events?level=&pipelineId=
-  GET /api/v1/workspaces/{wsId}/events/stream?access_token=<jwt>
-
-Cluster view
-  GET /api/v1/clusters/kafka
-  GET /api/v1/clusters/kafka/throughput?minutes=30
-  GET /api/v1/clusters/connect
+ActivityLogView (FR-019)     GET /api/v1/workspaces/{wsId}/events?level=&pipelineId=
+                              Sidebar '이벤트 로그'에서 진입
+OperatorClusterView (FR-023)  GET /api/v1/clusters/kafka
+                              GET /api/v1/clusters/kafka/throughput?minutes=30
+                              GET /api/v1/clusters/connect   (Broker·Connect worker, workspace scope 없음)
+ResourceEvents (FR-024)       GET /api/v1/workspaces/{wsId}/monitoring/resource-events
+                              (별도 OperatorResourceEventsView는 AlertsView 통합 이벤트 로그로 흡수 — #324)
 ```
 
 `MonitoringController`의 `/monitoring/**` 4개 handler는 모두 workspace access를 요구한다. Spring에는 `monitoring/overview`와 incident detail route도 구현되어 있지만 현재 frontend `api.ts` wrapper와 `loadMonitoringData()`는 incidents list, workspace events, resource-events만 호출한다. Alerts detail은 이미 로드된 incident list에서 선택하며 `api.getIncident(...)` wrapper는 현재 미사용이다. `/api/v1/clusters/**`는 인증 사용자 대상이지만 workspace path scope는 없다.
 
-`ActivityLog`는 개발용 컴포넌트로 남아 있으며 현재 앱 내 route/sidebar에 연결되어 있지 않다. 표준 운영 화면에서 event log는 Alerts/Overview 데이터와 store-level platform SSE 갱신으로 소비된다.
+`ActivityLog`는 개발용 컴포넌트로 남아 있으며 현재 앱 내 route/sidebar에 연결되어 있지 않다. 표준 운영 화면에서 event log는 Alerts 데이터와 store-level platform SSE 갱신으로 소비된다.
 
 ## 8. 인시던트 + AI Agent (FR-021, FR-022, FR-025, FR-026)
 
 ```text
-AlertsView — 조회는 Spring Boot
+AlertsView (FR-021) — 조회는 Spring Boot
   GET /api/v1/workspaces/{wsId}/monitoring/incidents?status=
   (detail 선택은 현재 list item state 사용; `api.getIncident(...)` wrapper는 미사용)
 

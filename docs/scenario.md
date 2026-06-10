@@ -17,7 +17,7 @@
 | 7 | 모니터링 | FR-006~009 | Overview(produce/consume·lag·error) · Consumers(파티션 lag) · Connector(상태·task·오류) · (CDC)Sync(행수·동기화율) |
 | 8 | 메시지·매핑 | FR-010, FR-012 | Debezium before/after 페이로드 · 컬럼·타입 매핑 |
 | 9 | 구독 가이드 | FR-011 | topic alias·bootstrap·group ID + 언어별(Java/Python/Node) 스니펫 복사 → 외부 Consumer 연결 |
-| 10 | 운영·인시던트 | FR-020, FR-021 | 운영 현황 대시보드 · 인시던트 목록/상세(근본원인·영향 파이프라인·관련 이벤트 타임라인) |
+| 10 | 운영·인시던트 | FR-021 | 인시던트 목록/상세(근본원인·영향 파이프라인·관련 이벤트 타임라인) |
 | 11 | AI 장애대응 (HITL) | FR-022/025/026 | BifrostAgentPanel: 자연어 요청 또는 자동 감지 → 진단(RCA) → 추천 조치 → **사용자 승인(Run) 후 실행** |
 
 > Kafka Topic/파티션/오프셋 등 인프라 세부는 화면에 노출하지 않는다(자동 처리). Topic 이름은 **Connection Guide 탭에서만** 노출한다.

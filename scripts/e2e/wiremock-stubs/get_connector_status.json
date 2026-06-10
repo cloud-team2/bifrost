@@ -1,0 +1,37 @@
+{
+  "request": {
+    "method": "GET",
+    "urlPattern": "/internal/ops/projects/[^/]+/kafka/connectors/[^/]+/status.*"
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "ok": true,
+      "request_id": "req_e2e_004",
+      "operation": "get_connector_status",
+      "result": {
+        "connector_name": "default-connector",
+        "state": "RUNNING",
+        "tasks": [
+          {
+            "task_id": 0,
+            "state": "RUNNING",
+            "worker_id": "connect-worker-1"
+          }
+        ],
+        "last_error": null,
+        "observed_at": "2026-06-09T12:00:00Z"
+      },
+      "evidence": [
+        {
+          "evidence_id": "ev_connector_001",
+          "store_ref": "evidence://e2e/ev_connector_001",
+          "summary": "connector RUNNING; broker 장애 evidence 없음; consumer pod resource pressure 의심",
+          "redaction_status": "redacted",
+          "type": "status"
+        }
+      ],
+      "audit_event_id": "audit_e2e_004"
+    }
+  }
+}

@@ -171,6 +171,19 @@ class InternalOpsObservabilityControllerTest {
         assertThat(response.getBody().error().code()).isEqualTo("VALIDATION_FAILED");
     }
 
+    @Test
+    void getConnectorTaskTraceEndpointReturnsConnectorTaskTraceOperation() throws Exception {
+        // #368 realign: query_traces가 주던 connector task 예외를 별도 도구로 분리.
+        // Connect 미연결(http://connect.invalid)이라 traces는 비지만, 엔드포인트·operation은 존재해야 한다.
+        mockMvc().perform(get("/internal/ops/projects/{projectId}/connectors/{connectorName}/task-trace",
+                        "proj-001", "pipe-conn")
+                        .header("X-Request-Id", "req-ctt-001"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.operation").value("get_connector_task_trace"))
+                .andExpect(jsonPath("$.result.connector").value("pipe-conn"))
+                .andExpect(jsonPath("$.result.traces").isArray());
+    }
+
     private MockMvc mockMvc() {
         return MockMvcBuilders.standaloneSetup(controller)
                 .setMessageConverters(new MappingJackson2HttpMessageConverter(

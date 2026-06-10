@@ -11,6 +11,11 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-websocket'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    implementation 'org.springframework.boot:spring-boot-starter-aop'
+
+    // Distributed tracing → Tempo (OTLP). 버전은 Spring Boot 3.3 BOM이 관리. (#366)
+    implementation 'io.micrometer:micrometer-tracing-bridge-otel'
+    implementation 'io.opentelemetry:opentelemetry-exporter-otlp'
 
     // Kafka
     implementation 'org.springframework.kafka:spring-kafka'
@@ -38,6 +43,7 @@ dependencies {
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.security:spring-security-test'
     testImplementation 'org.springframework.kafka:spring-kafka-test'
+    testImplementation 'io.micrometer:micrometer-observation-test'
     testImplementation 'io.fabric8:kubernetes-server-mock:6.13.4'
     testImplementation 'org.testcontainers:junit-jupiter:1.20.2'
     testImplementation 'org.testcontainers:postgresql:1.20.2'

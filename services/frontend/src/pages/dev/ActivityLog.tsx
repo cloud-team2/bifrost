@@ -23,9 +23,15 @@ const LEVEL_META: Record<LogLevel, { tone: string; bar: string; icon: 'alert' | 
 export function ActivityLog() {
   const app = useApp()
   const [filter, setFilter] = useState<'all' | LogLevel>('all')
+  const [pipelineFilter, setPipelineFilter] = useState('all')
   const [rows, setRows] = useState<ActivityEvent[]>([])
 
-  // 워크스페이스 이벤트 로그(FR-019). 서버 측 level 필터로 조회.
+  useEffect(() => {
+    if (pipelineFilter === 'all') return
+    if (!app.edges.some((edge) => edge.id === pipelineFilter)) setPipelineFilter('all')
+  }, [app.edges, pipelineFilter])
+
+  // 워크스페이스 이벤트 로그(FR-019). 서버 측 level/pipeline 필터로 조회.
   useEffect(() => {
     const wsId = app.currentProject?.id
     if (!wsId) {
@@ -33,9 +39,10 @@ export function ActivityLog() {
       return
     }
     const level = filter === 'all' ? undefined : FILTER_TO_LEVEL[filter]
+    const pipelineId = pipelineFilter === 'all' ? undefined : pipelineFilter
     let cancelled = false
     api
-      .listEvents(wsId, level)
+      .listEvents(wsId, level, pipelineId)
       .then((es) => {
         if (!cancelled) setRows(es.map(eventToActivity))
       })
@@ -45,7 +52,7 @@ export function ActivityLog() {
     return () => {
       cancelled = true
     }
-  }, [app.currentProject?.id, filter])
+  }, [app.currentProject?.id, filter, pipelineFilter])
 
   return (
     <div className="px-6 py-5">
@@ -64,6 +71,20 @@ export function ActivityLog() {
             {t}
           </button>
         ))}
+        <div className="flex-1" />
+        <select
+          value={pipelineFilter}
+          onChange={(e) => setPipelineFilter(e.target.value)}
+          aria-label="Pipeline filter"
+          className="mb-2 h-8 rounded-md border border-gray-300 bg-white px-2 text-[12.5px] text-gray-700 outline-none focus:border-brand-600"
+        >
+          <option value="all">전체 Pipeline</option>
+          {app.edges.map((edge) => (
+            <option key={edge.id} value={edge.id}>
+              {pipelineLabel(edge)}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div className="mt-4 space-y-2">
