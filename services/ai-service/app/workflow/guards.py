@@ -49,7 +49,11 @@ def check_revise_action_loops(state: AgentState, max_revise_action_loops: int) -
 
 def check_all_global(state: AgentState, policy: RetryPolicy) -> None:
     check_step_budget(state, policy.max_steps)
-    check_gap_loops(state, policy.max_gap_loops)
-    check_fail_loops(state, policy.max_fail_loops)
     check_scope_loops(state, policy.max_scope_loops)
     check_revise_action_loops(state, policy.max_revise_action_loops)
+    # NOTE(#453): fail_loops/gap_loops는 매 stage 진입마다 검사하지 않는다.
+    # Verifier loopback(§9)은 책임 Agent로 되돌아간 뒤 다시 Verifier에 도달하는
+    # 정상 경로이므로, 카운터가 상한에 닿은 채로도 그 한 번의 loopback은 끝까지
+    # 실행돼야 한다. 따라서 loopback 예산 집행은 진입 시점이 아니라
+    # Supervisor.record_verifier_result(...)의 전이 결정 지점에서 수행한다.
+    # check_fail_loops/check_gap_loops는 명시적 검사를 위해 그대로 보존한다.
