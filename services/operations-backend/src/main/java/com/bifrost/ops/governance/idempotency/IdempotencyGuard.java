@@ -79,7 +79,8 @@ public class IdempotencyGuard {
             return CheckResult.conflict();
         }
         if (STATUS_DONE.equals(e.getStatus())) {
-            return CheckResult.duplicate(e.getResult(), e.getResponseStatus(), e.getHttpStatus(), e.getApprovalId());
+            return CheckResult.duplicate(e.getResult(), e.getResponseStatus(), e.getHttpStatus(),
+                    e.getApprovalId(), e.getChangeTicketId());
         }
         return CheckResult.processing();
     }
@@ -110,12 +111,24 @@ public class IdempotencyGuard {
                          String responseStatus,
                          Integer httpStatus,
                          UUID approvalId) {
+        complete(key, tenantId, result, responseStatus, httpStatus, approvalId, null);
+    }
+
+    @Transactional
+    public void complete(String key,
+                         UUID tenantId,
+                         String result,
+                         String responseStatus,
+                         Integer httpStatus,
+                         UUID approvalId,
+                         UUID changeTicketId) {
         repository.findByIdemKeyAndTenantId(key, tenantId).ifPresent(e -> {
             e.setStatus(STATUS_DONE);
             e.setResult(result);
             e.setResponseStatus(responseStatus);
             e.setHttpStatus(httpStatus);
             e.setApprovalId(approvalId);
+            e.setChangeTicketId(changeTicketId);
             repository.save(e);
         });
     }
@@ -135,10 +148,11 @@ public class IdempotencyGuard {
             String result,
             String responseStatus,
             Integer httpStatus,
-            UUID approvalId
+            UUID approvalId,
+            UUID changeTicketId
     ) {
         public static CheckResult created() {
-            return new CheckResult(CheckKind.NEW, null, null, null, null);
+            return new CheckResult(CheckKind.NEW, null, null, null, null, null);
         }
 
         public static CheckResult duplicate(String result, String responseStatus, Integer httpStatus) {
@@ -146,15 +160,24 @@ public class IdempotencyGuard {
         }
 
         public static CheckResult duplicate(String result, String responseStatus, Integer httpStatus, UUID approvalId) {
-            return new CheckResult(CheckKind.DUPLICATE, result, responseStatus, httpStatus, approvalId);
+            return duplicate(result, responseStatus, httpStatus, approvalId, null);
+        }
+
+        public static CheckResult duplicate(String result,
+                                            String responseStatus,
+                                            Integer httpStatus,
+                                            UUID approvalId,
+                                            UUID changeTicketId) {
+            return new CheckResult(CheckKind.DUPLICATE, result, responseStatus, httpStatus,
+                    approvalId, changeTicketId);
         }
 
         public static CheckResult processing() {
-            return new CheckResult(CheckKind.PROCESSING, null, null, null, null);
+            return new CheckResult(CheckKind.PROCESSING, null, null, null, null, null);
         }
 
         public static CheckResult conflict() {
-            return new CheckResult(CheckKind.CONFLICT, null, null, null, null);
+            return new CheckResult(CheckKind.CONFLICT, null, null, null, null, null);
         }
     }
 }

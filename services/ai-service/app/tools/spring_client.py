@@ -11,6 +11,13 @@ from app.schemas.tools import SpringErrorCode, SpringOpsResponse, ToolContext, T
 from app.tools.context import DEFAULT_ACTOR_ID, spring_headers
 
 
+# Spring 가 raw list 를 result 로 반환하는 operation → ai-service 모델이 기대하는 wrapper key.
+# (#390) 예: list_project_pipelines 는 List<PipelineResponse> 반환 → {pipelines: [...]} 로 wrap.
+_LIST_RESULT_WRAPPER: dict[str, str] = {
+    "list_project_pipelines": "pipelines",
+}
+
+
 class SpringOpsClient:
     def __init__(
         self,
@@ -81,6 +88,11 @@ class SpringOpsClient:
         if isinstance(payload, dict):
             payload.setdefault("operation", operation)
             payload.setdefault("request_id", request_id)
+
+            # Spring 가 result 로 raw list 를 반환하는 operation 은 ai-service 모델이 기대하는 wrapper 로 normalize.
+            wrapper_key = _LIST_RESULT_WRAPPER.get(operation)
+            if wrapper_key and isinstance(payload.get("result"), list):
+                payload = {**payload, "result": {wrapper_key: payload["result"]}}
 
         try:
             return SpringOpsResponse.model_validate(payload)

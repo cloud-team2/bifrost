@@ -1,13 +1,13 @@
 # Frontend 설계
 
-> 사람이 읽는 요약본이다. 화면(FR)별 연동 계약 전체는 [DETAILS.md](#), 화면·상태값 기준은 [기능명세서](../spec.md).
+> 사람이 읽는 요약본이다. 화면(FR)별 기준은 [기능명세서](../spec.md), 백엔드 API 상세는 [Spring Boot API](../api/springboot.md)와 [FastAPI API](../api/fastapi.md)를 따른다.
 
-엔터프라이즈 내부(폐쇄망·온프레미스)용 데이터 파이프라인 운영 콘솔. UI는 mock 스케치가 있으므로 설계 초점은 **백엔드 연동**이다.
+엔터프라이즈 내부(폐쇄망·온프레미스)용 데이터 파이프라인 운영 콘솔. UI 설계 초점은 화면 컴포넌트 자체보다 **실제 백엔드 연동 계약**이다.
 
 ```mermaid
 flowchart LR
-    UI[Frontend 콘솔] -->|/api/v1/workspaces·auth| SB[Spring Boot 플랫폼]
-    UI -->|/api/v1/agent·approvals·...| FA[FastAPI Agent]
+    UI[Frontend 콘솔] -->|/api/v1/auth·workspaces·monitoring·clusters| SB[Spring Boot 플랫폼]
+    UI -->|/api/v1/agent·approvals| FA[FastAPI Agent]
     SB -. 플랫폼 SSE(workspace) .-> UI
     FA -. Agent SSE(run) .-> UI
 ```
@@ -16,151 +16,153 @@ flowchart LR
 
 | 항목 | 내용 |
 | --- | --- |
-| 데이터 흐름 중심 | 기본 화면은 흐름·지연·상태. Kafka/Connect/lag/CDC 내부 지표는 **상세 토글**에서만 |
-| 두 백엔드 | 플랫폼·모니터링 → Spring Boot(`/api/v1/...`), AI 장애대응만 FastAPI(`/api/v1/agent/...`). MCP 미사용 |
-| 단일 콘솔 | 구현은 단일 콘솔, 역할(TA·AA·개발자·운영자)은 진입 동선·강조로만 구분(권한 분기 아님) |
-| scope | 로그인 토큰 두 백엔드 공통, 선택한 `workspace_id`(=내부 `project_id`)로 모든 호출 제한 |
-| raw 비노출 | evidence 원문·secret·connection string 미노출(password `****`). Topic 이름은 Connection Guide 탭에서만 |
-| 인증 | Spring Boot가 JWT 발급, **두 서비스가 같은 JWT 검증**(공유 서명키/JWKS) |
-| SSE | 플랫폼 SSE(workspace·장수명)와 Agent SSE(run·단명) **별도 EventSource 2개**. `EventSource`는 헤더 불가 → 현재 FE 구현은 JWT를 `?access_token=<jwt>` 쿼리로 붙임 |
+| 데이터 흐름 중심 | 기본 화면은 흐름·지연·상태. Kafka/Connect/lag/CDC 내부 지표는 상세 탭에서만 |
+| 두 백엔드 | 플랫폼·모니터링은 Spring Boot, AI 장애대응은 FastAPI |
+| 단일 콘솔 | 구현은 단일 콘솔. TA·AA·개발자·운영자 구분은 정보 강조와 동선 차이로만 처리 |
+| scope | 로그인 후 선택한 `workspace_id`를 플랫폼 호출 path에 넣는다. 현재 AgentRunPanel은 같은 UUID를 FastAPI `project_id`로 전달하지만, FastAPI internal-ops tool registry가 Spring `/internal/ops/projects/{projectId}`에 그대로 넣으면 Spring은 대부분 `projectKey`/namespace를 기대한다. |
+| raw 비노출 | evidence 원문·secret·connection string 미노출. DB password는 `****`, Kafka secret은 `MASKED_REFERENCE_ONLY` |
+| 인증 | Spring Boot가 JWT 발급. Frontend는 같은 token을 Spring Boot와 FastAPI 호출에 사용 |
+| SSE | 플랫폼 SSE(workspace·장수명)와 Agent SSE(run·단명)는 별도 EventSource |
 
-## 백엔드 라우팅 (게이트웨이 — 경로 그룹 소유권)
+## 1. 라우팅 경계
 
-| 소유 | 경로 |
-| --- | --- |
-| FastAPI(AI) | `/api/v1/agent/**`, `/approvals/**`, `/change-tickets/**`, `/catalogs/**`, `/tools/**`, `/audit-events/**`, `/incidents/{id}/reports`, `/admin/**`, `/health`·`/ready`·`/version`·`/capabilities` |
-| Spring Boot(플랫폼) | `/api/v1/workspaces/**`, `/auth/**` 등 리소스 루트. 플랫폼 헬스/준비도는 `/internal/ops/health`·`/ready`·`/version`(agent-facing)으로 분리 |
-
-incident·alert·모니터링 데이터의 source of truth는 Spring Boot이고, FastAPI는 해당 incident 분석 run만 담당한다.
-
-## 역할별 핵심 화면
-
-| 역할 | 화면(FR) |
-| --- | --- |
-| TA(구축) | 워크스페이스·DB 등록·파이프라인 생성 (FR-002·004·013~015) |
-| AA/설계 | EDA/CDC 패턴·테이블 매핑 (FR-004·012) |
-| 개발자(구독) | 구독 정보·코드 스니펫·메시지 (FR-010·011·012) |
-| 운영자(운영·장애) | 모니터링·이벤트/인시던트·AI 장애대응 (FR-006~009·019~026) |
-
-## 더 읽기 → [DETAILS.md](#)
-
-[연동 명세](#1-연동-명세-integration-spec) — 인증·워크스페이스, DB 등록·점검, 파이프라인 생성·생명주기, 상세 탭, 모니터링/이벤트, 인시던트+Agent, SSE 이벤트, 에러 처리
-
-
----
-
-
-> 요약은 [README.md](#). 화면(FR)별 백엔드 연동 명세 전체다.
-
-## 목차
-1. [연동 명세 (Integration Spec)](#1-연동-명세-integration-spec)
-
----
-
-## 1. 연동 명세 (Integration Spec)
-
-
-### 1. 목적
-
-이 문서는 각 화면(FR)이 어떤 백엔드 API와 SSE 이벤트에 연결되는지 정의한다. 화면 컴포넌트/스타일은 mock 스케치를 따르고, 여기서는 호출 계약만 다룬다.
-
-- 플랫폼/모니터링 API: Spring Boot Operations Backend ([Spring Boot DETAILS](./backend-springboot/overview.md))
-- AI Agent API: FastAPI Agent Server ([FastAPI DETAILS](./backend-fastapi/overview.md))
-
-두 서비스는 별도 호스트다. 게이트웨이/BFF는 **경로 그룹 소유권**으로 라우팅한다(단순 "agent vs 나머지" 분기가 아님).
+### 1.1 Gateway path ownership
 
 | 소유 | 경로 그룹 |
 | --- | --- |
-| FastAPI(AI) | `/api/v1/agent/**`, `/api/v1/approvals/**`, `/api/v1/change-tickets/**`, `/api/v1/catalogs/**`(에이전트 카탈로그), `/api/v1/tools/**`(tool 메타), `/api/v1/audit-events/**`(UI 요약), `/api/v1/incidents/{id}/reports`(분석 리포트), `/api/v1/admin/**`, `/api/v1/health`·`/ready`·`/version`·`/capabilities` |
-| Spring Boot(플랫폼) | `/api/v1/workspaces/**`, `/api/v1/auth/**` 등 리소스 루트. 플랫폼 헬스/준비도는 `/internal/ops/health`·`/ready`·`/version`으로 분리해 `/api/v1` 충돌을 피한다 |
+| FastAPI(AI, route mount) | `/api/v1/agent/**`, `/api/v1/approvals/{id}/decision`, `/api/v1/catalogs/**`, `/api/v1/tools/**`, `/api/v1/incidents/{id}/reports`, `/api/v1/health`, `/api/v1/ready`, `/api/v1/version`, `/api/v1/capabilities` |
+| Frontend proxy → FastAPI(현재) | Vite/nginx는 현재 `/api/v1/agent/**`, `/api/v1/approvals/**`만 AI service로 보낸다. 그 외 `/api/**`는 Spring Boot로 fallback된다. |
+| Spring Boot(플랫폼) | `/api/v1/auth/**`, `/api/v1/workspaces/**`, `/api/v1/clusters/**`, `/api/v1/workspaces/{wsId}/monitoring/**`, `/api/v1/workspaces/{wsId}/events/**`, `/api/v1/workspaces/{wsId}/kafka/principals/**` |
+| Spring Boot(agent-facing) | `/internal/ops/**`. Frontend가 직접 호출하지 않는다 |
 
-incident·alert·모니터링 데이터의 source of truth는 Spring Boot이며, FastAPI는 해당 incident의 분석 run만 담당한다.
+FastAPI admin/feedback API는 현재 mount되지 않는다. `/api/v1/change-tickets/**` 조회도 현재 FastAPI route가 없다.
 
-### 2. 공통
+### 1.2 Frontend screen routing
 
-- 인증 헤더: `Authorization: Bearer <token>` (두 백엔드 공통).
-- workspace scope: 로그인 후 선택한 `workspace_id`를 모든 플랫폼 호출의 path 또는 query로 전달한다. FastAPI에는 `project_id`로 매핑한다.
-- 응답 봉투: Spring Boot 플랫폼 API와 FastAPI API 모두 `{ ok, request_id, data }` / `{ ok, error }` 형태. (Spring Boot internal ops API는 `operation`/`evidence` 봉투를 쓰지만 그건 FastAPI가 소비한다.)
-- 에러 처리: §9 참조.
+현재 `services/frontend/src/store/AppStore.tsx`는 React Router URL path가 아니라 `View` 상태로 화면을 전환한다. `history.pushState`에는 `bifrostNav` state만 저장하고 URL path를 `/monitoring`이나 `/clusters`로 바꾸지 않는다.
 
-### 3. 인증·워크스페이스 (FR-001, FR-002)
+현재 standard UI view:
+
+| View | 주요 화면 |
+| --- | --- |
+| `overview` | 운영 overview / alerts 중심 |
+| `pipelines` | Pipeline 목록 |
+| `pipeline-detail` | Pipeline 상세 |
+| `databases` | DB 목록 |
+| `database-detail` | DB 상세 |
+| `alerts` | Incident/alert 목록 |
+| `cluster` | Kafka/Connect cluster |
+| `settings` | workspace/member/Kafka principal 설정 |
+
+따라서 `/monitoring`과 `/clusters`는 frontend route prefix가 아니라 backend API group이다. `ActivityLog` 컴포넌트는 `services/frontend/src/pages/dev/ActivityLog.tsx`에 있지만 `View`, `App.tsx`, `Sidebar`에 연결되어 있지 않아 현재 표준 UI 동선에서는 접근되지 않는다.
+
+## 2. 공통 호출 규칙
+
+- 인증 헤더: `Authorization: Bearer <token>`.
+- Spring Boot 플랫폼 API 성공 응답은 handler별 DTO를 그대로 반환한다. 실패는 숫자형 `ErrorResponse`(`code`, `message`, `details`)가 기본이다.
+- Spring Boot `/internal/ops/**`는 `OpsEnvelope`(`ok`, `request_id`, `operation`, `result`, `evidence`, `audit_event_id`, `error`)를 쓴다. Frontend 직접 호출 대상이 아니다.
+- FastAPI는 `{ ok, request_id, data, error }` envelope을 쓴다.
+- SSE는 브라우저 `EventSource` 제약 때문에 현재 URL에 `?access_token=<jwt>`를 붙인다.
+
+## 3. 인증·워크스페이스 (FR-001, FR-002)
 
 ```text
 LoginView
   POST /api/v1/auth/login {email, password}
-    -> {token, user}
-  성공 시 token 저장 -> WorkspaceListView
+    -> {accessToken, tokenType, expiresInSeconds, userId, workspaceId}
 
 WorkspaceListView
-  GET  /api/v1/workspaces            -> 카드 목록
-  POST /api/v1/workspaces {name}     -> 생성 (백엔드가 KafkaUser 프로비저닝 트리거)
-  선택 시 currentWorkspace 저장 -> PipelinesView
+  GET  /api/v1/workspaces
+  POST /api/v1/workspaces {name}
 ```
 
-워크스페이스 생성은 Kafka 리소스(KafkaUser/ACL) 프로비저닝을 유발한다 — [Spring Boot DETAILS §2](./backend-springboot/provisioning.md#2-provisioning).
+Workspace 선택 후 `currentWorkspace.id`를 Spring path의 `{wsId}`로 사용한다. 현재 AgentRunPanel도 run 생성 `project_id`에 `currentWorkspace.id`를 전달한다. 단, Spring internal-ops path variable은 대부분 `currentWorkspace.projectKey`에 해당하는 namespace slug를 조회하므로, 현재 FastAPI tool 실행 경로에는 UUID↔projectKey 매핑 gap이 있다.
 
-### 4. Database 등록·점검 (FR-013, FR-014, FR-015)
+## 4. Database 등록·점검 (FR-013, FR-014, FR-015)
 
 ```text
 DatabasesView
-  GET /api/v1/workspaces/{wsId}/databases?role=&engine=&q=
-  # role은 파생 필터(해당 DB가 파이프라인에서 source/sink로 쓰이는지). DB 엔티티에 역할 컬럼 없음
+  GET /api/v1/workspaces/{wsId}/databases
+  (검색은 현재 client-side filter)
 
 AddDatabaseModal
   POST /api/v1/workspaces/{wsId}/databases/connection-test
        {engine, host, port, dbName, user, password}
-    -> {ok, classified_error?}        # 5초 timeout, SELECT 1
-  POST /api/v1/workspaces/{wsId}/databases
-       {alias, engine, host, port, dbName, user, password}
-    -> {database_id}                   # 자격증명은 secretRef로 보관(DB 평문/암호문 X), 응답은 ****
+    -> {success, reason, message, latencyMs}
 
-DatabaseDetail > 연결 준비도 (FR-015)
-  GET /api/v1/workspaces/{wsId}/databases/{dbId}/cdc-readiness
-    -> {overallStatus, checks:[{name,status,actual,expected,hint}]}
-  화면: 요약 카드(준비 완료 / N개 주의) + 항목 토글(OK/WARNING/BLOCKED + hint)
+  POST /api/v1/workspaces/{wsId}/databases
+       {name, engine, host, port, dbName, username, password}
+    -> DatabaseResponse
+
+DatabaseDetail
+  GET /api/v1/workspaces/{wsId}/databases/{dbId}/schema
 ```
 
-연결 테스트·암호화·CDC 점검 로직은 [Spring Boot DETAILS §3](./backend-springboot/database-registry.md#3-database-registry).
+실제 DTO 차이:
 
-### 5. Pipeline 생성·생명주기 (FR-004, FR-005)
+| API | 사용자명 field | 응답 |
+| --- | --- | --- |
+| connection-test | `user` | 실패도 HTTP 200이며 `success=false`, `reason`, `message`로 분류 |
+| register | `username` | `DatabaseResponse`: `id`, `name`, `engine`, `host`, `port`, `dbName`, `username`, `password="****"`, `cdcReadinessStatus`, `sinkReadinessStatus`, `connectionStatus`, `connectionError`, `connectionCheckedAt`, `roles`, `createdAt` |
+
+프론트 `DatabaseResponse` 타입은 현재 backend의 `sinkReadinessStatus`를 아직 포함하지 않는다. 문서의 API 계약 정본은 Spring Boot DTO다.
+`cdcReadiness()` wrapper는 AddDatabaseModal의 등록 직후 점검에서 사용된다. `sinkReadiness()` wrapper는 현재 frontend call site가 없다.
+
+## 5. Pipeline 생성·생명주기 (FR-004, FR-005)
 
 ```text
-CreatePipelineModal (마법사)
-  Step1 연결 방식: EDA(fan-out) | CDC(direct)
-  Step2 Source DB 선택   GET .../databases   # role 필터 미사용 — CDC-ready DB 전체가 소스 후보(신규 등록 DB 포함)
-  Step3 테이블 선택      GET .../databases/{dbId}/cdc-readiness  (blocked면 선택 불가)
-  Step4 (CDC) Sink DB 선택
-  Step5 이름 입력 -> POST /api/v1/workspaces/{wsId}/pipelines
+CreatePipelineModal
+  read DB candidates from AppStore `nodes`
+  GET  /api/v1/workspaces/{wsId}/databases/{dbId}/schema
+  POST /api/v1/workspaces/{wsId}/pipelines
        {name, pattern, sourceDbId, sinkDbId?, schema, table}
-    -> {pipeline_id, status:"creating"}
-  이후 상태는 SSE로 creating -> active 전이 수신
 
-PipelineDetail 헤더 (FR-005)
-  POST .../pipelines/{id}/pause   POST .../pipelines/{id}/resume
-  DELETE .../pipelines/{id}       (확인 다이얼로그)
+PipelineDetail header
+  POST   /api/v1/workspaces/{wsId}/pipelines/{id}/pause
+  POST   /api/v1/workspaces/{wsId}/pipelines/{id}/resume
+  DELETE /api/v1/workspaces/{wsId}/pipelines/{id}
 ```
 
-화면은 Kafka Topic/파티션/오프셋을 노출하지 않는다(자동 처리). Connector CR 생성·watch는 [Spring Boot DETAILS §2](./backend-springboot/provisioning.md#2-provisioning).
+생성 응답은 pipeline DTO이며, 상태 전이는 플랫폼 SSE `pipeline_status_changed`와 polling read API로 반영한다.
 
-### 6. Pipeline 상세 탭 (FR-006 ~ FR-012)
+## 6. Pipeline 상세 탭 (FR-006 ~ FR-012)
+
+현재 `PipelineDetail`은 `edge.pattern === "fan-out"`이면 EDA 탭, 그 외는 CDC 탭을 렌더링한다.
+
+| 패턴 | 탭 |
+| --- | --- |
+| EDA(`fan-out`) | `Overview`, `Consumers`, `Connector`, `Messages`, `Connection Guide` |
+| CDC(`direct`) | `Overview`, `Topic`, `Connector`, `Messages`, `Table Mapping` |
+
+FR-006 Overview의 실제 구현:
+
+| 패턴 | Overview 구성 | 호출 |
+| --- | --- | --- |
+| EDA | `TopicTab` 재사용 | `GET /api/v1/workspaces/{wsId}/pipelines/{id}/topic-info`, 5초 polling |
+| CDC | `SyncTab` 재사용 | `GET /api/v1/workspaces/{wsId}/pipelines/{id}/sync-status`, `GET /api/v1/workspaces/{wsId}/pipelines/{id}/metrics/event-distribution?minutes=15`(기본 range), 5초 polling |
+
+이전 설계의 `metrics + SSE` Overview card는 현재 프론트 구현에 없다. metrics API는 backend family에 남아 있지만 FR-006 현재 화면 계약은 위 polling 기반 탭 구성이다.
+
+상세 탭 API:
 
 | 탭(FR) | 호출 |
 | --- | --- |
-| Overview (FR-006) | `GET .../pipelines/{id}/metrics` (produce/consume rate, lag, error rate) + SSE |
-| Consumers (FR-007) | `GET .../pipelines/{id}/consumer-groups` → 그룹/파티션 lag |
-| Connector (FR-008) | `GET .../pipelines/{id}/connectors` (상태·task·records/s·재시작·마지막 오류) |
-| Sync (FR-009, CDC) | `GET .../pipelines/{id}/sync-status` (source/sink row, 동기화율, 지연) |
-| Messages (FR-010) | `GET .../pipelines/{id}/messages` → Debezium before/after |
-| Connection Guide (FR-011) | `GET .../pipelines/{id}/connection-guide` — 백엔드([#303](https://github.com/cloud-team2/bifrost/issues/303))·FE([#304](https://github.com/cloud-team2/bifrost/issues/304)) 연결 완료. bootstrap·group·인증 템플릿·topic, 자격증명은 Secret 이름/키 참조만(원문 미노출) |
-| Table Mapping (FR-012) | `GET .../pipelines/{id}/table-mapping` — 백엔드([#303](https://github.com/cloud-team2/bifrost/issues/303))·FE([#304](https://github.com/cloud-team2/bifrost/issues/304)) 연결 완료. source table→topic→sink table |
+| Consumers (FR-007) | `GET /api/v1/workspaces/{wsId}/pipelines/{id}/consumer-groups` |
+| Connector (FR-008) | `GET /api/v1/workspaces/{wsId}/pipelines/{id}/connectors` |
+| Topic/Sync (FR-009) | `topic-info` 또는 `sync-status` + `metrics/event-distribution` |
+| Messages (FR-010) | `GET /api/v1/workspaces/{wsId}/pipelines/{id}/messages` |
+| Connection Guide (FR-011) | `GET /api/v1/workspaces/{wsId}/pipelines/{id}/connection-guide` |
+| Table Mapping (FR-012) | `GET /api/v1/workspaces/{wsId}/pipelines/{id}/table-mapping` |
 
-기본 표시는 흐름·지연 중심, Kafka 지표(lag 수치·connector state 원문)는 상세 토글에서 노출(§1.1).
+Connection Guide 응답은 `pipelineId`, `pipelineName`, `bootstrapServers`, `recommendedGroupId`, `authenticationMethod`, `credentialReference`, `authenticationTemplates`, `topics`다. Secret은 namespace/name/key reference만 노출하고 원문은 반환하지 않는다.
 
-### 7. 모니터링·이벤트 (FR-019, FR-020, FR-023, FR-024)
+Table Mapping 응답은 `pipelineId`, `sourceConnector`, `sinkConnector`, `mappings[{sourceTable,kafkaTopic,sinkTable}]`다. KafkaConnector config에서 산출할 수 없는 값은 빈 mapping으로 반환한다.
+
+## 7. 모니터링·이벤트 (FR-019, FR-023, FR-024)
 
 ```text
 ActivityLogView (FR-019)     GET /api/v1/workspaces/{wsId}/events?level=&pipelineId=
-OperatorOverviewView (FR-020) GET /api/v1/workspaces/{wsId}/monitoring/overview
+                              Sidebar '이벤트 로그'에서 진입
 OperatorClusterView (FR-023)  GET /api/v1/clusters/kafka
                               GET /api/v1/clusters/kafka/throughput?minutes=30
                               GET /api/v1/clusters/connect   (Broker·Connect worker, workspace scope 없음)
@@ -168,51 +170,58 @@ ResourceEvents (FR-024)       GET /api/v1/workspaces/{wsId}/monitoring/resource-
                               (별도 OperatorResourceEventsView는 AlertsView 통합 이벤트 로그로 흡수 — #324)
 ```
 
-### 8. 인시던트 + AI Agent (FR-021, FR-022, FR-025, FR-026)
+`MonitoringController`의 `/monitoring/**` 4개 handler는 모두 workspace access를 요구한다. Spring에는 `monitoring/overview`와 incident detail route도 구현되어 있지만 현재 frontend `api.ts` wrapper와 `loadMonitoringData()`는 incidents list, workspace events, resource-events만 호출한다. Alerts detail은 이미 로드된 incident list에서 선택하며 `api.getIncident(...)` wrapper는 현재 미사용이다. `/api/v1/clusters/**`는 인증 사용자 대상이지만 workspace path scope는 없다.
+
+`ActivityLog`는 개발용 컴포넌트로 남아 있으며 현재 앱 내 route/sidebar에 연결되어 있지 않다. 표준 운영 화면에서 event log는 Alerts 데이터와 store-level platform SSE 갱신으로 소비된다.
+
+## 8. 인시던트 + AI Agent (FR-021, FR-022, FR-025, FR-026)
 
 ```text
-AlertsView (FR-021)  — 조회는 Spring Boot
+AlertsView (FR-021) — 조회는 Spring Boot
   GET /api/v1/workspaces/{wsId}/monitoring/incidents?status=
-  GET /api/v1/workspaces/{wsId}/monitoring/incidents/{incidentId}      (근본원인·영향·관련 이벤트 타임라인)
+  (detail 선택은 현재 list item state 사용; `api.getIncident(...)` wrapper는 미사용)
 
-BifrostAgentPanel (FR-022/025/026) — AI는 FastAPI
-  POST /api/v1/agent/runs            {project_id, mode?, message, incident_id?, alert_ids?}
+BifrostAgentPanel — AI는 FastAPI
+  POST /api/v1/agent/runs
+       {project_id, mode?, message, incident_id?, remediation_requested?, stream?}
   GET  /api/v1/agent/runs/{runId}/events?access_token=<jwt>
-                                             (SSE: agent_started, tool_call_completed,
-                                              approval_required, verification_completed, ...)
-  POST /api/v1/approvals/{approvalId}/decision  {decision, comment}   # HITL
+  GET  /api/v1/agent/runs/{runId}/approvals
+  POST /api/v1/approvals/{approvalId}/decision {decision, comment}
 ```
 
-- AI 채팅·장애분석 진행은 FastAPI SSE로 받고, Tool Call 결과는 카드로 시각화(FR-025).
-- AI 추천 조치는 `approval_required` 이벤트 → 사용자가 "Run"(승인) 시 `decision` 호출(HITL, FR-022). 실행 자체는 FastAPI→Spring Boot.
-- AI 자동 인시던트 리포트(FR-026)는 `incident_id` 기반 run으로 진입.
+FastAPI `POST /api/v1/agent/runs`의 현재 DTO에는 `alert_ids`가 없다. `AgentRunPanel`은 `incident_id`와 `remediation_requested`를 보낼 수 있지만, 현재 FastAPI `create_run()`은 이 두 값을 persistence와 `run_workflow()`에 넘기지 않아 실행 컨텍스트에는 반영되지 않는다([FastAPI API §5](../api/fastapi.md#post-apiv1agentruns)). FastAPI에는 state/timeline/evidence/actions/report 조회 route가 있지만 현재 `AgentRunPanel`은 evidence와 report preview를 별도 GET이 아니라 SSE event(`evidence_collected`, `report_preview_available`)로 소비한다.
 
-### 9. SSE 이벤트 종류
+## 9. Kafka Principal Secret 보안정책
 
-| 출처 | 이벤트 | 용도 |
-| --- | --- | --- |
-| Spring Boot | `pipeline_status_changed` | 파이프라인 상태(creating/active/lag/error/paused) 갱신 |
-| Spring Boot | `connector_state_changed` | connector state watch 결과 (상세 토글용) |
-| Spring Boot | `incident_opened` / `incident_updated` | 사이드바 배지·알럿 |
-| FastAPI | `agent_started`/`agent_completed`/`tool_call_*`/`evidence_collected`/`report_preview_available`/`partial_result`/`approval_required`/`verification_completed`/`run_completed` | AI 진행 상태 + 부분 결과(검증 전 preview) ([FastAPI DETAILS §16](./backend-fastapi/contract/contract-streaming-events.md#16-contract-streaming-events)) |
+Settings 화면의 Kafka principal secret 조회는 Spring Boot를 호출한다.
 
-플랫폼 SSE 구독 엔드포인트(예): `GET /api/v1/workspaces/{wsId}/events/stream?access_token=<jwt>`.
+```text
+GET /api/v1/workspaces/{wsId}/kafka/principals/{principalId}/secret
+  -> {
+       principalId, username, status,
+       namespace, secretName, availableKeys,
+       passwordMasked: "********",
+       retrievedAt,
+       exposurePolicy: "MASKED_REFERENCE_ONLY"
+     }
+```
 
-### 10. 에러 처리
+원문 password, connection string, Secret value는 API로 반환하지 않는다. 권한은 OWNER/ADMIN 또는 workspace owner이며, principal이 `ACTIVE`이고 K8s Secret name/key가 principal naming policy와 맞아야 한다.
+
+## 10. 에러 처리
 
 | 상황 | 처리 |
 | --- | --- |
-| `VALIDATION_FAILED` | 폼 필드 인라인 오류 |
-| `UNAUTHORIZED` | 로그인 화면으로 |
-| 연결 테스트 실패 | 분류된 사유(`CONNECTION_REFUSED`/`AUTH_FAILED`/`DB_NOT_FOUND`/`TIMEOUT`/`UNKNOWN`) + 재시도 안내 |
-| CDC `BLOCKED` | 마법사에서 해당 DB를 Source 선택 불가 + hint 노출 |
-| `POLICY_DENIED` / 승인 필요 | 조치 차단 사유 + 대체/승인 경로 안내 |
-| `SPRING_BACKEND_ERROR` / `LLM_PROVIDER_ERROR` | 토스트 + 재시도 |
-| SSE 끊김 | 현재 FE는 `EventSource` 자동 재연결/상태 메시지에 의존한다(`services/frontend/src/store/AppStore.tsx:211-244`, `services/frontend/src/pages/ai/AgentRunPanel.tsx:360-373`). FastAPI `/events/history`는 미구현(예정)이다([FastAPI API §7](../api/fastapi.md#7-event-streaming-api)). |
+| Spring 숫자형 `ErrorResponse` | `code`, `message`, `details`를 폼/토스트에 표시 |
+| FastAPI `{ok:false,error}` | `error.code`, `error.message` 기준 표시 |
+| 연결 테스트 실패 | `success=false`와 `reason`(`CONNECTION_REFUSED`/`AUTH_FAILED`/`DB_NOT_FOUND`/`TIMEOUT`/`UNKNOWN`)을 안내 |
+| CDC `BLOCKED` | 마법사에서 source 선택 불가 + hint 노출 |
+| 승인 필요 | 현재 UI는 `approval_required` SSE event로 승인 카드를 만들고, pending approval 조회로 approval id를 보강한다. action state route 기반 연결은 없다 |
+| SSE 끊김 | 현재 FE는 `EventSource` 자동 재연결과 상태 메시지에 의존한다. FastAPI `/events/history`는 route 없음 |
 
-### 11. 확정 사항
+## 11. 확정 사항
 
-- **인증 토큰**: Spring Boot가 로그인/JWT를 발급하고 **두 서비스가 같은 JWT를 검증**한다(공유 서명키 또는 JWKS). 별도 로그인·세션 동기화는 두지 않으며, FastAPI는 Spring 발급 JWT를 검증만 한다.
-- **SSE 채널**: 플랫폼 SSE(workspace 범위·장수명)와 Agent SSE(run 단위·단명)는 수명·소스가 달라 **별도 구독**한다(EventSource 2개). 프론트가 UI 레벨에서 합쳐 표시한다.
-- **SSE 인증**: 브라우저 기본 `EventSource`는 커스텀 헤더(`Authorization`)를 붙일 수 없으므로, 현재 프론트는 Agent SSE URL과 플랫폼 SSE URL 모두에 `?access_token=<jwt>`를 붙인다. Spring `JwtAuthenticationFilter`는 `/events/stream`과 `/api/v1/agent/runs/{runId}/events` 단일 경로에서 쿼리 토큰을 읽고, 플랫폼 workspace 권한은 `SseController`의 `requireAccess`가 확인한다. 토큰은 URL 로깅에 남을 수 있으므로 재연결 시 갱신 정책은 별도 보강 대상이다.
-  - 정본 근거: Agent SSE URL 생성/구독은 `services/frontend/src/lib/api.ts:570-573`, `services/frontend/src/pages/ai/AgentRunPanel.tsx:352-353`; 플랫폼 SSE URL 생성/구독은 `services/frontend/src/lib/api.ts:589-592`, `services/frontend/src/store/AppStore.tsx:211-215`; query token 경로 판정은 `services/operations-backend/src/main/java/com/bifrost/ops/auth/jwt/JwtAuthenticationFilter.java:65-85`, `services/operations-backend/src/main/java/com/bifrost/ops/auth/jwt/JwtAuthenticationFilter.java:97-105`; 플랫폼 workspace 권한은 `services/operations-backend/src/main/java/com/bifrost/ops/streaming/SseController.java:34-38`.
+- Spring Boot가 로그인/JWT를 발급하고 Frontend는 같은 token으로 두 backend를 호출한다.
+- 플랫폼 SSE와 Agent SSE는 별도 구독이다.
+- Frontend 화면 navigation은 URL path router가 아니라 `View` 상태 기반이다.
+- Secret 원문과 evidence raw는 UI에 노출하지 않는다.

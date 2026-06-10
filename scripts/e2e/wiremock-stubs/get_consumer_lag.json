@@ -10,18 +10,9 @@
       "request_id": "req_e2e_001",
       "operation": "get_consumer_lag",
       "result": {
-        "consumer_group": "default-group",
-        "total_lag": 12345,
-        "partitions": [
-          {
-            "topic": "orders",
-            "partition": 0,
-            "lag": 5000,
-            "current_offset": 1000,
-            "log_end_offset": 6000
-          }
-        ],
-        "observed_at": "2026-06-09T12:00:00Z"
+        "consumerGroup": "default-group",
+        "totalLag": 12345,
+        "source": "kafka-admin"
       },
       "evidence": [
         {

@@ -72,6 +72,10 @@ export interface RegisterInput {
 export interface MeResponse {
   userId: string
   email: string
+  name: string | null
+  role: 'OWNER' | 'ADMIN' | 'MEMBER'
+  joinedAt: string | null
+  lastLoginAt: string | null
   workspaceId: string
   workspaceName: string
   namespace: string
@@ -277,6 +281,8 @@ export interface KafkaClusterResponse {
   underReplicated: number
   offlinePartitions: number
   brokers: BrokerInfo[]
+  status?: 'healthy' | 'warning' | 'error'
+  message?: string | null
 }
 export interface ConnectWorker {
   name: string

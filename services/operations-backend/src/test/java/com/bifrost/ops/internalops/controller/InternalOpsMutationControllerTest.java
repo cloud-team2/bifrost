@@ -2,12 +2,13 @@ package com.bifrost.ops.internalops.controller;
 
 import com.bifrost.ops.adapters.connect.ConnectRestClient;
 import com.bifrost.ops.adapters.connect.ConnectRestException;
-import com.bifrost.ops.governance.approval.ApprovalValidator;
-import com.bifrost.ops.governance.approval.persistence.entity.ApprovalEntity;
+import com.bifrost.ops.governance.MutationContext;
+import com.bifrost.ops.governance.MutationGate;
 import com.bifrost.ops.governance.idempotency.IdempotencyGuard;
 import com.bifrost.ops.governance.idempotency.IdempotencyGuard.CheckResult;
 import com.bifrost.ops.internalops.AgentHeaders;
 import com.bifrost.ops.internalops.dto.ConnectorActionResult;
+import com.bifrost.ops.internalops.dto.ConsumerGroupActionResult;
 import com.bifrost.ops.internalops.dto.OpsEnvelope;
 import com.bifrost.ops.internalops.operations.kafka.ConsumerGroupVerificationException;
 import com.bifrost.ops.internalops.operations.kafka.ConsumerGroupVerifier;
@@ -20,18 +21,21 @@ import com.bifrost.ops.provisioning.persistence.repository.ConnectorRepository;
 import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
 
-import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -47,7 +51,7 @@ class InternalOpsMutationControllerTest {
     private final WorkspaceRepository workspaceRepository = mock(WorkspaceRepository.class);
     private final PipelineRepository pipelineRepository = mock(PipelineRepository.class);
     private final ConnectorRepository connectorRepository = mock(ConnectorRepository.class);
-    private final ApprovalValidator approvalValidator = mock(ApprovalValidator.class);
+    private final MutationGate mutationGate = mock(MutationGate.class);
     private final IdempotencyGuard idempotencyGuard = mock(IdempotencyGuard.class);
     private final ConnectRestClient connectRestClient = mock(ConnectRestClient.class);
     private final ConsumerGroupVerifier consumerGroupVerifier = mock(ConsumerGroupVerifier.class);
@@ -56,7 +60,7 @@ class InternalOpsMutationControllerTest {
             workspaceRepository,
             pipelineRepository,
             connectorRepository,
-            approvalValidator,
+            mutationGate,
             idempotencyGuard,
             connectRestClient,
             consumerGroupVerifier,
@@ -65,6 +69,15 @@ class InternalOpsMutationControllerTest {
     private final UUID tenantId = UUID.randomUUID();
     private final UUID pipelineId = UUID.randomUUID();
     private final UUID approvalId = UUID.randomUUID();
+
+    @BeforeEach
+    void passThroughMutationGate() {
+        when(mutationGate.executeChecked(any(MutationContext.class), any()))
+                .thenAnswer(invocation -> {
+                    Supplier<?> supplier = invocation.getArgument(1);
+                    return supplier.get();
+                });
+    }
 
     @Test
     void missingMutationHeaderReturns400BeforeOwnershipOrConnect() {
@@ -78,7 +91,7 @@ class InternalOpsMutationControllerTest {
         assertThat(response.getBody().ok()).isFalse();
         assertThat(response.getBody().error().code()).isEqualTo("VALIDATION_FAILED");
         verifyNoInteractions(workspaceRepository, connectorRepository, pipelineRepository,
-                approvalValidator, idempotencyGuard, connectRestClient);
+                mutationGate, idempotencyGuard, connectRestClient);
     }
 
     @Test
@@ -92,7 +105,7 @@ class InternalOpsMutationControllerTest {
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().error().message()).contains(AgentHeaders.X_AGENT_RUN_ID);
         verifyNoInteractions(workspaceRepository, connectorRepository, pipelineRepository,
-                approvalValidator, idempotencyGuard, connectRestClient);
+                mutationGate, idempotencyGuard, connectRestClient);
     }
 
     @Test
@@ -106,12 +119,18 @@ class InternalOpsMutationControllerTest {
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().error().message()).contains(AgentHeaders.X_AGENT_STEP_ID);
         verifyNoInteractions(workspaceRepository, connectorRepository, pipelineRepository,
-                approvalValidator, idempotencyGuard, connectRestClient);
+                mutationGate, idempotencyGuard, connectRestClient);
     }
 
     @Test
-    void missingApprovalRejectsBeforeConnectAndReleasesIdempotencyReservation() {
+    void gateRejectionReleasesIdempotencyReservationBeforeConnect() {
         stubOwnedConnector();
+        when(idempotencyGuard.check(eq("idem-1"), eq(tenantId), eq("pause_connector"), any()))
+                .thenReturn(CheckResult.created());
+        when(mutationGate.executeChecked(any(MutationContext.class), any()))
+                .thenThrow(new com.bifrost.ops.global.common.error.ApiException(
+                        com.bifrost.ops.global.common.error.ErrorCode.APPROVAL_NOT_FOUND,
+                        "approval is required"));
 
         MockHttpServletRequest request = requestWithoutIdempotency();
         request.addHeader(AgentHeaders.X_IDEMPOTENCY_KEY, "idem-1");
@@ -123,15 +142,36 @@ class InternalOpsMutationControllerTest {
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().ok()).isFalse();
         assertThat(response.getBody().error().code()).isEqualTo("APPROVAL_REQUIRED");
-        verifyNoInteractions(approvalValidator, idempotencyGuard, connectRestClient);
+        verify(idempotencyGuard).check(eq("idem-1"), eq(tenantId), eq("pause_connector"), any());
+        verify(idempotencyGuard).abandon("idem-1", tenantId);
+        verify(mutationGate).executeChecked(any(MutationContext.class), any());
+        verifyNoInteractions(connectRestClient);
     }
 
     @Test
-    void approvalValidatorFailureAbandonsIdempotencyAndSkipsConnect() {
+    void mutationCanPassThroughGateWithoutApprovalWhenPolicyAllows() {
+        stubOwnedConnector();
+        when(idempotencyGuard.check(eq("idem-1"), eq(tenantId), eq("pause_connector"), any()))
+                .thenReturn(CheckResult.created());
+        MockHttpServletRequest request = requestWithoutIdempotency();
+        request.addHeader(AgentHeaders.X_IDEMPOTENCY_KEY, "idem-1");
+
+        ResponseEntity<OpsEnvelope<ConnectorActionResult>> response =
+                controller.pauseConnector(PROJECT_ID, CONNECTOR, request);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        verify(mutationGate).executeChecked(any(MutationContext.class), any());
+        verify(connectRestClient).pauseConnector(CONNECTOR);
+        verify(idempotencyGuard).complete(eq("idem-1"), eq(tenantId), any(),
+                eq(IdempotencyGuard.RESPONSE_OK), eq(HttpStatus.OK.value()), isNull(), isNull());
+    }
+
+    @Test
+    void governanceGateFailureAbandonsIdempotencyAndSkipsConnect() {
         stubOwnedConnector();
         when(idempotencyGuard.check(eq("idem-1"), eq(tenantId), eq("resume_connector"), any()))
                 .thenReturn(CheckResult.created());
-        when(approvalValidator.validateAndConsume(eq(approvalId), eq(tenantId), eq("resume_connector"), any()))
+        when(mutationGate.executeChecked(any(MutationContext.class), any()))
                 .thenThrow(new com.bifrost.ops.global.common.error.ApiException(
                         com.bifrost.ops.global.common.error.ErrorCode.WORKSPACE_FORBIDDEN,
                         "approval params_hash mismatch"));
@@ -154,21 +194,41 @@ class InternalOpsMutationControllerTest {
                 .thenReturn(CheckResult.duplicate("""
                         {"connector_name":"orders-sink","action":"restart_connector","status":"SUCCESS","message":"accepted"}
                         """, IdempotencyGuard.RESPONSE_OK, 200, approvalId));
-        when(approvalValidator.validateAndConsume(eq(approvalId), eq(tenantId), eq("restart_connector"), any()))
-                .thenReturn(approval("restart_connector"));
         doNothing().when(connectRestClient).restartConnector(CONNECTOR);
+        MockHttpServletRequest replayRequest = requestWithoutIdempotency();
+        replayRequest.addHeader(AgentHeaders.X_IDEMPOTENCY_KEY, "idem-1");
+        replayRequest.addHeader(AgentHeaders.X_APPROVAL_ID, approvalId.toString());
 
         ResponseEntity<OpsEnvelope<ConnectorActionResult>> first =
                 controller.restartConnector(PROJECT_ID, CONNECTOR, request());
         ResponseEntity<OpsEnvelope<ConnectorActionResult>> second =
-                controller.restartConnector(PROJECT_ID, CONNECTOR, request());
+                controller.restartConnector(PROJECT_ID, CONNECTOR, replayRequest);
 
         assertThat(first.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(second.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(second.getBody()).isNotNull();
         assertThat(second.getBody().result().connectorName()).isEqualTo(CONNECTOR);
         verify(connectRestClient).restartConnector(CONNECTOR);
-        verify(approvalValidator).validateAndConsume(eq(approvalId), eq(tenantId), eq("restart_connector"), any());
+        verify(mutationGate).executeChecked(any(MutationContext.class), any());
+    }
+
+    @Test
+    void idempotentReplayRejectsMissingApprovalIdProof() {
+        stubOwnedConnector();
+        when(idempotencyGuard.check(eq("idem-1"), eq(tenantId), eq("restart_connector"), any()))
+                .thenReturn(CheckResult.duplicate("""
+                        {"connector_name":"orders-sink","action":"restart_connector","status":"SUCCESS","message":"accepted"}
+                        """, IdempotencyGuard.RESPONSE_OK, 200, approvalId));
+        MockHttpServletRequest replayRequest = requestWithoutIdempotency();
+        replayRequest.addHeader(AgentHeaders.X_IDEMPOTENCY_KEY, "idem-1");
+
+        ResponseEntity<OpsEnvelope<ConnectorActionResult>> response =
+                controller.restartConnector(PROJECT_ID, CONNECTOR, replayRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error().code()).isEqualTo("APPROVAL_SCOPE_MISMATCH");
+        verifyNoInteractions(mutationGate, connectRestClient);
     }
 
     @Test
@@ -186,7 +246,60 @@ class InternalOpsMutationControllerTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().error().code()).isEqualTo("APPROVAL_SCOPE_MISMATCH");
-        verifyNoInteractions(approvalValidator, connectRestClient);
+        verifyNoInteractions(mutationGate, connectRestClient);
+    }
+
+    @Test
+    void idempotentReplayRequiresSameChangeTicketProof() {
+        stubOwnedConnector();
+        UUID changeTicketId = UUID.randomUUID();
+        when(idempotencyGuard.check(eq("idem-1"), eq(tenantId), eq("restart_connector"), any()))
+                .thenReturn(CheckResult.duplicate("""
+                        {"connector_name":"orders-sink","action":"restart_connector","status":"SUCCESS","message":"accepted"}
+                        """, IdempotencyGuard.RESPONSE_OK, 200, approvalId, changeTicketId));
+
+        ResponseEntity<OpsEnvelope<ConnectorActionResult>> response =
+                controller.restartConnector(PROJECT_ID, CONNECTOR, request());
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error().code()).isEqualTo("CHANGE_TICKET_REQUIRED");
+        verifyNoInteractions(mutationGate, connectRestClient);
+    }
+
+    @Test
+    void idempotentConnectorReplayReturnsCachedEnvelopeWithoutMutation() {
+        stubOwnedConnector();
+        when(idempotencyGuard.check(eq("idem-1"), eq(tenantId), eq("restart_connector"), any()))
+                .thenReturn(CheckResult.duplicate("""
+                        {"connector_name":"orders-sink","action":"restart_connector","status":"SUCCESS","message":"accepted"}
+                        """, IdempotencyGuard.RESPONSE_OK, 200, approvalId));
+
+        ResponseEntity<OpsEnvelope<ConnectorActionResult>> response =
+                controller.restartConnector(PROJECT_ID, CONNECTOR, request());
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().result().connectorName()).isEqualTo(CONNECTOR);
+        verifyNoInteractions(mutationGate, connectRestClient);
+    }
+
+    @Test
+    void idempotentConsumerGroupReplayReturnsCachedEnvelopeWithoutMutation() {
+        stubOwnedConnector();
+        doNothing().when(consumerGroupVerifier).requireExists("connect-" + CONNECTOR);
+        when(idempotencyGuard.check(eq("idem-1"), eq(tenantId), eq("restart_consumer_group"), any()))
+                .thenReturn(CheckResult.duplicate("""
+                        {"consumer_group":"connect-orders-sink","action":"restart_consumer_group","status":"SUCCESS","message":"accepted"}
+                        """, IdempotencyGuard.RESPONSE_OK, 200, approvalId));
+
+        ResponseEntity<OpsEnvelope<ConsumerGroupActionResult>> response =
+                controller.restartConsumerGroup(PROJECT_ID, "connect-" + CONNECTOR, request());
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().result().consumerGroup()).isEqualTo("connect-" + CONNECTOR);
+        verifyNoInteractions(mutationGate, connectRestClient);
     }
 
     @Test
@@ -201,7 +314,7 @@ class InternalOpsMutationControllerTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().error().code()).isEqualTo("CONFLICT");
-        verifyNoInteractions(approvalValidator, connectRestClient);
+        verifyNoInteractions(mutationGate, connectRestClient);
     }
 
     @Test
@@ -212,8 +325,6 @@ class InternalOpsMutationControllerTest {
                 .thenReturn(CheckResult.duplicate("""
                         {"code":"UPSTREAM_UNAVAILABLE","message":"Kafka Connect REST failed during pause_connector","retryable":false,"required_action":"get_connector_status"}
                         """, IdempotencyGuard.RESPONSE_ERROR, HttpStatus.BAD_GATEWAY.value(), approvalId));
-        when(approvalValidator.validateAndConsume(eq(approvalId), eq(tenantId), eq("pause_connector"), any()))
-                .thenReturn(approval("pause_connector"));
         doThrow(ConnectRestException.upstream("pause_connector", 500, new RuntimeException("boom")))
                 .when(connectRestClient).pauseConnector(CONNECTOR);
 
@@ -247,7 +358,7 @@ class InternalOpsMutationControllerTest {
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().ok()).isFalse();
         assertThat(response.getBody().error().code()).isEqualTo("RESOURCE_NOT_OWNED_BY_PROJECT");
-        verifyNoInteractions(approvalValidator, idempotencyGuard, connectRestClient);
+        verifyNoInteractions(mutationGate, idempotencyGuard, connectRestClient);
     }
 
     @Test
@@ -255,8 +366,6 @@ class InternalOpsMutationControllerTest {
         stubOwnedConnector();
         when(idempotencyGuard.check(eq("idem-1"), eq(tenantId), eq("pause_connector"), any()))
                 .thenReturn(CheckResult.created());
-        when(approvalValidator.validateAndConsume(eq(approvalId), eq(tenantId), eq("pause_connector"), any()))
-                .thenReturn(approval("pause_connector"));
         doNothing().when(connectRestClient).pauseConnector(CONNECTOR);
 
         ResponseEntity<OpsEnvelope<ConnectorActionResult>> response =
@@ -267,8 +376,43 @@ class InternalOpsMutationControllerTest {
         assertThat(response.getBody().ok()).isTrue();
         assertThat(response.getBody().result().action()).isEqualTo("pause_connector");
         verify(connectRestClient).pauseConnector(CONNECTOR);
+        verify(mutationGate).executeChecked(any(MutationContext.class), any());
         verify(idempotencyGuard).complete(eq("idem-1"), eq(tenantId), any(),
-                eq(IdempotencyGuard.RESPONSE_OK), eq(HttpStatus.OK.value()), eq(approvalId));
+                eq(IdempotencyGuard.RESPONSE_OK), eq(HttpStatus.OK.value()), eq(approvalId), isNull());
+    }
+
+    @Test
+    void approvedMutationPassesAuditAndChangeTicketContextToGate() {
+        stubOwnedConnector();
+        UUID changeTicketId = UUID.randomUUID();
+        MockHttpServletRequest request = request();
+        request.addHeader(AgentHeaders.X_ACTOR_ID, "actor-1");
+        request.addHeader(AgentHeaders.X_CHANGE_TICKET_ID, changeTicketId.toString());
+        when(idempotencyGuard.check(eq("idem-1"), eq(tenantId), eq("pause_connector"), any()))
+                .thenReturn(CheckResult.created());
+
+        ResponseEntity<OpsEnvelope<ConnectorActionResult>> response =
+                controller.pauseConnector(PROJECT_ID, CONNECTOR, request);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        ArgumentCaptor<MutationContext> contextCaptor = ArgumentCaptor.forClass(MutationContext.class);
+        verify(mutationGate).executeChecked(contextCaptor.capture(), any());
+        MutationContext ctx = contextCaptor.getValue();
+        assertThat(ctx.tenantId()).isEqualTo(tenantId);
+        assertThat(ctx.actor()).isEqualTo("actor-1");
+        assertThat(ctx.operation()).isEqualTo("pause_connector");
+        assertThat(ctx.targetType()).isEqualTo("CONNECTOR");
+        assertThat(ctx.targetId()).isNotNull();
+        assertThat(ctx.idempotencyKey()).isEqualTo("idem-1");
+        assertThat(ctx.approvalId()).isEqualTo(approvalId);
+        assertThat(ctx.changeTicketId()).isEqualTo(changeTicketId);
+        assertThat(ctx.paramsHash()).hasSize(64);
+        assertThat(ctx.beforeSnapshot())
+                .containsEntry("project_id", PROJECT_ID)
+                .containsEntry("connector_name", CONNECTOR);
+        verify(idempotencyGuard).complete(eq("idem-1"), eq(tenantId), any(),
+                eq(IdempotencyGuard.RESPONSE_OK), eq(HttpStatus.OK.value()),
+                eq(approvalId), eq(changeTicketId));
     }
 
     @Test
@@ -276,8 +420,6 @@ class InternalOpsMutationControllerTest {
         stubOwnedConnector();
         when(idempotencyGuard.check(eq("idem-1"), eq(tenantId), eq("resume_connector"), any()))
                 .thenReturn(CheckResult.created());
-        when(approvalValidator.validateAndConsume(eq(approvalId), eq(tenantId), eq("resume_connector"), any()))
-                .thenReturn(approval("resume_connector"));
 
         ResponseEntity<OpsEnvelope<ConnectorActionResult>> response =
                 controller.resumeConnector(PROJECT_ID, CONNECTOR, request());
@@ -288,7 +430,7 @@ class InternalOpsMutationControllerTest {
         assertThat(response.getBody().result().action()).isEqualTo("resume_connector");
         verify(connectRestClient).resumeConnector(CONNECTOR);
         verify(idempotencyGuard).complete(eq("idem-1"), eq(tenantId), any(),
-                eq(IdempotencyGuard.RESPONSE_OK), eq(HttpStatus.OK.value()), eq(approvalId));
+                eq(IdempotencyGuard.RESPONSE_OK), eq(HttpStatus.OK.value()), eq(approvalId), isNull());
     }
 
     @Test
@@ -296,9 +438,6 @@ class InternalOpsMutationControllerTest {
         stubOwnedConnector();
         when(idempotencyGuard.check(eq("idem-1"), eq(tenantId), eq("restart_consumer_group"), any()))
                 .thenReturn(CheckResult.created());
-        when(approvalValidator.validateAndConsume(eq(approvalId), eq(tenantId), eq("restart_consumer_group"), any()))
-                .thenReturn(approval("restart_consumer_group"));
-
         var response = controller.restartConsumerGroup(PROJECT_ID, "connect-" + CONNECTOR, request());
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -321,7 +460,7 @@ class InternalOpsMutationControllerTest {
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().ok()).isFalse();
         assertThat(response.getBody().error().code()).isEqualTo("CONSUMER_GROUP_NOT_FOUND");
-        verifyNoInteractions(approvalValidator, idempotencyGuard, connectRestClient);
+        verifyNoInteractions(mutationGate, idempotencyGuard, connectRestClient);
     }
 
     @Test
@@ -338,7 +477,7 @@ class InternalOpsMutationControllerTest {
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().ok()).isFalse();
         assertThat(response.getBody().error().code()).isEqualTo("CONSUMER_GROUP_NOT_FOUND");
-        verifyNoInteractions(approvalValidator, idempotencyGuard, connectRestClient);
+        verifyNoInteractions(mutationGate, idempotencyGuard, connectRestClient);
     }
 
     private void stubOwnedConnector() {
@@ -406,15 +545,4 @@ class InternalOpsMutationControllerTest {
         return connector;
     }
 
-    private ApprovalEntity approval(String operation) {
-        ApprovalEntity approval = new ApprovalEntity();
-        approval.setId(approvalId);
-        approval.setTenantId(tenantId);
-        approval.setActor("operator");
-        approval.setOperation(operation);
-        approval.setDecision("APPROVED");
-        approval.setParamsHash("hash");
-        approval.setExpiresAt(Instant.now().plusSeconds(60));
-        return approval;
-    }
 }

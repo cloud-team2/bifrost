@@ -48,12 +48,12 @@ v1은 SSE를 기본으로 한다.
 | `tool_call_completed` | tool 호출 완료 | yes |
 | `tool_call_failed` | tool 호출 실패 | yes |
 | `evidence_collected` | evidence metadata 추가 | yes |
-| `report_preview_available` | Verifier 통과 전 중간 RCA preview 사용 가능([§4.2](contract-workflow-control.md#42-지연-최소화latency-원칙), `report/preview`). "검증 전" 표시 | yes |
+| `report_preview_available` | Verifier 통과 전 중간 RCA preview 사용 가능. 현재 preview는 `/report/preview` route가 아니라 SSE event payload로만 노출된다. "검증 전" 표시 | yes |
 | `partial_result` | 부분 결과(단계 완료 시점의 중간 결론·진행 요약) | yes |
 | `approval_required` | 승인 필요 | yes |
 | `change_management_required` | 변경관리 필요 | yes |
-| `execution_started` | action 실행 시작 | yes |
-| `execution_completed` | action 실행 완료 | yes |
+| `execution_started` | enum은 있으나 현재 runner/executor가 emit하지 않음 | no |
+| `execution_completed` | enum은 있으나 현재 runner/executor가 emit하지 않음 | no |
 | `verification_completed` | 검증 완료 | yes |
 | `run_completed` | 최종 완료 | yes |
 | `debug_trace` | 내부 debug | no |
@@ -71,7 +71,7 @@ data: {"run_id":"run_001","agent":"Retrieval","message":"근거 수집을 시작
 
 ```text
 event: tool_call_completed
-data: {"run_id":"run_001","agent":"Retrieval","tool":"get_metrics","message":"source DB timeout 지표를 수집했습니다","evidence_id":"ev_metric_001"}
+data: {"run_id":"run_001","agent":"Retrieval","tool":"get_consumer_lag","message":"consumer lag 근거를 수집했습니다","evidence_id":"ev_metric_001"}
 ```
 
 #### 5.3 RCA 완료
@@ -129,4 +129,3 @@ data: {"run_id":"run_001","action_id":"act_001","message":"connector task restar
 ```
 
 ---
-

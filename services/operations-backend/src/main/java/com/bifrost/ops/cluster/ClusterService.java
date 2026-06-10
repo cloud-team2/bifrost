@@ -35,6 +35,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -48,6 +49,7 @@ import java.util.stream.Collectors;
 public class ClusterService {
 
     private static final Logger log = LoggerFactory.getLogger(ClusterService.class);
+    private static final long ADMIN_TIMEOUT_SEC = 5L;
 
     private final AdminClient admin;
     private final PrometheusClient prometheus;
@@ -82,50 +84,77 @@ public class ClusterService {
     /** Brokers 탭: 컨트롤러·파티션 건강·브로커별 리소스. */
     public KafkaClusterResponse kafkaCluster() {
         try {
+            String status = "healthy";
+            String message = null;
+
             var dc = admin.describeCluster();
-            Node controller = dc.controller().get();
-            Collection<Node> nodes = dc.nodes().get();
+            Collection<Node> nodes = dc.nodes().get(ADMIN_TIMEOUT_SEC, TimeUnit.SECONDS);
+            Node controller = null;
+            try {
+                controller = dc.controller().get(ADMIN_TIMEOUT_SEC, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                restoreInterrupt(e);
+                status = "warning";
+                message = appendMessage(message, "controller unavailable");
+                log.warn("Kafka 컨트롤러 조회 실패, controllerId=-1로 폴백: {}", e.getMessage());
+            }
             int controllerId = controller != null ? controller.id() : -1;
 
             // 토픽 → 파티션 건강 + 브로커별 leader 수
-            Set<String> topics = admin.listTopics().names().get();
-            Map<String, TopicDescription> descs = admin.describeTopics(topics).allTopicNames().get();
             long total = 0, underRep = 0, offline = 0;
             Map<Integer, Long> leaderCount = new HashMap<>();
-            for (TopicDescription td : descs.values()) {
-                for (TopicPartitionInfo p : td.partitions()) {
-                    total++;
-                    if (p.leader() == null || p.leader().id() < 0) {
-                        offline++;
-                    } else {
-                        leaderCount.merge(p.leader().id(), 1L, Long::sum);
+            try {
+                Set<String> topics = admin.listTopics().names().get(ADMIN_TIMEOUT_SEC, TimeUnit.SECONDS);
+                Map<String, TopicDescription> descs = topics.isEmpty()
+                        ? Map.of()
+                        : admin.describeTopics(topics).allTopicNames().get(ADMIN_TIMEOUT_SEC, TimeUnit.SECONDS);
+                for (TopicDescription td : descs.values()) {
+                    for (TopicPartitionInfo p : td.partitions()) {
+                        total++;
+                        if (p.leader() == null || p.leader().id() < 0) {
+                            offline++;
+                        } else {
+                            leaderCount.merge(p.leader().id(), 1L, Long::sum);
+                        }
+                        if (p.isr().size() < p.replicas().size()) underRep++;
                     }
-                    if (p.isr().size() < p.replicas().size()) underRep++;
                 }
+            } catch (Exception e) {
+                restoreInterrupt(e);
+                status = "warning";
+                message = appendMessage(message, "topic metadata unavailable");
+                log.warn("Kafka 토픽 조회 실패, 브로커 기본 정보만 반환: {}", e.getMessage());
             }
 
             // 브로커별 로그 디렉토리 바이트
             List<Integer> brokerIds = nodes.stream().map(Node::id).collect(Collectors.toList());
-            Map<Integer, Long> logDirBytes = logDirBytes(brokerIds);
+            LogDirBytes logDirs = logDirBytes(brokerIds);
+            if (logDirs.degraded()) {
+                status = "warning";
+                message = appendMessage(message, "log dirs unavailable");
+            }
 
             List<BrokerInfo> brokers = new ArrayList<>();
             for (Node n : nodes) {
                 brokers.add(brokerInfo(n, controllerId, leaderCount.getOrDefault(n.id(), 0L),
-                        logDirBytes.getOrDefault(n.id(), 0L)));
+                        logDirs.bytes().getOrDefault(n.id(), 0L)));
             }
             brokers.sort(java.util.Comparator.comparingInt(BrokerInfo::id));
 
-            return new KafkaClusterResponse(controllerId, nodes.size(), total, underRep, offline, brokers);
+            return new KafkaClusterResponse(controllerId, nodes.size(), total, underRep, offline,
+                    brokers, status, message);
         } catch (Exception e) {
+            restoreInterrupt(e);
             log.warn("Kafka 클러스터 조회 실패: {}", e.getMessage());
-            return new KafkaClusterResponse(-1, 0, 0, 0, 0, List.of());
+            return new KafkaClusterResponse(-1, 0, 0, 0, 0, List.of(),
+                    "error", "cluster metadata unavailable");
         }
     }
 
-    private Map<Integer, Long> logDirBytes(List<Integer> brokerIds) {
+    private LogDirBytes logDirBytes(List<Integer> brokerIds) {
         try {
             Map<Integer, Map<String, LogDirDescription>> dirs =
-                    admin.describeLogDirs(brokerIds).allDescriptions().get();
+                    admin.describeLogDirs(brokerIds).allDescriptions().get(ADMIN_TIMEOUT_SEC, TimeUnit.SECONDS);
             Map<Integer, Long> out = new HashMap<>();
             dirs.forEach((broker, perDir) -> {
                 long sum = perDir.values().stream()
@@ -134,11 +163,25 @@ public class ClusterService {
                         .sum();
                 out.put(broker, sum);
             });
-            return out;
+            return new LogDirBytes(out, false);
         } catch (Exception e) {
+            restoreInterrupt(e);
             log.warn("logDirs 조회 실패: {}", e.getMessage());
-            return Map.of();
+            return new LogDirBytes(Map.of(), true);
         }
+    }
+
+    private static String appendMessage(String current, String next) {
+        return current == null ? next : current + "; " + next;
+    }
+
+    private static void restoreInterrupt(Exception e) {
+        if (e instanceof InterruptedException) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private record LogDirBytes(Map<Integer, Long> bytes, boolean degraded) {
     }
 
     private BrokerInfo brokerInfo(Node n, int controllerId, long leaderPartitions, long logDirBytes) {

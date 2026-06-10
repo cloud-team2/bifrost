@@ -4,6 +4,7 @@ import com.bifrost.ops.event.EventLevel;
 import com.bifrost.ops.event.EventService;
 import com.bifrost.ops.pipeline.persistence.entity.PipelineEntity;
 import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
+import io.micrometer.observation.annotation.Observed;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -52,6 +53,7 @@ public class ConnectRestPoller {
         this.eventService = eventService;
     }
 
+    @Observed(name = "pipeline.connect.poll")
     @Scheduled(fixedRate = 10_000, initialDelay = 20_000)
     public void poll() {
         List<?> connectors;

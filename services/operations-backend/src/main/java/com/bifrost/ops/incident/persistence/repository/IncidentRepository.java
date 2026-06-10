@@ -17,5 +17,6 @@ public interface IncidentRepository extends JpaRepository<IncidentEntity, UUID> 
     List<IncidentEntity> findByTenantIdAndStatusAndSeverityOrderByOpenedAtDesc(
             UUID tenantId, String status, String severity, Pageable pageable);
     long countByTenantIdAndStatus(UUID tenantId, String status);
+    Optional<IncidentEntity> findByIdAndTenantId(UUID id, UUID tenantId);
     Optional<IncidentEntity> findByTenantIdAndGroupingKeyAndStatus(UUID tenantId, String groupingKey, String status);
 }

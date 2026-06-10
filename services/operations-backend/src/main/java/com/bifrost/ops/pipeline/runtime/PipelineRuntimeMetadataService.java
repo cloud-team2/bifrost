@@ -316,7 +316,9 @@ public class PipelineRuntimeMetadataService {
             return sinkTopics.get(index);
         }
         if (notBlank(topicPrefix)) {
-            return topicPrefix + "." + sourceTable;
+            // #365 이후 source topic.prefix는 최종 토픽명(이미 .{schema}.{table} 포함)이라 그대로 쓴다.
+            // 구 스킴(datasource 단위 prefix)이면 sourceTable을 덧붙인다.
+            return topicPrefix.endsWith("." + sourceTable) ? topicPrefix : topicPrefix + "." + sourceTable;
         }
         return null;
     }

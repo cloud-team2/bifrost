@@ -9,13 +9,30 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic.alias_generators import to_camel
 
 from app.schemas.state import RiskLevel
 
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class SpringResponseModel(BaseModel):
+    """Spring /internal/ops/* 응답 매핑 전용 base.
+
+    - alias_generator=to_camel: snake_case 필드가 camelCase alias 자동 부여
+    - populate_by_name=True: snake_case·camelCase 양쪽 수용
+    - extra="ignore": Spring 의 무관 필드 (예: ConsumerLagResult.source) 거부 안 함
+
+    StrictModel (request/internal schema) 는 그대로 유지 — extra="forbid" 보호 정책 보존.
+    """
+    model_config = ConfigDict(
+        populate_by_name=True,
+        alias_generator=to_camel,
+        extra="ignore",
+    )
 
 
 class ToolStatus(str, Enum):
@@ -119,7 +136,9 @@ class SpringOpsResponse(StrictModel):
     ok: bool
     request_id: str
     operation: str
-    result: dict[str, Any] | None = None
+    # Spring 가 dict 또는 raw list (예: list_project_pipelines) 모두 반환 가능.
+    # raw list 응답은 spring_client.py 의 LIST_RESULT_WRAPPER 가 wrapping 처리.
+    result: dict[str, Any] | list[Any] | None = None
     evidence: list[EvidenceRef] = Field(default_factory=list)
     audit_event_id: str | None = None
     error: ToolError | None = None
@@ -136,7 +155,7 @@ class ToolResult(StrictModel):
     error: ToolError | None = None
 
 
-class ProjectPipelineSummary(StrictModel):
+class ProjectPipelineSummary(SpringResponseModel):
     pipeline_id: str
     name: str
     pattern: str
@@ -146,22 +165,22 @@ class ProjectPipelineSummary(StrictModel):
     updated_at: datetime | None = None
 
 
-class ListProjectPipelinesData(StrictModel):
+class ListProjectPipelinesData(SpringResponseModel):
     pipelines: list[ProjectPipelineSummary] = Field(default_factory=list)
 
 
-class PipelineDependencyRef(StrictModel):
+class PipelineDependencyRef(SpringResponseModel):
     db_id: str
     alias: str
 
 
-class PipelineConnectorRef(StrictModel):
+class PipelineConnectorRef(SpringResponseModel):
     cr_name: str
     kind: str
     state: str
 
 
-class PipelineTopologyData(StrictModel):
+class PipelineTopologyData(SpringResponseModel):
     pipeline_id: str
     pattern: str
     source: PipelineDependencyRef
@@ -171,13 +190,13 @@ class PipelineTopologyData(StrictModel):
     status: str
 
 
-class ConnectorTaskStatus(StrictModel):
+class ConnectorTaskStatus(SpringResponseModel):
     task_id: int
     state: str
     worker_id: str | None = None
 
 
-class ConnectorStatusData(StrictModel):
+class ConnectorStatusData(SpringResponseModel):
     connector_name: str
     state: str
     tasks: list[ConnectorTaskStatus] = Field(default_factory=list)
@@ -185,7 +204,7 @@ class ConnectorStatusData(StrictModel):
     observed_at: datetime | None = None
 
 
-class ConsumerLagPartition(StrictModel):
+class ConsumerLagPartition(SpringResponseModel):
     topic: str
     partition: int
     current_offset: int
@@ -193,11 +212,12 @@ class ConsumerLagPartition(StrictModel):
     lag: int
 
 
-class ConsumerLagData(StrictModel):
+class ConsumerLagData(SpringResponseModel):
     consumer_group: str
     total_lag: int
     partitions: list[ConsumerLagPartition] = Field(default_factory=list)
     observed_at: datetime | None = None
+    source: str | None = None  # Spring ConsumerLagResult.source (kafka-admin 등) — RCA evidence 메모용
 
 
 class TimeRange(StrictModel):
@@ -212,18 +232,36 @@ class LogSearchRequest(StrictModel):
     limit: int | None = None
 
 
-class LogSearchData(StrictModel):
-    match_count: int
-    summary: str
+class LogSearchData(SpringResponseModel):
+    """Spring LogSearchResult{logs, total, note} 및 ai-service 의도된 {match_count, summary} 양쪽 수용.
+
+    Spring 가 반환한 total/note 를 model_validator 가 match_count/summary 로 normalize.
+    """
+    match_count: int = 0
+    summary: str | None = None
+    logs: list[dict[str, Any]] = Field(default_factory=list)
+    total: int | None = None
+    note: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_spring_logsearch(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            data = dict(data)
+            if "match_count" not in data and "matchCount" not in data and "total" in data:
+                data["match_count"] = data["total"]
+            if "summary" not in data and "note" in data:
+                data["summary"] = data["note"]
+        return data
 
 
-class TriggerEventSummary(StrictModel):
+class TriggerEventSummary(SpringResponseModel):
     event_id: str
     level: str
     occurred_at: datetime
 
 
-class IncidentSummaryData(StrictModel):
+class IncidentSummaryData(SpringResponseModel):
     incident_id: str
     severity: str
     status: str
@@ -236,12 +274,12 @@ class IncidentSummaryData(StrictModel):
 
 # ── catalog §8.1 Observability ────────────────────────────────────────────────
 
-class MetricsDataPoint(StrictModel):
+class MetricsDataPoint(SpringResponseModel):
     timestamp: str
     value: float
 
 
-class MetricsData(StrictModel):
+class MetricsData(SpringResponseModel):
     metric: str
     summary: str
     data_points: list[MetricsDataPoint] = Field(default_factory=list)
@@ -252,17 +290,15 @@ class GetTracesParams(StrictModel):
     limit: int | None = None
 
 
-class TraceEntry(StrictModel):
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
+class TraceEntry(SpringResponseModel):
+    # 명시 alias "taskId" 보존 (alias_generator(to_camel) 가 동일하게 생성하지만 명시성 유지).
     task_id: int | None = Field(default=None, alias="taskId")
     state: str | None = None
     trace: str
 
 
-class TracesData(StrictModel):
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
+class TracesData(SpringResponseModel):
+    # Spring 가 "connector" 필드명으로 반환 — alias_generator(to_camel) 의 "connectorName" 과 다르므로 명시 alias 필수.
     connector_name: str | None = Field(default=None, alias="connector")
     traces: list[TraceEntry] = Field(default_factory=list)
     summary: str | None = None
@@ -275,7 +311,7 @@ class GetAlertsParams(StrictModel):
     limit: int | None = None
 
 
-class AlertSummaryData(StrictModel):
+class AlertSummaryData(SpringResponseModel):
     alert_id: str
     severity: str
     status: str
@@ -285,34 +321,34 @@ class AlertSummaryData(StrictModel):
     incident_id: str | None = None
 
 
-class AlertsData(StrictModel):
+class AlertsData(SpringResponseModel):
     alerts: list[AlertSummaryData] = Field(default_factory=list)
     summary: str | None = None
 
 
 # ── catalog §8.2 Pipeline / Change ───────────────────────────────────────────
 
-class DeploymentChangeSummary(StrictModel):
+class DeploymentChangeSummary(SpringResponseModel):
     change_id: str
     type: str
     description: str
     changed_at: datetime | None = None
 
 
-class DeploymentsData(StrictModel):
+class DeploymentsData(SpringResponseModel):
     changes: list[DeploymentChangeSummary] = Field(default_factory=list)
 
 
 # ── catalog §8.6 Mutation (write) actions ─────────────────────────────────────
 
-class ConnectorActionData(StrictModel):
+class ConnectorActionData(SpringResponseModel):
     connector_name: str
     action: str
     status: str
     message: str | None = None
 
 
-class ConsumerGroupActionData(StrictModel):
+class ConsumerGroupActionData(SpringResponseModel):
     consumer_group: str
     action: str
     status: str

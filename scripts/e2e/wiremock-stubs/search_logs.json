@@ -10,8 +10,15 @@
       "request_id": "req_e2e_002",
       "operation": "search_logs",
       "result": {
-        "match_count": 5,
-        "summary": "5 occurrences of consumer lag p95 increase and offset progression 정체"
+        "logs": [
+          {"ts": "2026-06-10T09:00:00Z", "line": "consumer lag p95 increased to 12345"},
+          {"ts": "2026-06-10T09:01:00Z", "line": "offset progression 정체 observed"},
+          {"ts": "2026-06-10T09:02:00Z", "line": "consumer lag p95 sustained"},
+          {"ts": "2026-06-10T09:03:00Z", "line": "consumer group rebalance retried"},
+          {"ts": "2026-06-10T09:04:00Z", "line": "offset commit rate drop"}
+        ],
+        "total": 5,
+        "note": "5 occurrences of consumer lag p95 increase and offset progression 정체"
       },
       "evidence": [
         {

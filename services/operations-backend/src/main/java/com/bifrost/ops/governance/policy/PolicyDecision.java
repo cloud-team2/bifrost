@@ -4,5 +4,6 @@ package com.bifrost.ops.governance.policy;
 public enum PolicyDecision {
     ALLOW,
     REQUIRE_APPROVAL,
+    REQUIRE_CHANGE_MANAGEMENT,
     DENY
 }

@@ -12,6 +12,7 @@ import {
   type AuthTokens,
   type EventResponse,
   type IncidentResponse,
+  type MeResponse,
   type PipelineCreateInput,
   type RegisterInput,
   type ResourceEventResponse,
@@ -19,11 +20,11 @@ import {
 import { datasourceToNode, pipelineToEdge, workspaceToProject } from '../lib/mappers'
 
 export type View =
-  | 'overview'
   | 'pipelines'
   | 'pipeline-detail'
   | 'databases'
   | 'database-detail'
+  | 'activity-log'
   | 'alerts'
   | 'cluster'
   | 'settings'
@@ -119,12 +120,31 @@ const emptyAgentRunState = (): AgentRunSseState => ({
   updatedAt: null,
 })
 
-function userFromEmail(email: string): User {
+const VIEWS = new Set<View>([
+  'pipelines',
+  'pipeline-detail',
+  'databases',
+  'database-detail',
+  'activity-log',
+  'alerts',
+  'cluster',
+  'settings',
+])
+
+function normalizeView(view: unknown): View {
+  return typeof view === 'string' && VIEWS.has(view as View) ? (view as View) : 'pipelines'
+}
+
+function userFromMe(me: MeResponse): User {
+  const name = me.name?.trim() || me.email.split('@')[0]
+  const initial = Array.from(name)[0] ?? Array.from(me.email)[0] ?? '?'
   return {
-    name: email.split('@')[0],
-    email,
-    role: 'developer',
-    initial: (email[0] ?? '?').toUpperCase(),
+    name,
+    email: me.email,
+    role: me.role,
+    initial: initial.toUpperCase(),
+    joinedAt: me.joinedAt,
+    lastLoginAt: me.lastLoginAt,
   }
 }
 
@@ -188,7 +208,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     selectProject(proj)
     if (projectChanged) clearMonitoringData()
     if (proj) loadProjectData(proj.id)
-    setViewRaw(s.view)
+    setViewRaw(normalizeView(s.view))
     setSelectedPipelineId(s.selectedPipelineId)
     setSelectedDatabaseId(s.selectedDatabaseId)
     setOpSelectedIncidentId(s.opSelectedIncidentId)
@@ -297,7 +317,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .me()
       .then(async (me) => {
         if (cancelled) return
-        setCurrentUser(userFromEmail(me.email))
+        setCurrentUser(userFromMe(me))
         await loadWorkspaces()
       })
       .catch(() => setToken(null))
@@ -339,7 +359,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   async function applyAuth(tokens: AuthTokens) {
     setToken(tokens.accessToken)
     const me = await api.me()
-    setCurrentUser(userFromEmail(me.email))
+    setCurrentUser(userFromMe(me))
     selectProject(null)
     clearMonitoringData()
     await loadWorkspaces()

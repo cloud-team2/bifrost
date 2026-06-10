@@ -21,6 +21,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.Optional;
 import java.util.UUID;
+import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -87,6 +88,7 @@ class ChangeTicketControllerTest {
         assertThat(captor.getValue().getTenantId()).isEqualTo(tenantId);
         assertThat(captor.getValue().getTitle()).isEqualTo("rollback_pipeline");
         assertThat(captor.getValue().getStatus()).isEqualTo("OPEN");
+        assertThat(captor.getValue().getScopeOperation()).isEqualTo("rollback_pipeline");
         verify(auditService).record(
                 eq(tenantId),
                 eq(AuditService.ACTOR_SYSTEM),
@@ -144,7 +146,7 @@ class ChangeTicketControllerTest {
     void validateChangeTicketDelegatesToValidatorAndAudits() throws Exception {
         UUID ticketId = UUID.randomUUID();
         UUID tenantId = UUID.randomUUID();
-        ChangeTicketEntity ticket = ticket(ticketId, tenantId, "rollback_pipeline", "OPEN");
+        ChangeTicketEntity ticket = ticket(ticketId, tenantId, "rollback_pipeline", "APPROVED");
         when(changeTicketValidator.validate(ticketId, tenantId)).thenReturn(ticket);
 
         mockMvc.perform(post("/internal/ops/change-tickets/{changeTicketId}/validate", ticketId)
@@ -168,6 +170,29 @@ class ChangeTicketControllerTest {
                 eq("change_ticket"),
                 eq(ticketId),
                 eq("change ticket validated for execution"));
+    }
+
+    @Test
+    void approveChangeTicketRouteIsNotExposed() throws Exception {
+        UUID ticketId = UUID.randomUUID();
+        UUID tenantId = UUID.randomUUID();
+        Instant windowStart = Instant.parse("2026-06-10T10:00:00Z");
+        Instant windowEnd = Instant.parse("2026-06-10T11:00:00Z");
+
+        mockMvc.perform(post("/internal/ops/change-tickets/{changeTicketId}/approve", ticketId)
+                        .header(REQUEST_ID_HEADER, REQUEST_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "tenantId":"%s",
+                                  "windowStart":"%s",
+                                  "windowEnd":"%s"
+                                }
+                                """.formatted(tenantId, windowStart, windowEnd)))
+                .andExpect(status().isNotFound());
+
+        verify(changeTicketRepository, never()).save(any());
+        verify(auditService, never()).record(any(), any(), eq("change_ticket_approve"), any(), any(), any());
     }
 
     @Test
@@ -259,6 +284,11 @@ class ChangeTicketControllerTest {
         ticket.setTenantId(tenantId);
         ticket.setTitle(title);
         ticket.setStatus(status);
+        ticket.setWindowStart(Instant.now().minusSeconds(60));
+        ticket.setWindowEnd(Instant.now().plusSeconds(60));
+        ticket.setRollbackPlan("restore previous connector config");
+        ticket.setImpactAnalysis("single connector impact");
+        ticket.setScopeOperation(title);
         return ticket;
     }
 

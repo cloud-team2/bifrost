@@ -67,6 +67,7 @@ public class ChangeTicketController {
         ticket.setTenantId(request.tenantId());
         ticket.setTitle(request.title());
         ticket.setStatus(STATUS_OPEN);
+        ticket.setScopeOperation(request.title());
 
         ChangeTicketEntity saved = changeTicketRepository.save(ticket);
         auditService.record(
@@ -137,7 +138,10 @@ public class ChangeTicketController {
             UUID tenantId,
             String title,
             String status,
-            Instant createdAt
+            Instant createdAt,
+            Instant windowStart,
+            Instant windowEnd,
+            String scopeOperation
     ) {
         static ChangeTicketResult from(ChangeTicketEntity ticket) {
             return new ChangeTicketResult(
@@ -145,7 +149,10 @@ public class ChangeTicketController {
                     ticket.getTenantId(),
                     ticket.getTitle(),
                     externalStatus(ticket.getStatus()),
-                    ticket.getCreatedAt());
+                    ticket.getCreatedAt(),
+                    ticket.getWindowStart(),
+                    ticket.getWindowEnd(),
+                    ticket.getScopeOperation());
         }
     }
 
