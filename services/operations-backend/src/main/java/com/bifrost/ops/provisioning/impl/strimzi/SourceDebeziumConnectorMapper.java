@@ -39,6 +39,12 @@ public class SourceDebeziumConnectorMapper {
     public static final String MARIADB_CLASS = "io.debezium.connector.mariadb.MariaDbConnector";
     /** 데이터플레인 추적 SMT(#371/#438). 변경 이벤트마다 span 생성 + trace context를 Kafka 헤더에 주입. */
     public static final String TRACING_SMT_TYPE = "io.debezium.transforms.tracing.ActivateTracingSpan";
+    /**
+     * Postgres timestamptz 커스텀 컨버터(#425). Connect 이미지의 plugin 디렉토리에 동봉되며
+     * (connect-plugins/timestamptz-converter), timestamptz를 Connect Timestamp 논리 타입으로 바꿔
+     * JDBC sink의 varchar 적재 → 타입 불일치를 막는다.
+     */
+    public static final String TIMESTAMPTZ_CONVERTER_TYPE = "com.bifrost.connect.converter.TimestamptzConverter";
 
     /**
      * source 커넥터 config의 transforms에 데이터플레인 tracing SMT를 on/off (per-pipeline 토글, #438).
@@ -165,6 +171,11 @@ public class SourceDebeziumConnectorMapper {
                     // (#365) publication을 이 파이프라인의 테이블로만 한정(filtered). 기본값(all_tables)이면
                     // slot이 DB의 모든 테이블 변경을 stream해 "events seen" 메트릭이 테이블 무관하게 합산된다.
                     .addToConfig("publication.autocreate.mode", "filtered")
+                    // (#425) timestamptz는 time.precision.mode와 무관하게 Debezium이 ZonedTimestamp(문자열)로
+                    // 방출 → JDBC sink가 varchar 적재 → 타입 불일치. 커스텀 컨버터로 Connect Timestamp로 변환한다.
+                    // (컨버터 JAR은 Connect 이미지에 동봉, connect-plugins/timestamptz-converter)
+                    .addToConfig("converters", "timestamptz")
+                    .addToConfig("converters.timestamptz.type", TIMESTAMPTZ_CONVERTER_TYPE)
                     .endSpec();
             // MariaDB(Debezium binlog): server id는 클러스터 내 유일해야 하므로 pipelineId 해시 사용.
             // 단일 테이블만 캡처하므로 database.include.list = dbName으로 좁힌다.

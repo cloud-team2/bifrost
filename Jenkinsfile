@@ -38,6 +38,14 @@ spec:
       volumeMounts:
         - name: harbor-auth
           mountPath: /kaniko/.docker
+    # Kafka Connect 커스텀 이미지(#425) — Strimzi spec.image 용. 컨텍스트=레포 루트(멀티모듈 Gradle).
+    - name: kaniko-kafka-connect
+      image: gcr.io/kaniko-project/executor:v1.23.2-debug
+      command: ["/busybox/cat"]
+      tty: true
+      volumeMounts:
+        - name: harbor-auth
+          mountPath: /kaniko/.docker
     - name: git
       image: alpine/git:2.45.2
       command: ["cat"]
@@ -96,6 +104,13 @@ spec:
                 changed.any { it.startsWith("services/${svc}/") }
               }.join(' ')
               echo "변경된 서비스: '${env.TO_BUILD}'"
+
+              // Kafka Connect 커스텀 이미지(#425): Dockerfile 또는 컨버터 모듈 변경 시 재빌드.
+              // base 없으면(전체 빌드) 함께 빌드. (services/<svc> 모델과 별개라 따로 감지)
+              env.BUILD_CONNECT = (!base || changed.any {
+                it.startsWith('infra/docker/kafka-connect/') || it.startsWith('connect-plugins/')
+              }) ? 'true' : ''
+              echo "Kafka Connect 이미지 빌드: '${env.BUILD_CONNECT}'"
             }
           }
         }
@@ -122,6 +137,25 @@ spec:
                   """
                 }
               }
+            }
+          }
+        }
+
+        // Kafka Connect 커스텀 이미지(#425). 컨텍스트=레포 루트(멀티모듈 Gradle로 컨버터 JAR 빌드).
+        // Harbor에 push만 한다 — 인프라 이미지라 main 머지마다 자동 롤하지 않는다. 롤아웃은
+        // KafkaConnect spec.image 태그를 새 :${TAG}로 올려 적용(수동/별도, 런북 참조).
+        stage('Build Kafka Connect image') {
+          when { expression { env.BUILD_CONNECT?.trim() } }
+          steps {
+            container('kaniko-kafka-connect') {
+              sh """
+                /kaniko/executor \
+                  --context=dir://${WORKSPACE} \
+                  --dockerfile=${WORKSPACE}/infra/docker/kafka-connect/Dockerfile \
+                  --destination=${HARBOR}/${PROJECT}/bifrost-kafka-connect:${TAG} \
+                  --destination=${HARBOR}/${PROJECT}/bifrost-kafka-connect:latest \
+                  --insecure --skip-tls-verify --insecure-pull
+              """
             }
           }
         }
