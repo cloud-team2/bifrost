@@ -524,7 +524,10 @@ async def run_workflow(
                     await _publish(bus, event_repo, run_id,
                                    _evt(run_id, StreamingEventType.AGENT_STARTED, "report", "답변을 생성합니다"))
                     llm = get_llm_provider()
-                    answer = await report_agent.run_report(user_message, retrieval_out, mode, llm)
+                    answer = await report_agent.run_report(
+                        user_message, retrieval_out, mode, llm,
+                        rca_out=rca_out, classifier_out=classifier_out,
+                    )
                     await _persist_report_snapshot(
                         run_id=run_id,
                         answer=answer,
