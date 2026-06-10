@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
+from uuid import UUID
 
 from fastapi.testclient import TestClient
 
@@ -20,7 +22,7 @@ def _now() -> datetime:
 
 
 class FakeRunRecord(SimpleNamespace):
-    def model_dump(self) -> dict[str, Any]:
+    def model_dump(self, **_: Any) -> dict[str, Any]:
         return dict(self.__dict__)
 
 
@@ -220,6 +222,78 @@ def test_actions_merges_actions_namespace(monkeypatch):
         "execution_status": "pending",
         "audit_event_id": None,
     }]
+
+
+def test_auxiliary_routes_accept_db_record_values_for_closed_runs(monkeypatch):
+    ts = _now()
+    author_id = UUID("8a686502-fc55-4515-b186-396c19293edb")
+    action_id = UUID("11111111-1111-1111-1111-111111111111")
+    approval_id = UUID("22222222-2222-2222-2222-222222222222")
+    audit_event_id = UUID("33333333-3333-3333-3333-333333333333")
+
+    for status in ("completed", "failed"):
+        event = SimpleNamespace(
+            run_id="run_001",
+            created_at=ts + timedelta(seconds=3),
+            type="agent_completed",
+            agent=author_id,
+            message=None,
+        )
+        patches = [
+            StatePatchRecord(
+                run_id="run_001",
+                seq=1,
+                namespace="analysis",
+                author=author_id,
+                op="append",
+                path="/analysis/root_cause",
+                patch=json.dumps({"summary": "root cause"}),
+                created_at=ts + timedelta(seconds=1),
+            ),
+            StatePatchRecord(
+                run_id="run_001",
+                seq=2,
+                namespace="actions",
+                author="PolicyGuard",
+                op="append",
+                path=f"/actions/{action_id}",
+                patch={
+                    "action_id": action_id,
+                    "action_type": "runtime_tool",
+                    "risk": "medium",
+                    "approval_id": approval_id,
+                    "audit_event_id": audit_event_id,
+                },
+                created_at=ts + timedelta(seconds=2),
+            ),
+        ]
+        _install(monkeypatch, runs=[_run(status=status)], patches=patches, events=[event])
+
+        summary = client.get("/api/v1/agent/runs/run_001/state/summary")
+        assert summary.status_code == 200
+        summary_data = summary.json()["data"]
+        assert summary_data["status"] == status
+        assert summary_data["namespaces"]["analysis"]["last_author"] == str(author_id)
+        assert summary_data["namespaces"]["analysis"]["last_updated_at"].startswith("2026-06-01T00:00:01")
+
+        timeline = client.get("/api/v1/agent/runs/run_001/timeline")
+        assert timeline.status_code == 200
+        timeline_items = timeline.json()["data"]["items"]
+        assert timeline_items[0]["agent"] == str(author_id)
+        assert timeline_items[0]["created_at"].startswith("2026-06-01T00:00:01")
+        assert timeline_items[2]["message"] == ""
+
+        steps = client.get("/api/v1/agent/runs/run_001/steps")
+        assert steps.status_code == 200
+        assert steps.json()["data"]["steps"][0]["agent"] == str(author_id)
+
+        actions = client.get("/api/v1/agent/runs/run_001/actions")
+        assert actions.status_code == 200
+        action = actions.json()["data"]["actions"][0]
+        assert action["action_id"] == str(action_id)
+        assert action["approval_id"] == str(approval_id)
+        assert action["audit_event_id"] == str(audit_event_id)
+        assert action["risk"] == "medium"
 
 
 def test_messages_starts_background_workflow(monkeypatch):

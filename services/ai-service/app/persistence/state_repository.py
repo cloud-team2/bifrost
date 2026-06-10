@@ -1,13 +1,15 @@
 """Repository for state_patch table — append-only State history (§9.2)."""
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from datetime import datetime
 from typing import Any
 from typing import Union
+from uuid import UUID
 
 import asyncpg
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from app.core.db import get_pool
 
@@ -24,6 +26,20 @@ class StatePatchRecord(BaseModel):
     path: str
     patch: dict[str, Any]
     created_at: datetime | None = None
+
+    @field_validator("run_id", "namespace", "author", "op", "path", mode="before")
+    @classmethod
+    def _uuid_to_str(cls, value: object) -> object:
+        return str(value) if isinstance(value, UUID) else value
+
+    @field_validator("patch", mode="before")
+    @classmethod
+    def _jsonb_to_dict(cls, value: object) -> object:
+        if value is None:
+            return {}
+        if isinstance(value, str):
+            return json.loads(value)
+        return value
 
 
 class InMemoryStateRepository:

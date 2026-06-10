@@ -57,6 +57,14 @@ const ROLE_LABEL: Record<WorkspaceMemberRole, string> = {
 
 const RISK_LABEL: Record<AgentTask['risk'], string> = { low: '낮음', medium: '중간', high: '높음' }
 
+const DONE_PROGRESS_EVENTS: AgentStreamingEventType[] = [
+  'agent_completed',
+  'execution_completed',
+  'verification_completed',
+  'run_started',
+]
+const RUNNING_PROGRESS_EVENTS: AgentStreamingEventType[] = ['execution_started', 'agent_started']
+
 const THEMES = {
   brand: {
     avatar: 'bg-gradient-to-br from-brand-500 to-violet-600',
@@ -86,22 +94,33 @@ interface TextMsg {
   role: 'user' | 'assistant'
   text: string
 }
+type ProgressState = 'running' | 'done' | 'failed' | 'waiting'
 interface StatusMsg {
   id: number
   kind: 'status'
   eventType: string
   agent: string | null
   text: string
-  state: 'running' | 'done' | 'failed' | 'waiting'
+  state: ProgressState
 }
-interface ToolMsg {
-  id: number
-  kind: 'tool'
+interface ProgressItem {
   key: string
-  toolName: string
-  detail: string
-  status: 'running' | 'completed' | 'failed'
+  kind: 'stage' | 'tool' | 'system'
+  eventType: string
+  agent: string | null
+  label: string
+  text: string
+  state: ProgressState
   summary: string | null
+}
+interface ProgressMsg {
+  id: number
+  kind: 'progress'
+  runId: string
+  expanded: boolean
+  terminalState: Extract<ProgressState, 'done' | 'failed'> | null
+  terminalText: string | null
+  items: ProgressItem[]
 }
 interface EvidenceMsg {
   id: number
@@ -114,6 +133,7 @@ interface EvidenceMsg {
 interface ReportMsg {
   id: number
   kind: 'report'
+  key: string | null
   title: string
   text: string
   verified: boolean | null
@@ -137,7 +157,7 @@ interface DoneMsg {
   success: boolean
 }
 
-type AgentMsg = TextMsg | StatusMsg | ToolMsg | EvidenceMsg | ReportMsg | ApprovalMsg | DoneMsg
+type AgentMsg = TextMsg | StatusMsg | ProgressMsg | EvidenceMsg | ReportMsg | ApprovalMsg | DoneMsg
 
 type ThemeName = keyof typeof THEMES
 
@@ -294,17 +314,16 @@ export function AgentRunPanel({
         lastEventType: 'run_created',
         lastMessage: `Agent Run ${run.run_id} 생성됨`,
       })
-      updateMsgs((m) => [
-        ...m,
-        {
-          id: ++seq.current,
-          kind: 'status',
-          eventType: 'run_created',
-          agent: null,
-          text: `Agent Run ${run.run_id} 생성됨 — SSE 연결 중`,
-          state: 'running',
-        },
-      ])
+      upsertProgress(run.run_id, {
+        key: `${run.run_id}:run`,
+        kind: 'system',
+        eventType: 'run_created',
+        agent: null,
+        label: 'Run',
+        text: `Agent Run ${run.run_id} 생성됨 — SSE 연결 중`,
+        state: 'running',
+        summary: null,
+      })
       openEventStream(run.run_id)
     } catch (e) {
       setRunning(false)
@@ -359,17 +378,16 @@ export function AgentRunPanel({
     es.onmessage = (event) => handleStreamEvent('partial_result', event as MessageEvent<string>)
     es.onerror = () => {
       if (!runningRef.current) return
-      updateMsgs((m) => [
-        ...m,
-        {
-          id: ++seq.current,
-          kind: 'status',
-          eventType: 'stream_reconnecting',
-          agent: null,
-          text: 'SSE 연결이 끊겨 재연결을 시도합니다.',
-          state: 'waiting',
-        },
-      ])
+      upsertProgress(runId, {
+        key: `${runId}:stream`,
+        kind: 'system',
+        eventType: 'stream_reconnecting',
+        agent: null,
+        label: 'SSE',
+        text: 'SSE 연결이 끊겨 재연결을 시도합니다.',
+        state: 'waiting',
+        summary: null,
+      })
     }
   }
 
@@ -394,6 +412,7 @@ export function AgentRunPanel({
     const normalized: AgentRunEvent = { ...parsed, type: parsed.type ?? eventType, payload: parsed.payload ?? {} }
     if (normalized.event_id && seenEvents.current.has(normalized.event_id)) return
     if (normalized.event_id) seenEvents.current.add(normalized.event_id)
+    resolveStreamReconnect(normalized.run_id)
     app.setAgentRunState({
       runId: normalized.run_id,
       status: agentRunStatusFromEvent(normalized),
@@ -410,7 +429,7 @@ export function AgentRunPanel({
       return
     }
     if (event.type === 'tool_call_completed') {
-      upsertTool(event, 'completed')
+      upsertTool(event, 'done')
       return
     }
     if (event.type === 'tool_call_failed') {
@@ -432,23 +451,37 @@ export function AgentRunPanel({
       return
     }
     if (event.type === 'report_preview' || event.type === 'report_preview_available') {
-      updateMsgs((m) => [
-        ...m,
-        {
-          id: ++seq.current,
-          kind: 'report',
-          title: 'Report preview',
-          text: event.message,
-          verified: payloadBoolean(event, 'verified'),
-          confidence: payloadNumber(event, 'confidence'),
-        },
-      ])
+      upsertReport({
+        key: event.agent === 'rca' ? `${event.run_id}:rca` : null,
+        title: event.agent === 'rca' ? 'RCA preview' : 'Report preview',
+        text: event.message,
+        verified: payloadBoolean(event, 'verified'),
+        confidence: payloadNumber(event, 'confidence'),
+      })
       return
     }
     if (event.type === 'partial_result') {
       const answer = payloadString(event, 'answer')
-      if (answer) appendText('assistant', answer)
-      else appendStatus(event, 'done')
+      const stage = payloadString(event, 'stage')
+      if (answer) {
+        appendProgressStatus(event, 'done')
+        upsertReport({
+          key: `${event.run_id}:final-report`,
+          title: 'Report',
+          text: answer,
+          verified: null,
+          confidence: payloadNumber(event, 'confidence'),
+        })
+      } else if (stage === 'rca') {
+        upsertReport({
+          key: `${event.run_id}:rca`,
+          title: 'RCA',
+          text: event.message,
+          verified: null,
+          confidence: payloadNumber(event, 'confidence'),
+        })
+        appendProgressStatus(event, 'done')
+      } else appendProgressStatus(event, 'done')
       return
     }
     if (event.type === 'approval_required') {
@@ -478,6 +511,7 @@ export function AgentRunPanel({
     }
     if (event.type === 'run_completed') {
       const failed = typeof event.payload.error === 'string' || event.message.startsWith('오류')
+      settleProgress(event.run_id, failed ? 'failed' : 'done', event.message)
       updateMsgs((m) => [
         ...m,
         { id: ++seq.current, kind: 'done', text: event.message || 'Agent Run이 완료되었습니다.', success: !failed },
@@ -491,14 +525,7 @@ export function AgentRunPanel({
       return
     }
 
-    const doneTypes: AgentStreamingEventType[] = [
-      'agent_completed',
-      'execution_completed',
-      'verification_completed',
-      'run_started',
-    ]
-    const waitingTypes: AgentStreamingEventType[] = ['execution_started', 'agent_started']
-    appendStatus(event, doneTypes.includes(event.type) ? 'done' : waitingTypes.includes(event.type) ? 'running' : 'waiting')
+    appendProgressStatus(event, progressStateForEvent(event))
   }
 
   function appendStatus(event: AgentRunEvent, state: StatusMsg['state']) {
@@ -515,22 +542,115 @@ export function AgentRunPanel({
     ])
   }
 
-  function upsertTool(event: AgentRunEvent, status: ToolMsg['status']) {
+  function appendProgressStatus(event: AgentRunEvent, state: ProgressState) {
+    upsertProgress(event.run_id, {
+      key: progressKey(event),
+      kind: 'stage',
+      eventType: event.type,
+      agent: event.agent,
+      label: progressLabel(event),
+      text: event.message,
+      state,
+      summary: null,
+    })
+  }
+
+  function upsertTool(event: AgentRunEvent, state: ProgressState) {
     const toolName = payloadString(event, 'tool') ?? 'tool'
     const key = `${event.run_id}:${payloadString(event, 'step_id') ?? toolName}`
-    const summary = payloadString(event, 'summary') ?? (status === 'running' ? null : event.message)
+    const summary = payloadString(event, 'summary') ?? (state === 'running' ? null : event.message)
+    upsertProgress(event.run_id, {
+      key: `tool:${key}`,
+      kind: 'tool',
+      eventType: event.type,
+      agent: event.agent,
+      label: toolName,
+      text: event.message,
+      state,
+      summary,
+    })
+  }
+
+  function upsertProgress(runId: string, item: ProgressItem) {
     updateMsgs((prev) => {
+      const progressIndex = prev.findIndex((msg): msg is ProgressMsg => msg.kind === 'progress' && msg.runId === runId)
+      if (progressIndex < 0) {
+        return [
+          ...prev,
+          { id: ++seq.current, kind: 'progress', runId, expanded: false, terminalState: null, terminalText: null, items: [item] },
+        ]
+      }
+      return prev.map((msg, index) => {
+        if (index !== progressIndex || msg.kind !== 'progress') return msg
+        const itemIndex = msg.items.findIndex((existing) => existing.key === item.key)
+        if (itemIndex < 0) return { ...msg, items: [...msg.items, item] }
+        return {
+          ...msg,
+          items: msg.items.map((existing, existingIndex) =>
+            existingIndex === itemIndex
+              ? {
+                  ...existing,
+                  ...item,
+                  state: mergeProgressState(existing.state, item.state),
+                  summary: item.summary ?? existing.summary,
+                }
+              : existing,
+          ),
+        }
+      })
+    })
+  }
+
+  function settleProgress(runId: string, state: Extract<ProgressState, 'done' | 'failed'>, text: string) {
+    updateMsgs((prev) =>
+      prev.map((msg) => {
+        if (msg.kind !== 'progress' || msg.runId !== runId) return msg
+        return {
+          ...msg,
+          terminalState: state,
+          terminalText: text || (state === 'done' ? 'Agent Run이 완료되었습니다.' : 'Agent Run이 실패했습니다.'),
+          items: msg.items.map((item) =>
+            item.state === 'running' || item.state === 'waiting' ? { ...item, state } : item,
+          ),
+        }
+      }),
+    )
+  }
+
+  function toggleProgress(messageId: number) {
+    updateMsgs((m) =>
+      m.map((msg) => (msg.kind === 'progress' && msg.id === messageId ? { ...msg, expanded: !msg.expanded } : msg)),
+    )
+  }
+
+  function resolveStreamReconnect(runId: string) {
+    updateMsgs((prev) => {
+      let changed = false
+      const next = prev.map((msg) => {
+        if (msg.kind !== 'progress' || msg.runId !== runId) return msg
+        let itemsChanged = false
+        const items = msg.items.map((item) => {
+          if (item.eventType !== 'stream_reconnecting' || item.state === 'done') return item
+          itemsChanged = true
+          return { ...item, text: 'SSE 연결이 복구되었습니다.', state: 'done' as const }
+        })
+        changed = changed || itemsChanged
+        return itemsChanged ? { ...msg, items } : msg
+      })
+      return changed ? next : prev
+    })
+  }
+
+  function upsertReport(report: Omit<ReportMsg, 'id' | 'kind'>) {
+    updateMsgs((prev) => {
+      if (!report.key) return [...prev, { id: ++seq.current, kind: 'report', ...report }]
       let found = false
       const next = prev.map((msg) => {
-        if (msg.kind !== 'tool' || msg.key !== key) return msg
+        if (msg.kind !== 'report' || msg.key !== report.key) return msg
         found = true
-        return { ...msg, toolName, detail: event.message, status, summary }
+        return { ...msg, ...report }
       })
-      if (found) return next
-      return [
-        ...next,
-        { id: ++seq.current, kind: 'tool', key, toolName, detail: event.message, status, summary },
-      ]
+      return found ? next : [...next, { id: ++seq.current, kind: 'report', ...report }]
     })
   }
 
@@ -610,7 +730,9 @@ export function AgentRunPanel({
         {msgs.map((m) => {
           if (m.kind === 'text') return <TextBubble key={m.id} msg={m} theme={theme} />
           if (m.kind === 'status') return <StatusCard key={m.id} msg={m} theme={theme} />
-          if (m.kind === 'tool') return <ToolCard key={m.id} msg={m} theme={theme} />
+          if (m.kind === 'progress') {
+            return <ProgressCard key={m.id} msg={m} theme={theme} onToggle={() => toggleProgress(m.id)} />
+          }
           if (m.kind === 'evidence') return <EvidenceCard key={m.id} msg={m} />
           if (m.kind === 'report') return <ReportCard key={m.id} msg={m} />
           if (m.kind === 'approval') {
@@ -706,33 +828,87 @@ function StatusCard({ msg, theme }: { msg: StatusMsg; theme: (typeof THEMES)[The
   )
 }
 
-function ToolCard({ msg, theme }: { msg: ToolMsg; theme: (typeof THEMES)[ThemeName] }) {
+function ProgressCard({
+  msg,
+  theme,
+  onToggle,
+}: {
+  msg: ProgressMsg
+  theme: (typeof THEMES)[ThemeName]
+  onToggle: () => void
+}) {
+  const failed = msg.items.find((item) => item.state === 'failed')
+  const running = msg.items.find((item) => item.state === 'running')
+  const waiting = msg.items.find((item) => item.state === 'waiting')
+  const completedCount = msg.items.filter((item) => item.state === 'done').length
+  const latest = msg.items[msg.items.length - 1]
+  const visualState = progressVisualState({ terminalState: msg.terminalState, failed, running, waiting })
+  const headline = progressHeadline({
+    terminalState: msg.terminalState,
+    terminalText: msg.terminalText,
+    failed,
+    running,
+    waiting,
+    latest,
+  })
+
   return (
-    <div className="rounded-lg border border-gray-200 bg-white">
-      <div className="flex items-center gap-1.5 border-b border-gray-100 px-3 py-1.5 font-mono text-[11px] text-gray-500">
-        {msg.status === 'running' ? (
-          <Spinner size={11} />
-        ) : msg.status === 'failed' ? (
-          <Icon name="alert" size={11} className="text-rose-500" />
-        ) : (
-          <Icon name="zap" size={11} className={theme.icon} />
-        )}
-        <span className="font-semibold text-gray-700">{msg.toolName}</span>
-        <span className="text-gray-300">·</span>
-        <span className="truncate text-gray-400">{msg.detail}</span>
-      </div>
-      {msg.summary ? (
-        <pre className="overflow-x-auto whitespace-pre-wrap px-3 py-2.5 font-mono text-[10.5px] leading-relaxed text-gray-700">
-          {msg.summary}
-        </pre>
-      ) : (
-        <div className="flex items-center gap-2 px-3 py-2.5 text-[11.5px] text-gray-400">
-          <Spinner size={12} />
-          도구 호출 중…
+    <div className="rounded-lg border border-gray-200 bg-white/70 text-[11.5px] text-gray-600">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left"
+      >
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          {visualState === 'running' ? (
+            <Spinner size={12} />
+          ) : visualState === 'failed' ? (
+            <Icon name="alert" size={12} className="text-rose-500" />
+          ) : visualState === 'waiting' ? (
+            <Icon name="clock" size={12} className="text-amber-500" />
+          ) : (
+            <Icon name="check" size={12} strokeWidth={3} className="text-emerald-500" />
+          )}
+          <span className="shrink-0 font-semibold text-gray-800">진행 단계</span>
+          <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[10.5px] text-gray-500">
+            {completedCount}/{msg.items.length}
+          </span>
+          <span className={cn('truncate', visualState === 'running' ? theme.statusText : 'text-gray-500')}>{headline}</span>
+        </div>
+        <Icon name={msg.expanded ? 'chevron-up' : 'chevron-down'} size={13} className="shrink-0 text-gray-400" />
+      </button>
+      {msg.expanded && (
+        <div className="max-h-80 space-y-2 overflow-y-auto border-t border-gray-100 px-3 py-2.5">
+          {msg.items.map((item) => (
+            <div key={item.key} className="grid grid-cols-[14px_minmax(0,1fr)] gap-2">
+              <ProgressDot state={item.state} />
+              <div className="min-w-0">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate font-semibold text-gray-700">{item.label}</span>
+                  <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-400">
+                    {progressEventLabel(item)}
+                  </span>
+                </div>
+                <div className="mt-0.5 whitespace-pre-wrap break-words leading-relaxed text-gray-500">{item.text}</div>
+                {item.summary && (
+                  <pre className="mt-1 overflow-x-auto whitespace-pre-wrap rounded bg-gray-50 px-2 py-1.5 font-mono text-[10.5px] leading-relaxed text-gray-600">
+                    {item.summary}
+                  </pre>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
   )
+}
+
+function ProgressDot({ state }: { state: ProgressState }) {
+  if (state === 'running') return <Spinner size={12} />
+  if (state === 'failed') return <Icon name="alert" size={12} className="mt-0.5 text-rose-500" />
+  if (state === 'waiting') return <Icon name="clock" size={12} className="mt-0.5 text-amber-500" />
+  return <Icon name="check" size={12} strokeWidth={3} className="mt-0.5 text-emerald-500" />
 }
 
 function EvidenceCard({ msg }: { msg: EvidenceMsg }) {
@@ -759,7 +935,7 @@ function ReportCard({ msg }: { msg: ReportMsg }) {
         {msg.verified === false && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px]">검증 전</span>}
         {msg.confidence !== null && <span className="text-[10.5px] text-amber-700">{Math.round(msg.confidence * 100)}%</span>}
       </div>
-      <div className="leading-relaxed">{msg.text}</div>
+      <div className="break-words leading-relaxed">{msg.text}</div>
     </div>
   )
 }
@@ -858,6 +1034,97 @@ function agentRunStatusFromEvent(event: AgentRunEvent) {
   }
   if (event.type === 'approval_required' || event.type === 'change_management_required') return 'waiting_for_approval'
   return 'running'
+}
+
+function progressKey(event: AgentRunEvent) {
+  const stage = payloadString(event, 'stage')
+  if (event.type === 'run_started') return `${event.run_id}:run`
+  if (event.type === 'partial_result' && (stage || event.agent)) {
+    return `${event.run_id}:stage:${stage ?? event.agent}`
+  }
+  if ((event.type === 'agent_started' || event.type === 'agent_completed') && event.agent) {
+    return `${event.run_id}:stage:${event.agent}`
+  }
+  if (event.type === 'execution_started' || event.type === 'execution_completed') {
+    return `${event.run_id}:stage:${event.agent ?? 'executor'}`
+  }
+  if (event.type === 'verification_completed') return `${event.run_id}:stage:${event.agent ?? 'verifier'}`
+  return `${event.run_id}:${event.type}:${event.agent ?? 'run'}`
+}
+
+function progressLabel(event: AgentRunEvent) {
+  const stage = payloadString(event, 'stage')
+  const agent = event.agent ?? stage
+  if (agent) return AGENT_LABEL[agent] ?? agent
+  if (event.type === 'run_started') return 'Run'
+  return event.type
+}
+
+function progressEventLabel(item: ProgressItem) {
+  if (item.kind === 'tool') return item.state === 'running' ? 'tool_call' : 'tool_done'
+  if (item.eventType === 'run_created') return 'created'
+  if (item.eventType === 'run_started') return 'started'
+  if (item.eventType === 'agent_started') return 'started'
+  if (item.eventType === 'agent_completed') return 'completed'
+  if (item.eventType === 'partial_result') return 'summary'
+  if (item.eventType === 'execution_started') return 'started'
+  if (item.eventType === 'execution_completed') return 'completed'
+  if (item.eventType === 'verification_completed') return 'verified'
+  if (item.eventType === 'stream_reconnecting') return 'reconnect'
+  return item.eventType
+}
+
+function progressStateForEvent(event: AgentRunEvent): ProgressState {
+  if (DONE_PROGRESS_EVENTS.includes(event.type)) return 'done'
+  if (RUNNING_PROGRESS_EVENTS.includes(event.type)) return 'running'
+  return 'waiting'
+}
+
+function progressVisualState({
+  terminalState,
+  failed,
+  running,
+  waiting,
+}: {
+  terminalState: ProgressMsg['terminalState']
+  failed: ProgressItem | undefined
+  running: ProgressItem | undefined
+  waiting: ProgressItem | undefined
+}): ProgressState {
+  if (terminalState) return terminalState
+  if (failed) return 'failed'
+  if (running) return 'running'
+  if (waiting) return 'waiting'
+  return 'done'
+}
+
+function progressHeadline({
+  terminalState,
+  terminalText,
+  failed,
+  running,
+  waiting,
+  latest,
+}: {
+  terminalState: ProgressMsg['terminalState']
+  terminalText: string | null
+  failed: ProgressItem | undefined
+  running: ProgressItem | undefined
+  waiting: ProgressItem | undefined
+  latest: ProgressItem | undefined
+}) {
+  if (terminalState === 'failed') return terminalText || 'Run 실패'
+  if (terminalState === 'done') return terminalText || 'Agent Run이 완료되었습니다.'
+  if (failed) return `${failed.label} 실패`
+  if (running) return `${running.label} 진행 중`
+  if (waiting) return `${waiting.label} 대기 중`
+  return latest?.text ?? '대기 중'
+}
+
+function mergeProgressState(current: ProgressState, next: ProgressState): ProgressState {
+  if (current === 'failed' || next === 'failed') return 'failed'
+  if (current === 'done') return 'done'
+  return next
 }
 
 function payloadString(event: AgentRunEvent, key: string): string | null {

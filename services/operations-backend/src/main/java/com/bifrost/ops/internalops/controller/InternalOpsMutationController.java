@@ -10,6 +10,7 @@ import com.bifrost.ops.governance.idempotency.IdempotencyGuard;
 import com.bifrost.ops.governance.idempotency.IdempotencyGuard.CheckKind;
 import com.bifrost.ops.governance.idempotency.IdempotencyGuard.CheckResult;
 import com.bifrost.ops.internalops.AgentHeaders;
+import com.bifrost.ops.internalops.WorkspaceLookup;
 import com.bifrost.ops.internalops.dto.ConnectorActionResult;
 import com.bifrost.ops.internalops.dto.ConsumerGroupActionResult;
 import com.bifrost.ops.internalops.dto.OpsEnvelope;
@@ -390,7 +391,7 @@ public class InternalOpsMutationController {
     }
 
     private WorkspaceEntity requireWorkspace(String projectId) {
-        return workspaceRepository.findByNamespace(projectId)
+        return WorkspaceLookup.resolve(workspaceRepository, projectId)
                 .orElseThrow(() -> new ApiException(ErrorCode.WORKSPACE_NOT_FOUND,
                         "프로젝트를 찾을 수 없습니다: " + projectId));
     }

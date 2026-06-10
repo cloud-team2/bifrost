@@ -90,4 +90,38 @@ class PipelineTopicServiceTest {
         c.setLastError(lastError);
         return c;
     }
+
+    /** #404: 60분 창을 요청해도 생성시각(5분 전)으로 클램프 → 메트릭 쿼리 시작이 생성시각 이후여야 한다. */
+    @Test
+    void eventDistributionClampsQueryStartToCreatedAt() {
+        UUID wsId = UUID.randomUUID();
+        UUID id = UUID.randomUUID();
+        AuthenticatedUser principal = new AuthenticatedUser(UUID.randomUUID(), wsId, "u@bifrost.io");
+        long createdSec = System.currentTimeMillis() / 1000L - 300; // 5분 전 생성
+
+        PipelineEntity p = new PipelineEntity();
+        p.setId(id);
+        p.setTenantId(wsId);
+        p.setPattern(PipelinePattern.DIRECT);
+        p.setSchemaName("public");
+        p.setTableName("orders");
+        p.setTopicName("cdc.table.team.shop-1234.public.orders");
+        org.springframework.test.util.ReflectionTestUtils.setField(
+                p, "createdAt", java.time.Instant.ofEpochSecond(createdSec));
+        when(pipelineRepository.findByIdAndTenantId(id, wsId)).thenReturn(Optional.of(p));
+        when(kafkaMetricsQuery.isEnabled()).thenReturn(true);
+        when(kafkaMetricsQuery.eventCountSeries(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyLong())).thenReturn(java.util.Map.of());
+
+        service().eventDistribution(wsId, principal, id, 60); // 60분 창 요청
+
+        org.mockito.ArgumentCaptor<Long> startCap = org.mockito.ArgumentCaptor.forClass(Long.class);
+        org.mockito.Mockito.verify(kafkaMetricsQuery, org.mockito.Mockito.atLeastOnce()).eventCountSeries(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
+                startCap.capture(), org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong());
+        // 클램프가 없으면 (now-60분)-evStep로 한참 이전이어야 하지만, 생성시각으로 잘려 createdAt 근처여야 한다.
+        assertThat(startCap.getValue()).isGreaterThanOrEqualTo(createdSec - 60);
+    }
 }

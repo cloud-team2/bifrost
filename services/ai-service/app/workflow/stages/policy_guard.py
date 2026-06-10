@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.catalogs import policy_matrix
-from app.persistence.event_repository import AnyEventRepo, InMemoryEventRepository
+from app.persistence.event_repository import AnyEventRepo, append_event
 from app.schemas.events import StreamingEvent, StreamingEventType
 from app.schemas.outputs import ActionCandidateOutput, PolicyDecisionOutput, PolicyGuardOutput
 from app.schemas.state import ActionStatus, PolicyDecisionType
@@ -20,10 +20,7 @@ _DECISION_TO_STATUS = {
 
 
 async def _pub(bus: EventBus, repo: AnyEventRepo, run_id: str, event: StreamingEvent) -> None:
-    if isinstance(repo, InMemoryEventRepository):
-        repo.append(run_id, event)
-    else:
-        await repo.append(run_id, event)
+    await append_event(repo, run_id, event)
     await bus.publish(run_id, event)
 
 

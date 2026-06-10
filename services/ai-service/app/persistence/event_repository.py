@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from typing import Union
+from typing import Any, Union
 
 import asyncpg
 
@@ -42,21 +42,26 @@ class PostgresEventRepository:
     async def append(self, run_id: str, event: StreamingEvent) -> None:
         payload = event.payload or None
         async with self._get_pool().acquire() as conn:
-            await conn.execute(
-                """
-                INSERT INTO run_event (event_id, run_id, seq, type, agent, message, payload)
-                SELECT $1, $2,
-                       COALESCE((SELECT MAX(seq) FROM run_event WHERE run_id = $2), 0) + 1,
-                       $3, $4, $5, $6::jsonb
-                ON CONFLICT (event_id) DO NOTHING
-                """,
-                event.event_id,
-                run_id,
-                event.type.value,
-                event.agent,
-                event.message,
-                json.dumps(payload) if payload else None,
-            )
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT 1 FROM agent_run WHERE run_id = $1 FOR UPDATE",
+                    run_id,
+                )
+                await conn.execute(
+                    """
+                    INSERT INTO run_event (event_id, run_id, seq, type, agent, message, payload)
+                    SELECT $1, $2,
+                           COALESCE((SELECT MAX(seq) FROM run_event WHERE run_id = $2), 0) + 1,
+                           $3, $4, $5, $6::jsonb
+                    ON CONFLICT (event_id) DO NOTHING
+                    """,
+                    event.event_id,
+                    run_id,
+                    event.type.value,
+                    event.agent,
+                    event.message,
+                    json.dumps(payload) if payload else None,
+                )
 
     async def get_after(
         self,
@@ -90,17 +95,32 @@ def _row_to_event(row: asyncpg.Record) -> StreamingEvent:
     if isinstance(payload, str):
         payload = json.loads(payload)
     return StreamingEvent(
-        event_id=row["event_id"],
-        run_id=row["run_id"],
+        event_id=_value_as_str(row["event_id"], ""),
+        run_id=_value_as_str(row["run_id"], ""),
         timestamp=row["created_at"],
-        type=StreamingEventType(row["type"]),
-        agent=row["agent"],
-        message=row["message"],
+        type=StreamingEventType(_value_as_str(row["type"], "") or ""),
+        agent=_value_as_str(row["agent"]),
+        message=_value_as_str(row["message"], "") or "",
         payload=payload or {},
     )
 
 
+def _value_as_str(value: Any, default: str | None = None) -> str | None:
+    if value is None:
+        return default
+    value = getattr(value, "value", value)
+    return value if isinstance(value, str) else str(value)
+
+
 AnyEventRepo = Union[InMemoryEventRepository, PostgresEventRepository]
+
+
+async def append_event(repo: AnyEventRepo, run_id: str, event: StreamingEvent) -> None:
+    if isinstance(repo, InMemoryEventRepository):
+        repo.append(run_id, event)
+    else:
+        await repo.append(run_id, event)
+
 
 _postgres_repo = PostgresEventRepository()
 _memory_repo = InMemoryEventRepository()

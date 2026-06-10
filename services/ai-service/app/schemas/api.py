@@ -26,6 +26,13 @@ class StateNamespaceSummary(StrictModel):
     last_updated_at: datetime | None = None
 
 
+class StepSummary(StrictModel):
+    step_id: str
+    agent: str
+    status: str
+    created_at: datetime | None = None
+
+
 class TimelineItem(StrictModel):
     seq: int | None = None
     type: str
