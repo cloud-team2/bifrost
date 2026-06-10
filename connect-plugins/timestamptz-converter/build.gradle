@@ -1,0 +1,30 @@
+// Debezium 커스텀 컨버터(#425). Kafka Connect 이미지의 plugin 디렉토리에 동봉되는 단일 JAR.
+// debezium-api / connect-api 는 런타임(Connect 워커)이 제공하므로 compileOnly 로만 의존한다.
+plugins {
+    id 'java-library'
+}
+
+description = 'Debezium custom converter: timestamptz → Kafka Connect Timestamp (#425)'
+
+// Connect 이미지와 버전 정합 (infra/k8s/kafka/kafka-connect.yaml):
+//   debezium-connector-postgres 3.5.1.Final, KafkaConnect version 4.2.0
+ext {
+    debeziumVersion = '3.5.1.Final'
+    kafkaConnectVersion = '4.2.0'
+}
+
+dependencies {
+    compileOnly "io.debezium:debezium-api:${debeziumVersion}"
+    compileOnly "org.apache.kafka:connect-api:${kafkaConnectVersion}"
+
+    testImplementation "io.debezium:debezium-api:${debeziumVersion}"
+    testImplementation "org.apache.kafka:connect-api:${kafkaConnectVersion}"
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.3'
+    testImplementation 'org.assertj:assertj-core:3.26.3'
+    testImplementation 'org.mockito:mockito-core:5.14.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+jar {
+    archiveBaseName = 'bifrost-timestamptz-converter'
+}

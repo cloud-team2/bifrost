@@ -4,10 +4,13 @@ import com.bifrost.ops.provisioning.dto.PipelineProvisionCommand;
 import com.bifrost.ops.provisioning.dto.PipelineProvisionResult;
 import com.bifrost.ops.provisioning.dto.PipelineProvisionStatus;
 import com.bifrost.ops.provisioning.dto.PipelineResourceRef;
+import com.bifrost.ops.provisioning.naming.ConnectorNaming;
 import com.bifrost.ops.provisioning.port.KafkaPipelineProvisioner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+
+import java.util.UUID;
 
 /**
  * 파이프라인 생성/조회/삭제 호출 경로의 단일 진입점(#45).
@@ -54,5 +57,11 @@ public class PipelineProvisioningService {
         log.info("pipeline 삭제 요청: pipeline={}, connectors={}",
                 resourceRef.pipelineId(), resourceRef.connectorNames());
         provisioner.deletePipelineResources(resourceRef);
+    }
+
+    /** 데이터플레인 추적 SMT를 파이프라인 source 커넥터에 on/off (per-pipeline 토글, #438). */
+    public void setDataplaneTracing(UUID pipelineId, boolean enabled) {
+        log.info("데이터플레인 추적 토글: pipeline={}, enabled={}", pipelineId, enabled);
+        provisioner.setSourceTracing(ConnectorNaming.sourceConnectorName(pipelineId), enabled);
     }
 }
