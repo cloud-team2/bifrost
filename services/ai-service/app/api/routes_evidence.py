@@ -48,25 +48,45 @@ def get_state_repo() -> PostgresStateRepository:
     return _state_repo
 
 
+def _value_as_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    value = getattr(value, "value", value)
+    return value if isinstance(value, str) else str(value)
+
+
+async def _get_patches(run_id: str) -> list[Any]:
+    return await get_state_repo().get_patches(run_id)
+
+
+def _patch_payload(patch: Any) -> dict[str, Any]:
+    payload = getattr(patch, "patch", {})
+    return payload if isinstance(payload, dict) else {}
+
+
 def _evidence_summary(patch: Any) -> dict[str, Any]:
-    payload = patch.patch
+    payload = _patch_payload(patch)
+    created_at = getattr(patch, "created_at", None)
     return {
-        "evidence_id": payload.get("evidence_id"),
-        "type": payload.get("type"),
-        "store_ref": payload.get("store_ref"),
-        "summary": payload.get("summary"),
-        "redaction_status": payload.get("redaction_status"),
-        "collected_at": patch.created_at.isoformat() if patch.created_at else None,
+        "evidence_id": _value_as_str(payload.get("evidence_id")),
+        "type": _value_as_str(payload.get("type")),
+        "store_ref": _value_as_str(payload.get("store_ref")),
+        "summary": _value_as_str(payload.get("summary")),
+        "redaction_status": _value_as_str(payload.get("redaction_status")),
+        "collected_at": created_at.isoformat() if created_at else None,
     }
 
 
 @router.get("/runs/{run_id}/evidence")
 async def list_evidence(run_id: str) -> ApiResponse:
-    patches = await get_state_repo().get_patches(run_id)
+    patches = await _get_patches(run_id)
     items = [
         _evidence_summary(patch)
         for patch in patches
-        if patch.namespace == "evidence" and patch.patch.get("evidence_id")
+        if (
+            getattr(patch, "namespace", None) == "evidence"
+            and _patch_payload(patch).get("evidence_id")
+        )
     ]
     return ApiResponse.success(_request_id(), {"items": items})
 
@@ -74,10 +94,14 @@ async def list_evidence(run_id: str) -> ApiResponse:
 @router.get("/runs/{run_id}/evidence/{evidence_id}")
 async def get_evidence(run_id: str, evidence_id: str) -> Any:
     request_id = _request_id()
-    patches = await get_state_repo().get_patches(run_id)
+    patches = await _get_patches(run_id)
     for patch in patches:
-        if patch.namespace == "evidence" and patch.patch.get("evidence_id") == evidence_id:
-            return ApiResponse.success(request_id, patch.patch)
+        payload = _patch_payload(patch)
+        if (
+            getattr(patch, "namespace", None) == "evidence"
+            and _value_as_str(payload.get("evidence_id")) == evidence_id
+        ):
+            return ApiResponse.success(request_id, payload)
     return _failure(
         request_id,
         "EVIDENCE_NOT_FOUND",

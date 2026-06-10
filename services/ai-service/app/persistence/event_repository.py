@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from typing import Union
+from typing import Any, Union
 
 import asyncpg
 
@@ -90,14 +90,21 @@ def _row_to_event(row: asyncpg.Record) -> StreamingEvent:
     if isinstance(payload, str):
         payload = json.loads(payload)
     return StreamingEvent(
-        event_id=row["event_id"],
-        run_id=row["run_id"],
+        event_id=_value_as_str(row["event_id"], ""),
+        run_id=_value_as_str(row["run_id"], ""),
         timestamp=row["created_at"],
-        type=StreamingEventType(row["type"]),
-        agent=row["agent"],
-        message=row["message"],
+        type=StreamingEventType(_value_as_str(row["type"], "") or ""),
+        agent=_value_as_str(row["agent"]),
+        message=_value_as_str(row["message"], "") or "",
         payload=payload or {},
     )
+
+
+def _value_as_str(value: Any, default: str | None = None) -> str | None:
+    if value is None:
+        return default
+    value = getattr(value, "value", value)
+    return value if isinstance(value, str) else str(value)
 
 
 AnyEventRepo = Union[InMemoryEventRepository, PostgresEventRepository]
