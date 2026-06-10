@@ -67,6 +67,9 @@ spec:
     TAG         = "${(env.GIT_COMMIT ?: 'latest').take(8)}"
     GITOPS_REPO = 'github.com/cloud-team2/bifrost.git'
     SERVICES    = 'ai-service operations-backend frontend'   // services/<svc> = 빌드 컨텍스트
+    // Kafka Connect 커스텀 이미지(#425)가 push하는 고정 버전 태그. KafkaConnect spec.image가
+    // 참조하는 값(infra/k8s/kafka/kafka-connect.yaml)과 일치해야 한다 — 이미지가 바뀌면 둘을 함께 bump.
+    CONNECT_TAG = '1.0.0-converter'
   }
 
   options {
@@ -148,10 +151,13 @@ spec:
           when { expression { env.BUILD_CONNECT?.trim() } }
           steps {
             container('kaniko-kafka-connect') {
+              // spec.image가 참조하는 고정 태그(CONNECT_TAG) + 추적용 git-sha + latest로 push.
+              // CONNECT_TAG가 매니페스트와 일치하므로 빌드 후 kafka-connect.yaml을 그대로 apply하면 된다.
               sh """
                 /kaniko/executor \
                   --context=dir://${WORKSPACE} \
                   --dockerfile=${WORKSPACE}/infra/docker/kafka-connect/Dockerfile \
+                  --destination=${HARBOR}/${PROJECT}/bifrost-kafka-connect:${CONNECT_TAG} \
                   --destination=${HARBOR}/${PROJECT}/bifrost-kafka-connect:${TAG} \
                   --destination=${HARBOR}/${PROJECT}/bifrost-kafka-connect:latest \
                   --insecure --skip-tls-verify --insecure-pull
