@@ -75,6 +75,24 @@ class InMemoryApprovalLinkRepository:
     def list_pending(self, run_id: str) -> list[ApprovalLink]:
         return [l for l in self._store.values() if l.run_id == run_id and l.status == "pending"]
 
+    def list_all(
+        self,
+        *,
+        status: str | None = None,
+        run_id: str | None = None,
+    ) -> list[ApprovalLink]:
+        """글로벌 approval 조회 (issue #394).
+
+        run/status 필터는 optional. 최신 (created_at desc) 순 정렬.
+        """
+        items = list(self._store.values())
+        if status is not None:
+            items = [l for l in items if l.status == status]
+        if run_id is not None:
+            items = [l for l in items if l.run_id == run_id]
+        items.sort(key=lambda l: l.created_at, reverse=True)
+        return items
+
 
 class PostgresApprovalLinkRepository:
     def __init__(self, pool: asyncpg.Pool | None = None) -> None:
