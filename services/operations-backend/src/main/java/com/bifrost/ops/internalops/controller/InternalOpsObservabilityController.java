@@ -168,16 +168,37 @@ public class InternalOpsObservabilityController {
     }
 
     /**
-     * query_traces — Connect REST task exception trace 실구현(S4).
-     * Tempo 분산 트레이싱 불필요. connector task status의 trace 필드를 RCA evidence로 노출.
+     * query_traces — Connect REST task exception trace(S4).
+     *
+     * <p>설계상 query_traces(Observability)는 Tempo 분산 trace summary 자리이고, connector task 예외는
+     * {@link #getConnectorTaskTrace}로 분리한다(#368 realign 1단계). 무중단을 위해 현재는 두 엔드포인트가
+     * 동일 본문을 제공하며, 이후 query_traces는 Tempo 기반으로 교체 예정.
      */
     @GetMapping("/projects/{projectId}/connectors/{connectorName}/traces")
-    @SuppressWarnings("unchecked")
     public ResponseEntity<OpsEnvelope<Map<String, Object>>> queryTraces(
             @PathVariable String projectId,
             @PathVariable String connectorName,
             HttpServletRequest request) {
         String requestId = AgentHeaders.requestId(request);
+        return ResponseEntity.ok(OpsEnvelope.ok(requestId, "query_traces", connectorTaskTraceBody(connectorName)));
+    }
+
+    /**
+     * get_connector_task_trace — Kafka Connect task status의 exception trace를 RCA evidence로 노출
+     * (설계 tool-catalog §8.3). #368: query_traces가 임시로 맡던 역할을 이 도구로 분리.
+     */
+    @GetMapping("/projects/{projectId}/connectors/{connectorName}/task-trace")
+    public ResponseEntity<OpsEnvelope<Map<String, Object>>> getConnectorTaskTrace(
+            @PathVariable String projectId,
+            @PathVariable String connectorName,
+            HttpServletRequest request) {
+        String requestId = AgentHeaders.requestId(request);
+        return ResponseEntity.ok(OpsEnvelope.ok(requestId, "get_connector_task_trace", connectorTaskTraceBody(connectorName)));
+    }
+
+    /** Connect REST {@code /connectors/{name}/status}의 task {@code trace}(예외) 필드를 모은 본문. 미연결 시 빈 결과 + note. */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> connectorTaskTraceBody(String connectorName) {
         try {
             Map<String, Object> status = connectRestClient.get()
                     .uri("/connectors/{name}/status", connectorName)
@@ -195,13 +216,10 @@ public class InternalOpsObservabilityController {
                             "trace", t.get("trace")))
                     .collect(Collectors.toList());
 
-            return ResponseEntity.ok(OpsEnvelope.ok(requestId, "query_traces",
-                    Map.of("connector", connectorName, "traces", traces)));
+            return Map.of("connector", connectorName, "traces", traces);
         } catch (RestClientException e) {
-            log.debug("query_traces Connect REST 실패(무시): connector={} cause={}", connectorName, e.getMessage());
-            return ResponseEntity.ok(OpsEnvelope.ok(requestId, "query_traces",
-                    Map.of("connector", connectorName, "traces", List.of(),
-                            "note", "Connect REST unavailable")));
+            log.debug("connector task trace Connect REST 실패(무시): connector={} cause={}", connectorName, e.getMessage());
+            return Map.of("connector", connectorName, "traces", List.of(), "note", "Connect REST unavailable");
         }
     }
 
