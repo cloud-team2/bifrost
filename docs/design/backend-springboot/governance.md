@@ -1,144 +1,132 @@
-# Spring Boot Operations Backend — Governance Engine (운영 조치 집행)
+# Spring Boot Operations Backend — Governance Engine
 
-> 요약은 [overview.md](./overview.md). 이 파일은 agent-facing mutation의 **집행 파이프라인**(정책·승인·변경관리·멱등성·감사·증거)을 구현 수준으로 다룬다. **무엇을 실행할 수 있는지(allowlist)의 정본은 [server.md §7.1](./server.md#71-operation-allowlist-집행-경계-단일-출처)**, 개념 흐름은 [server.md §4·§6~§10](./server.md#1-server-design)이며 이 문서는 그 구현이다.
->
-> 패키지: `internalops`(요청 표면) + `governance`(policy·approval·changemanagement·idempotency·audit·evidence) ([server.md §5](./server.md#5-패키지-구조)).
+> 요약은 [overview.md](./overview.md). 이 파일은 현재 구현된 `/internal/ops` governance, approval, change-ticket, mutation/idempotency 계약을 코드 기준으로 정리한다. API 상세는 [Spring Boot API §6](../../api/springboot.md#6-internal-ops-read--governance--mutation-api), 문자열 에러 코드는 [error-codes.md](../../api/error-codes.md#internal-ops-문자열-코드)를 따른다.
 
 ## 7. Governance Engine
 
-### 1. 목적·범위
+### 1. 현재 구현 범위
 
-FastAPI Agent가 `/internal/ops`로 보낸 **mutation 요청을 실제 runtime에 반영하기 전, 모든 게이트를 통과시키는 집행 계층**. read-only 조회는 scope만 통과하면 바로 실행하고, mutation은 이 엔진을 반드시 거친다. **FastAPI의 Policy Guard는 사전 판단(미러)일 뿐, 집행·SoT는 여기**다([server.md §3 신뢰 경계](./server.md#3-신뢰-경계) — TOCTOU·confused deputy 방어).
+현재 Spring Boot에 구현된 agent-facing 표면은 세 부류다.
 
-### 2. 집행 파이프라인
+| 범위 | 구현 |
+| --- | --- |
+| read tools | `/internal/ops/admin/tool-catalog`의 8개 read operation과 health/ready/version |
+| governance facade | `/internal/ops/approvals/**`, `/internal/ops/change-tickets/**` |
+| mutation subset | connector restart/pause/resume, Kafka Connect-managed consumer group restart |
 
-`internalops` controller가 받은 mutation 요청은 아래 순서로 통과하며, **하나라도 실패하면 즉시 차단 + audit**한다(부수효과 전에 끝낸다).
+`SecurityConfig`상 `/internal/ops/**`는 현재 permitAll path다. 따라서 service identity 인증은 설계 목표이지 현재 코드 gate가 아니다. Mutation controller가 실제로 적용하는 gate는 agent header, workspace/resource ownership, approval, idempotency, Kafka Connect REST 결과 mapping이다.
+
+### 2. Mutation 처리 순서
+
+`InternalOpsMutationController` 기준 처리 순서:
 
 ```text
-[1] service identity   FastAPI service account인가                  → 401/403
-[2] scope/ownership    project_id 멤버십 + resource 소유             → WORKSPACE_FORBIDDEN
-[3] idempotency        X-Idempotency-Key 조회                        → replay / CONFLICT / 진행중 status
-[4] policy             operation → allowlist decision(§3)            → POLICY_DENIED
-[5] approval/change    decision별 승인·티켓 재검증(§4·§5)            → APPROVAL_* / CHANGE_*
-[6] before-evidence    실행 전 snapshot 저장                          → evidence_ref
-[7] execute            Resource Adapter 호출(Fabric8/Kafka/Connect)  → runtime
-[8] after-evidence     실행 후 snapshot 저장
-[9] audit              성공/실패/차단을 audit_event에 기록
-[10] response          operation/evidence 봉투로 반환
+[1] request id 산출
+[2] X-Agent-Run-Id / X-Agent-Step-Id / X-Idempotency-Key 필수 header 검사
+[3] workspace namespace 기반 project 조회
+[4] connector 또는 consumer group ownership 검사
+[5] X-Approval-Id 존재 검사
+[6] IdempotencyGuard.check(tenantId, operation, paramsHash)
+[7] ApprovalValidator.validateAndConsume(approvalId, tenantId, operation, paramsHash)
+[8] Kafka Connect REST mutation 실행
+[9] idempotency row에 response snapshot 저장
+[10] OpsEnvelope 반환
 ```
 
-차단은 실패가 아니라 정상 경로다. 모든 분기(성공·차단)는 [9] audit를 거친다.
+모든 failure가 audit/evidence를 남기는 구조는 아직 구현되어 있지 않다. `OpsEnvelope.evidence` 기본값은 빈 배열이고 `auditEventId` 값은 null이라 JSON 응답에서는 `audit_event_id` field가 생략된다.
 
-### 3. Policy Guard (`governance.policy`)
+### 3. Header와 Envelope
 
-operation을 [server.md §7.1 allowlist](./server.md#71-operation-allowlist-집행-경계-단일-출처)에서 lookup해 `allow`/`require_approval`/`require_change_management`/`deny`를 정한다.
-
-- **allowlist는 정적 등록**(operation catalog). 미등록 `runtime_tool`·금지 목록은 **deny**. 불명확하면 더 안전한 쪽으로 올린다(낮추지 않음).
-- decision은 operation 유형에서 파생([server.md §7](./server.md#1-server-design)): read=allow, runtime state change=approval, replay/rollback/config=change management, delete/exec/SQL/secret=deny.
-- FastAPI catalog와 **decision이 어긋나면 Spring 기준이 우선**한다. `GET /internal/ops/admin/tool-catalog`로 런타임 allowlist를 노출([api §25](../../api/springboot.md)).
-
-### 4. Approval 검증 (`governance.approval`)
-
-**Approval record의 원본·검증·감사는 Spring(SoT)**, FastAPI는 facade(run↔approval 연계·UI 캐시만 — [fastapi server-design §9](../backend-fastapi/server-design.md#2-server-design)). 실행 직전 다음을 **모두** 만족해야 한다.
-
-| # | 검증 | 실패 코드 |
-| --- | --- | --- |
-| 1 | approval id 존재 | RESOURCE_NOT_FOUND |
-| 2 | status=`approved` | APPROVAL_REQUIRED |
-| 3 | approval.action_id == 요청 action_id | APPROVAL_SCOPE_MISMATCH |
-| 4 | approval.operation == 실제 operation | APPROVAL_SCOPE_MISMATCH |
-| 5 | **params_hash 일치** | APPROVAL_SCOPE_MISMATCH |
-| 6 | 승인자 권한(project/resource) | PERMISSION_DENIED |
-| 7 | 미만료(expiry) | APPROVAL_EXPIRED |
-| 8 | single-use(미사용) | CONFLICT |
-
-- **params_hash**: 실행 parameter를 **정규화 JSON(키 정렬·whitespace 제거·null 규칙 고정) → SHA-256**. 승인 시점 hash와 실행 시점 hash가 다르면 "승인 후 변조"로 보고 차단(§4.5). 정규화 규칙은 FastAPI와 동일 고정([fastapi tool-catalog §14](../backend-fastapi/tool-catalog.md#4-tool-catalog)).
-- 승인 절차: Policy Guard `require_approval` → `POST /approvals`로 request 생성 → 사용자가 `POST /approvals/{id}/decision`(HITL) → Executor가 위 8개 재검증 후 실행.
-
-### 5. Change Management 검증 (`governance.changemanagement`)
-
-`require_change_management`(rollback/backfill/topic·user·config 변경)는 approval보다 강하다. 모두 충족해야 실행한다.
-
-| 검증 | 실패 코드 |
+| Header | 현재 동작 |
 | --- | --- |
-| change ticket 존재·status=approved | CHANGE_TICKET_REQUIRED |
-| 현재 시각이 execution window 안 | CHANGE_WINDOW_CLOSED |
-| rollback plan 존재 | CHANGE_TICKET_REQUIRED |
-| impact analysis 존재 | CHANGE_TICKET_REQUIRED |
-| requested operation ∈ ticket scope | CHANGE_SCOPE_MISMATCH |
+| `X-Agent-Request-Id` | request id 우선 후보 |
+| `X-Request-Id` | `X-Agent-Request-Id`가 없을 때 request id 후보 |
+| `X-Agent-Run-Id` | mutation 필수 |
+| `X-Agent-Step-Id` | mutation 필수 |
+| `X-Idempotency-Key` | mutation 필수 |
+| `X-Approval-Id` | mutation 필수. 누락 시 403 `APPROVAL_REQUIRED` |
+| `X-Agent-Name`, `X-Agent-Id`, `X-Actor-Type`, `X-Actor-Id` | FastAPI가 보낼 수 있으나 mutation controller 필수 검증 대상은 아님 |
 
-외부 변경관리 시스템이 있으면 `changemanagement` adapter가 연동, 없으면 자체 `change_ticket` 테이블(§9).
+응답은 `OpsEnvelope`다. JSON field는 `request_id`, `audit_event_id`, `error.required_action`처럼 snake_case로 직렬화된다.
 
-### 6. Idempotency (`governance.idempotency`)
+### 4. Approval facade
 
-모든 mutation은 `X-Idempotency-Key` 필수. 키+요청 fingerprint를 저장해 재시도/중복을 흡수한다.
+Approval source of truth는 Spring Boot `approval` 테이블이다.
+
+| Endpoint | 구현 |
+| --- | --- |
+| `POST /internal/ops/approvals` | `tenantId`, `toolName`, `paramsHash`, `requiredApprover`, `expiresInMinutes`로 approval 생성. unknown field 거부 |
+| `POST /internal/ops/approvals/{approvalId}/decision` | `decision`, `tenantId`, `decidedBy`, `comment` 처리. `SecurityContext` principal이 필요 |
+| `POST /internal/ops/approvals/{approvalId}/validate` | `tenantId`, `paramsHash`로 single-use 검증/소비 |
+| `GET /internal/ops/approvals/{approvalId}?tenantId=` | 단건 조회 |
+| `GET /internal/ops/approvals?tenantId=&status=&actorId=&limit=` | 목록 조회. status 기본 `PENDING`, limit 1..500 |
+
+실행 직전 mutation controller는 `ApprovalValidator.validateAndConsume()`로 tenant, operation, params hash, expiry, single-use를 확인한다.
+
+### 5. Change-ticket facade
+
+현재 Spring change-ticket 구현은 자체 `change_ticket` row를 만들고 검증한다.
+
+| Endpoint | 구현 |
+| --- | --- |
+| `POST /internal/ops/change-tickets` | `tenantId`, `title` 또는 alias `toolName`으로 ticket 생성. 응답 status는 `pending` |
+| `POST /internal/ops/change-tickets/{changeTicketId}/validate` | `tenantId`와 status `OPEN`만 검증 |
+| `GET /internal/ops/change-tickets/{changeTicketId}?tenantId=` | 단건 조회 |
+
+현재 controller/entity 표면에는 execution window, rollback plan, impact analysis, operation scope 검증 필드가 없다. Mutation controller도 change-ticket header나 id를 받지 않는다.
+
+### 6. Idempotency
+
+모든 mutation은 `X-Idempotency-Key`를 요구한다. Guard는 tenant, operation, params hash를 기준으로 중복 요청을 처리한다.
 
 | 상황 | 처리 |
 | --- | --- |
-| 같은 key + 같은 params_hash | 저장된 **이전 response replay** (`IDEMPOTENCY_REPLAY`) |
-| 같은 key + 다른 params_hash | `CONFLICT` |
-| key 없음 | `VALIDATION_FAILED` |
-| 같은 key 실행 중(in-flight) | 기존 execution status 반환 |
+| 새 key | `PROCESSING` row 생성 후 실행 |
+| 같은 key + 같은 operation/params + 완료 | 저장된 response replay. cached JSON parse가 성공하면 원래 result status를 그대로 반환하고, `IDEMPOTENCY_REPLAY`는 fallback result 구성 시에만 사용 |
+| 같은 key 실행 중 | 409 `CONFLICT` |
+| 같은 key + 다른 operation/params | 409 `CONFLICT` |
+| replay snapshot approval id가 현재 `X-Approval-Id`와 다름 | 403 `APPROVAL_SCOPE_MISMATCH` |
 
-- **mutation timeout 시 자동 재시도 금지** — read-only after-check로 실제 반영 여부를 확인한다(중복 실행 방지).
-- 키는 `(project_id, idempotency_key)` 유니크. 응답 스냅샷·status를 함께 저장(§9).
+Kafka Connect REST timeout은 504 `TIMEOUT`, 그 외 상류 실패는 502 `UPSTREAM_UNAVAILABLE`로 snapshot에 저장되어 replay될 수 있다.
 
-### 7. Audit & Evidence (`governance.audit`·`governance.evidence`)
+### 7. Mutation allowlist
 
-- **audit_event(append-only)**: 모든 요청을 성공·실패·차단 불문 기록 — request_id·run_id·actor·operation·target·**policy_decision**·approval/ticket id·idempotency_key·before/after evidence id·result_status·error_code([data-model §3.8](./data-model.md#4-data-model)).
-- **Evidence Writer**: 실행 전후 snapshot을 Evidence Store에 저장하고 **reference만** 반환한다(원문 미반환). evidence_ref는 metadb([data-model §3.9](./data-model.md#4-data-model)), 원문은 Evidence Store. mutation 성공 응답은 before/after evidence id를 포함해야 한다.
+현재 구현된 mutation endpoint:
 
-### 8. internalops 요청 표면 (`internalops`)
-
-- **헤더**: `X-Agent-Run-Id`·`X-Agent-Step-Id`·`X-Agent-Name`·`X-Request-Id`·`X-Actor-Type`·`X-Actor-Id`, mutation은 `X-Idempotency-Key` 추가([api §3](../../api/springboot.md)).
-- **응답 봉투**: 내부 운영 API는 `{ ok, request_id, operation, result, evidence[], audit_event_id }`(플랫폼 `/api/v1`의 `{ok,data}`와 다름). 실패는 `error{code, retryable, required_action}`([api §4·§5](../../api/springboot.md)).
-- **인증**: FastAPI service identity만. 사용자 권한은 FastAPI 전달값을 믿지 않고 재확인(scope/ownership).
-
-### 9. 데이터 모델 (governance 소유, metadb)
-
-플랫폼 메타데이터([data-model.md](./data-model.md#4-data-model))와 별개로 거버넌스 집행 record를 둔다(Approval SoT=Spring).
-
-**`approval`**
-
-| 컬럼 | 타입 | 설명 |
+| Operation | Path | Gate |
 | --- | --- | --- |
-| `id` | uuid PK | |
-| `workspace_id` | uuid FK | |
-| `run_id` / `action_id` | text | agent run·action 연계 |
-| `operation` | text | 승인된 operation |
-| `params_hash` | text | 승인 당시 정규화 params SHA-256 |
-| `status` | text | `pending`/`approved`/`rejected`/`expired` |
-| `approver` | uuid null | 승인자(app_user) |
-| `expires_at` | timestamptz | |
-| `consumed_at` | timestamptz null | single-use 소비 시각 |
+| `restart_connector` | `POST /internal/ops/projects/{projectId}/connectors/{connectorName}/restart` | approval + idempotency |
+| `pause_connector` | `POST /internal/ops/projects/{projectId}/connectors/{connectorName}/pause` | approval + idempotency |
+| `resume_connector` | `POST /internal/ops/projects/{projectId}/connectors/{connectorName}/resume` | approval + idempotency |
+| `restart_consumer_group` | `POST /internal/ops/projects/{projectId}/kafka/consumer-groups/{consumerGroup}/restart` | approval + idempotency |
 
-**`change_ticket`**
+이외 deployment scale, rollback, backfill, topic config patch, KafkaUser ACL patch, pod exec, arbitrary SQL, secret raw read 같은 operation은 현재 Spring endpoint가 없다. Secret 원문 read는 정책상 금지이며 Kafka principal secret API도 `MASKED_REFERENCE_ONLY`만 반환한다.
 
-| 컬럼 | 타입 | 설명 |
-| --- | --- | --- |
-| `id` | uuid PK | |
-| `workspace_id` | uuid FK | |
-| `status` | text | `approved` 등 |
-| `window_start` `window_end` | timestamptz | execution window |
-| `rollback_plan` `impact_analysis` | text | 필수 |
-| `scope` | jsonb | 허용 operation/resource |
+### 8. Read tool catalog
 
-**`idempotency_key`**
+`GET /internal/ops/admin/tool-catalog`는 read operation 8개만 반환한다. Mutation endpoint는 이 catalog에 포함되지 않는다. 상세 목록은 [internal-ops-read-tools.md](../../api/internal-ops-read-tools.md)를 따른다.
 
-| 컬럼 | 타입 | 설명 |
-| --- | --- | --- |
-| `idempotency_key` | text | `(workspace_id, idempotency_key)` 유니크 |
-| `workspace_id` | uuid FK | |
-| `params_hash` | text | 요청 fingerprint |
-| `status` | text | `in_flight`/`completed` |
-| `response_snapshot` | jsonb | replay용 |
-| `created_at` | timestamptz | |
+### 9. 현재 미구현/계획 상태
 
-> `audit_event`·`evidence_ref`는 [data-model §3.8·§3.9](./data-model.md#4-data-model). approval/change/idempotency는 governance 소유로 여기 정의한다.
+아래 항목은 설계 목표 또는 추후 확장이지 현재 코드 계약이 아니다.
 
-### 10. 구현 메모
+| 항목 | 현재 상태 |
+| --- | --- |
+| `/internal/ops/**` service identity 인증 | Security path는 permitAll. 별도 service account gate 미구현 |
+| policy matrix lookup으로 allow/approval/change/deny 결정 | mutation endpoint가 제한되어 있어 별도 policy engine lookup 없음 |
+| change management 실행 window/rollback/impact/scope 검증 | change-ticket facade에는 필드 없음 |
+| before/after evidence writer | mutation 응답 evidence는 빈 배열 |
+| audit_event append-only 기록 | `auditEventId` 값이 null이라 JSON 응답에서 `audit_event_id` field 생략 |
+| Kubernetes/Prometheus/Schema Registry mutation | endpoint 없음 |
 
-- **TOCTOU 방어**: 정책·승인·params_hash·idempotency는 **부수효과 직전 트랜잭션 안에서 재검증**한다(사전 판단 신뢰 금지). single-use approval 소비와 실행은 같은 트랜잭션 경계로 묶어 race를 막는다.
-- **단락(short-circuit)**: 게이트 실패 시 adapter 호출 전에 중단하고 audit만 남긴다.
-- **read-only after-check**: mutation timeout/불확실 시 재실행 대신 상태 조회로 반영 여부 확인.
-- **테스트 기준**(server.md §13 확장): (a) approval 없는 mutation 차단, (b) params_hash 불일치 차단, (c) change window 밖 차단, (d) 같은 idempotency key replay가 중복 실행 안 만듦, (e) 같은 key+다른 params=CONFLICT, (f) before/after evidence 생성, (g) 금지 operation은 endpoint 부재 또는 deny, (h) 모든 분기 audit 기록.
+### 10. 테스트 기준
+
+현재 구현 기준 regression 대상:
+
+- tool catalog는 read operation 8개만 포함하고 mutation과 미구현 read alias를 포함하지 않는다.
+- mutation은 `X-Agent-Run-Id`, `X-Agent-Step-Id`, `X-Idempotency-Key` 누락 시 400 `VALIDATION_FAILED`.
+- mutation은 `X-Approval-Id` 누락 시 403 `APPROVAL_REQUIRED`.
+- approval params hash/tenant/operation 불일치와 expired/used 상태가 차단된다.
+- idempotency replay가 중복 Connect REST 호출을 만들지 않는다.
+- 같은 key + 다른 params는 409 `CONFLICT`.
+- connector/project ownership 불일치는 `RESOURCE_NOT_OWNED_BY_PROJECT` 또는 not found code로 차단된다.
