@@ -181,8 +181,9 @@ public class SourceDebeziumConnectorMapper {
                     // (#425) timestamptz는 time.precision.mode와 무관하게 Debezium이 ZonedTimestamp(문자열)로
                     // 방출 → JDBC sink가 varchar 적재 → 타입 불일치. 커스텀 컨버터로 Connect Timestamp로 변환한다.
                     // (컨버터 JAR은 Connect 이미지에 동봉, connect-plugins/timestamptz-converter)
+                    // Debezium 규약: 타입 키는 `<alias>.type` (converters.<alias>.type 아님, #462).
                     .addToConfig("converters", "timestamptz")
-                    .addToConfig("converters.timestamptz.type", TIMESTAMPTZ_CONVERTER_TYPE)
+                    .addToConfig("timestamptz.type", TIMESTAMPTZ_CONVERTER_TYPE)
                     .endSpec();
             // MariaDB(Debezium binlog): server id는 클러스터 내 유일해야 하므로 pipelineId 해시 사용.
             // 단일 테이블만 캡처하므로 database.include.list = dbName으로 좁힌다.

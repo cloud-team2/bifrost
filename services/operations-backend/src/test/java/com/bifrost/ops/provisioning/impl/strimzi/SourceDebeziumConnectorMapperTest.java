@@ -95,8 +95,11 @@ class SourceDebeziumConnectorMapperTest {
 
         Map<String, Object> config = cr.getSpec().getConfig();
         assertThat(config).containsEntry("converters", "timestamptz");
-        assertThat(config).containsEntry("converters.timestamptz.type",
+        // Debezium 규약: 컨버터 타입 키는 `<alias>.type` (converters.<alias>.type 아님). 잘못된 키면
+        // Debezium이 타입을 못 찾아 컨버터를 null로 인스턴스화 → configure() NPE → task FAILED (#462).
+        assertThat(config).containsEntry("timestamptz.type",
                 SourceDebeziumConnectorMapper.TIMESTAMPTZ_CONVERTER_TYPE);
+        assertThat(config).doesNotContainKey("converters.timestamptz.type");
     }
 
     @Test

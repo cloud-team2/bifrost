@@ -17,7 +17,7 @@
 | 이미지 정의(멀티스테이지) | `infra/docker/kafka-connect/Dockerfile` |
 | CI 빌드 | `Jenkinsfile` → `Build Kafka Connect image` 스테이지 |
 | KafkaConnect CR | `infra/k8s/kafka/kafka-connect.yaml` (`spec.image`) |
-| 커넥터 config 등록 | `SourceDebeziumConnectorMapper`(Postgres에 `converters.timestamptz.*`) |
+| 커넥터 config 등록 | `SourceDebeziumConnectorMapper`(Postgres에 `converters=timestamptz` + `timestamptz.type`) |
 
 이미지 = `harbor.harbor.svc.cluster.local/library/bifrost-kafka-connect:<tag>`.
 포함 플러그인 버전은 Dockerfile의 `ARG`로 고정(debezium 3.5.1.Final, JDBC sink 10.9.4, postgres 42.7.4, mariadb 3.4.1).
@@ -57,8 +57,10 @@ docker push harbor.harbor.svc.cluster.local/library/bifrost-kafka-connect:1.0.0-
    kubectl -n platform-kafka exec platform-connect-connect-0 -- \
      sh -c 'ls /opt/kafka/plugins/debezium-postgres | grep timestamptz'
    ```
-4. 기존 Postgres source 커넥터에 컨버터 config를 반영(새로 만든 파이프라인은 매퍼가 자동 주입). 라이브 커넥터는 재시작/재적용으로 `converters.timestamptz.*`를 받게 한다:
+4. 기존 Postgres source 커넥터에 컨버터 config를 반영(새로 만든 파이프라인은 매퍼가 자동 주입). 라이브 커넥터는 config 패치(`converters=timestamptz` + `timestamptz.type=...`) 후 재시작한다. **Debezium 규약상 타입 키는 `<alias>.type`** (`converters.<alias>.type` 아님 — 잘못 쓰면 컨버터 null → task FAILED, #462):
    ```bash
+   kubectl -n platform-kafka patch kafkaconnector <source-connector> --type merge \
+     -p '{"spec":{"config":{"converters":"timestamptz","timestamptz.type":"com.bifrost.connect.converter.TimestamptzConverter"}}}'
    kubectl -n platform-kafka annotate kafkaconnector <source-connector> \
      strimzi.io/restart="true" --overwrite
    ```
