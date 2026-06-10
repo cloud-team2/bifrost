@@ -126,10 +126,10 @@ public class ClusterService {
                 log.warn("Kafka 토픽 조회 실패, 브로커 기본 정보만 반환: {}", e.getMessage());
             }
 
-            // 브로커별 로그 디렉토리 바이트
+            // 브로커별 로그 디렉토리 바이트 + 데이터 디스크 사용률
             List<Integer> brokerIds = nodes.stream().map(Node::id).collect(Collectors.toList());
-            LogDirBytes logDirs = logDirBytes(brokerIds);
-            if (logDirs.degraded()) {
+            BrokerStorage storage = brokerStorage(brokerIds);
+            if (storage.degraded()) {
                 status = "warning";
                 message = appendMessage(message, "log dirs unavailable");
             }
@@ -137,7 +137,7 @@ public class ClusterService {
             List<BrokerInfo> brokers = new ArrayList<>();
             for (Node n : nodes) {
                 brokers.add(brokerInfo(n, controllerId, leaderCount.getOrDefault(n.id(), 0L),
-                        logDirs.bytes().getOrDefault(n.id(), 0L)));
+                        storage.bytes().getOrDefault(n.id(), 0L), storage.diskPct().get(n.id())));
             }
             brokers.sort(java.util.Comparator.comparingInt(BrokerInfo::id));
 
@@ -151,23 +151,36 @@ public class ClusterService {
         }
     }
 
-    private LogDirBytes logDirBytes(List<Integer> brokerIds) {
+    private BrokerStorage brokerStorage(List<Integer> brokerIds) {
         try {
             Map<Integer, Map<String, LogDirDescription>> dirs =
                     admin.describeLogDirs(brokerIds).allDescriptions().get(ADMIN_TIMEOUT_SEC, TimeUnit.SECONDS);
-            Map<Integer, Long> out = new HashMap<>();
+            Map<Integer, Long> bytes = new HashMap<>();
+            Map<Integer, Double> diskPct = new HashMap<>();
             dirs.forEach((broker, perDir) -> {
                 long sum = perDir.values().stream()
                         .flatMap(d -> d.replicaInfos().values().stream())
                         .mapToLong(r -> r.size())
                         .sum();
-                out.put(broker, sum);
+                bytes.put(broker, sum);
+                // 데이터 디렉토리 디스크 사용률(KIP-827, kafka-clients 3.3+). 브로커가 값을 안 주면(Optional empty)
+                // null로 두고 brokerInfo에서 node_filesystem으로 폴백한다. node_filesystem 전역 평균보다 정확.
+                long total = 0, used = 0;
+                boolean hasCap = false;
+                for (LogDirDescription d : perDir.values()) {
+                    if (d.totalBytes().isPresent() && d.usableBytes().isPresent()) {
+                        total += d.totalBytes().getAsLong();
+                        used += d.totalBytes().getAsLong() - d.usableBytes().getAsLong();
+                        hasCap = true;
+                    }
+                }
+                if (hasCap && total > 0) diskPct.put(broker, (double) used / total * 100.0);
             });
-            return new LogDirBytes(out, false);
+            return new BrokerStorage(bytes, diskPct, false);
         } catch (Exception e) {
             restoreInterrupt(e);
             log.warn("logDirs 조회 실패: {}", e.getMessage());
-            return new LogDirBytes(Map.of(), true);
+            return new BrokerStorage(Map.of(), Map.of(), true);
         }
     }
 
@@ -181,21 +194,26 @@ public class ClusterService {
         }
     }
 
-    private record LogDirBytes(Map<Integer, Long> bytes, boolean degraded) {
+    private record BrokerStorage(Map<Integer, Long> bytes, Map<Integer, Double> diskPct, boolean degraded) {
     }
 
-    private BrokerInfo brokerInfo(Node n, int controllerId, long leaderPartitions, long logDirBytes) {
-        // Strimzi: broker id N → pod platform-kafka-kafka-N
-        String pod = "platform-kafka-kafka-" + n.id();
+    private BrokerInfo brokerInfo(Node n, int controllerId, long leaderPartitions,
+                                  long logDirBytes, Double diskFromLogDirs) {
+        // 브로커 JMX/JVM exporter는 instance=pod 호스트로 라벨된다(예: platform-kafka-kafka-0.{cluster}-kafka-brokers...).
+        // [.]로 id 뒤 점을 고정 매칭해 kafka-1이 kafka-10/11을 잡지 않게 한다. (cAdvisor는 pod 라벨이 없어 0 나옴)
+        String inst = "platform-kafka-kafka-" + n.id() + "[.].*";
+        // CPU: JVM process CPU(%). container CPU(cAdvisor)는 라벨 미스로 0이라 process_cpu로 교정.
         Double cpu = scalarOrNull(
-                "rate(container_cpu_usage_seconds_total{namespace=\"" + namespace + "\",pod=\"" + pod + "\",container=\"kafka\"}[2m]) * 100");
-        Double disk = scalarOrNull(
+                "rate(process_cpu_seconds_total{job=\"kafka-broker\",instance=~\"" + inst + "\"}[2m]) * 100");
+        // Net: 컨테이너 네트워크가 아니라 Kafka 브로커 처리량(BytesIn/OutPerSec) — 모든 토픽 합.
+        Double netIn = scalarOrNull(
+                "sum(rate(kafka_server_brokertopicmetrics_bytesin_total{instance=~\"" + inst + "\"}[2m]))");
+        Double netOut = scalarOrNull(
+                "sum(rate(kafka_server_brokertopicmetrics_bytesout_total{instance=~\"" + inst + "\"}[2m]))");
+        // Disk: describeLogDirs의 데이터 볼륨 사용률(per-broker). 미제공이면 node_filesystem(노드 전역)으로 폴백.
+        Double disk = diskFromLogDirs != null ? diskFromLogDirs : scalarOrNull(
                 "(1 - sum(node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|squashfs\"}) "
                         + "/ sum(node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|squashfs\"})) * 100");
-        Double netIn = scalarOrNull(
-                "sum(rate(container_network_receive_bytes_total{namespace=\"" + namespace + "\",pod=\"" + pod + "\"}[2m]))");
-        Double netOut = scalarOrNull(
-                "sum(rate(container_network_transmit_bytes_total{namespace=\"" + namespace + "\",pod=\"" + pod + "\"}[2m]))");
         String status = (cpu != null && cpu > 90) || (disk != null && disk > 85) ? "warning" : "healthy";
         return new BrokerInfo(n.id(), n.host(), n.port(), n.id() == controllerId,
                 leaderPartitions, logDirBytes, round(cpu), round(disk), netIn, netOut, status);
@@ -240,12 +258,12 @@ public class ClusterService {
             Double heapMax = scalarOrNull("sum(jvm_memory_max_bytes{area=\"heap\",job=\"kafka-connect\"})");
             Double cpu = round(scalarOrNull("rate(process_cpu_seconds_total{job=\"kafka-connect\"}[2m]) * 100"));
             Double gc = round(scalarOrNull("sum(jvm_gc_collection_seconds_sum{job=\"kafka-connect\"})"));
+            // worker 버전 = KafkaConnect CR spec.version(=Kafka 버전). 컨테이너 이미지 태그(예: 'v1')가 아님.
+            String version = connectVersion();
             List<Worker> out = new ArrayList<>();
             for (Pod p : pods) {
                 String state = p.getStatus() != null ? p.getStatus().getPhase() : "Unknown";
                 String ip = p.getStatus() != null ? p.getStatus().getPodIP() : null;
-                String version = p.getSpec() != null && !p.getSpec().getContainers().isEmpty()
-                        ? imageTag(p.getSpec().getContainers().get(0).getImage()) : null;
                 out.add(new Worker(p.getMetadata().getName(), ip, state,
                         toLong(heapUsed), toLong(heapMax), cpu, gc, version));
             }
@@ -344,10 +362,22 @@ public class ClusterService {
         }
     }
 
-    private static String imageTag(String image) {
-        if (image == null) return null;
-        int i = image.lastIndexOf(':');
-        return i >= 0 ? image.substring(i + 1) : image;
+    /** KafkaConnect CR의 spec.version(= 구동 중인 Kafka/Connect 버전). 없으면 null. */
+    @SuppressWarnings("unchecked")
+    private String connectVersion() {
+        try {
+            GenericKubernetesResource cr = k8s.genericKubernetesResources("kafka.strimzi.io/v1", "KafkaConnect")
+                    .inNamespace(namespace).withName(connectCluster).get();
+            if (cr == null) return null;
+            Object spec = cr.getAdditionalProperties().get("spec");
+            if (spec instanceof Map<?, ?> m && m.get("version") != null) {
+                return String.valueOf(m.get("version"));
+            }
+            return null;
+        } catch (Exception e) {
+            log.warn("connect version 조회 실패: {}", e.getMessage());
+            return null;
+        }
     }
 
     private static Long toLong(Double d) {

@@ -69,6 +69,9 @@ public class SourceDebeziumConnectorMapper {
 
     /** MariaDB schema history를 저장할 Kafka bootstrap. Connect 내부 접근이므로 plain 9092 사용. */
     private final String kafkaBootstrapServers;
+    /** 자동 생성 토픽의 partition/replication factor. 운영 기본 6/3, 로컬(단일 브로커)은 env로 1 주입. */
+    private final int topicPartitions;
+    private final int topicReplicationFactor;
 
     /** 데이터플레인 추적(#371): on이면 Debezium tracing SMT를 커넥터에 추가. 기본 off(오버헤드 없음). */
     private final boolean dataplaneTracingEnabled;
@@ -76,9 +79,13 @@ public class SourceDebeziumConnectorMapper {
     public SourceDebeziumConnectorMapper(
             @Value("${spring.kafka.bootstrap-servers:platform-kafka-kafka-bootstrap.platform-kafka.svc.cluster.local:9092}")
             String kafkaBootstrapServers,
-            @Value("${tracing.dataplane.enabled:false}") boolean dataplaneTracingEnabled) {
+            @Value("${tracing.dataplane.enabled:false}") boolean dataplaneTracingEnabled,
+            @Value("${pipeline.topic.partitions:6}") int topicPartitions,
+            @Value("${pipeline.topic.replication-factor:3}") int topicReplicationFactor) {
         this.kafkaBootstrapServers = kafkaBootstrapServers;
         this.dataplaneTracingEnabled = dataplaneTracingEnabled;
+        this.topicPartitions = topicPartitions;
+        this.topicReplicationFactor = topicReplicationFactor;
     }
 
     /**
@@ -100,7 +107,7 @@ public class SourceDebeziumConnectorMapper {
         // 같은 소스 DB의 여러 파이프라인이 server를 공유해 이벤트/소스지연 메트릭이 섞이던 문제를 막는다.
         // 최종 토픽명을 prefix로 쓰고, Debezium이 또 붙이는 .{schema}.{table} 중복분은 아래 route SMT로 제거.
         String serverName = ConnectorNaming.topicName(
-                command.projectKey(), src.dbName(), src.datasourceId(), src.schema(), src.table());
+                command.pattern(), command.projectKey(), src.dbName(), src.datasourceId(), src.schema(), src.table());
         String tableInclude = src.schema() + "." + src.table();
         String connectorClass = connectorClass(src.engine());
 
@@ -141,8 +148,8 @@ public class SourceDebeziumConnectorMapper {
                     // BIGINT로 만들어버린다 → connect 모드면 SQL TIMESTAMP로 자연스럽게 적재된다.
                     .addToConfig("time.precision.mode", "connect")
                     // 자동 토픽 생성 기본값 (설계 §2 4.1)
-                    .addToConfig("topic.creation.default.partitions", "6")
-                    .addToConfig("topic.creation.default.replication.factor", "3")
+                    .addToConfig("topic.creation.default.partitions", String.valueOf(topicPartitions))
+                    .addToConfig("topic.creation.default.replication.factor", String.valueOf(topicReplicationFactor))
                 .endSpec();
 
         applyEngineSpecifics(builder, src, command.projectKey(), pipelineId);
@@ -174,8 +181,9 @@ public class SourceDebeziumConnectorMapper {
                     // (#425) timestamptz는 time.precision.mode와 무관하게 Debezium이 ZonedTimestamp(문자열)로
                     // 방출 → JDBC sink가 varchar 적재 → 타입 불일치. 커스텀 컨버터로 Connect Timestamp로 변환한다.
                     // (컨버터 JAR은 Connect 이미지에 동봉, connect-plugins/timestamptz-converter)
+                    // Debezium 규약: 타입 키는 `<alias>.type` (converters.<alias>.type 아님, #462).
                     .addToConfig("converters", "timestamptz")
-                    .addToConfig("converters.timestamptz.type", TIMESTAMPTZ_CONVERTER_TYPE)
+                    .addToConfig("timestamptz.type", TIMESTAMPTZ_CONVERTER_TYPE)
                     .endSpec();
             // MariaDB(Debezium binlog): server id는 클러스터 내 유일해야 하므로 pipelineId 해시 사용.
             // 단일 테이블만 캡처하므로 database.include.list = dbName으로 좁힌다.

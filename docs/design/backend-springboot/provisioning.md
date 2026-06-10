@@ -140,8 +140,9 @@ KafkaConnector source = new KafkaConnectorBuilder()
         .addToConfig("time.precision.mode", "connect")
         // (#425) timestamptz는 time.precision.mode와 무관하게 Debezium이 ZonedTimestamp(문자열)로 방출 →
         // JDBC sink가 varchar로 적재 → 타입 불일치. 커스텀 컨버터로 Connect Timestamp로 변환한다(Postgres 전용).
+        // Debezium 규약: 타입 키는 `<alias>.type` (converters.<alias>.type 아님, #462)
         .addToConfig("converters", "timestamptz")
-        .addToConfig("converters.timestamptz.type", "com.bifrost.connect.converter.TimestamptzConverter")
+        .addToConfig("timestamptz.type", "com.bifrost.connect.converter.TimestamptzConverter")
     .endSpec()
     .build();
 kubernetesClient.resource(source).inNamespace("platform-kafka").create();
