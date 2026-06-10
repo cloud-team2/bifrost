@@ -6,8 +6,11 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
+import org.springframework.web.bind.MissingRequestHeaderException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.servlet.NoHandlerFoundException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
@@ -46,6 +49,16 @@ public class GlobalExceptionHandler {
                 ? e.getCause() : e;
         return ResponseEntity.status(ErrorCode.VALIDATION_FAILED.status())
             .body(ErrorResponse.of(ErrorCode.VALIDATION_FAILED, cause.getMessage()));
+    }
+
+    @ExceptionHandler({
+        MissingServletRequestParameterException.class,
+        MissingRequestHeaderException.class,
+        MethodArgumentTypeMismatchException.class
+    })
+    public ResponseEntity<ErrorResponse> handleRequestBinding(Exception e) {
+        return ResponseEntity.status(ErrorCode.VALIDATION_FAILED.status())
+            .body(ErrorResponse.of(ErrorCode.VALIDATION_FAILED, e.getMessage()));
     }
 
     @ExceptionHandler({NoHandlerFoundException.class, NoResourceFoundException.class})

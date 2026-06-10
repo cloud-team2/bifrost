@@ -166,6 +166,44 @@ export interface PipelineResponse {
   sinkConnector: string | null
   createdAt: string
 }
+export interface SecretReference {
+  namespace: string
+  secretName: string
+  keyRefs: Record<string, string>
+  availableKeys: string[]
+}
+export interface AuthTemplate {
+  type: string
+  securityProtocol: string
+  properties: Record<string, string>
+  credentialReference: SecretReference
+}
+export interface TopicRef {
+  name: string
+  sourceTable: string | null
+  role: string
+}
+export interface ConnectionGuideResponse {
+  pipelineId: string
+  pipelineName: string
+  bootstrapServers: string
+  recommendedGroupId: string
+  authenticationMethod: string
+  credentialReference: SecretReference
+  authenticationTemplates: AuthTemplate[]
+  topics: TopicRef[]
+}
+export interface TableMappingEntry {
+  sourceTable: string
+  kafkaTopic: string
+  sinkTable: string
+}
+export interface TableMappingResponse {
+  pipelineId: string
+  sourceConnector: string
+  sinkConnector: string
+  mappings: TableMappingEntry[]
+}
 /** 토픽 파티션 정보(#126). */
 export interface TopicInfoResponse {
   name: string
@@ -363,6 +401,17 @@ export interface KafkaPrincipalCreateRequest {
   username: string
   secretRef?: string | null
 }
+export interface KafkaPrincipalSecretResponse {
+  principalId: string
+  username: string
+  status: KafkaPrincipalStatus
+  namespace: string
+  secretName: string
+  availableKeys: string[]
+  passwordMasked: string
+  retrievedAt: string
+  exposurePolicy: string
+}
 
 
 /* ── Agent Run API(#252) ───────────────────────────────────────────── */
@@ -521,6 +570,10 @@ export const api = {
     request<PipelineResponse>('POST', `/api/v1/workspaces/${wsId}/pipelines`, body),
   getPipeline: (wsId: string, id: string) =>
     request<PipelineResponse>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}`),
+  getConnectionGuide: (wsId: string, id: string) =>
+    request<ConnectionGuideResponse>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/connection-guide`),
+  getTableMapping: (wsId: string, id: string) =>
+    request<TableMappingResponse>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/table-mapping`),
   listPipelineConnectors: (wsId: string, id: string) =>
     request<ConnectorInfo[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/connectors`),
   pipelineSyncStatus: (wsId: string, id: string) =>
@@ -615,6 +668,8 @@ export const api = {
     request<KafkaPrincipalResponse>('POST', `/api/v1/workspaces/${wsId}/kafka/principals/${id}/revoke`),
   rotateKafkaPrincipal: (wsId: string, id: string) =>
     request<KafkaPrincipalResponse>('POST', `/api/v1/workspaces/${wsId}/kafka/principals/${id}/rotate`),
+  getKafkaPrincipalSecret: (wsId: string, id: string) =>
+    request<KafkaPrincipalSecretResponse>('GET', `/api/v1/workspaces/${wsId}/kafka/principals/${id}/secret`),
 }
 
 export interface ConnectionTestInput {

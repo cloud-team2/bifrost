@@ -71,6 +71,15 @@ class PostgresVectorStore:
     def _get_pool(self) -> asyncpg.Pool:
         return self._pool or get_pool()
 
+    async def health(self) -> bool:
+        try:
+            pool = self._get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute("SELECT 1 FROM knowledge_chunk LIMIT 1")
+            return True
+        except Exception:
+            return False
+
     async def upsert_chunks(self, chunks: Sequence[KnowledgeChunk]) -> int:
         """Insert/update chunks by deterministic chunk_id."""
         if not chunks:
