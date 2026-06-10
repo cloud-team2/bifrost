@@ -84,6 +84,28 @@ class SourceDebeziumConnectorMapperTest {
     }
 
     @Test
+    void postgresSourceRegistersTimestamptzConverter() {
+        // #425: Postgres timestamptz를 Connect Timestamp로 변환하는 커스텀 컨버터를 등록한다.
+        KafkaConnector cr = mapper.map(
+                command(DbType.POSTGRESQL), new DbCredential("svc", "pw"), NS, CLUSTER);
+
+        Map<String, Object> config = cr.getSpec().getConfig();
+        assertThat(config).containsEntry("converters", "timestamptz");
+        assertThat(config).containsEntry("converters.timestamptz.type",
+                SourceDebeziumConnectorMapper.TIMESTAMPTZ_CONVERTER_TYPE);
+    }
+
+    @Test
+    void mariadbSourceDoesNotRegisterTimestamptzConverter() {
+        // timestamptz는 Postgres 전용 타입 → MariaDB 커넥터에는 컨버터를 달지 않는다.
+        KafkaConnector cr = mapper.map(
+                command(DbType.MARIADB), new DbCredential("svc", "pw"), NS, CLUSTER);
+
+        Map<String, Object> config = cr.getSpec().getConfig();
+        assertThat(config).doesNotContainKey("converters");
+    }
+
+    @Test
     void dataplaneTracingAddsDebeziumTracingSmtWhenEnabled() {
         // #371: 데이터플레인 추적 on → Debezium ActivateTracingSpan SMT를 route 뒤에 체이닝
         SourceDebeziumConnectorMapper tracingMapper =
