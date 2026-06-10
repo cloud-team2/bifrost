@@ -72,6 +72,10 @@ export interface RegisterInput {
 export interface MeResponse {
   userId: string
   email: string
+  name: string | null
+  role: 'OWNER' | 'ADMIN' | 'MEMBER'
+  joinedAt: string | null
+  lastLoginAt: string | null
   workspaceId: string
   workspaceName: string
   namespace: string

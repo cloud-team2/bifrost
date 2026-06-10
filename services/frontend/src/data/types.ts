@@ -67,13 +67,15 @@ export interface Project {
   activeCount: number
 }
 
-export type Role = 'developer' | 'admin' | 'operator'
+export type Role = 'OWNER' | 'ADMIN' | 'MEMBER'
 
 export interface User {
   name: string
   email: string
   role: Role
   initial: string
+  joinedAt: string | null
+  lastLoginAt: string | null
 }
 
 /* ---------------------------------------------------------------- events */

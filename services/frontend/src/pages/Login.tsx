@@ -101,7 +101,7 @@ export function Login({ onRegister }: { onRegister: () => void }) {
                   <div
                     className={cn(
                       'flex h-8 w-8 items-center justify-center rounded-full text-[12px] font-semibold text-white',
-                      a.user.role === 'developer'
+                      a.user.role === 'MEMBER'
                         ? 'bg-gradient-to-br from-sky-400 to-indigo-500'
                         : 'bg-gradient-to-br from-violet-400 to-violet-600',
                     )}
@@ -115,7 +115,7 @@ export function Login({ onRegister }: { onRegister: () => void }) {
                   <span
                     className={cn(
                       'rounded px-1.5 py-0.5 text-[10px] font-semibold capitalize',
-                      a.user.role === 'developer'
+                      a.user.role === 'MEMBER'
                         ? 'bg-sky-50 text-sky-700'
                         : 'bg-violet-50 text-violet-700',
                     )}
