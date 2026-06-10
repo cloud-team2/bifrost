@@ -68,6 +68,34 @@ class PostgresRunRepository:
             row = await conn.fetchrow("SELECT * FROM agent_run WHERE run_id = $1", run_id)
         return RunRecord(**dict(row)) if row else None
 
+    async def list(
+        self,
+        project_id: str | None = None,
+        status: str | None = None,
+        limit: int = 20,
+    ) -> list[RunRecord]:
+        clauses: list[str] = []
+        values: list[str | int] = []
+        if project_id is not None:
+            values.append(project_id)
+            clauses.append(f"project_id = ${len(values)}::uuid")
+        if status is not None:
+            values.append(status)
+            clauses.append(f"status = ${len(values)}")
+
+        values.append(max(0, min(limit, 100)))
+        limit_placeholder = f"${len(values)}"
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"""
+            SELECT * FROM agent_run
+            {where_sql}
+            ORDER BY created_at DESC NULLS LAST, run_id DESC
+            LIMIT {limit_placeholder}
+        """
+        async with self._get_pool().acquire() as conn:
+            rows = await conn.fetch(query, *values)
+        return [RunRecord(**dict(row)) for row in rows]
+
     async def update_status(
         self,
         run_id: str,
@@ -130,6 +158,20 @@ class InMemoryRunRepository:
 
     async def get(self, run_id: str) -> InMemoryRunRecord | None:
         return self._store.get(run_id)
+
+    async def list(
+        self,
+        project_id: str | None = None,
+        status: str | None = None,
+        limit: int = 20,
+    ) -> list[InMemoryRunRecord]:
+        runs = list(self._store.values())
+        if project_id is not None:
+            runs = [run for run in runs if run.project_id == project_id]
+        if status is not None:
+            runs = [run for run in runs if run.status == status]
+        runs.sort(key=lambda run: run.created_at, reverse=True)
+        return runs[:max(0, min(limit, 100))]
 
     async def update_status(
         self, run_id: str, status: str, current_agent: str | None = None

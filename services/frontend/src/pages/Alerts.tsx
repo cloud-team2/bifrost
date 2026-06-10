@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Icon } from '../components/Icon'
 import { PageHead, StatusBadge } from '../components/blocks'
 import { useApp } from '../store/AppStore'
@@ -104,7 +104,7 @@ function buildEvents(events: EventResponse[], resourceEvents: ResourceEventRespo
 
 export function Alerts() {
   const app = useApp()
-  const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(null)
+  const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(() => app.opSelectedIncidentId)
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all')
   const [levelFilter, setLevelFilter] = useState<'all' | LogLevel>('all')
 
@@ -114,6 +114,12 @@ export function Alerts() {
   const selectedIncident = incidents.find((i) => i.id === selectedIncidentId) ?? null
   const allEvents = useMemo(() => buildEvents(app.events, app.resourceEvents), [app.events, app.resourceEvents])
   const initialLoading = app.monitoringLoading && incidents.length === 0 && allEvents.length === 0
+
+  useEffect(() => {
+    if (!app.opSelectedIncidentId) return
+    setSelectedIncidentId(app.opSelectedIncidentId)
+    app.clearOpSelectedIncident()
+  }, [app.opSelectedIncidentId])
 
   const filteredEvents = allEvents.filter(
     (e) =>

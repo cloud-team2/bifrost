@@ -25,6 +25,21 @@ public class IdempotencyKeyEntity {
     @Column(nullable = false, length = 20)
     private String status = "PROCESSING"; // PROCESSING / DONE
 
+    @Column(length = 100)
+    private String operation;
+
+    @Column(name = "params_hash", length = 64)
+    private String paramsHash;
+
+    @Column(name = "response_status", length = 20)
+    private String responseStatus;
+
+    @Column(name = "http_status")
+    private Integer httpStatus;
+
+    @Column(name = "approval_id")
+    private UUID approvalId;
+
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
     private String result;
@@ -49,6 +64,16 @@ public class IdempotencyKeyEntity {
     public void setTenantId(UUID tenantId) { this.tenantId = tenantId; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public String getOperation() { return operation; }
+    public void setOperation(String operation) { this.operation = operation; }
+    public String getParamsHash() { return paramsHash; }
+    public void setParamsHash(String paramsHash) { this.paramsHash = paramsHash; }
+    public String getResponseStatus() { return responseStatus; }
+    public void setResponseStatus(String responseStatus) { this.responseStatus = responseStatus; }
+    public Integer getHttpStatus() { return httpStatus; }
+    public void setHttpStatus(Integer httpStatus) { this.httpStatus = httpStatus; }
+    public UUID getApprovalId() { return approvalId; }
+    public void setApprovalId(UUID approvalId) { this.approvalId = approvalId; }
     public String getResult() { return result; }
     public void setResult(String result) { this.result = result; }
     public Instant getExpiresAt() { return expiresAt; }

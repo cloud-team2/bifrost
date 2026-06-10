@@ -11,8 +11,10 @@ import { DatabaseDetail } from './pages/dev/DatabaseDetail'
 import { Settings } from './pages/Settings'
 import { Alerts } from './pages/Alerts'
 import { OperatorCluster } from './pages/op/OperatorCluster'
+import { OperatorOverview } from './pages/op/OperatorOverview'
 
 const VIEW_LABEL: Record<View, string> = {
+  overview: 'overview',
   pipelines: 'pipelines',
   'pipeline-detail': 'pipelines / detail',
   databases: 'databases',
@@ -44,6 +46,7 @@ export default function App() {
 
 function renderView(view: View) {
   switch (view) {
+    case 'overview':       return <OperatorOverview />
     case 'pipelines':      return <Pipelines />
     case 'pipeline-detail': return <PipelineDetail />
     case 'databases':      return <Databases />

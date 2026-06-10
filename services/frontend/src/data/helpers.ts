@@ -1,5 +1,4 @@
-import type { Edge, Node, Point, Project } from './types'
-import { LAG_THRESHOLD } from './mock'
+import type { Edge, Node, Project } from './types'
 
 export const nodeName = (n: Node): string => n.alias || n.label
 export const pipelineLabel = (e: Edge): string => e.alias || e.name
@@ -59,49 +58,4 @@ export function projectNodes(proj: Project, nodes: Node[], edges: Edge[]): Node[
 
 export function projectEdges(proj: Project, edges: Edge[]): Edge[] {
   return edges.filter((e) => proj.pipelineIds.includes(e.id))
-}
-
-/** consumer node health from lag + group state (spec §3.6) */
-export function deriveConsumerStatus(lag: number, group?: string): Node['status'] {
-  if (group === 'DEAD') return 'error'
-  if (lag >= LAG_THRESHOLD || group === 'REBALANCING') return 'warning'
-  return 'healthy'
-}
-
-/* ----------------------------------------------------------- chart series */
-
-let seed = 7
-function rnd(): number {
-  seed = (seed * 1664525 + 1013904223) % 4294967296
-  return seed / 4294967296
-}
-
-export function timeLabels(n: number, stepMin = 5): string[] {
-  const out: string[] = []
-  const now = new Date()
-  now.setSeconds(0, 0)
-  for (let i = n - 1; i >= 0; i--) {
-    const d = new Date(now.getTime() - i * stepMin * 60_000)
-    out.push(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`)
-  }
-  return out
-}
-
-/** deterministic time-series for recharts */
-export function genSeries(
-  keys: { key: string; base: number; vary: number; drift?: number }[],
-  n = 24,
-): Point[] {
-  seed = 7
-  const labels = timeLabels(n)
-  return labels.map((t, i) => {
-    const p: Point = { t }
-    for (const k of keys) {
-      const wave = Math.sin(i / 3) * k.vary * 0.4
-      const noise = (rnd() - 0.5) * k.vary
-      const drift = (k.drift ?? 0) * i
-      p[k.key] = Math.max(0, Math.round(k.base + wave + noise + drift))
-    }
-    return p
-  })
 }

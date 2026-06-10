@@ -10,6 +10,7 @@ import {
   ApiError,
   type AiPolicySettingsResponse,
   type KafkaPrincipalResponse,
+  type KafkaPrincipalSecretResponse,
   type NotificationSettingsResponse,
   type NotificationSeverityPolicy,
   type ProjectMemberResponse,
@@ -137,7 +138,7 @@ function GeneralSection() {
   const app = useApp()
   const toast = useToast()
   const wsId = app.currentProject?.id
-  const [name, setName] = useState(app.currentProject?.name ?? app.settings.projectName)
+  const [name, setName] = useState(app.currentProject?.name ?? '')
   const [timezone, setTimezone] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -973,16 +974,138 @@ export function KafkaUsersSection() {
   )
 }
 
+type KafkaSecretRow = {
+  principal: KafkaPrincipalResponse
+  secret: KafkaPrincipalSecretResponse | null
+  error: string | null
+}
+
 export function KafkaSecretsSection() {
+  const app = useApp()
+  const wsId = app.currentProject?.id
+  const [rows, setRows] = useState<KafkaSecretRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!wsId) return
+    const workspaceId = wsId
+    let alive = true
+    async function load() {
+      setLoading(true)
+      setError(null)
+      try {
+        const principals = await api.listKafkaPrincipals(workspaceId)
+        const secrets = await Promise.all(principals.map(async (principal): Promise<KafkaSecretRow> => {
+          try {
+            const secret = await api.getKafkaPrincipalSecret(workspaceId, principal.id)
+            return { principal, secret, error: null }
+          } catch (e) {
+            return {
+              principal,
+              secret: null,
+              error: e instanceof ApiError ? e.message : '시크릿 없음',
+            }
+          }
+        }))
+        if (alive) setRows(secrets)
+      } catch (e) {
+        if (alive) {
+          setRows([])
+          setError(e instanceof ApiError ? e.message : 'Kafka 시크릿을 불러오지 못했습니다')
+        }
+      } finally {
+        if (alive) setLoading(false)
+      }
+    }
+    load()
+    return () => {
+      alive = false
+    }
+  }, [wsId])
+
+  if (!wsId) {
+    return (
+      <div>
+        <Head title="Kafka 시크릿" sub="Secret 이름·키 참조·마스킹된 비밀번호만 표시" />
+        <Panel title="Kafka principal secrets">
+          <div className="px-4 py-10 text-center text-[13px] text-gray-400">워크스페이스를 먼저 선택하세요.</div>
+        </Panel>
+      </div>
+    )
+  }
+
+  const loadState = SettingsLoadState({ loading, error })
+  if (loadState) {
+    return (
+      <div>
+        <Head title="Kafka 시크릿" sub="Secret 이름·키 참조·마스킹된 비밀번호만 표시" />
+        {loadState}
+      </div>
+    )
+  }
+
   return (
     <div>
-      <Head title="Kafka 시크릿" sub="커넥터와 컨슈머가 사용하는 자격 증명" />
-      <Panel title="이번 PR 제외">
-        <div className="space-y-2 px-5 py-5 text-[13px] leading-relaxed text-gray-600">
-          <p>Kafka 시크릿은 전용 백엔드 API가 아직 없어 mock 목록·생성·폐기 UI를 제거했습니다.</p>
-          <p className="text-[12px] text-gray-400">백엔드 API가 추가되면 이 탭을 실데이터로 연결합니다.</p>
-        </div>
+      <Head title="Kafka 시크릿" sub="Secret 이름·키 참조·마스킹된 비밀번호만 표시" />
+      <Panel title="Kafka principal secrets">
+        <table className="w-full text-[12px]">
+          <thead>
+            <tr className="border-b border-gray-100 text-left text-[10.5px] uppercase tracking-wide text-gray-400">
+              <th className="px-4 py-2 font-semibold">Principal</th>
+              <th className="px-3 py-2 font-semibold">Secret</th>
+              <th className="px-3 py-2 font-semibold">Keys</th>
+              <th className="px-3 py-2 font-semibold">Password</th>
+              <th className="px-3 py-2 font-semibold">Policy</th>
+              <th className="px-3 py-2 font-semibold">조회</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ principal, secret, error: rowError }) => (
+              <tr key={principal.id} className="border-b border-gray-50 align-top">
+                <td className="px-4 py-2.5">
+                  <div className="font-mono font-medium text-gray-800">{principal.username}</div>
+                  <div className="mt-1"><StatusBadge status={principal.status} /></div>
+                </td>
+                <td className="px-3 py-2.5">
+                  {secret ? (
+                    <div className="space-y-0.5 font-mono text-[11px] text-gray-600">
+                      <div>{secret.namespace}</div>
+                      <div className="font-medium text-gray-800">{secret.secretName}</div>
+                    </div>
+                  ) : (
+                    <div className="text-[12px] text-gray-400" title={rowError ?? undefined}>시크릿 없음</div>
+                  )}
+                </td>
+                <td className="px-3 py-2.5">
+                  {secret && secret.availableKeys.length > 0 ? (
+                    <div className="flex max-w-[180px] flex-wrap gap-1">
+                      {secret.availableKeys.map((key) => (
+                        <span key={key} className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[10.5px] text-gray-600">{key}</span>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-gray-400">—</span>
+                  )}
+                </td>
+                <td className="px-3 py-2.5 font-mono text-gray-700">{secret?.passwordMasked ?? '—'}</td>
+                <td className="px-3 py-2.5 text-[11px] text-gray-500">{secret?.exposurePolicy ?? (rowError ? 'MASKED_REFERENCE_ONLY' : '—')}</td>
+                <td className="px-3 py-2.5 text-gray-400">{secret?.retrievedAt ? secret.retrievedAt.slice(0, 19).replace('T', ' ') : '—'}</td>
+              </tr>
+            ))}
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={6} className="px-4 py-8 text-center text-[12.5px] text-gray-400">
+                  시크릿 없음
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </Panel>
+      <p className="mt-2 px-1 text-[11.5px] text-gray-400">
+        Secret 원문은 표시하지 않습니다. 백엔드가 제공하는 secret 이름, 키 목록, 마스킹 값만 노출합니다.
+      </p>
     </div>
   )
 }

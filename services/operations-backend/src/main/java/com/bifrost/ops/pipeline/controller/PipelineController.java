@@ -4,14 +4,17 @@ import com.bifrost.ops.auth.jwt.AuthenticatedUser;
 import com.bifrost.ops.pipeline.dto.ConnectorResponse;
 import com.bifrost.ops.pipeline.dto.ConsumerGroupInfo;
 import com.bifrost.ops.pipeline.dto.KafkaMessageRecord;
+import com.bifrost.ops.pipeline.dto.ConnectionGuideResponse;
 import com.bifrost.ops.pipeline.dto.PipelineCreateRequest;
 import com.bifrost.ops.pipeline.dto.PipelineMetricsResponse;
 import com.bifrost.ops.pipeline.dto.PipelineResponse;
 import com.bifrost.ops.pipeline.dto.EventDistPoint;
 import com.bifrost.ops.pipeline.dto.MetricPoint;
 import com.bifrost.ops.pipeline.dto.SyncStatusResponse;
+import com.bifrost.ops.pipeline.dto.TableMappingResponse;
 import com.bifrost.ops.pipeline.dto.ThroughputPoint;
 import com.bifrost.ops.pipeline.dto.TopicInfoResponse;
+import com.bifrost.ops.pipeline.runtime.PipelineRuntimeMetadataService;
 import com.bifrost.ops.pipeline.service.PipelineMessageService;
 import com.bifrost.ops.pipeline.service.PipelineService;
 import com.bifrost.ops.pipeline.service.PipelineSyncService;
@@ -45,15 +48,18 @@ public class PipelineController {
     private final PipelineSyncService pipelineSyncService;
     private final PipelineTopicService pipelineTopicService;
     private final PipelineMessageService pipelineMessageService;
+    private final PipelineRuntimeMetadataService runtimeMetadataService;
 
     public PipelineController(PipelineService pipelineService,
                               PipelineSyncService pipelineSyncService,
                               PipelineTopicService pipelineTopicService,
-                              PipelineMessageService pipelineMessageService) {
+                              PipelineMessageService pipelineMessageService,
+                              PipelineRuntimeMetadataService runtimeMetadataService) {
         this.pipelineService = pipelineService;
         this.pipelineSyncService = pipelineSyncService;
         this.pipelineTopicService = pipelineTopicService;
         this.pipelineMessageService = pipelineMessageService;
+        this.runtimeMetadataService = runtimeMetadataService;
     }
 
     /** 목록(FR-003). status 필터(creating/active/lag/error/paused). */
@@ -119,6 +125,22 @@ public class PipelineController {
                                              @AuthenticationPrincipal AuthenticatedUser principal,
                                              @RequestParam(defaultValue = "20") int limit) {
         return pipelineMessageService.messages(wsId, principal, id, limit);
+    }
+
+    /** Connection Guide(#303). bootstrap/auth/topic 정보를 비밀값 없이 반환한다. */
+    @GetMapping("/{id}/connection-guide")
+    public ConnectionGuideResponse connectionGuide(@PathVariable UUID wsId,
+                                                   @PathVariable UUID id,
+                                                   @AuthenticationPrincipal AuthenticatedUser principal) {
+        return runtimeMetadataService.connectionGuide(wsId, principal, id);
+    }
+
+    /** Table Mapping(#303). KafkaConnector config 기준 source table → topic → sink table 매핑. */
+    @GetMapping("/{id}/table-mapping")
+    public TableMappingResponse tableMapping(@PathVariable UUID wsId,
+                                             @PathVariable UUID id,
+                                             @AuthenticationPrincipal AuthenticatedUser principal) {
+        return runtimeMetadataService.tableMapping(wsId, principal, id);
     }
 
     /** 파이프라인 메트릭(#126, Overview 메트릭 카드). Kafka lag + connector 에러율. */

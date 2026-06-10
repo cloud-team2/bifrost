@@ -3,7 +3,6 @@ import type {
   ClusterConnector,
   ClusterTopic,
   ConsumerGroupRow,
-  Member,
   User,
 } from './types'
 
@@ -109,17 +108,3 @@ export const CLUSTER_CONNECTORS: ClusterConnector[] = [
   { name: 'txn-source', kind: 'Source', status: 'RUNNING', project: '이상거래 탐지 시스템', pipeline: 'txn-fraud-events', tasks: 3, recordsPerSec: 3120 },
   { name: 'events-source', kind: 'Source', status: 'RUNNING', project: '반도체 생산 분석 허브', pipeline: 'events-warehouse-cdc', tasks: 2, recordsPerSec: 980 },
 ]
-
-/* --------------------------------------------------------------- settings */
-
-export const MEMBERS: Member[] = [
-  { name: '김민준', email: 'ta@bifrost.io', role: 'admin', joinedAt: '2026-02-11' },
-  { name: '이민지', email: 'minji@bifrost.io', role: 'developer', joinedAt: '2026-02-14' },
-  { name: '박정우', email: 'david@bifrost.io', role: 'developer', joinedAt: '2026-03-20' },
-  { name: '조유나', email: 'yuna@bifrost.io', role: 'operator', joinedAt: '2026-04-02' },
-]
-
-export const BOOTSTRAP_SERVER = 'pkc-bifrost.ap-northeast-2.aws.confluent.cloud:9092'
-export const LAG_THRESHOLD_WARNING = 5000
-export const LAG_THRESHOLD_CRITICAL = 20000
-export const LAG_THRESHOLD = LAG_THRESHOLD_WARNING

@@ -69,13 +69,14 @@ public class InternalOpsController {
             HttpServletRequest request) {
         String requestId = AgentHeaders.requestId(request);
         var catalog = java.util.List.of(
-                tool("get_consumer_lag",      "GET",  "/internal/ops/projects/{projectId}/kafka/consumer-groups/{consumerGroup}/lag"),
-                tool("search_logs",           "POST", "/internal/ops/projects/{projectId}/observability/logs/search"),
-                tool("query_traces",          "GET",  "/internal/ops/projects/{projectId}/connectors/{connectorName}/traces"),
-                tool("get_incident_summary",  "GET",  "/internal/ops/incidents/{incidentId}/summary"),
-                tool("get_pipeline_topology", "GET",  "/internal/ops/projects/{projectId}/pipelines/{pipelineId}/topology"),
-                tool("health",               "GET",  "/internal/ops/health"),
-                tool("ready",                "GET",  "/internal/ops/ready")
+                tool("get_consumer_lag",       "GET",  "/internal/ops/projects/{projectId}/kafka/consumer-groups/{consumerGroup}/lag"),
+                tool("search_logs",            "POST", "/internal/ops/projects/{projectId}/observability/logs/search"),
+                tool("query_traces",           "GET",  "/internal/ops/projects/{projectId}/connectors/{connectorName}/traces"),
+                tool("list_alerts",            "GET",  "/internal/ops/projects/{projectId}/observability/alerts"),
+                tool("get_incident_summary",   "GET",  "/internal/ops/incidents/{incidentId}/summary"),
+                tool("list_project_pipelines", "GET",  "/internal/ops/projects/{projectId}/pipelines"),
+                tool("get_pipeline_topology",  "GET",  "/internal/ops/projects/{projectId}/pipelines/{pipelineId}/topology"),
+                tool("get_connector_status",   "GET",  "/internal/ops/projects/{projectId}/kafka/connectors/{connectorName}/status")
         );
         return ResponseEntity.ok(OpsEnvelope.ok(requestId, "tool_catalog", catalog));
     }

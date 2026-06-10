@@ -29,6 +29,7 @@ Bifrost API가 반환하는 에러 코드의 단일 출처. 코드 추가/변경
 | `30000~30999` | 데이터베이스 |
 | `40000~40999` | 파이프라인 / 커넥터 |
 | `50000~50999` | 서버 / 인프라 / 내부 오류 |
+| `60000~61999` | 거버넌스 / 승인 / 변경관리 |
 | `90000~99999` | 기타 (검증 등 도메인-횡단) |
 
 - 각 도메인 안에서 사건별로 +1씩 배정한다.
@@ -84,6 +85,18 @@ Bifrost API가 반환하는 에러 코드의 단일 출처. 코드 추가/변경
 | 코드 | HTTP | 이름 | 트리거 | 클라이언트 권장 처리 |
 |---|---|---|---|---|
 | 50001 | 500 | `INTERNAL_ERROR` | 알 수 없는 서버 오류 (전역 핸들러 fallback) | "잠시 후 다시 시도해주세요" 안내, request_id를 운영팀에 전달 |
+
+### 거버넌스 / 승인 / 변경관리 (60000~61999)
+
+| 코드 | HTTP | 이름 | 트리거 | 클라이언트 권장 처리 |
+|---|---|---|---|---|
+| 60001 | 404 | `APPROVAL_NOT_FOUND` | approval id가 없거나 요청 tenant 범위에 속하지 않음 | approval 목록 새로고침 |
+| 60002 | 410 | `APPROVAL_EXPIRED` | 승인 대기 또는 실행 검증 시 approval 만료 | 새 approval 요청 생성 |
+| 60003 | 409 | `APPROVAL_ALREADY_DECIDED` | 이미 승인/거절된 approval에 decision 재시도 | 현재 approval 상태 새로고침 |
+| 60004 | 409 | `APPROVAL_ALREADY_USED` | single-use approval을 다시 실행 검증에 사용 | 실행 상태 확인 후 새 approval 요청 |
+| 60005 | 403 | `APPROVAL_SCOPE_MISMATCH` | tenant 또는 params_hash 등 approval scope 불일치 | action parameters와 approval 연결 재확인 |
+| 61001 | 404 | `CHANGE_TICKET_NOT_FOUND` | change ticket id가 없거나 요청 tenant 범위에 속하지 않음 | change ticket 목록 새로고침 |
+| 61002 | 403 | `CHANGE_TICKET_REQUIRED` | change ticket이 없거나 실행 가능한 상태가 아님 | 변경관리 ticket 생성/상태 확인 |
 
 ### 기타 / 도메인-횡단 (90000~99999)
 

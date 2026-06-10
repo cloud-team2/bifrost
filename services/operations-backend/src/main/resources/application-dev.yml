@@ -83,7 +83,9 @@ kafka-cluster:
 # rest-url: S1 ConnectRestPoller, S4 query_traces에서 사용
 kafka-connect:
   cluster: platform-connect
-  rest-url: ${KAFKA_CONNECT_REST_URL:http://platform-connect-connect-api.platform-kafka.svc:8083}
+  rest-url: ${KAFKA_CONNECT_REST_URL:}
+  connect-timeout-ms: ${KAFKA_CONNECT_CONNECT_TIMEOUT_MS:2000}
+  read-timeout-ms: ${KAFKA_CONNECT_READ_TIMEOUT_MS:3000}
 
 # Consumer Group Discovery polling
 discovery:

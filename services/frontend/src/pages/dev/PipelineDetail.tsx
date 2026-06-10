@@ -5,20 +5,20 @@ import { MetricCard, Panel, StatusBadge } from '../../components/blocks'
 import { TrendChart, CHART_COLORS, ResponsiveChart } from '../../components/Charts'
 import { TechIcon, nodeKind } from '../../components/TechIcon'
 import { useToast } from '../../components/Toast'
-import { useApp, CLUSTER } from '../../store/AppStore'
+import { useApp } from '../../store/AppStore'
 import { pipelineLabel } from '../../data/helpers'
-import { BOOTSTRAP_SERVER, LAG_THRESHOLD } from '../../data/mock'
 import type { Edge, Node } from '../../data/types'
 import {
   api,
+  type ConnectionGuideResponse,
   type ConnectorInfo,
   type ConsumerGroupInfo,
   type EventDistPoint,
   type KafkaMessageRecord,
   type MetricPoint,
   type PipelineMetricsResponse,
-  type SchemaColumn,
   type SyncStatusResponse,
+  type TableMappingResponse,
   type ThroughputPoint,
   type TopicInfoResponse,
 } from '../../lib/api'
@@ -278,6 +278,8 @@ function ConsumersTab({ edge }: { edge: Edge }) {
   const app = useApp()
   const wsId = app.currentProject?.id
   const [groups, setGroups] = useState<ConsumerGroupInfo[]>([])
+  const [lagWarningThreshold, setLagWarningThreshold] = useState<number | null>(null)
+  const [lagThresholdError, setLagThresholdError] = useState(false)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -291,10 +293,38 @@ function ConsumersTab({ edge }: { edge: Edge }) {
     return () => { cancelled = true }
   }, [wsId, edge.id])
 
+  useEffect(() => {
+    if (!wsId) {
+      setLagWarningThreshold(null)
+      setLagThresholdError(false)
+      return
+    }
+    let cancelled = false
+    setLagWarningThreshold(null)
+    setLagThresholdError(false)
+    api
+      .getThresholdSettings(wsId)
+      .then((settings) => { if (!cancelled) setLagWarningThreshold(settings.warning) })
+      .catch(() => {
+        if (!cancelled) {
+          setLagWarningThreshold(null)
+          setLagThresholdError(true)
+        }
+      })
+    return () => { cancelled = true }
+  }, [wsId])
+
   const [openGroup, setOpenGroup] = useState<string | null>(null)
 
   const lagChartData = groups.map((g) => ({ name: g.name, lag: g.totalLag }))
   const axis = { fontSize: 10, fill: '#94a3b8' }
+  const lagTone = (lag: number): 'unknown' | 'warning' | 'ok' => {
+    if (lagWarningThreshold == null) return 'unknown'
+    return lag >= lagWarningThreshold ? 'warning' : 'ok'
+  }
+  const thresholdLabel = lagWarningThreshold == null
+    ? lagThresholdError ? '조회 실패' : '불러오는 중…'
+    : formatNum(lagWarningThreshold)
 
   return (
     <div className="space-y-4">
@@ -303,7 +333,9 @@ function ConsumersTab({ edge }: { edge: Edge }) {
       <Panel title="Consumer Group Lag"
         right={
           <span className="text-[12px] text-gray-400">
-            임계값 <span className="font-semibold text-amber-600">{formatNum(LAG_THRESHOLD)}</span>
+            임계값 <span className={cn('font-semibold', lagThresholdError ? 'text-rose-600' : 'text-amber-600')}>
+              {thresholdLabel}
+            </span>
           </span>
         }>
         {loading ? (
@@ -332,7 +364,13 @@ function ConsumersTab({ edge }: { edge: Edge }) {
                     {lagChartData.map((entry) => (
                       <Cell
                         key={entry.name}
-                        fill={entry.lag >= LAG_THRESHOLD ? CHART_COLORS.amber : CHART_COLORS.emerald}
+                        fill={
+                          lagTone(entry.lag) === 'unknown'
+                            ? CHART_COLORS.slate
+                            : lagTone(entry.lag) === 'warning'
+                              ? CHART_COLORS.amber
+                              : CHART_COLORS.emerald
+                        }
                         opacity={openGroup && openGroup !== entry.name ? 0.35 : 1}
                         cursor="pointer"
                       />
@@ -372,7 +410,9 @@ function ConsumersTab({ edge }: { edge: Edge }) {
                     <td className="px-4 py-2.5"><StatusBadge status={g.state} /></td>
                     <td className="px-4 py-2.5 text-gray-600">{g.members}</td>
                     <td className={cn('px-4 py-2.5 text-right font-mono font-semibold tabular-nums',
-                      g.totalLag >= LAG_THRESHOLD ? 'text-amber-600' : 'text-gray-700')}>
+                      lagTone(g.totalLag) === 'unknown'
+                        ? 'text-slate-500'
+                        : lagTone(g.totalLag) === 'warning' ? 'text-amber-600' : 'text-gray-700')}>
                       {formatNum(g.totalLag)}
                     </td>
                     <td className="px-4 py-2.5 text-gray-500">
@@ -418,7 +458,11 @@ function ConsumersTab({ edge }: { edge: Edge }) {
                                     <td className="py-1.5 pr-4 text-right font-mono tabular-nums text-gray-500">{formatNum(o.committed)}</td>
                                     <td className="py-1.5 pr-4 text-right font-mono tabular-nums text-gray-500">{formatNum(o.endOffset)}</td>
                                     <td className={cn('py-1.5 text-right font-mono font-semibold tabular-nums',
-                                      lag >= LAG_THRESHOLD ? 'text-amber-600' : lag > 0 ? 'text-gray-700' : 'text-emerald-500')}>
+                                      lagTone(lag) === 'unknown'
+                                        ? 'text-slate-500'
+                                        : lagTone(lag) === 'warning'
+                                          ? 'text-amber-600'
+                                          : lag > 0 ? 'text-gray-700' : 'text-emerald-500')}>
                                       {formatNum(lag)}
                                     </td>
                                   </tr>
@@ -1004,33 +1048,128 @@ function MsgJsonBox({ title, data, empty }: { title: string; data: unknown; empt
 /* ---------------------------------------------------------------- Connection Guide tab (EDA) */
 
 function GuideTab({ edge }: { edge: Edge }) {
+  const app = useApp()
   const toast = useToast()
+  const wsId = app.currentProject?.id
   const [lang, setLang] = useState<'Java' | 'Python' | 'Node.js'>('Java')
-  const [reveal, setReveal] = useState(false)
+  const [guide, setGuide] = useState<ConnectionGuideResponse | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const copy = (v: string, what: string) => { navigator.clipboard?.writeText(v); toast(`${what} copied`) }
-  const snippets: Record<string, string> = {
-    Java:     `var props = new Properties();\nprops.put("bootstrap.servers", "${BOOTSTRAP_SERVER}");\nprops.put("group.id", "my-consumer");\nprops.put("key.deserializer", StringDeserializer.class);\n\nvar consumer = new KafkaConsumer<>(props);\nconsumer.subscribe(List.of("${edge.topic}"));`,
-    Python:   `from kafka import KafkaConsumer\n\nconsumer = KafkaConsumer(\n    "${edge.topic}",\n    bootstrap_servers="${BOOTSTRAP_SERVER}",\n    group_id="my-consumer",\n)\nfor msg in consumer:\n    handle(msg.value)`,
-    'Node.js': `const { Kafka } = require("kafkajs")\nconst kafka = new Kafka({ brokers: ["${BOOTSTRAP_SERVER}"] })\nconst consumer = kafka.consumer({ groupId: "my-consumer" })\nawait consumer.subscribe({ topic: "${edge.topic}" })`,
+
+  useEffect(() => {
+    if (!wsId) return
+    let cancelled = false
+    setGuide(null)
+    setError(null)
+    api
+      .getConnectionGuide(wsId, edge.id)
+      .then((res) => { if (!cancelled) setGuide(res) })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : '연결 가이드를 불러오지 못했습니다')
+      })
+    return () => { cancelled = true }
+  }, [wsId, edge.id])
+
+  if (!wsId) {
+    return <Panel title="Connection details"><div className="px-4 py-10 text-center text-[13px] text-gray-400">워크스페이스를 먼저 선택하세요.</div></Panel>
   }
+  if (error) {
+    return <Panel title="Connection details"><div className="px-4 py-10 text-center text-[13px] text-rose-500">{error}</div></Panel>
+  }
+  if (!guide) {
+    return <Panel title="Connection details"><div className="px-4 py-10 text-center text-[13px] text-gray-400">불러오는 중…</div></Panel>
+  }
+
+  const credential = guide.credentialReference
+  const keyRefs = Object.entries(credential.keyRefs)
+  const template = guide.authenticationTemplates[0] ?? null
+  const topicName = guide.topics[0]?.name ?? edge.topic ?? '<topic>'
+  const snippets: Record<string, string> = buildConsumerSnippets(guide, topicName, template)
 
   return (
     <div className="space-y-4">
       <Panel title="Connection details">
         <div className="space-y-2.5 px-4 py-3.5">
-          <Row label="Bootstrap server" value={BOOTSTRAP_SERVER} onCopy={() => copy(BOOTSTRAP_SERVER, 'Bootstrap server')} />
-          <Row label="Topic name"       value={edge.topic}        onCopy={() => copy(edge.topic, 'Topic name')} />
-          <div className="flex items-center gap-2 text-[12.5px]">
-            <span className="w-36 shrink-0 text-gray-500">Auth credentials</span>
-            <span className="flex-1 font-mono text-gray-700">
-              {reveal ? 'SCRAM-SHA-512 · user=consumer-svc · pw=•k3yR0t8a' : '•••••••••••••••••••'}
-            </span>
-            <button onClick={() => setReveal(r => !r)} className="text-gray-400 hover:text-gray-700">
-              <Icon name={reveal ? 'eye-off' : 'eye'} size={15} />
-            </button>
+          <Row label="Bootstrap server" value={guide.bootstrapServers} onCopy={() => copy(guide.bootstrapServers, 'Bootstrap server')} />
+          <Row label="Recommended group" value={guide.recommendedGroupId} onCopy={() => copy(guide.recommendedGroupId, 'Consumer group')} />
+          <Row label="Auth method" value={guide.authenticationMethod || 'NONE'} onCopy={() => copy(guide.authenticationMethod || 'NONE', 'Auth method')} />
+          <Row label="Credential Secret" value={`${credential.namespace}/${credential.secretName}`} onCopy={() => copy(`${credential.namespace}/${credential.secretName}`, 'Credential Secret')} />
+        </div>
+        <div className="border-t border-gray-100 px-4 py-3.5">
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Credential key references</div>
+          {keyRefs.length === 0 ? (
+            <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-[12.5px] text-gray-400">키 참조가 없습니다.</div>
+          ) : (
+            <div className="grid gap-1.5 sm:grid-cols-2">
+              {keyRefs.map(([usage, key]) => (
+                <div key={usage} className="flex items-center justify-between rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-[12px]">
+                  <span className="font-medium text-gray-500">{usage}</span>
+                  <span className="font-mono text-gray-700">{key}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {credential.availableKeys.length === 0 ? (
+              <span className="text-[12px] text-gray-400">사용 가능한 Secret 키가 없습니다.</span>
+            ) : credential.availableKeys.map((key) => (
+              <span key={key} className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[11px] text-gray-600">{key}</span>
+            ))}
           </div>
         </div>
       </Panel>
+
+      <Panel title="Topic references">
+        {guide.topics.length === 0 ? (
+          <div className="px-4 py-8 text-center text-[13px] text-gray-400">토픽 참조가 없습니다.</div>
+        ) : (
+          <table className="w-full text-[12.5px]">
+            <thead>
+              <tr className="border-b border-gray-100 text-left text-[11px] uppercase tracking-wide text-gray-400">
+                <th className="px-4 py-2 font-semibold">Topic</th>
+                <th className="px-3 py-2 font-semibold">Source table</th>
+                <th className="px-3 py-2 font-semibold">Role</th>
+              </tr>
+            </thead>
+            <tbody>
+              {guide.topics.map((topic) => (
+                <tr key={`${topic.role}-${topic.name}`} className="border-b border-gray-50">
+                  <td className="px-4 py-2.5 font-mono font-medium text-gray-800">{topic.name}</td>
+                  <td className="px-3 py-2.5 font-mono text-gray-500">{topic.sourceTable ?? '—'}</td>
+                  <td className="px-3 py-2.5 text-gray-500">{topic.role}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Panel>
+
+      <Panel title="Authentication templates">
+        {guide.authenticationTemplates.length === 0 ? (
+          <div className="px-4 py-8 text-center text-[13px] text-gray-400">인증 템플릿이 없습니다.</div>
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {guide.authenticationTemplates.map((t) => (
+              <div key={`${t.type}-${t.securityProtocol}`} className="px-4 py-3">
+                <div className="mb-2 flex items-center gap-2">
+                  <span className="rounded bg-brand-50 px-2 py-0.5 text-[11px] font-semibold text-brand-700">{t.type}</span>
+                  <span className="font-mono text-[12px] text-gray-500">{t.securityProtocol}</span>
+                  <span className="text-[12px] text-gray-400">secret {t.credentialReference.secretName}</span>
+                </div>
+                <div className="grid gap-1.5">
+                  {Object.entries(t.properties).map(([key, value]) => (
+                    <div key={key} className="grid grid-cols-[180px_1fr] gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-[12px]">
+                      <span className="font-mono text-gray-500">{key}</span>
+                      <span className="break-all font-mono text-gray-700">{value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Panel>
+
       <Panel title="Consumer code"
         right={
           <div className="flex gap-1">
@@ -1057,6 +1196,62 @@ function GuideTab({ edge }: { edge: Edge }) {
   )
 }
 
+function buildConsumerSnippets(
+  guide: ConnectionGuideResponse,
+  topicName: string,
+  template: ConnectionGuideResponse['authenticationTemplates'][number] | null,
+): Record<'Java' | 'Python' | 'Node.js', string> {
+  const javaAuth = template
+    ? Object.entries(template.properties)
+        .map(([key, value]) => `props.put("${escapeSnippetValue(key)}", "${escapeSnippetValue(value)}");`)
+        .join('\n')
+    : '// No client authentication properties returned by backend.'
+  const commentAuth = template
+    ? Object.entries(template.properties)
+        .map(([key, value]) => `# ${key}=${value}`)
+        .join('\n')
+    : '# No client authentication properties returned by backend.'
+  const jsAuth = template
+    ? Object.entries(template.properties)
+        .map(([key, value]) => `// ${key}=${value}`)
+        .join('\n')
+    : '// No client authentication properties returned by backend.'
+
+  return {
+    Java: `var props = new Properties();
+props.put("bootstrap.servers", "${escapeSnippetValue(guide.bootstrapServers)}");
+props.put("group.id", "${escapeSnippetValue(guide.recommendedGroupId)}");
+${javaAuth}
+props.put("key.deserializer", StringDeserializer.class);
+props.put("value.deserializer", StringDeserializer.class);
+
+var consumer = new KafkaConsumer<>(props);
+consumer.subscribe(List.of("${escapeSnippetValue(topicName)}"));`,
+    Python: `from kafka import KafkaConsumer
+
+# Authentication template (${guide.authenticationMethod}) uses Secret ${guide.credentialReference.namespace}/${guide.credentialReference.secretName}.
+${commentAuth}
+consumer = KafkaConsumer(
+    "${topicName}",
+    bootstrap_servers="${guide.bootstrapServers}",
+    group_id="${guide.recommendedGroupId}",
+)
+for msg in consumer:
+    handle(msg.value)`,
+    'Node.js': `const { Kafka } = require("kafkajs")
+
+// Authentication template (${guide.authenticationMethod}) uses Secret ${guide.credentialReference.namespace}/${guide.credentialReference.secretName}.
+${jsAuth}
+const kafka = new Kafka({ brokers: ["${guide.bootstrapServers}"] })
+const consumer = kafka.consumer({ groupId: "${guide.recommendedGroupId}" })
+await consumer.subscribe({ topic: "${topicName}" })`,
+  }
+}
+
+function escapeSnippetValue(value: string) {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')
+}
+
 function Row({ label, value, onCopy }: { label: string; value: string; onCopy: () => void }) {
   return (
     <div className="flex items-center gap-2 text-[12.5px]">
@@ -1074,63 +1269,68 @@ function Row({ label, value, onCopy }: { label: string; value: string; onCopy: (
 function MappingTab({ edge }: { edge: Edge }) {
   const app = useApp()
   const wsId = app.currentProject?.id
-  const [cols, setCols] = useState<SchemaColumn[] | null>(null)
-  const [error, setError] = useState(false)
+  const [mapping, setMapping] = useState<TableMappingResponse | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!wsId) return
     let cancelled = false
-    setCols(null)
-    setError(false)
+    setMapping(null)
+    setError(null)
     api
-      .databaseSchema(wsId, edge.source)
-      .then((res) => {
-        if (cancelled) return
-        const t = res.tables.find(
-          (tb) => tb.name === edge.table?.name && (!edge.table?.schema || tb.schema === edge.table?.schema),
-        )
-        setCols(t?.columns ?? [])
+      .getTableMapping(wsId, edge.id)
+      .then((res) => { if (!cancelled) setMapping(res) })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : '테이블 매핑을 불러오지 못했습니다')
       })
-      .catch(() => { if (!cancelled) setError(true) })
     return () => { cancelled = true }
-  }, [wsId, edge.source, edge.table?.name, edge.table?.schema])
+  }, [wsId, edge.id])
+
+  const titleTable = edge.table ? `${edge.table.schema}.${edge.table.name}` : 'pipeline'
 
   return (
-    <Panel title={`Table mapping · ${edge.table?.schema}.${edge.table?.name}`}>
-      {error ? (
-        <div className="px-4 py-10 text-center text-[13px] text-gray-400">스키마를 불러오지 못했습니다</div>
-      ) : cols === null ? (
+    <Panel title={`Table mapping · ${titleTable}`}>
+      {!wsId ? (
+        <div className="px-4 py-10 text-center text-[13px] text-gray-400">워크스페이스를 먼저 선택하세요.</div>
+      ) : error ? (
+        <div className="px-4 py-10 text-center text-[13px] text-rose-500">{error}</div>
+      ) : mapping === null ? (
         <div className="px-4 py-10 text-center text-[13px] text-gray-400">불러오는 중…</div>
-      ) : cols.length === 0 ? (
-        <div className="px-4 py-10 text-center text-[13px] text-gray-400">컬럼 정보를 찾을 수 없습니다</div>
       ) : (
-        <table className="w-full text-[12.5px]">
-          <thead>
-            <tr className="border-b border-gray-100 text-left text-[11px] uppercase tracking-wide text-gray-400">
-              <th className="px-4 py-2 font-semibold">Source column</th>
-              <th className="px-4 py-2 font-semibold">Destination column</th>
-              <th className="px-4 py-2 font-semibold">Type</th>
-              <th className="px-4 py-2 font-semibold">Flags</th>
-            </tr>
-          </thead>
-          <tbody>
-            {cols.map((c) => (
-              <tr key={c.name} className="border-b border-gray-50">
-                <td className="px-4 py-2.5 font-mono font-medium text-gray-800">{c.name}</td>
-                {/* CDC(direct)는 동일 컬럼명으로 복제 → 대상 컬럼명 동일 */}
-                <td className="px-4 py-2.5 font-mono text-gray-600">{c.name}</td>
-                <td className="px-4 py-2.5 font-mono text-gray-500">{c.type}</td>
-                <td className="px-4 py-2.5">
-                  <div className="flex gap-1.5">
-                    {c.primaryKey && <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">PK</span>}
-                    {!c.nullable && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">NOT NULL</span>}
-                    {c.indexed && <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">INDEX</span>}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <>
+          <div className="grid gap-2 border-b border-gray-100 px-4 py-3 text-[12px] sm:grid-cols-2">
+            <div>
+              <span className="text-gray-400">Source connector</span>
+              <div className="mt-0.5 font-mono text-gray-700">{mapping.sourceConnector || '—'}</div>
+            </div>
+            <div>
+              <span className="text-gray-400">Sink connector</span>
+              <div className="mt-0.5 font-mono text-gray-700">{mapping.sinkConnector || '—'}</div>
+            </div>
+          </div>
+          {mapping.mappings.length === 0 ? (
+            <div className="px-4 py-10 text-center text-[13px] text-gray-400">테이블 매핑이 없습니다.</div>
+          ) : (
+            <table className="w-full text-[12.5px]">
+              <thead>
+                <tr className="border-b border-gray-100 text-left text-[11px] uppercase tracking-wide text-gray-400">
+                  <th className="px-4 py-2 font-semibold">Source table</th>
+                  <th className="px-4 py-2 font-semibold">Kafka topic</th>
+                  <th className="px-4 py-2 font-semibold">Sink table</th>
+                </tr>
+              </thead>
+              <tbody>
+                {mapping.mappings.map((m) => (
+                  <tr key={`${m.sourceTable}-${m.kafkaTopic}-${m.sinkTable}`} className="border-b border-gray-50">
+                    <td className="px-4 py-2.5 font-mono font-medium text-gray-800">{m.sourceTable || '—'}</td>
+                    <td className="px-4 py-2.5 font-mono text-gray-600">{m.kafkaTopic || '—'}</td>
+                    <td className="px-4 py-2.5 font-mono text-gray-500">{m.sinkTable || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>
       )}
     </Panel>
   )
