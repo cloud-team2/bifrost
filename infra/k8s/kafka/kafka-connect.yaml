@@ -37,7 +37,9 @@ spec:
       - name: jdbc-sink
         artifacts:
           - type: zip
-            url: https://hub-downloads.confluent.io/api/plugins/confluentinc/kafka-connect-jdbc/versions/10.7.4/confluentinc-kafka-connect-jdbc-10.7.4.zip
+            # 10.7.4는 Kafka 4.x에서 제거된 Utils.mkSet 호출(Postgres dialect)로 sink task 실패(#419).
+            # 10.9.4(CP 8.0/Kafka 4.x 계열)로 업그레이드.
+            url: https://hub-downloads.confluent.io/api/plugins/confluentinc/kafka-connect-jdbc/versions/10.9.4/confluentinc-kafka-connect-jdbc-10.9.4.zip
           - type: jar
             url: https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.4/postgresql-42.7.4.jar
           - type: jar
