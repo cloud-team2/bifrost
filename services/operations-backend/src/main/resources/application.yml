@@ -23,9 +23,10 @@ management:
     health:
       show-details: when-authorized
   # 분산 추적 → Tempo (OTLP HTTP). 엔드포인트/샘플링은 환경변수로 오버라이드. (#366)
+  # 샘플링 기본 0.1(10%): 100%는 Tempo를 폭주시킴(OOM). 필요 시 env로 일시 상향.
   tracing:
     sampling:
-      probability: ${TRACING_SAMPLE_RATE:1.0}
+      probability: ${TRACING_SAMPLE_RATE:0.1}
   otlp:
     tracing:
       endpoint: ${OTLP_TRACING_ENDPOINT:http://tempo.monitoring:4318/v1/traces}
