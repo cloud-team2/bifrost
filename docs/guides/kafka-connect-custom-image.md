@@ -24,14 +24,9 @@
 
 ## 빌드
 
-### A. CI(Jenkins) — 정석 루트
+### A. CI(Jenkins) — 평상시
 
-`main`에 `infra/docker/kafka-connect/**` 또는 `connect-plugins/**` 변경이 머지되면 `Build Kafka Connect image` 스테이지가 Kaniko로 빌드해 Harbor에 push한다:
-
-- `:${CONNECT_TAG}` — KafkaConnect `spec.image`가 참조하는 **고정 태그**(Jenkinsfile env, 현재 `1.0.0-converter`). 매니페스트와 같은 값.
-- `:<git-sha>` — 추적용. `:latest` — 편의용.
-
-**자동 롤아웃은 하지 않는다.** kafka 매니페스트는 ArgoCD 대상이 아니라 **수동 apply**다(gitops chart-bump 흐름과 별개). 빌드 후 아래 롤아웃 절차를 수행한다. 이미지를 바꿀 땐 Jenkinsfile `CONNECT_TAG`와 매니페스트 `spec.image` 태그를 **함께 bump**한다.
+`main`에 `infra/docker/kafka-connect/**` 또는 `connect-plugins/**` 변경이 머지되면 `Build Kafka Connect image` 스테이지가 Kaniko로 빌드해 Harbor에 `:<git-sha>`·`:latest`로 push한다. **자동 롤아웃은 하지 않는다**(인프라 이미지). 롤아웃은 아래 수동 절차로.
 
 ### B. 수동 — 최초 컷오버/긴급
 
