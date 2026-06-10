@@ -185,9 +185,11 @@ async def test_simple_query_returns_rag_evidence_without_runtime_tool() -> None:
     bus.publish = AsyncMock(side_effect=lambda run_id, evt: published.append(evt))
     event_repo = InMemoryEventRepository()
 
+    # 순수 지식 질의 "DLQ가 뭐야?" 는 planner 가 키워드 미매칭으로 fallback(search_logs)만
+    # 계획한다 → 운영 tool 미계획이므로 RAG-only 단락 유지.
     out = await run_retrieval(
         "r1",
-        _plan(),
+        _plan("search_logs"),
         _context(),
         registry,
         bus,
@@ -203,3 +205,60 @@ async def test_simple_query_returns_rag_evidence_without_runtime_tool() -> None:
     assert out.evidence_items[0].store_ref.startswith("knowledge://global/glossary:dlq/")
     registry.call_tool.assert_not_called()
     assert any(e.type == StreamingEventType.EVIDENCE_COLLECTED for e in published)
+
+
+@pytest.mark.asyncio
+async def test_simple_query_with_operational_tool_calls_runtime_tool_despite_knowledge() -> None:
+    """#478: 상태/목록 질의가 simple_query 로 분류돼도, planner 가 운영 tool 을 계획했으면
+    knowledge hit 시에도 runtime tool 을 호출해 최신 운영 데이터를 근거에 포함한다."""
+    from app.knowledge.vector_store import KnowledgeSearchResult
+
+    class FakeVectorStore:
+        async def search(self, query: str, **kwargs):
+            return [
+                KnowledgeSearchResult(
+                    chunk_id="chunk-1",
+                    doc_id="ops_doc:pipeline",
+                    doc_type="ops_doc",
+                    title="파이프라인 운영 가이드",
+                    content="파이프라인 목록은 list_project_pipelines 로 조회한다.",
+                    scope="global",
+                    doc_version="test",
+                    metadata={},
+                    score=0.9,
+                )
+            ]
+
+    registry = AsyncMock()
+    registry.call_tool.return_value = ToolResult(
+        tool_name="list_project_pipelines",
+        status=ToolStatus.SUCCESS,
+        risk=RiskLevel.READ_ONLY,
+        summary="파이프라인 3건: orders, payments, audit",
+        evidence_ids=[],
+    )
+    bus = EventBus()
+    published = []
+    bus.publish = AsyncMock(side_effect=lambda run_id, evt: published.append(evt))
+    event_repo = InMemoryEventRepository()
+
+    out = await run_retrieval(
+        "r1",
+        _plan("list_project_pipelines"),
+        _context(),
+        registry,
+        bus,
+        event_repo,
+        user_message="파이프라인 리스트 알려줘",
+        mode=AgentMode.SIMPLE_QUERY,
+        vector_store=FakeVectorStore(),
+    )
+
+    # 운영 tool 이 실제 호출됐고, knowledge 근거 + tool 결과가 모두 evidence 에 포함된다.
+    registry.call_tool.assert_called_once()
+    assert registry.call_tool.call_args[0][0] == "list_project_pipelines"
+    summaries = [item.summary for item in out.evidence_items]
+    assert any("파이프라인 3건" in s for s in summaries)
+    types = {item.type.value for item in out.evidence_items}
+    assert "knowledge" in types
+    assert "tool_result" in types
