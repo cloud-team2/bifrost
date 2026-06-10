@@ -22,7 +22,7 @@ from app.agents import router as router_agent
 from app.agents import verifier as verifier_agent
 from app.llm.provider import get_llm_provider
 from app.persistence.change_ticket_repository import STATUS_VERIFIED
-from app.persistence.event_repository import AnyEventRepo, InMemoryEventRepository, get_event_repo
+from app.persistence.event_repository import AnyEventRepo, append_event, get_event_repo
 from app.persistence.report_repository import get_report_repo
 from app.persistence.run_repository import AnyRunRepo
 from app.persistence.state_repository import get_state_repo
@@ -40,6 +40,7 @@ from app.workflow.stages.executor import run_executor
 from app.workflow.stages.policy_guard import run_policy_guard
 
 logger = logging.getLogger(__name__)
+_PUBLIC_FAILURE_MESSAGE = "요청 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
 
 
 def _evt(run_id: str, type_: StreamingEventType, agent: str | None, message: str, payload: dict | None = None) -> StreamingEvent:
@@ -55,10 +56,22 @@ def _evt(run_id: str, type_: StreamingEventType, agent: str | None, message: str
 
 
 async def _publish(bus: EventBus, event_repo: AnyEventRepo, run_id: str, event: StreamingEvent) -> None:
-    if isinstance(event_repo, InMemoryEventRepository):
-        event_repo.append(run_id, event)
-    else:
-        await event_repo.append(run_id, event)
+    await append_event(event_repo, run_id, event)
+    await bus.publish(run_id, event)
+
+
+async def _publish_failure(bus: EventBus, event_repo: AnyEventRepo, run_id: str) -> None:
+    event = _evt(
+        run_id,
+        StreamingEventType.RUN_COMPLETED,
+        None,
+        _PUBLIC_FAILURE_MESSAGE,
+        {"error": "workflow_failed"},
+    )
+    try:
+        await append_event(event_repo, run_id, event)
+    except Exception:
+        logger.warning("final failure event persist failed: run_id=%s", run_id, exc_info=True)
     await bus.publish(run_id, event)
 
 
@@ -548,11 +561,7 @@ async def run_workflow(
     except Exception as exc:
         logger.exception("run_workflow failed: run_id=%s", run_id)
         await run_repo.update_status(run_id, "failed", None)
-        await _publish(bus, event_repo, run_id, _evt(
-            run_id, StreamingEventType.RUN_COMPLETED, None,
-            f"오류: {exc}",
-            {"error": str(exc)},
-        ))
+        await _publish_failure(bus, event_repo, run_id)
 
     finally:
         await bus.close_run(run_id)
