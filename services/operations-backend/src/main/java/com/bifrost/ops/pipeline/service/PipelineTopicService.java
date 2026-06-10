@@ -270,14 +270,13 @@ public class PipelineTopicService {
         return out;
     }
 
-    /** Debezium server 이름 = topic에서 ".schema.table" 접미를 제거(= topic.prefix). */
+    /**
+     * Debezium server 이름 = topic.prefix. #365 이후 source의 topic.prefix를 최종 토픽명으로 두므로
+     * (테이블 단위 유일한 server, RegexRouter로 중복 suffix 제거) server == 저장된 토픽명이다.
+     */
     private String debeziumServer(PipelineEntity p) {
         String topic = p.getTopicName();
-        if (topic == null || topic.isBlank()) return null;
-        String suffix = "." + p.getSchemaName() + "." + p.getTableName();
-        return topic.endsWith(suffix)
-                ? topic.substring(0, topic.length() - suffix.length())
-                : topic;
+        return (topic == null || topic.isBlank()) ? null : topic;
     }
 
     private TopicInfoResponse fetchTopicInfo(String topic) throws Exception {

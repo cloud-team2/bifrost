@@ -46,14 +46,23 @@ class SourceDebeziumConnectorMapperTest {
         assertThat(cr.getSpec().getTasksMax()).isEqualTo(1);
 
         Map<String, Object> config = cr.getSpec().getConfig();
-        assertThat(config).containsEntry("topic.prefix", "cdc.table.team2.shop-12345678");
+        // (#365) topic.prefix = 최종 토픽명(테이블 단위 유일한 Debezium server). Debezium이 또 붙이는
+        // .{schema}.{table} 중복분은 route SMT로 제거 → 최종 토픽명은 동일하게 유지된다.
+        assertThat(config).containsEntry("topic.prefix", "cdc.table.team2.shop-12345678.public.orders");
         assertThat(config).containsEntry("table.include.list", "public.orders");
+        assertThat(config).containsEntry("transforms", "route");
+        assertThat(config).containsEntry("transforms.route.type",
+                "org.apache.kafka.connect.transforms.RegexRouter");
+        assertThat(config).containsEntry("transforms.route.regex", "(.*)\\.public\\.orders$");
+        assertThat(config).containsEntry("transforms.route.replacement", "$1");
         assertThat(config).containsEntry("database.hostname", "db.internal");
         assertThat(config).containsEntry("database.user", "svc");
         assertThat(config).containsEntry("database.password", "pw");
         assertThat(config).containsEntry("plugin.name", "pgoutput");
         assertThat(config).containsKey("slot.name");
         assertThat(config).containsKey("publication.name");
+        // (#365) publication을 이 테이블로만 한정 → slot이 다른 테이블 변경을 stream하지 않아 메트릭 분리
+        assertThat(config).containsEntry("publication.autocreate.mode", "filtered");
     }
 
     @Test
