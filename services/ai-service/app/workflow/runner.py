@@ -507,7 +507,12 @@ async def run_workflow(
                         retrieval_out=retrieval_out,
                         classifier_out=classifier_out,
                     )
-                    v_status = verifier_out.verification_results[0].status.value if verifier_out.verification_results else "pass"
+                    first_result = (
+                        verifier_out.verification_results[0]
+                        if verifier_out.verification_results
+                        else None
+                    )
+                    v_status = first_result.status.value if first_result else "pass"
                     await _publish(bus, event_repo, run_id,
                                    _evt(run_id, StreamingEventType.VERIFICATION_COMPLETED, "verifier", f"검증: {v_status}"))
                     await _append_state_patch(
@@ -519,6 +524,11 @@ async def run_workflow(
                         path="/verification/verification_results",
                         patch={"verification_results": _jsonable(verifier_out.verification_results)},
                     )
+                    # #453: Verifier fail/needs_revision이면 책임 Agent로 loopback을
+                    # 등록한다. 예산 초과 시 다음 advance에서 RunBudgetExceeded로 종료.
+                    record_verifier = getattr(supervisor, "record_verifier_result", None)
+                    if record_verifier is not None and first_result is not None:
+                        record_verifier(run_id, first_result.status, first_result.next_agent)
 
                 case "report":
                     await _publish(bus, event_repo, run_id,
