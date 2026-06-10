@@ -27,6 +27,7 @@ import com.bifrost.ops.provisioning.persistence.repository.ConnectorRepository;
 import com.bifrost.ops.workspace.WorkspaceAccessGuard;
 import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
+import io.micrometer.observation.annotation.Observed;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -107,6 +108,7 @@ public class PipelineService {
 
     // ---------- 생성 ----------
 
+    @Observed(name = "pipeline.create")
     @Transactional
     public PipelineResponse create(UUID wsId, AuthenticatedUser principal, PipelineCreateRequest req) {
         accessGuard.requireAccess(wsId, principal);
