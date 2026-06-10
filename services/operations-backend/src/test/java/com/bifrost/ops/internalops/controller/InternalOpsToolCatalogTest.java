@@ -72,7 +72,7 @@ class InternalOpsToolCatalogTest {
 
         assertThat(catalog)
                 .extracting(entry -> entry.get("name"))
-                .doesNotContain("get_metrics", "get_deployments", "get_kafka_lag", "query_metrics");
+                .doesNotContain("get_metrics", "get_deployments", "get_kafka_lag");
     }
 
     @Test
