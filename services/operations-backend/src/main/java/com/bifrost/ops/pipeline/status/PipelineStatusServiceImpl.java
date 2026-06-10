@@ -13,6 +13,7 @@ import com.bifrost.ops.provisioning.dto.PipelinePattern;
 import com.bifrost.ops.provisioning.persistence.entity.ConnectorEntity;
 import com.bifrost.ops.provisioning.persistence.repository.ConnectorRepository;
 import com.bifrost.ops.streaming.SsePublisher;
+import io.micrometer.observation.annotation.Observed;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -55,6 +56,7 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
         this.ssePublisher = ssePublisher;
     }
 
+    @Observed(name = "pipeline.status.apply_connector_status")
     @Override
     @Transactional
     public void applyConnectorStatus(ConnectorStatusUpdate update) {

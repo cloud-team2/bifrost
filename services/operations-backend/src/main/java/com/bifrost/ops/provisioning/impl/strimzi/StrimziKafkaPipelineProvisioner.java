@@ -18,6 +18,7 @@ import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.dsl.NonDeletingOperation;
 import io.fabric8.kubernetes.client.utils.Serialization;
+import io.micrometer.observation.annotation.Observed;
 import io.strimzi.api.kafka.model.connector.KafkaConnector;
 import io.strimzi.api.kafka.model.connector.KafkaConnectorStatus;
 import org.slf4j.Logger;
@@ -73,6 +74,7 @@ public class StrimziKafkaPipelineProvisioner implements KafkaPipelineProvisioner
         this.connectCluster = connectCluster;
     }
 
+    @Observed(name = "pipeline.provision.create")
     @Override
     public PipelineProvisionResult createPipelineResources(PipelineProvisionCommand command) {
         List<ConnectorRef> created = new ArrayList<>();
