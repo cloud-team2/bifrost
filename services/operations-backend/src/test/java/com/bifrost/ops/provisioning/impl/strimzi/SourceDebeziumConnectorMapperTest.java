@@ -16,7 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class SourceDebeziumConnectorMapperTest {
 
     private final SourceDebeziumConnectorMapper mapper =
-            new SourceDebeziumConnectorMapper("localhost:9092");
+            new SourceDebeziumConnectorMapper("localhost:9092", false);
     private static final String NS = "platform-kafka";
     private static final String CLUSTER = "platform-connect";
 
@@ -80,5 +80,31 @@ class SourceDebeziumConnectorMapperTest {
         assertThat(config).containsKey("schema.history.internal.kafka.topic");
         assertThat(config).containsEntry("snapshot.mode", "initial");
         assertThat(config).doesNotContainKey("plugin.name");
+    }
+
+    @Test
+    void dataplaneTracingAddsDebeziumTracingSmtWhenEnabled() {
+        // #371: 데이터플레인 추적 on → Debezium ActivateTracingSpan SMT를 route 뒤에 체이닝
+        SourceDebeziumConnectorMapper tracingMapper =
+                new SourceDebeziumConnectorMapper("localhost:9092", true);
+
+        KafkaConnector cr = tracingMapper.map(
+                command(DbType.POSTGRESQL), new DbCredential("svc", "pw"), NS, CLUSTER);
+
+        Map<String, Object> config = cr.getSpec().getConfig();
+        assertThat(config).containsEntry("transforms", "route,tracing");
+        assertThat(config).containsEntry("transforms.tracing.type",
+                "io.debezium.transforms.tracing.ActivateTracingSpan");
+    }
+
+    @Test
+    void dataplaneTracingOffByDefaultKeepsRouteOnly() {
+        // 기본 off → 오버헤드 없음, transforms는 route만 유지
+        KafkaConnector cr = mapper.map(
+                command(DbType.POSTGRESQL), new DbCredential("svc", "pw"), NS, CLUSTER);
+
+        Map<String, Object> config = cr.getSpec().getConfig();
+        assertThat(config).containsEntry("transforms", "route");
+        assertThat(config).doesNotContainKey("transforms.tracing.type");
     }
 }

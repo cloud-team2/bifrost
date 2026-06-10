@@ -38,10 +38,15 @@ public class SourceDebeziumConnectorMapper {
     /** MariaDB schema history를 저장할 Kafka bootstrap. Connect 내부 접근이므로 plain 9092 사용. */
     private final String kafkaBootstrapServers;
 
+    /** 데이터플레인 추적(#371): on이면 Debezium tracing SMT를 커넥터에 추가. 기본 off(오버헤드 없음). */
+    private final boolean dataplaneTracingEnabled;
+
     public SourceDebeziumConnectorMapper(
             @Value("${spring.kafka.bootstrap-servers:platform-kafka-kafka-bootstrap.platform-kafka.svc.cluster.local:9092}")
-            String kafkaBootstrapServers) {
+            String kafkaBootstrapServers,
+            @Value("${tracing.dataplane.enabled:false}") boolean dataplaneTracingEnabled) {
         this.kafkaBootstrapServers = kafkaBootstrapServers;
+        this.dataplaneTracingEnabled = dataplaneTracingEnabled;
     }
 
     /**
@@ -109,6 +114,16 @@ public class SourceDebeziumConnectorMapper {
                 .endSpec();
 
         applyEngineSpecifics(builder, src, command.projectKey(), pipelineId);
+        if (dataplaneTracingEnabled) {
+            // #371 데이터플레인 추적: Debezium ActivateTracingSpan SMT를 route 뒤에 체이닝한다.
+            // 변경 이벤트마다 span 생성 + trace context를 Kafka 헤더에 주입 → sink까지 한 trace로 연결.
+            // (전제: Connect 워커에 OTel agent. 워커 미계측 시 SMT는 사실상 no-op.)
+            builder.editSpec()
+                    .addToConfig("transforms", "route,tracing")
+                    .addToConfig("transforms.tracing.type",
+                            "io.debezium.transforms.tracing.ActivateTracingSpan")
+                    .endSpec();
+        }
         return builder.build();
     }
 
