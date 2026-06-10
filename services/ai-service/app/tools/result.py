@@ -76,12 +76,70 @@ def failed_tool_result(
     )
 
 
+# 폴백 요약에 값을 노출해도 안전한 categorical scalar 키 (열거형 상태값 — secret 아님).
+_SAFE_SCALAR_KEYS = ("status", "state", "action", "severity", "level", "pattern")
+# 리소스 식별자 — 사용자 요청 맥락에 이미 존재, raw 로그·secret·connection string 아님.
+_SAFE_NAME_KEYS = (
+    "connector_name",
+    "consumer_group",
+    "pipeline_id",
+    "incident_id",
+    "metric",
+)
+# 정수 카운트 키 — 값 자체가 집계치라 민감정보 아님.
+_SAFE_COUNT_KEYS = (
+    "total",
+    "match_count",
+    "total_lag",
+    "related_event_count",
+    "count",
+    "affected_rows_estimate",
+)
+_MAX_SUMMARY_PARTS = 4
+
+
 def _success_summary(response: SpringOpsResponse) -> str:
-    if isinstance(response.result, dict):
-        summary = response.result.get("summary")
-        if isinstance(summary, str) and summary:
-            return summary
-    return f"{response.operation} completed"
+    """Spring 응답에서 민감정보 없이 유의미한 성공 요약을 생성.
+
+    우선순위:
+    1) Spring 가 직접 준 ``summary`` 문자열 (기존 동작 유지).
+    2) result(dict/list) 의 구조적 요약 — 리스트 항목 수·열거형 상태·집계 카운트만.
+       raw 로그·secret·connection string 등 값 덤프는 일절 하지 않음(redaction 보존).
+    3) 위 어느 것도 추출 불가하면 기존 ``"{op} completed"`` 안전 폴백.
+    """
+    base = f"{response.operation} completed"
+    result = response.result
+
+    if isinstance(result, list):
+        return f"{base} ({len(result)} items)"
+
+    if not isinstance(result, dict) or not result:
+        return base
+
+    summary = result.get("summary")
+    if isinstance(summary, str) and summary:
+        return summary
+
+    parts: list[str] = []
+    # 리스트-값 키: 항목 수만 보고 (내용 미노출).
+    for key, value in result.items():
+        if isinstance(value, list):
+            parts.append(f"{key}: {len(value)}")
+    # 안전한 식별자/상태/카운트 스칼라.
+    for key in _SAFE_NAME_KEYS + _SAFE_SCALAR_KEYS:
+        value = result.get(key)
+        if isinstance(value, str) and value:
+            parts.append(f"{key}={value}")
+    for key in _SAFE_COUNT_KEYS:
+        value = result.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            parts.append(f"{key}={value}")
+
+    if not parts:
+        return base
+    return f"{base} ({', '.join(parts[:_MAX_SUMMARY_PARTS])})"
 
 
 def _is_blocking_error(error: ToolError) -> bool:
