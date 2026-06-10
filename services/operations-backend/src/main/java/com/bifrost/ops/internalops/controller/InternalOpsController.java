@@ -73,7 +73,7 @@ public class InternalOpsController {
                 tool("search_logs",            "POST", "/internal/ops/projects/{projectId}/observability/logs/search"),
                 tool("query_traces",           "GET",  "/internal/ops/projects/{projectId}/connectors/{connectorName}/traces"),
                 tool("list_alerts",            "GET",  "/internal/ops/projects/{projectId}/observability/alerts"),
-                tool("get_incident_summary",   "GET",  "/internal/ops/incidents/{incidentId}/summary"),
+                tool("get_incident_summary",   "GET",  "/internal/ops/projects/{projectId}/incidents/{incidentId}/summary"),
                 tool("list_project_pipelines", "GET",  "/internal/ops/projects/{projectId}/pipelines"),
                 tool("get_pipeline_topology",  "GET",  "/internal/ops/projects/{projectId}/pipelines/{pipelineId}/topology"),
                 tool("get_connector_status",   "GET",  "/internal/ops/projects/{projectId}/kafka/connectors/{connectorName}/status")

@@ -40,6 +40,9 @@ public class IdempotencyKeyEntity {
     @Column(name = "approval_id")
     private UUID approvalId;
 
+    @Column(name = "change_ticket_id")
+    private UUID changeTicketId;
+
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
     private String result;
@@ -74,6 +77,8 @@ public class IdempotencyKeyEntity {
     public void setHttpStatus(Integer httpStatus) { this.httpStatus = httpStatus; }
     public UUID getApprovalId() { return approvalId; }
     public void setApprovalId(UUID approvalId) { this.approvalId = approvalId; }
+    public UUID getChangeTicketId() { return changeTicketId; }
+    public void setChangeTicketId(UUID changeTicketId) { this.changeTicketId = changeTicketId; }
     public String getResult() { return result; }
     public void setResult(String result) { this.result = result; }
     public Instant getExpiresAt() { return expiresAt; }

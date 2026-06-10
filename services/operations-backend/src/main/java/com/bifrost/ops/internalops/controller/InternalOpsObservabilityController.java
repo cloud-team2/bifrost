@@ -1,6 +1,8 @@
 package com.bifrost.ops.internalops.controller;
 
 import com.bifrost.ops.adapters.logstore.LokiClient;
+import com.bifrost.ops.global.common.error.ApiException;
+import com.bifrost.ops.global.common.error.ErrorCode;
 import com.bifrost.ops.internalops.AgentHeaders;
 import com.bifrost.ops.internalops.dto.AlertListResult;
 import com.bifrost.ops.internalops.dto.AlertSummaryResult;
@@ -10,6 +12,9 @@ import com.bifrost.ops.internalops.dto.LogSearchResult;
 import com.bifrost.ops.internalops.dto.OpsEnvelope;
 import com.bifrost.ops.incident.persistence.entity.IncidentEntity;
 import com.bifrost.ops.incident.persistence.repository.IncidentRepository;
+import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
+import com.bifrost.ops.provisioning.persistence.entity.ConnectorEntity;
+import com.bifrost.ops.provisioning.persistence.repository.ConnectorRepository;
 import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
 import jakarta.servlet.http.HttpServletRequest;
@@ -25,7 +30,6 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -37,6 +41,7 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -59,23 +64,26 @@ public class InternalOpsObservabilityController {
 
     private final AdminClient adminClient;
     private final LokiClient lokiClient;
-    private final JdbcTemplate jdbcTemplate;
     private final WorkspaceRepository workspaceRepository;
+    private final PipelineRepository pipelineRepository;
+    private final ConnectorRepository connectorRepository;
     private final IncidentRepository incidentRepository;
     private final RestClient connectRestClient;
 
     public InternalOpsObservabilityController(
             AdminClient adminClient,
             LokiClient lokiClient,
-            JdbcTemplate jdbcTemplate,
             WorkspaceRepository workspaceRepository,
+            PipelineRepository pipelineRepository,
+            ConnectorRepository connectorRepository,
             IncidentRepository incidentRepository,
             @Value("${kafka-connect.rest-url:http://platform-connect-connect-api.platform-kafka.svc:8083}")
             String connectRestUrl) {
         this.adminClient = adminClient;
         this.lokiClient = lokiClient;
-        this.jdbcTemplate = jdbcTemplate;
         this.workspaceRepository = workspaceRepository;
+        this.pipelineRepository = pipelineRepository;
+        this.connectorRepository = connectorRepository;
         this.incidentRepository = incidentRepository;
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(2000);
@@ -93,6 +101,11 @@ public class InternalOpsObservabilityController {
             @PathVariable String consumerGroup,
             HttpServletRequest request) {
         String requestId = AgentHeaders.requestId(request);
+        try {
+            requireOwnedConnectConsumerGroup(projectId, consumerGroup);
+        } catch (ApiException e) {
+            return apiError(requestId, "get_consumer_lag", e);
+        }
         long totalLag = fetchLag(consumerGroup);
         String source = totalLag >= 0 ? "kafka-admin" : "unavailable";
         ConsumerLagResult result = new ConsumerLagResult(consumerGroup, Math.max(0, totalLag), source);
@@ -106,8 +119,15 @@ public class InternalOpsObservabilityController {
             @RequestBody(required = false) Map<String, Object> body,
             HttpServletRequest request) {
         String requestId = AgentHeaders.requestId(request);
+        WorkspaceEntity workspace;
+        try {
+            workspace = requireWorkspace(projectId);
+        } catch (ApiException e) {
+            return apiError(requestId, "search_logs", e);
+        }
 
-        String query = body != null ? String.valueOf(body.getOrDefault("query", "{job=~\".+\"}")) : "{job=~\".+\"}";
+        String query = scopedLogQuery(workspace,
+                body != null ? String.valueOf(body.getOrDefault("query", "")) : "");
         long endNs = Instant.now().toEpochMilli() * 1_000_000L;
         long startNs = endNs - 3_600_000_000_000L; // 기본 1시간
         int limit = body != null && body.containsKey("limit")
@@ -179,6 +199,11 @@ public class InternalOpsObservabilityController {
             HttpServletRequest request) {
         String requestId = AgentHeaders.requestId(request);
         try {
+            requireOwnedConnector(projectId, connectorName);
+        } catch (ApiException e) {
+            return apiError(requestId, "query_traces", e);
+        }
+        try {
             Map<String, Object> status = connectRestClient.get()
                     .uri("/connectors/{name}/status", connectorName)
                     .retrieve()
@@ -209,20 +234,29 @@ public class InternalOpsObservabilityController {
      * get_incident_summary — incidents 테이블 직접 조회(S4).
      * S2(#258) V16 마이그레이션 적용 후 동작한다.
      */
-    @GetMapping("/incidents/{incidentId}/summary")
+    @GetMapping("/projects/{projectId}/incidents/{incidentId}/summary")
     public ResponseEntity<OpsEnvelope<IncidentSummaryResult>> incidentSummary(
+            @PathVariable String projectId,
             @PathVariable String incidentId,
             HttpServletRequest request) {
         String requestId = AgentHeaders.requestId(request);
         try {
-            Map<String, Object> row = jdbcTemplate.queryForMap(
-                    "SELECT id, severity, status, title, rca, opened_at, resolved_at FROM incidents WHERE id = ?::uuid",
-                    incidentId);
+            WorkspaceEntity workspace = requireWorkspace(projectId);
+            IncidentEntity incident = incidentRepository.findByIdAndTenantId(UUID.fromString(incidentId), workspace.getId())
+                    .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND,
+                            "incident not found in project: " + incidentId));
             IncidentSummaryResult result = new IncidentSummaryResult(
                     incidentId,
-                    String.valueOf(row.get("status")),
-                    buildSummaryNote(row));
+                    incident.getStatus(),
+                    buildSummaryNote(incident));
             return ResponseEntity.ok(OpsEnvelope.ok(requestId, "get_incident_summary", result));
+        } catch (ApiException e) {
+            if (e.code() == ErrorCode.WORKSPACE_NOT_FOUND || e.code() == ErrorCode.WORKSPACE_FORBIDDEN) {
+                return apiError(requestId, "get_incident_summary", e);
+            }
+            log.debug("incident 조회 실패(무시): id={} cause={}", incidentId, e.getMessage());
+            return ResponseEntity.ok(OpsEnvelope.ok(requestId, "get_incident_summary",
+                    IncidentSummaryResult.stub(incidentId)));
         } catch (Exception e) {
             log.debug("incident 조회 실패(무시): id={} cause={}", incidentId, e.getMessage());
             return ResponseEntity.ok(OpsEnvelope.ok(requestId, "get_incident_summary",
@@ -230,10 +264,21 @@ public class InternalOpsObservabilityController {
         }
     }
 
-    private static String buildSummaryNote(Map<String, Object> row) {
-        return "severity=" + row.get("severity")
-                + " title=" + row.get("title")
-                + (row.get("rca") != null ? " rca=" + row.get("rca") : "");
+    @GetMapping("/incidents/{incidentId}/summary")
+    public ResponseEntity<OpsEnvelope<IncidentSummaryResult>> legacyIncidentSummary(
+            @PathVariable String incidentId,
+            HttpServletRequest request) {
+        String requestId = AgentHeaders.requestId(request);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(OpsEnvelope.error(requestId, "get_incident_summary", "VALIDATION_FAILED",
+                        "project-scoped incident summary path is required", false,
+                        "use_project_scoped_path"));
+    }
+
+    private static String buildSummaryNote(IncidentEntity incident) {
+        return "severity=" + incident.getSeverity()
+                + " title=" + incident.getTitle()
+                + (incident.getRca() != null ? " rca=" + incident.getRca() : "");
     }
 
     private static long parseNs(Object val) {
@@ -244,15 +289,119 @@ public class InternalOpsObservabilityController {
     }
 
     private Optional<WorkspaceEntity> findWorkspace(String projectId) {
-        try {
-            Optional<WorkspaceEntity> byId = workspaceRepository.findById(UUID.fromString(projectId));
-            if (byId.isPresent()) {
-                return byId;
-            }
-        } catch (IllegalArgumentException ignored) {
-            // projectId may be a namespace slug.
-        }
         return workspaceRepository.findByNamespace(projectId);
+    }
+
+    private WorkspaceEntity requireWorkspace(String projectId) {
+        return findWorkspace(projectId)
+                .orElseThrow(() -> new ApiException(ErrorCode.WORKSPACE_NOT_FOUND,
+                        "프로젝트를 찾을 수 없습니다: " + projectId));
+    }
+
+    private ConnectorEntity requireOwnedConnectConsumerGroup(String projectId, String consumerGroup) {
+        if (!consumerGroup.startsWith("connect-") || consumerGroup.length() <= "connect-".length()) {
+            throw new ApiException(ErrorCode.RESOURCE_NOT_FOUND,
+                    "consumer group is not a Kafka Connect-managed group: " + consumerGroup);
+        }
+        return requireOwnedConnector(projectId, consumerGroup.substring("connect-".length()));
+    }
+
+    private ConnectorEntity requireOwnedConnector(String projectId, String connectorName) {
+        WorkspaceEntity workspace = requireWorkspace(projectId);
+        ConnectorEntity connector = connectorRepository.findByCrName(connectorName)
+                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND,
+                        "connector not found: " + connectorName));
+        pipelineRepository.findByIdAndTenantId(connector.getPipelineId(), workspace.getId())
+                .orElseThrow(() -> new ApiException(ErrorCode.WORKSPACE_FORBIDDEN,
+                        "connector is not owned by project: " + projectId));
+        return connector;
+    }
+
+    private static String scopedLogQuery(WorkspaceEntity workspace, String rawQuery) {
+        String namespace = workspace.getNamespace() != null && !workspace.getNamespace().isBlank()
+                ? workspace.getNamespace()
+                : workspace.getId().toString();
+        String query = rawQuery == null ? "" : rawQuery.trim();
+        if (query.isBlank()) {
+            return "{namespace=\"" + escapeLogQuery(namespace) + "\"}";
+        }
+        if (query.startsWith("{")) {
+            return mergeNamespaceSelector(namespace, query);
+        }
+        return "{namespace=\"" + escapeLogQuery(namespace) + "\"} |= \"" + escapeLogQuery(query) + "\"";
+    }
+
+    private static String mergeNamespaceSelector(String namespace, String query) {
+        int end = query.indexOf('}');
+        if (end < 0) {
+            return "{namespace=\"" + escapeLogQuery(namespace) + "\"} |= \"" + escapeLogQuery(query) + "\"";
+        }
+        String selector = query.substring(1, end);
+        String suffix = query.substring(end + 1).trim();
+        List<String> matchers = new ArrayList<>();
+        matchers.add("namespace=\"" + escapeLogQuery(namespace) + "\"");
+        for (String matcher : splitLabelMatchers(selector)) {
+            String trimmed = matcher.trim();
+            if (!trimmed.isBlank() && !isNamespaceMatcher(trimmed)) {
+                matchers.add(trimmed);
+            }
+        }
+        return "{" + String.join(",", matchers) + "}" + (suffix.isBlank() ? "" : " " + suffix);
+    }
+
+    private static List<String> splitLabelMatchers(String selector) {
+        List<String> matchers = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean inQuotes = false;
+        boolean escaped = false;
+        for (int i = 0; i < selector.length(); i++) {
+            char c = selector.charAt(i);
+            if (escaped) {
+                current.append(c);
+                escaped = false;
+                continue;
+            }
+            if (c == '\\') {
+                current.append(c);
+                escaped = true;
+                continue;
+            }
+            if (c == '"') {
+                inQuotes = !inQuotes;
+                current.append(c);
+                continue;
+            }
+            if (c == ',' && !inQuotes) {
+                matchers.add(current.toString());
+                current.setLength(0);
+                continue;
+            }
+            current.append(c);
+        }
+        matchers.add(current.toString());
+        return matchers;
+    }
+
+    private static boolean isNamespaceMatcher(String matcher) {
+        return matcher.matches("\\s*namespace\\s*(=|!=|=~|!~).*");
+    }
+
+    private static String escapeLogQuery(String value) {
+        return value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private static <T> ResponseEntity<OpsEnvelope<T>> apiError(
+            String requestId,
+            String operation,
+            ApiException e) {
+        if (e.code() == ErrorCode.WORKSPACE_FORBIDDEN) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(OpsEnvelope.error(requestId, operation, "RESOURCE_NOT_OWNED_BY_PROJECT",
+                            e.getMessage(), false, "check_project_scope"));
+        }
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(OpsEnvelope.error(requestId, operation, "RESOURCE_NOT_FOUND",
+                        e.getMessage(), false, "check_project_scope"));
     }
 
     private static String normalizeFilter(String value) {
