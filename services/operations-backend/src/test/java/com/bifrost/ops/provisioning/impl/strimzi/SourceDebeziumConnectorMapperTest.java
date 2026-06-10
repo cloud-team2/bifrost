@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class SourceDebeziumConnectorMapperTest {
 
     private final SourceDebeziumConnectorMapper mapper =
-            new SourceDebeziumConnectorMapper("localhost:9092", false);
+            new SourceDebeziumConnectorMapper("localhost:9092", false, 6, 3);
     private static final String NS = "platform-kafka";
     private static final String CLUSTER = "platform-connect";
 
@@ -51,6 +51,9 @@ class SourceDebeziumConnectorMapperTest {
         // .{schema}.{table} 중복분은 route SMT로 제거 → 최종 토픽명은 동일하게 유지된다.
         assertThat(config).containsEntry("topic.prefix", "cdc.table.team2.shop-12345678.public.orders");
         assertThat(config).containsEntry("table.include.list", "public.orders");
+        // 토픽 자동생성 기본값(운영 기준 6/3) — 로컬은 env로 1 주입(#402)
+        assertThat(config).containsEntry("topic.creation.default.partitions", "6");
+        assertThat(config).containsEntry("topic.creation.default.replication.factor", "3");
         assertThat(config).containsEntry("transforms", "route");
         assertThat(config).containsEntry("transforms.route.type",
                 "org.apache.kafka.connect.transforms.RegexRouter");
@@ -109,7 +112,7 @@ class SourceDebeziumConnectorMapperTest {
     void dataplaneTracingAddsDebeziumTracingSmtWhenEnabled() {
         // #371: 데이터플레인 추적 on → Debezium ActivateTracingSpan SMT를 route 뒤에 체이닝
         SourceDebeziumConnectorMapper tracingMapper =
-                new SourceDebeziumConnectorMapper("localhost:9092", true);
+                new SourceDebeziumConnectorMapper("localhost:9092", true, 6, 3);
 
         KafkaConnector cr = tracingMapper.map(
                 command(DbType.POSTGRESQL), new DbCredential("svc", "pw"), NS, CLUSTER);

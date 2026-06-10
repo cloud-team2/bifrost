@@ -69,6 +69,9 @@ public class SourceDebeziumConnectorMapper {
 
     /** MariaDB schema history를 저장할 Kafka bootstrap. Connect 내부 접근이므로 plain 9092 사용. */
     private final String kafkaBootstrapServers;
+    /** 자동 생성 토픽의 partition/replication factor. 운영 기본 6/3, 로컬(단일 브로커)은 env로 1 주입. */
+    private final int topicPartitions;
+    private final int topicReplicationFactor;
 
     /** 데이터플레인 추적(#371): on이면 Debezium tracing SMT를 커넥터에 추가. 기본 off(오버헤드 없음). */
     private final boolean dataplaneTracingEnabled;
@@ -76,9 +79,13 @@ public class SourceDebeziumConnectorMapper {
     public SourceDebeziumConnectorMapper(
             @Value("${spring.kafka.bootstrap-servers:platform-kafka-kafka-bootstrap.platform-kafka.svc.cluster.local:9092}")
             String kafkaBootstrapServers,
-            @Value("${tracing.dataplane.enabled:false}") boolean dataplaneTracingEnabled) {
+            @Value("${tracing.dataplane.enabled:false}") boolean dataplaneTracingEnabled,
+            @Value("${pipeline.topic.partitions:6}") int topicPartitions,
+            @Value("${pipeline.topic.replication-factor:3}") int topicReplicationFactor) {
         this.kafkaBootstrapServers = kafkaBootstrapServers;
         this.dataplaneTracingEnabled = dataplaneTracingEnabled;
+        this.topicPartitions = topicPartitions;
+        this.topicReplicationFactor = topicReplicationFactor;
     }
 
     /**
@@ -141,8 +148,8 @@ public class SourceDebeziumConnectorMapper {
                     // BIGINT로 만들어버린다 → connect 모드면 SQL TIMESTAMP로 자연스럽게 적재된다.
                     .addToConfig("time.precision.mode", "connect")
                     // 자동 토픽 생성 기본값 (설계 §2 4.1)
-                    .addToConfig("topic.creation.default.partitions", "6")
-                    .addToConfig("topic.creation.default.replication.factor", "3")
+                    .addToConfig("topic.creation.default.partitions", String.valueOf(topicPartitions))
+                    .addToConfig("topic.creation.default.replication.factor", String.valueOf(topicReplicationFactor))
                 .endSpec();
 
         applyEngineSpecifics(builder, src, command.projectKey(), pipelineId);
