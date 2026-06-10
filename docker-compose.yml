@@ -164,8 +164,7 @@ services:
       wiremock:
         condition: service_started
     command: >
-      sh -c "alembic upgrade 004 &&
-             python -c 'import os, psycopg2; dsn=os.environ[\"AI_DATABASE_URL\"].replace(\"postgresql+asyncpg://\", \"postgresql://\"); conn=psycopg2.connect(dsn); cur=conn.cursor(); cur.execute(\"ALTER TABLE agent_run ALTER COLUMN project_id TYPE text USING project_id::text; ALTER TABLE run_event DROP CONSTRAINT IF EXISTS run_event_run_id_seq_key\"); conn.commit(); conn.close()' &&
+      sh -c "alembic upgrade head &&
              uvicorn app.main:app --host 0.0.0.0 --port 8082"
 
 volumes:
