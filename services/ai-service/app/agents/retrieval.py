@@ -19,6 +19,17 @@ from app.tools.registry import ToolClientRegistry
 
 logger = logging.getLogger(__name__)
 
+# planner 가 명시적 키워드 매칭 없이 fallback 으로 선택하는 도구. 이 도구만으로 이뤄진
+# plan 은 순수 지식/용어 질의("DLQ가 뭐야?")로 간주해 RAG 근거가 있으면 단락한다.
+# 그 외 도구(list_project_pipelines·get_connector_status·get_consumer_lag 등)는 명시적
+# 운영 조회 의도를 뜻하므로, knowledge 근거가 있어도 실제 운영 데이터를 조회한다 (#478).
+_FALLBACK_ONLY_TOOLS = frozenset({"search_logs"})
+
+
+def _has_operational_tool(plan: PlannerOutput) -> bool:
+    """planner 가 fallback 이 아닌 명시적 운영 runtime tool 을 계획했는지 여부."""
+    return any(step.tool_name not in _FALLBACK_ONLY_TOOLS for step in plan.retrieval_plan)
+
 
 async def _pub(bus: EventBus, repo: AnyEventRepo, run_id: str, event: StreamingEvent) -> None:
     await append_event(repo, run_id, event)
@@ -50,8 +61,10 @@ async def run_retrieval(
         vector_store=vector_store,
     )
 
-    # simple_query 지식 질의는 RAG 근거가 있으면 운영 runtime tool 호출 없이 답변한다.
-    if mode == AgentMode.SIMPLE_QUERY and knowledge_items:
+    # 순수 지식 질의(planner 가 fallback tool 만 계획)는 RAG 근거가 있으면 운영 runtime tool
+    # 호출 없이 답변한다. 단, 상태/목록 등 명시적 운영 tool 이 계획됐다면 knowledge 근거가
+    # 있어도 단락하지 않고 실제 운영 데이터를 조회한다 (#478).
+    if mode == AgentMode.SIMPLE_QUERY and knowledge_items and not _has_operational_tool(plan):
         return RetrievalOutput(evidence_items=knowledge_items)
 
     async def call_step(step: "RetrievalPlanStep") -> EvidenceItem:  # type: ignore[name-defined]
