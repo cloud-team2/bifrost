@@ -8,6 +8,7 @@ import com.bifrost.ops.pipeline.dto.ConnectionGuideResponse;
 import com.bifrost.ops.pipeline.dto.PipelineCreateRequest;
 import com.bifrost.ops.pipeline.dto.PipelineMetricsResponse;
 import com.bifrost.ops.pipeline.dto.PipelineResponse;
+import com.bifrost.ops.pipeline.dto.PipelineStageStatusResponse;
 import com.bifrost.ops.pipeline.dto.EventDistPoint;
 import com.bifrost.ops.pipeline.dto.MetricPoint;
 import com.bifrost.ops.pipeline.dto.SyncStatusResponse;
@@ -108,6 +109,14 @@ public class PipelineController {
                                        @PathVariable UUID id,
                                        @AuthenticationPrincipal AuthenticatedUser principal) {
         return pipelineTopicService.topicInfo(wsId, principal, id);
+    }
+
+    /** 단계별(source/sink) 상태 귀속(#367, 상시 A RCA). 어느 단계가 느린지/실패인지 한눈에. */
+    @GetMapping("/{id}/stage-status")
+    public PipelineStageStatusResponse stageStatus(@PathVariable UUID wsId,
+                                                   @PathVariable UUID id,
+                                                   @AuthenticationPrincipal AuthenticatedUser principal) {
+        return pipelineTopicService.stageStatus(wsId, principal, id);
     }
 
     /** Consumer group 목록(#126, Consumers 탭). Kafka 미연결 시 빈 목록 반환. */

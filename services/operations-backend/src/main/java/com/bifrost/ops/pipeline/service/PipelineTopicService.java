@@ -7,6 +7,7 @@ import com.bifrost.ops.pipeline.dto.ConsumerGroupInfo;
 import com.bifrost.ops.pipeline.dto.EventDistPoint;
 import com.bifrost.ops.pipeline.dto.MetricPoint;
 import com.bifrost.ops.pipeline.dto.PipelineMetricsResponse;
+import com.bifrost.ops.pipeline.dto.PipelineStageStatusResponse;
 import com.bifrost.ops.pipeline.dto.TopicInfoResponse;
 import com.bifrost.ops.pipeline.dto.ThroughputPoint;
 import com.bifrost.ops.monitoring.query.KafkaMetricsQuery;
@@ -14,6 +15,8 @@ import com.bifrost.ops.pipeline.kafka.OffsetSnapshotStore;
 import com.bifrost.ops.pipeline.kafka.RateResult;
 import com.bifrost.ops.pipeline.persistence.entity.PipelineEntity;
 import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
+import com.bifrost.ops.provisioning.dto.ConnectorKind;
+import com.bifrost.ops.provisioning.dto.PipelinePattern;
 import com.bifrost.ops.provisioning.persistence.entity.ConnectorEntity;
 import com.bifrost.ops.provisioning.persistence.repository.ConnectorRepository;
 import com.bifrost.ops.workspace.WorkspaceAccessGuard;
@@ -179,6 +182,67 @@ public class PipelineTopicService {
             log.warn("소스 지연 추이 조회 실패: server={}, cause={}", server, e.getMessage());
             return List.of();
         }
+    }
+
+    /**
+     * 단계별(source/sink) 상태 귀속(#367, 상시 A RCA). 커넥터 watcher state로 단계 상태를 도출하고,
+     * source delay·sink lag를 best-effort로 첨부한다. EDA는 SOURCE만, CDC는 SOURCE+SINK.
+     */
+    public PipelineStageStatusResponse stageStatus(UUID wsId, AuthenticatedUser principal, UUID id) {
+        PipelineEntity p = loadPipeline(wsId, principal, id);
+        Map<ConnectorKind, ConnectorEntity> byKind = new HashMap<>();
+        for (ConnectorEntity c : connectorRepository.findByPipelineId(id)) {
+            byKind.putIfAbsent(c.getKind(), c);
+        }
+
+        List<PipelineStageStatusResponse.StageStatus> stages = new ArrayList<>();
+        stages.add(buildStage("SOURCE", byKind.get(ConnectorKind.SOURCE),
+                latestSourceDelayMs(wsId, principal, id), null));
+        if (p.getPattern() == PipelinePattern.DIRECT) {
+            stages.add(buildStage("SINK", byKind.get(ConnectorKind.SINK),
+                    null, currentSinkLag(wsId, principal, id)));
+        }
+
+        String bottleneck = firstStage(stages, "FAILED");
+        if (bottleneck == null) bottleneck = firstStage(stages, "DEGRADED");
+
+        return new PipelineStageStatusResponse(id, p.getStatus().name().toLowerCase(), stages, bottleneck);
+    }
+
+    private PipelineStageStatusResponse.StageStatus buildStage(String name, ConnectorEntity c,
+                                                               Long delayMs, Long lagMessages) {
+        String state = (c == null || c.getState() == null) ? "UNKNOWN" : c.getState();
+        String status = switch (state) {
+            case "FAILED" -> "FAILED";
+            case "PARTIALLY_FAILED" -> "DEGRADED";
+            case "PAUSED" -> "PAUSED";
+            case "RUNNING" -> "OK";
+            default -> "UNKNOWN";
+        };
+        String error = (c == null) ? null : c.getLastError();
+        return new PipelineStageStatusResponse.StageStatus(name, state, status, error, delayMs, lagMessages);
+    }
+
+    /** source 소스 지연(ms) 최신값. Prometheus 미가용 시 null. */
+    private Long latestSourceDelayMs(UUID wsId, AuthenticatedUser principal, UUID id) {
+        List<MetricPoint> pts = sourceDelay(wsId, principal, id, 5);
+        if (pts.isEmpty()) return null;
+        double v = pts.get(pts.size() - 1).value();
+        return v < 0 ? null : Math.round(v);   // -1 = idle/측정불가
+    }
+
+    /** sink consumer lag(메시지). Kafka/Prometheus 미가용 시 null. */
+    private Long currentSinkLag(UUID wsId, AuthenticatedUser principal, UUID id) {
+        try {
+            return metrics(wsId, principal, id).lagMessages();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static String firstStage(List<PipelineStageStatusResponse.StageStatus> stages, String status) {
+        return stages.stream().filter(s -> status.equals(s.status()))
+                .map(PipelineStageStatusResponse.StageStatus::stage).findFirst().orElse(null);
     }
 
     /** 미동기화 row 추이(#126, Sync 탭). consumer lag proxy. */
