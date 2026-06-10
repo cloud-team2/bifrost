@@ -42,21 +42,26 @@ class PostgresEventRepository:
     async def append(self, run_id: str, event: StreamingEvent) -> None:
         payload = event.payload or None
         async with self._get_pool().acquire() as conn:
-            await conn.execute(
-                """
-                INSERT INTO run_event (event_id, run_id, seq, type, agent, message, payload)
-                SELECT $1, $2,
-                       COALESCE((SELECT MAX(seq) FROM run_event WHERE run_id = $2), 0) + 1,
-                       $3, $4, $5, $6::jsonb
-                ON CONFLICT (event_id) DO NOTHING
-                """,
-                event.event_id,
-                run_id,
-                event.type.value,
-                event.agent,
-                event.message,
-                json.dumps(payload) if payload else None,
-            )
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT 1 FROM agent_run WHERE run_id = $1 FOR UPDATE",
+                    run_id,
+                )
+                await conn.execute(
+                    """
+                    INSERT INTO run_event (event_id, run_id, seq, type, agent, message, payload)
+                    SELECT $1, $2,
+                           COALESCE((SELECT MAX(seq) FROM run_event WHERE run_id = $2), 0) + 1,
+                           $3, $4, $5, $6::jsonb
+                    ON CONFLICT (event_id) DO NOTHING
+                    """,
+                    event.event_id,
+                    run_id,
+                    event.type.value,
+                    event.agent,
+                    event.message,
+                    json.dumps(payload) if payload else None,
+                )
 
     async def get_after(
         self,
@@ -108,6 +113,14 @@ def _value_as_str(value: Any, default: str | None = None) -> str | None:
 
 
 AnyEventRepo = Union[InMemoryEventRepository, PostgresEventRepository]
+
+
+async def append_event(repo: AnyEventRepo, run_id: str, event: StreamingEvent) -> None:
+    if isinstance(repo, InMemoryEventRepository):
+        repo.append(run_id, event)
+    else:
+        await repo.append(run_id, event)
+
 
 _postgres_repo = PostgresEventRepository()
 _memory_repo = InMemoryEventRepository()

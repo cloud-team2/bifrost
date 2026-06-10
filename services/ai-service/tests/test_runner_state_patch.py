@@ -309,6 +309,45 @@ async def test_state_repo_failure_does_not_block_stage() -> None:
 
 
 @pytest.mark.asyncio
+async def test_event_persist_failure_publishes_sanitized_final_error() -> None:
+    class FailingEventRepository:
+        async def append(self, *args, **kwargs):
+            raise RuntimeError('duplicate key value violates unique constraint "run_event_run_id_seq_key"')
+
+    published = []
+    bus = EventBus()
+    bus.publish = AsyncMock(side_effect=lambda run_id, event: published.append(event))  # type: ignore[method-assign]
+    run_repo = AsyncMock()
+
+    with (
+        patch("app.workflow.runner.router_agent.run_router", new_callable=AsyncMock) as mock_router,
+        patch("app.workflow.runner.get_supervisor") as mock_get_sup,
+        patch("app.workflow.runner.get_event_repo") as mock_get_event_repo,
+        patch("app.workflow.runner.get_state_repo") as mock_get_state_repo,
+    ):
+        mock_router.return_value = _router_out()
+        mock_get_sup.return_value = _FixedSupervisor([])
+        mock_get_event_repo.return_value = FailingEventRepository()
+        mock_get_state_repo.return_value = InMemoryStateRepository()
+
+        await run_workflow(
+            run_id="run_event_persist_failure",
+            user_message="현재 상태 요약",
+            project_id="proj_001",
+            bus=bus,
+            run_repo=run_repo,
+            registry=AsyncMock(),
+        )
+
+    status_updates = [call.args for call in run_repo.update_status.await_args_list]
+    assert ("run_event_persist_failure", "failed", None) in status_updates
+    assert published
+    assert all("duplicate key" not in event.message.lower() for event in published)
+    assert all("duplicate key" not in str(event.payload).lower() for event in published)
+    assert published[-1].payload == {"error": "workflow_failed"}
+
+
+@pytest.mark.asyncio
 async def test_classifier_patch_namespace_authoring() -> None:
     repo = await _run_with_state_repo(
         run_id="run_classifier_patch",
