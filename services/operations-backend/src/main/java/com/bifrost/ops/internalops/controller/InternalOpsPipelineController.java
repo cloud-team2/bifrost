@@ -3,6 +3,7 @@ package com.bifrost.ops.internalops.controller;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
 import com.bifrost.ops.internalops.AgentHeaders;
+import com.bifrost.ops.internalops.WorkspaceLookup;
 import com.bifrost.ops.internalops.dto.OpsEnvelope;
 import com.bifrost.ops.internalops.dto.PipelineTopologyResult;
 import com.bifrost.ops.pipeline.dto.ConnectorResponse;
@@ -83,7 +84,7 @@ public class InternalOpsPipelineController {
     }
 
     private WorkspaceEntity requireWorkspace(String projectId) {
-        return workspaceRepository.findByNamespace(projectId)
+        return WorkspaceLookup.resolve(workspaceRepository, projectId)
                 .orElseThrow(() -> new ApiException(ErrorCode.WORKSPACE_NOT_FOUND,
                         "프로젝트를 찾을 수 없습니다: " + projectId));
     }
