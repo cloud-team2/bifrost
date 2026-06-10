@@ -22,6 +22,16 @@ export default defineConfig({
         target: ai,
         changeOrigin: true,
       },
+      // FastAPI 메타 라우트(#377) — ai-service가 직접 서빙. generic '/api'(operations-backend)보다 먼저 매치돼야 한다.
+      '^/api/v1/(health|ready|version|capabilities)(?:[/?]|$)': {
+        target: ai,
+        changeOrigin: true,
+      },
+      // internal-ops(#377) — Spring InternalOpsController. 운영 nginx와 동일하게 operations-backend로 보낸다.
+      '^/internal/ops(?:[/?]|$)': {
+        target: backend,
+        changeOrigin: true,
+      },
       '/api': {
         target: backend,
         changeOrigin: true,
