@@ -11,10 +11,15 @@ from app.schemas.outputs import PlannerOutput, RetrievalPlanStep
 
 _LOG_PARAMS = {"query": "pipeline events", "time_range": {"from": "now-30m", "to": "now"}}
 _INCIDENT_LOG_PARAMS = {"query": "error exception failure", "time_range": {"from": "now-1h", "to": "now"}}
+# list_project_pipelines (operation: list_project_pipelines) takes no params — ListProjectPipelinesParams is empty.
+_PIPELINE_LIST_PARAMS: dict = {}
 
 _KEYWORD_TOOL_MAP: list[tuple[set[str], str, dict]] = [
-    # catalog §8.1 Observability — search_logs (operation: search_logs)
-    ({"파이프라인", "pipeline", "현황", "상태", "로그", "log"}, "search_logs", _LOG_PARAMS),
+    # catalog §8.4 Pipeline read — list_project_pipelines (operation: list_project_pipelines)
+    # "파이프라인 리스트/목록/연결/현황/상태" 의도는 로그 검색이 아니라 파이프라인 목록 조회다 (#468).
+    ({"파이프라인", "pipeline", "리스트", "목록", "연결", "현황", "상태"}, "list_project_pipelines", _PIPELINE_LIST_PARAMS),
+    # 로그 검색 의도(로그/log)만 search_logs 로 유지; 파이프라인 키워드는 위 버킷으로 분리.
+    ({"로그", "log"}, "search_logs", _LOG_PARAMS),
     # catalog §8.1 Observability — get_metrics (operation: query_metrics)
     ({"메트릭", "metric", "지표", "수치", "성능"}, "get_metrics", {"metric": "pipeline_lag_seconds", "time_range": "last_30m"}),
     # catalog §8.2 Pipeline / Change — get_deployments (operation: get_recent_changes)
@@ -42,9 +47,14 @@ async def run_planner(user_message: str, project_id: str) -> PlannerOutput:
     msg = user_message.lower()
     selected: list[tuple[str, dict]] = []
 
+    seen_tools: set[str] = set()
     for keywords, tool, params in _KEYWORD_TOOL_MAP:
+        if tool in seen_tools:
+            # 한 tool 은 한 번만 호출 — 같은 도구에 대한 중복 step 방지 (#468).
+            continue
         if any(kw in msg for kw in keywords):
             selected.append((tool, params))
+            seen_tools.add(tool)
 
     if not selected:
         selected.append(_DEFAULT_TOOL)
