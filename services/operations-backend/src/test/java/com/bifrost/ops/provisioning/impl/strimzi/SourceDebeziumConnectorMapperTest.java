@@ -7,6 +7,7 @@ import com.bifrost.ops.secret.DbCredential;
 import io.strimzi.api.kafka.model.connector.KafkaConnector;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -104,6 +105,31 @@ class SourceDebeziumConnectorMapperTest {
                 command(DbType.POSTGRESQL), new DbCredential("svc", "pw"), NS, CLUSTER);
 
         Map<String, Object> config = cr.getSpec().getConfig();
+        assertThat(config).containsEntry("transforms", "route");
+        assertThat(config).doesNotContainKey("transforms.tracing.type");
+    }
+
+    @Test
+    void setTracingSmtEnableAddsTracingPreservingExisting() {
+        // #438 per-pipeline 토글: 기존 커넥터 config에 tracing SMT on (기존 transforms 보존)
+        Map<String, Object> config = new HashMap<>();
+        config.put("transforms", "route");
+
+        SourceDebeziumConnectorMapper.setTracingSmt(config, true);
+
+        assertThat(config).containsEntry("transforms", "route,tracing");
+        assertThat(config).containsEntry("transforms.tracing.type",
+                "io.debezium.transforms.tracing.ActivateTracingSpan");
+    }
+
+    @Test
+    void setTracingSmtDisableRemovesTracing() {
+        Map<String, Object> config = new HashMap<>();
+        config.put("transforms", "route,tracing");
+        config.put("transforms.tracing.type", "io.debezium.transforms.tracing.ActivateTracingSpan");
+
+        SourceDebeziumConnectorMapper.setTracingSmt(config, false);
+
         assertThat(config).containsEntry("transforms", "route");
         assertThat(config).doesNotContainKey("transforms.tracing.type");
     }

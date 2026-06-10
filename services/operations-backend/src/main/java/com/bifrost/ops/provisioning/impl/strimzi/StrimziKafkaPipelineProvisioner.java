@@ -143,6 +143,19 @@ public class StrimziKafkaPipelineProvisioner implements KafkaPipelineProvisioner
     }
 
     @Override
+    public void setSourceTracing(String connectorName, boolean enabled) {
+        // 기존 source 커넥터 CR을 로드해 transforms에 tracing SMT를 add/remove 후 재적용(#438).
+        GenericKubernetesResource generic = k8s.resource(buildConnectorTemplate(connectorName)).inNamespace(namespace).get();
+        if (generic == null) {
+            throw new IllegalStateException("source 커넥터 CR을 찾을 수 없습니다: " + connectorName);
+        }
+        KafkaConnector cr = Serialization.unmarshal(Serialization.asJson(generic), KafkaConnector.class);
+        SourceDebeziumConnectorMapper.setTracingSmt(cr.getSpec().getConfig(), enabled);
+        applyConnector(cr);
+        log.info("데이터플레인 추적 {} : connector={}", enabled ? "on" : "off", connectorName);
+    }
+
+    @Override
     public void deletePipelineResources(PipelineResourceRef resourceRef) {
         String ns = resourceRef.namespace() != null ? resourceRef.namespace() : namespace;
         java.util.UUID pid = resourceRef.pipelineId();
