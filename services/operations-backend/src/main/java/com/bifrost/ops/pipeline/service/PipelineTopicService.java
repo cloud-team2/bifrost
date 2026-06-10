@@ -147,7 +147,7 @@ public class PipelineTopicService {
         if (topic == null || topic.isBlank() || !kafkaMetricsQuery.isEnabled()) return List.of();
 
         long endSec = System.currentTimeMillis() / 1000L;
-        long startSec = endSec - Math.max(1, minutes) * 60L;
+        long startSec = clampStart(endSec - Math.max(1, minutes) * 60L, p);
         long stepSec = stepFor(minutes);
         try {
             Map<Long, Double> produce = kafkaMetricsQuery.produceSeries(topic, startSec, endSec, stepSec);
@@ -177,7 +177,7 @@ public class PipelineTopicService {
         if (server == null || !kafkaMetricsQuery.isEnabled()) return List.of();
         long[] win = window(minutes);
         try {
-            return toPoints(kafkaMetricsQuery.sourceDelaySeries(server, win[0], win[1], win[2]));
+            return toPoints(kafkaMetricsQuery.sourceDelaySeries(server, clampStart(win[0], p), win[1], win[2]));
         } catch (Exception e) {
             log.warn("소스 지연 추이 조회 실패: server={}, cause={}", server, e.getMessage());
             return List.of();
@@ -253,7 +253,7 @@ public class PipelineTopicService {
         String group = sinkConsumerGroup(id);
         long[] win = window(minutes);
         try {
-            return toPoints(kafkaMetricsQuery.unsyncedSeries(group, win[0], win[1], win[2]));
+            return toPoints(kafkaMetricsQuery.unsyncedSeries(group, clampStart(win[0], p), win[1], win[2]));
         } catch (Exception e) {
             log.warn("미동기화 추이 조회 실패: group={}, cause={}", group, e.getMessage());
             return List.of();
@@ -285,7 +285,7 @@ public class PipelineTopicService {
         // endSec을 step 경계로 내림해 과거 버킷을 고정한다. (카운터 차분엔 분당 4 scrape로 충분)
         long evStep   = Math.max(60L, stepFor(minutes));
         long endSec   = (System.currentTimeMillis() / 1000L / evStep) * evStep;
-        long startSec = endSec - Math.max(1, minutes) * 60L;
+        long startSec = clampStart(endSec - Math.max(1, minutes) * 60L, p);
         try {
             // 첫 버킷도 차분 가능하도록 한 스텝 앞(startSec-evStep)부터 조회
             Map<Long, Double> ins = kafkaMetricsQuery.eventCountSeries(server, "create", startSec - evStep, endSec, evStep);
@@ -311,6 +311,16 @@ public class PipelineTopicService {
     }
 
     // ---- private ----
+
+    /**
+     * 메트릭 조회 시작 시각을 파이프라인 생성시각 이후로 제한(#404). 같은 datasource·테이블로 재생성하면
+     * Debezium server 라벨(=토픽명)이 동일해 Prometheus에 남은 이전 파이프라인 시계열이 새 차트에 섞인다.
+     * 생성 이전 데이터를 애초에 포함하지 않도록 startSec을 created_at으로 클램프한다.
+     */
+    private long clampStart(long startSec, PipelineEntity p) {
+        if (p.getCreatedAt() == null) return startSec;
+        return Math.max(startSec, p.getCreatedAt().getEpochSecond());
+    }
 
     /** [startSec, endSec, stepSec] 윈도우. step은 창 길이에 비례(짧은 창일수록 촘촘). */
     private long[] window(int minutes) {
