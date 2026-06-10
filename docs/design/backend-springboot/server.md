@@ -287,7 +287,7 @@ Mutation timeout이 발생해도 Spring은 자동 재시도하지 않는다. Kaf
 | --- | --- | --- | --- |
 | Watcher (Fabric8) | watch(event) | connector/pipeline **상태 전이** | KafkaConnector CR `.status` → `PipelineStatusService` → SSE ([§2 Provisioning §6](./provisioning.md#2-provisioning)) |
 | 폴링 수집기 | 주기 polling | sink consumer lag, connector task event, worker JVM, DB 상태 | Kafka AdminClient(30s)·Connect REST(10s)·Prometheus/PromQL(60s, `prometheus.enabled`)·DB health(60s) (부록 B.1/B.2/B.4/B.6) |
-| 쿼리 어댑터 | on-demand | metric·log·trace | Prometheus·Loki·Connect REST. 현재 trace는 Tempo가 아니라 Connect REST task `trace` field |
+| 쿼리 어댑터 | on-demand | metric·log·trace | Prometheus·Loki·Connect REST. ops-backend 작업 span은 OTLP로 Tempo 송신(#366). `query_traces` trace는 아직 Connect REST task `trace` field(분리: `get_connector_task_trace` #368, Tempo 교체 #373) |
 
 수집 결과의 쓰임: (a) `event` 기록(Watcher/PipelineStatusService 등 일부 경로는 SSE도 직접 발행), (b) 플랫폼 API(`/api/v1/.../metrics`·`/consumer-groups`·`/connectors`·`/cluster` 등)로 **프론트 시각화**(FR-006~009·017·023, [frontend §6/§7](../frontend.md)), (c) Agent의 `/internal/ops` read tool 근거. 현재 poller는 incident 자동 생성 메서드를 호출하지 않는다.
 
