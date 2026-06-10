@@ -239,7 +239,7 @@
 | creating | blue(pulse) |
 
 ### 라우팅 맵
-`login` LoginView · `workspaces` WorkspaceListView · `pipelines` PipelinesView · `pipeline-detail` PipelineDetail · `databases` DatabasesView · `database-detail` DatabaseDetail · `activity` ActivityLogView · `alerts` AlertsView · `cluster` OperatorClusterView · `resource-events` OperatorResourceEventsView · `settings` SettingsView
+`login` LoginView · `workspaces` WorkspaceListView · `pipelines` PipelinesView · `pipeline-detail` PipelineDetail · `databases` DatabasesView · `database-detail` DatabaseDetail · `activity-log` ActivityLogView · `alerts` AlertsView · `cluster` OperatorClusterView · `resource-events` OperatorResourceEventsView · `settings` SettingsView
 
 ---
 

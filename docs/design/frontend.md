@@ -160,6 +160,7 @@ PipelineDetail 헤더 (FR-005)
 
 ```text
 ActivityLogView (FR-019)     GET /api/v1/workspaces/{wsId}/events?level=&pipelineId=
+                              Sidebar '이벤트 로그'에서 진입
 OperatorClusterView (FR-023)  GET /api/v1/clusters/kafka
                               GET /api/v1/clusters/kafka/throughput?minutes=30
                               GET /api/v1/clusters/connect   (Broker·Connect worker, workspace scope 없음)

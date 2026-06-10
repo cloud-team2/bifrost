@@ -8,6 +8,7 @@ import { Pipelines } from './pages/dev/Pipelines'
 import { PipelineDetail } from './pages/dev/PipelineDetail'
 import { Databases } from './pages/dev/Databases'
 import { DatabaseDetail } from './pages/dev/DatabaseDetail'
+import { ActivityLog } from './pages/dev/ActivityLog'
 import { Settings } from './pages/Settings'
 import { Alerts } from './pages/Alerts'
 import { OperatorCluster } from './pages/op/OperatorCluster'
@@ -17,6 +18,7 @@ const VIEW_LABEL: Record<View, string> = {
   'pipeline-detail': 'pipelines / detail',
   databases: 'databases',
   'database-detail': 'databases / detail',
+  'activity-log': 'activity log',
   alerts: 'alerts',
   cluster: 'cluster',
   settings: 'settings',
@@ -48,6 +50,7 @@ function renderView(view: View) {
     case 'pipeline-detail': return <PipelineDetail />
     case 'databases':      return <Databases />
     case 'database-detail': return <DatabaseDetail />
+    case 'activity-log':   return <ActivityLog />
     case 'alerts':         return <Alerts />
     case 'cluster':        return <OperatorCluster />
     case 'settings':       return <Settings />
