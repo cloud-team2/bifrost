@@ -12,6 +12,8 @@ import java.util.List;
  * @param underReplicated ISR < replicas 인 파티션 수
  * @param offlinePartitions leader 없는 파티션 수
  * @param brokers 브로커별 상세
+ * @param status healthy|warning|error
+ * @param message 부분 응답 또는 오류 사유(null=정상)
  */
 public record KafkaClusterResponse(
         int controllerId,
@@ -19,7 +21,19 @@ public record KafkaClusterResponse(
         long totalPartitions,
         long underReplicated,
         long offlinePartitions,
-        List<BrokerInfo> brokers) {
+        List<BrokerInfo> brokers,
+        String status,
+        String message) {
+
+    public KafkaClusterResponse(int controllerId,
+                                int brokerCount,
+                                long totalPartitions,
+                                long underReplicated,
+                                long offlinePartitions,
+                                List<BrokerInfo> brokers) {
+        this(controllerId, brokerCount, totalPartitions, underReplicated, offlinePartitions,
+                brokers, "healthy", null);
+    }
 
     /**
      * @param id broker id

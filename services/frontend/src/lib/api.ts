@@ -277,6 +277,8 @@ export interface KafkaClusterResponse {
   underReplicated: number
   offlinePartitions: number
   brokers: BrokerInfo[]
+  status?: 'healthy' | 'warning' | 'error'
+  message?: string | null
 }
 export interface ConnectWorker {
   name: string
