@@ -35,11 +35,16 @@ class ChangeTicket(BaseModel):
     run_id: str
     action_id: str
     ticket_id: str
-    window: str | None = None
+    change_window: str | None = None
     rollback_plan: str | None = None
     status: str = STATUS_SUBMITTED
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+    @property
+    def window(self) -> str | None:
+        """Backward-compatible read alias for internal change_gate callers."""
+        return self.change_window
 
 
 class InMemoryChangeTicketRepository:
@@ -52,9 +57,11 @@ class InMemoryChangeTicketRepository:
         action_id: str,
         ticket_id: str,
         *,
-        window: str | None = None,
+        change_window: str | None = None,
         rollback_plan: str | None = None,
+        **legacy_kwargs: str | None,
     ) -> ChangeTicket:
+        change_window = _resolve_change_window(change_window, legacy_kwargs)
         key = (run_id, action_id)
         now = datetime.now(timezone.utc)
         existing = self._store.get(key)
@@ -63,7 +70,7 @@ class InMemoryChangeTicketRepository:
             run_id=run_id,
             action_id=action_id,
             ticket_id=ticket_id,
-            window=window,
+            change_window=change_window,
             rollback_plan=rollback_plan,
             status=STATUS_SUBMITTED,
             created_at=existing.created_at if existing else now,
@@ -107,19 +114,21 @@ class PostgresChangeTicketRepository:
         action_id: str,
         ticket_id: str,
         *,
-        window: str | None = None,
+        change_window: str | None = None,
         rollback_plan: str | None = None,
+        **legacy_kwargs: str | None,
     ) -> ChangeTicket:
+        change_window = _resolve_change_window(change_window, legacy_kwargs)
         ticket_pk = str(uuid4())
         async with self._get_pool().acquire() as conn:
             row = await conn.fetchrow(
                 """
                 INSERT INTO change_ticket
-                    (id, run_id, action_id, ticket_id, window, rollback_plan, status)
+                    (id, run_id, action_id, ticket_id, change_window, rollback_plan, status)
                 VALUES ($1::uuid, $2, $3, $4, $5, $6, $7)
                 ON CONFLICT (run_id, action_id) DO UPDATE
                 SET ticket_id = EXCLUDED.ticket_id,
-                    window = EXCLUDED.window,
+                    change_window = EXCLUDED.change_window,
                     rollback_plan = EXCLUDED.rollback_plan,
                     status = EXCLUDED.status,
                     updated_at = now()
@@ -129,7 +138,7 @@ class PostgresChangeTicketRepository:
                 run_id,
                 action_id,
                 ticket_id,
-                window,
+                change_window,
                 rollback_plan,
                 STATUS_SUBMITTED,
             )
@@ -195,6 +204,20 @@ def _ensure_valid_status(status: str) -> None:
         raise ValueError(f"unknown change ticket status: {status}")
 
 
+def _resolve_change_window(
+    change_window: str | None,
+    legacy_kwargs: dict[str, str | None],
+) -> str | None:
+    if "window" in legacy_kwargs:
+        if change_window is not None:
+            raise TypeError("use only change_window, not both change_window and window")
+        change_window = legacy_kwargs.pop("window")
+    if legacy_kwargs:
+        unknown = ", ".join(sorted(legacy_kwargs))
+        raise TypeError(f"unexpected keyword argument(s): {unknown}")
+    return change_window
+
+
 def _row_to_ticket(row: asyncpg.Record | dict[str, Any]) -> ChangeTicket:
     data = dict(row)
     return ChangeTicket(
@@ -202,7 +225,7 @@ def _row_to_ticket(row: asyncpg.Record | dict[str, Any]) -> ChangeTicket:
         run_id=data["run_id"],
         action_id=data["action_id"],
         ticket_id=data["ticket_id"],
-        window=data.get("window"),
+        change_window=data.get("change_window"),
         rollback_plan=data.get("rollback_plan"),
         status=data.get("status", STATUS_SUBMITTED),
         created_at=data.get("created_at"),

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, Field
 
 from app.persistence.change_ticket_repository import ChangeTicket, get_change_ticket_repo
 from app.schemas import ApiResponse
@@ -14,7 +14,10 @@ router = APIRouter()
 class ChangeTicketRequest(BaseModel):
     action_id: str
     ticket_id: str
-    window: str | None = None
+    change_window: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("change_window", "window"),
+    )
     rollback_plan: str | None = None
 
 
@@ -25,7 +28,7 @@ async def submit_ticket(run_id: str, req: ChangeTicketRequest) -> ApiResponse:
         run_id=run_id,
         action_id=req.action_id,
         ticket_id=req.ticket_id,
-        window=req.window,
+        change_window=req.change_window,
         rollback_plan=req.rollback_plan,
     )
 
@@ -43,7 +46,7 @@ async def submit_ticket(run_id: str, req: ChangeTicketRequest) -> ApiResponse:
         "run_id": run_id,
         "action_id": req.action_id,
         "ticket_id": ticket.ticket_id if ticket else req.ticket_id,
-        "window": ticket.window if ticket else req.window,
+        "change_window": ticket.change_window if ticket else req.change_window,
         "rollback_plan": ticket.rollback_plan if ticket else req.rollback_plan,
         "status": record.status if record else (ticket.status if ticket else None),
         "run_status": gate_output.run_status,
@@ -68,7 +71,7 @@ def _ticket_response(ticket: ChangeTicket) -> dict:
         "run_id": ticket.run_id,
         "action_id": ticket.action_id,
         "ticket_id": ticket.ticket_id,
-        "window": ticket.window,
+        "change_window": ticket.change_window,
         "rollback_plan": ticket.rollback_plan,
         "status": ticket.status,
         "created_at": ticket.created_at.isoformat() if ticket.created_at else None,
