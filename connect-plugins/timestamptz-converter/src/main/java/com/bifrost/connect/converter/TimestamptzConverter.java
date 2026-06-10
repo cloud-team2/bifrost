@@ -23,10 +23,12 @@ import java.util.Properties;
  * INSERT가 실패한다(#425, Confluent JDBC #921). 이 컨버터로 source 단계에서 Connect Timestamp(논리 타입)로
  * 바꿔주면 sink가 SQL TIMESTAMP로 자연스럽게 적재한다.
  *
- * <p><b>등록.</b> source KafkaConnector config에 아래처럼 등록한다(ops-backend SourceDebeziumConnectorMapper):
+ * <p><b>등록.</b> source KafkaConnector config에 아래처럼 등록한다(ops-backend SourceDebeziumConnectorMapper).
+ * Debezium 규약상 타입 키는 {@code <alias>.type}이다({@code converters.<alias>.type} 아님 — 잘못 쓰면
+ * 컨버터가 null로 인스턴스화돼 task가 FAILED, #462):
  * <pre>
  *   converters: timestamptz
- *   converters.timestamptz.type: com.bifrost.connect.converter.TimestamptzConverter
+ *   timestamptz.type: com.bifrost.connect.converter.TimestamptzConverter
  * </pre>
  *
  * <p><b>정밀도.</b> Connect Timestamp는 millisecond 해상도다. timestamptz의 microsecond 이하는
