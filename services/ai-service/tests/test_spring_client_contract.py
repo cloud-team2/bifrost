@@ -11,6 +11,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.schemas.tools import (
+    ConnectorStatusData,
     ConsumerLagData,
     ListProjectPipelinesData,
     LogSearchData,
@@ -43,6 +44,54 @@ def test_consumer_lag_camelcase_spring_response():
     assert data.partitions == []  # 누락 시 default
     assert data.observed_at is None
     assert data.source == "kafka-admin"  # Spring 무관 필드 명시 수용
+
+
+def test_connector_status_spring_pipeline_provision_response():
+    """Spring PipelineProvisionStatus{connectorName, connectorState, tasks:[{id,state,trace}]} → ConnectorStatusData (#448).
+
+    schema 드리프트: Spring 은 connector 상태를 "connectorState", task id 를 "id" 로 직렬화하는데
+    ai-service alias 가 "state"/"taskId" 였어 ValidationError → tool_call_failed. alias 정합 회귀 보호.
+    """
+    spring_payload = {
+        "ok": True,
+        "request_id": "req_003",
+        "operation": "get_connector_status",
+        "result": {
+            "connectorName": "mysql-source-orders",
+            "connectorState": "RUNNING",
+            "tasks": [
+                {"id": 0, "state": "RUNNING", "trace": None},
+                {"id": 1, "state": "FAILED", "trace": "java.lang.RuntimeException: boom"},
+            ],
+        },
+    }
+    envelope = SpringOpsResponse.model_validate(spring_payload)
+    assert envelope.ok
+    assert envelope.result is not None and not isinstance(envelope.result, list)
+
+    data = ConnectorStatusData.model_validate(envelope.result)
+    assert data.connector_name == "mysql-source-orders"
+    assert data.state == "RUNNING"  # Spring "connectorState" alias 수용
+    assert len(data.tasks) == 2
+    assert data.tasks[0].task_id == 0  # Spring task "id" alias 수용
+    assert data.tasks[0].state == "RUNNING"
+    assert data.tasks[1].task_id == 1
+    assert data.tasks[1].state == "FAILED"
+    # Spring 무관 필드 (trace) 는 extra="ignore" 로 거부 안 함
+    assert data.last_error is None
+    assert data.observed_at is None
+
+
+def test_connector_status_snake_case_also_supported():
+    """snake_case 입력도 populate_by_name=True 로 그대로 수용 (기존 호환)."""
+    data = ConnectorStatusData.model_validate({
+        "connector_name": "c1",
+        "state": "RUNNING",
+        "tasks": [{"task_id": 0, "state": "RUNNING"}],
+    })
+    assert data.connector_name == "c1"
+    assert data.state == "RUNNING"
+    assert data.tasks[0].task_id == 0
 
 
 def test_consumer_lag_snake_case_also_supported():

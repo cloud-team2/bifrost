@@ -191,14 +191,16 @@ class PipelineTopologyData(SpringResponseModel):
 
 
 class ConnectorTaskStatus(SpringResponseModel):
-    task_id: int
+    # Spring PipelineProvisionStatus 의 task 는 "id" 필드로 반환 — alias_generator(to_camel) 의 "taskId" 와 다르므로 명시 alias 필수 (#448).
+    task_id: int = Field(alias="id")
     state: str
     worker_id: str | None = None
 
 
 class ConnectorStatusData(SpringResponseModel):
     connector_name: str
-    state: str
+    # Spring PipelineProvisionStatus 는 "connectorState" 로 반환 — alias_generator(to_camel) 의 "state" 와 다르므로 명시 alias 필수 (#448).
+    state: str = Field(alias="connectorState")
     tasks: list[ConnectorTaskStatus] = Field(default_factory=list)
     last_error: str | None = None
     observed_at: datetime | None = None

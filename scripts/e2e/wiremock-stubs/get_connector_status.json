@@ -11,16 +11,14 @@
       "operation": "get_connector_status",
       "result": {
         "connectorName": "default-connector",
-        "state": "RUNNING",
+        "connectorState": "RUNNING",
         "tasks": [
           {
-            "taskId": 0,
+            "id": 0,
             "state": "RUNNING",
-            "workerId": "connect-worker-1"
+            "trace": null
           }
-        ],
-        "lastError": null,
-        "observedAt": "2026-06-09T12:00:00Z"
+        ]
       },
       "evidence": [
         {
