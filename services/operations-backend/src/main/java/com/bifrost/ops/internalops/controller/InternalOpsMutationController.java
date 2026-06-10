@@ -4,7 +4,8 @@ import com.bifrost.ops.adapters.connect.ConnectRestClient;
 import com.bifrost.ops.adapters.connect.ConnectRestException;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
-import com.bifrost.ops.governance.approval.ApprovalValidator;
+import com.bifrost.ops.governance.MutationContext;
+import com.bifrost.ops.governance.MutationGate;
 import com.bifrost.ops.governance.idempotency.IdempotencyGuard;
 import com.bifrost.ops.governance.idempotency.IdempotencyGuard.CheckKind;
 import com.bifrost.ops.governance.idempotency.IdempotencyGuard.CheckResult;
@@ -45,7 +46,7 @@ import java.util.function.Supplier;
 /**
  * Internal Ops mutation controller (#308).
  *
- * <p>모든 mutation은 header → project ownership → idempotency → approval consume →
+ * <p>모든 mutation은 header → project scope → idempotency → project ownership → governance gate →
  * Kafka Connect REST 순서로 처리한다. InternalOpsController tool catalog는 #309 소관이라 수정하지 않는다.
  */
 @RestController
@@ -63,9 +64,13 @@ public class InternalOpsMutationController {
     private static final String CODE_APPROVAL_REQUIRED = "APPROVAL_REQUIRED";
     private static final String CODE_APPROVAL_EXPIRED = "APPROVAL_EXPIRED";
     private static final String CODE_APPROVAL_SCOPE_MISMATCH = "APPROVAL_SCOPE_MISMATCH";
+    private static final String CODE_CHANGE_TICKET_REQUIRED = "CHANGE_TICKET_REQUIRED";
+    private static final String CODE_CHANGE_WINDOW_CLOSED = "CHANGE_WINDOW_CLOSED";
+    private static final String CODE_CHANGE_SCOPE_MISMATCH = "CHANGE_SCOPE_MISMATCH";
     private static final String CODE_CONFLICT = "CONFLICT";
     private static final String CODE_CONNECTOR_NOT_FOUND = "CONNECTOR_NOT_FOUND";
     private static final String CODE_CONSUMER_GROUP_NOT_FOUND = "CONSUMER_GROUP_NOT_FOUND";
+    private static final String CODE_POLICY_DENIED = "POLICY_DENIED";
     private static final String CODE_RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND";
     private static final String CODE_RESOURCE_NOT_OWNED_BY_PROJECT = "RESOURCE_NOT_OWNED_BY_PROJECT";
     private static final String CODE_TIMEOUT = "TIMEOUT";
@@ -74,7 +79,7 @@ public class InternalOpsMutationController {
     private final WorkspaceRepository workspaceRepository;
     private final PipelineRepository pipelineRepository;
     private final ConnectorRepository connectorRepository;
-    private final ApprovalValidator approvalValidator;
+    private final MutationGate mutationGate;
     private final IdempotencyGuard idempotencyGuard;
     private final ConnectRestClient connectRestClient;
     private final ConsumerGroupVerifier consumerGroupVerifier;
@@ -83,7 +88,7 @@ public class InternalOpsMutationController {
     public InternalOpsMutationController(WorkspaceRepository workspaceRepository,
                                          PipelineRepository pipelineRepository,
                                          ConnectorRepository connectorRepository,
-                                         ApprovalValidator approvalValidator,
+                                         MutationGate mutationGate,
                                          IdempotencyGuard idempotencyGuard,
                                          ConnectRestClient connectRestClient,
                                          ConsumerGroupVerifier consumerGroupVerifier,
@@ -91,7 +96,7 @@ public class InternalOpsMutationController {
         this.workspaceRepository = workspaceRepository;
         this.pipelineRepository = pipelineRepository;
         this.connectorRepository = connectorRepository;
-        this.approvalValidator = approvalValidator;
+        this.mutationGate = mutationGate;
         this.idempotencyGuard = idempotencyGuard;
         this.connectRestClient = connectRestClient;
         this.consumerGroupVerifier = consumerGroupVerifier;
@@ -137,14 +142,18 @@ public class InternalOpsMutationController {
             return headerError.get();
         }
 
-        OwnedConnector owned;
+        WorkspaceEntity workspace;
         try {
-            owned = requireOwnedConnectConsumerGroup(projectId, consumerGroup);
+            workspace = requireWorkspace(projectId);
         } catch (ApiException e) {
             return apiError(requestId, OP_RESTART_CONSUMER_GROUP, e, CODE_CONSUMER_GROUP_NOT_FOUND);
         }
+        OwnedConnector owned;
         try {
+            owned = requireOwnedConnectConsumerGroup(workspace, consumerGroup);
             consumerGroupVerifier.requireExists(consumerGroup);
+        } catch (ApiException e) {
+            return apiError(requestId, OP_RESTART_CONSUMER_GROUP, e, CODE_CONSUMER_GROUP_NOT_FOUND);
         } catch (ConsumerGroupVerificationException e) {
             HttpStatus status = e.isUnavailable() ? HttpStatus.BAD_GATEWAY : HttpStatus.NOT_FOUND;
             String code = e.isUnavailable() ? CODE_UPSTREAM_UNAVAILABLE : CODE_CONSUMER_GROUP_NOT_FOUND;
@@ -156,17 +165,34 @@ public class InternalOpsMutationController {
         String idempotencyKey = AgentHeaders.header(request, AgentHeaders.X_IDEMPOTENCY_KEY);
         String paramsHash = paramsHash(OP_RESTART_CONSUMER_GROUP, projectId,
                 "consumer_group", consumerGroup);
+        CheckResult idempotency = idempotencyGuard.check(
+                idempotencyKey, workspace.getId(), OP_RESTART_CONSUMER_GROUP, paramsHash);
+        Optional<ResponseEntity<OpsEnvelope<ConsumerGroupActionResult>>> replay =
+                idempotencyResponse(
+                        requestId,
+                        OP_RESTART_CONSUMER_GROUP,
+                        idempotency,
+                        request,
+                        ConsumerGroupActionResult.class,
+                        () -> ConsumerGroupActionResult.replay(consumerGroup, OP_RESTART_CONSUMER_GROUP));
+        if (replay.isPresent()) {
+            return replay.get();
+        }
 
-        return executeApprovedMutation(
+        return executeNewMutation(
                 requestId,
                 OP_RESTART_CONSUMER_GROUP,
                 idempotencyKey,
-                owned.workspace().getId(),
+                workspace.getId(),
                 paramsHash,
                 request,
-                ConsumerGroupActionResult.class,
+                "CONSUMER_GROUP",
+                owned.connector().getId(),
+                Map.of(
+                        "project_id", projectId,
+                        "consumer_group", consumerGroup,
+                        "connector_name", owned.connector().getCrName()),
                 () -> ConsumerGroupActionResult.accepted(consumerGroup, OP_RESTART_CONSUMER_GROUP),
-                () -> ConsumerGroupActionResult.replay(consumerGroup, OP_RESTART_CONSUMER_GROUP),
                 () -> connectRestClient.restartConnector(owned.connector().getCrName()),
                 "get_consumer_lag");
     }
@@ -184,39 +210,112 @@ public class InternalOpsMutationController {
             return headerError.get();
         }
 
+        WorkspaceEntity workspace;
+        try {
+            workspace = requireWorkspace(projectId);
+        } catch (ApiException e) {
+            return apiError(requestId, operation, e, CODE_CONNECTOR_NOT_FOUND);
+        }
+
         OwnedConnector owned;
         try {
-            owned = requireOwnedConnector(projectId, connectorName);
+            owned = requireOwnedConnector(workspace, connectorName);
         } catch (ApiException e) {
             return apiError(requestId, operation, e, CODE_CONNECTOR_NOT_FOUND);
         }
 
         String idempotencyKey = AgentHeaders.header(request, AgentHeaders.X_IDEMPOTENCY_KEY);
         String paramsHash = paramsHash(operation, projectId, "connector_name", connectorName);
-        return executeApprovedMutation(
+        CheckResult idempotency = idempotencyGuard.check(idempotencyKey, workspace.getId(), operation, paramsHash);
+        Optional<ResponseEntity<OpsEnvelope<ConnectorActionResult>>> replay =
+                idempotencyResponse(
+                        requestId,
+                        operation,
+                        idempotency,
+                        request,
+                        ConnectorActionResult.class,
+                        () -> ConnectorActionResult.replay(connectorName, operation));
+        if (replay.isPresent()) {
+            return replay.get();
+        }
+
+        return executeNewMutation(
                 requestId,
                 operation,
                 idempotencyKey,
-                owned.workspace().getId(),
+                workspace.getId(),
                 paramsHash,
                 request,
-                ConnectorActionResult.class,
+                "CONNECTOR",
+                owned.connector().getId(),
+                Map.of(
+                        "project_id", projectId,
+                        "connector_name", connectorName,
+                        "connector_id", String.valueOf(owned.connector().getId())),
                 () -> ConnectorActionResult.accepted(connectorName, operation),
-                () -> ConnectorActionResult.replay(connectorName, operation),
                 () -> call.apply(connectorName),
                 "get_connector_status");
     }
 
-    private <T> ResponseEntity<OpsEnvelope<T>> executeApprovedMutation(
+    private <T> Optional<ResponseEntity<OpsEnvelope<T>>> idempotencyResponse(
+            String requestId,
+            String operation,
+            CheckResult idempotency,
+            HttpServletRequest request,
+            Class<T> resultClass,
+            Supplier<T> replayResult) {
+        if (idempotency.kind() == CheckKind.NEW) {
+            return Optional.empty();
+        }
+        if (idempotency.kind() == CheckKind.CONFLICT) {
+            return Optional.of(ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(OpsEnvelope.error(requestId, operation, CODE_CONFLICT,
+                            "idempotency key was already used with different operation parameters",
+                            false, null)));
+        }
+        if (idempotency.kind() == CheckKind.PROCESSING) {
+            return Optional.of(ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(OpsEnvelope.error(requestId, operation, CODE_CONFLICT,
+                            "idempotency key is already processing", false, null)));
+        }
+        UUID replayApprovalId;
+        try {
+            replayApprovalId = approvalId(request);
+        } catch (IllegalArgumentException e) {
+            return Optional.of(ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(OpsEnvelope.error(requestId, operation, CODE_VALIDATION_FAILED, e.getMessage())));
+        }
+        UUID replayChangeTicketId;
+        try {
+            replayChangeTicketId = changeTicketId(request);
+        } catch (IllegalArgumentException e) {
+            return Optional.of(ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(OpsEnvelope.error(requestId, operation, CODE_VALIDATION_FAILED, e.getMessage())));
+        }
+        if (!sameNullable(idempotency.approvalId(), replayApprovalId)) {
+            return Optional.of(ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(OpsEnvelope.error(requestId, operation, CODE_APPROVAL_SCOPE_MISMATCH,
+                            "idempotency replay approval mismatch", false, "request_approval")));
+        }
+        if (!sameNullable(idempotency.changeTicketId(), replayChangeTicketId)) {
+            return Optional.of(ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(OpsEnvelope.error(requestId, operation, CODE_CHANGE_TICKET_REQUIRED,
+                            "idempotency replay change ticket mismatch", false, "request_change_ticket")));
+        }
+        return Optional.of(replayCachedEnvelope(requestId, operation, idempotency, resultClass, replayResult));
+    }
+
+    private <T> ResponseEntity<OpsEnvelope<T>> executeNewMutation(
             String requestId,
             String operation,
             String idempotencyKey,
             UUID tenantId,
             String paramsHash,
             HttpServletRequest request,
-            Class<T> resultClass,
+            String targetType,
+            UUID targetId,
+            Map<String, Object> beforeSnapshot,
             Supplier<T> acceptedResult,
-            Supplier<T> replayResult,
             Runnable mutation,
             String failureRequiredAction) {
 
@@ -224,52 +323,45 @@ public class InternalOpsMutationController {
         try {
             approvalId = approvalId(request);
         } catch (IllegalArgumentException e) {
+            idempotencyGuard.abandon(idempotencyKey, tenantId);
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(OpsEnvelope.error(requestId, operation, CODE_VALIDATION_FAILED, e.getMessage()));
         }
-        if (approvalId == null) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                    .body(OpsEnvelope.error(requestId, operation, CODE_APPROVAL_REQUIRED,
-                            "approval is required for mutation", false, "request_approval"));
+        UUID changeTicketId;
+        try {
+            changeTicketId = changeTicketId(request);
+        } catch (IllegalArgumentException e) {
+            idempotencyGuard.abandon(idempotencyKey, tenantId);
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(OpsEnvelope.error(requestId, operation, CODE_VALIDATION_FAILED, e.getMessage()));
         }
 
-        CheckResult idempotency = idempotencyGuard.check(idempotencyKey, tenantId, operation, paramsHash);
-        if (idempotency.kind() != CheckKind.NEW) {
-            if (idempotency.kind() == CheckKind.CONFLICT) {
-                return ResponseEntity.status(HttpStatus.CONFLICT)
-                        .body(OpsEnvelope.error(requestId, operation, CODE_CONFLICT,
-                                "idempotency key was already used with different operation parameters",
-                                false, null));
-            }
-            if (idempotency.kind() == CheckKind.PROCESSING) {
-                return ResponseEntity.status(HttpStatus.CONFLICT)
-                        .body(OpsEnvelope.error(requestId, operation, CODE_CONFLICT,
-                                "idempotency key is already processing", false, null));
-            }
-            if (idempotency.approvalId() != null && !idempotency.approvalId().equals(approvalId)) {
-                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body(OpsEnvelope.error(requestId, operation, CODE_APPROVAL_SCOPE_MISMATCH,
-                                "idempotency replay approval mismatch", false, "request_approval"));
-            }
-            return replayCachedEnvelope(requestId, operation, idempotency, resultClass, replayResult);
-        }
+        MutationContext ctx = new MutationContext(
+                tenantId,
+                actor(request),
+                operation,
+                targetType,
+                targetId,
+                idempotencyKey,
+                approvalId,
+                changeTicketId,
+                paramsHash,
+                beforeSnapshot);
 
         try {
-            approvalValidator.validateAndConsume(approvalId, tenantId, operation, paramsHash);
+            T result = mutationGate.executeChecked(ctx, () -> {
+                mutation.run();
+                return acceptedResult.get();
+            });
+            idempotencyGuard.complete(idempotencyKey, tenantId, toJson(result),
+                    IdempotencyGuard.RESPONSE_OK, HttpStatus.OK.value(), approvalId, changeTicketId);
+            return ResponseEntity.ok(OpsEnvelope.ok(requestId, operation, result));
         } catch (ApiException e) {
             idempotencyGuard.abandon(idempotencyKey, tenantId);
-            ApprovalError approvalError = approvalError(e);
-            return ResponseEntity.status(approvalError.httpStatus())
-                    .body(OpsEnvelope.error(requestId, operation, approvalError.code(),
-                            approvalError.message(), false, approvalError.requiredAction()));
-        }
-
-        try {
-            mutation.run();
-            T result = acceptedResult.get();
-            idempotencyGuard.complete(idempotencyKey, tenantId, toJson(result),
-                    IdempotencyGuard.RESPONSE_OK, HttpStatus.OK.value(), approvalId);
-            return ResponseEntity.ok(OpsEnvelope.ok(requestId, operation, result));
+            GovernanceError governanceError = governanceError(e);
+            return ResponseEntity.status(governanceError.httpStatus())
+                    .body(OpsEnvelope.error(requestId, operation, governanceError.code(),
+                            governanceError.message(), false, governanceError.requiredAction()));
         } catch (ConnectRestException e) {
             log.warn("[InternalOpsMutation] Connect REST mutation failed: op={} timeout={} status={} cause={}",
                     operation, e.isTimeout(), e.statusCode(), safeMessage(e));
@@ -277,19 +369,19 @@ public class InternalOpsMutationController {
             String code = e.isTimeout() ? CODE_TIMEOUT : CODE_UPSTREAM_UNAVAILABLE;
             OpsError error = new OpsError(code, e.getMessage(), false, failureRequiredAction);
             idempotencyGuard.complete(idempotencyKey, tenantId, toJson(error),
-                    IdempotencyGuard.RESPONSE_ERROR, status.value(), approvalId);
+                    IdempotencyGuard.RESPONSE_ERROR, status.value(), approvalId, changeTicketId);
             return ResponseEntity.status(status)
                     .body(OpsEnvelope.error(requestId, operation, code, e.getMessage(),
                             false, failureRequiredAction));
         }
     }
 
-    private OwnedConnector requireOwnedConnectConsumerGroup(String projectId, String consumerGroup) {
+    private OwnedConnector requireOwnedConnectConsumerGroup(WorkspaceEntity workspace, String consumerGroup) {
         if (!consumerGroup.startsWith("connect-") || consumerGroup.length() <= "connect-".length()) {
             throw new ApiException(ErrorCode.RESOURCE_NOT_FOUND,
                     "restart_consumer_group supports Kafka Connect-managed groups only");
         }
-        OwnedConnector owned = requireOwnedConnector(projectId, consumerGroup.substring("connect-".length()));
+        OwnedConnector owned = requireOwnedConnector(workspace, consumerGroup.substring("connect-".length()));
         if (owned.connector().getKind() != ConnectorKind.SINK) {
             throw new ApiException(ErrorCode.RESOURCE_NOT_FOUND,
                     "consumer group is not backed by a sink connector: " + consumerGroup);
@@ -297,16 +389,19 @@ public class InternalOpsMutationController {
         return owned;
     }
 
-    private OwnedConnector requireOwnedConnector(String projectId, String connectorName) {
-        WorkspaceEntity workspace = workspaceRepository.findByNamespace(projectId)
+    private WorkspaceEntity requireWorkspace(String projectId) {
+        return workspaceRepository.findByNamespace(projectId)
                 .orElseThrow(() -> new ApiException(ErrorCode.WORKSPACE_NOT_FOUND,
                         "프로젝트를 찾을 수 없습니다: " + projectId));
+    }
+
+    private OwnedConnector requireOwnedConnector(WorkspaceEntity workspace, String connectorName) {
         ConnectorEntity connector = connectorRepository.findByCrName(connectorName)
                 .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND,
                         "connector not found: " + connectorName));
         pipelineRepository.findByIdAndTenantId(connector.getPipelineId(), workspace.getId())
                 .orElseThrow(() -> new ApiException(ErrorCode.WORKSPACE_FORBIDDEN,
-                        "connector is not owned by project: " + projectId));
+                        "connector is not owned by project: " + workspace.getNamespace()));
         return new OwnedConnector(workspace, connector);
     }
 
@@ -338,6 +433,30 @@ public class InternalOpsMutationController {
         } catch (IllegalArgumentException e) {
             throw new IllegalArgumentException("invalid X-Approval-Id header");
         }
+    }
+
+    private UUID changeTicketId(HttpServletRequest request) {
+        String raw = AgentHeaders.header(request, AgentHeaders.X_CHANGE_TICKET_ID);
+        if (raw == null) {
+            return null;
+        }
+        try {
+            return UUID.fromString(raw);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("invalid X-Change-Ticket-Id header");
+        }
+    }
+
+    private String actor(HttpServletRequest request) {
+        String actor = AgentHeaders.header(request, AgentHeaders.X_AGENT_ID);
+        if (actor != null) {
+            return actor;
+        }
+        return AgentHeaders.header(request, AgentHeaders.X_ACTOR_ID);
+    }
+
+    private static boolean sameNullable(UUID stored, UUID supplied) {
+        return stored == null ? supplied == null : stored.equals(supplied);
     }
 
     private <T> T replayCached(String cached, Class<T> resultClass, Supplier<T> fallback) {
@@ -417,25 +536,45 @@ public class InternalOpsMutationController {
                         e.getMessage(), false, "check_project_scope"));
     }
 
-    private static ApprovalError approvalError(ApiException e) {
+    private static GovernanceError governanceError(ApiException e) {
+        if (e.code() == ErrorCode.CHANGE_WINDOW_CLOSED) {
+            String message = e.getMessage() != null ? e.getMessage() : "change ticket outside execution window";
+            return new GovernanceError(HttpStatus.FORBIDDEN, CODE_CHANGE_WINDOW_CLOSED,
+                    message, "wait_for_change_window");
+        }
+        if (e.code() == ErrorCode.CHANGE_SCOPE_MISMATCH) {
+            String message = e.getMessage() != null ? e.getMessage() : "change ticket operation scope mismatch";
+            return new GovernanceError(HttpStatus.FORBIDDEN, CODE_CHANGE_SCOPE_MISMATCH,
+                    message, "request_change_ticket");
+        }
+        if (e.code() == ErrorCode.CHANGE_TICKET_REQUIRED || e.code() == ErrorCode.CHANGE_TICKET_NOT_FOUND) {
+            String message = e.getMessage() != null ? e.getMessage() : "change ticket validation failed";
+            return new GovernanceError(HttpStatus.FORBIDDEN, CODE_CHANGE_TICKET_REQUIRED,
+                    message, "request_change_ticket");
+        }
+        if (e.code() == ErrorCode.VALIDATION_FAILED) {
+            String message = e.getMessage() != null ? e.getMessage() : "operation denied by policy";
+            return new GovernanceError(HttpStatus.FORBIDDEN, CODE_POLICY_DENIED,
+                    message, null);
+        }
         if (e.code() == ErrorCode.RESOURCE_NOT_FOUND) {
-            return new ApprovalError(HttpStatus.FORBIDDEN, CODE_APPROVAL_REQUIRED,
+            return new GovernanceError(HttpStatus.FORBIDDEN, CODE_APPROVAL_REQUIRED,
                     "approval not found", "request_approval");
         }
         String message = e.getMessage() != null ? e.getMessage() : "approval validation failed";
         if (message.contains("expired")) {
-            return new ApprovalError(HttpStatus.FORBIDDEN, CODE_APPROVAL_EXPIRED,
+            return new GovernanceError(HttpStatus.FORBIDDEN, CODE_APPROVAL_EXPIRED,
                     message, "request_approval");
         }
         if (message.contains("already used")) {
-            return new ApprovalError(HttpStatus.CONFLICT, CODE_CONFLICT,
+            return new GovernanceError(HttpStatus.CONFLICT, CODE_CONFLICT,
                     message, "request_approval");
         }
         if (message.contains("mismatch")) {
-            return new ApprovalError(HttpStatus.FORBIDDEN, CODE_APPROVAL_SCOPE_MISMATCH,
+            return new GovernanceError(HttpStatus.FORBIDDEN, CODE_APPROVAL_SCOPE_MISMATCH,
                     message, "request_approval");
         }
-        return new ApprovalError(HttpStatus.FORBIDDEN, CODE_APPROVAL_REQUIRED,
+        return new GovernanceError(HttpStatus.FORBIDDEN, CODE_APPROVAL_REQUIRED,
                 message, "request_approval");
     }
 
@@ -445,7 +584,7 @@ public class InternalOpsMutationController {
 
     private record OwnedConnector(WorkspaceEntity workspace, ConnectorEntity connector) {}
 
-    private record ApprovalError(HttpStatus httpStatus, String code, String message, String requiredAction) {}
+    private record GovernanceError(HttpStatus httpStatus, String code, String message, String requiredAction) {}
 
     @FunctionalInterface
     private interface ConnectorCall {

@@ -6,6 +6,7 @@ import com.bifrost.ops.governance.changemanagement.persistence.entity.ChangeTick
 import com.bifrost.ops.governance.changemanagement.persistence.repository.ChangeTicketRepository;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -20,13 +21,13 @@ class ChangeTicketValidatorTest {
     private final ChangeTicketValidator validator = new ChangeTicketValidator(repository);
 
     @Test
-    void validatesOpenTicketInTenantScope() {
+    void validatesApprovedTicketInsideWindowInTenantScope() {
         UUID ticketId = UUID.randomUUID();
         UUID tenantId = UUID.randomUUID();
-        ChangeTicketEntity ticket = ticket(ticketId, tenantId, "OPEN");
+        ChangeTicketEntity ticket = ticket(ticketId, tenantId, "APPROVED");
         when(repository.findByIdAndTenantId(ticketId, tenantId)).thenReturn(Optional.of(ticket));
 
-        assertThat(validator.validate(ticketId, tenantId)).isSameAs(ticket);
+        assertThat(validator.validate(ticketId, tenantId, "reset_offsets")).isSameAs(ticket);
     }
 
     @Test
@@ -39,10 +40,67 @@ class ChangeTicketValidatorTest {
     }
 
     @Test
-    void nonOpenTicketUsesRequiredCode() {
+    void nonApprovedTicketUsesRequiredCode() {
         UUID ticketId = UUID.randomUUID();
         UUID tenantId = UUID.randomUUID();
         when(repository.findByIdAndTenantId(ticketId, tenantId)).thenReturn(Optional.of(ticket(ticketId, tenantId, "CLOSED")));
+
+        assertApiCode(() -> validator.validate(ticketId, tenantId), ErrorCode.CHANGE_TICKET_REQUIRED);
+    }
+
+    @Test
+    void missingWindowUsesRequiredCode() {
+        UUID ticketId = UUID.randomUUID();
+        UUID tenantId = UUID.randomUUID();
+        ChangeTicketEntity ticket = ticket(ticketId, tenantId, "APPROVED");
+        ticket.setWindowStart(null);
+        when(repository.findByIdAndTenantId(ticketId, tenantId)).thenReturn(Optional.of(ticket));
+
+        assertApiCode(() -> validator.validate(ticketId, tenantId), ErrorCode.CHANGE_WINDOW_CLOSED);
+    }
+
+    @Test
+    void outsideWindowUsesRequiredCode() {
+        UUID ticketId = UUID.randomUUID();
+        UUID tenantId = UUID.randomUUID();
+        ChangeTicketEntity ticket = ticket(ticketId, tenantId, "APPROVED");
+        ticket.setWindowStart(Instant.now().minusSeconds(120));
+        ticket.setWindowEnd(Instant.now().minusSeconds(60));
+        when(repository.findByIdAndTenantId(ticketId, tenantId)).thenReturn(Optional.of(ticket));
+
+        assertApiCode(() -> validator.validate(ticketId, tenantId), ErrorCode.CHANGE_WINDOW_CLOSED);
+    }
+
+    @Test
+    void missingRollbackOrImpactUsesRequiredCode() {
+        UUID ticketId = UUID.randomUUID();
+        UUID tenantId = UUID.randomUUID();
+        ChangeTicketEntity ticket = ticket(ticketId, tenantId, "APPROVED");
+        ticket.setRollbackPlan("");
+        when(repository.findByIdAndTenantId(ticketId, tenantId)).thenReturn(Optional.of(ticket));
+
+        assertApiCode(() -> validator.validate(ticketId, tenantId, "reset_offsets"), ErrorCode.CHANGE_TICKET_REQUIRED);
+    }
+
+    @Test
+    void operationOutsideTicketScopeUsesScopeMismatchCode() {
+        UUID ticketId = UUID.randomUUID();
+        UUID tenantId = UUID.randomUUID();
+        ChangeTicketEntity ticket = ticket(ticketId, tenantId, "APPROVED");
+        when(repository.findByIdAndTenantId(ticketId, tenantId)).thenReturn(Optional.of(ticket));
+
+        assertApiCode(() -> validator.validate(ticketId, tenantId, "update_connector"),
+                ErrorCode.CHANGE_SCOPE_MISMATCH);
+    }
+
+    @Test
+    void futureWindowUsesRequiredCode() {
+        UUID ticketId = UUID.randomUUID();
+        UUID tenantId = UUID.randomUUID();
+        ChangeTicketEntity ticket = ticket(ticketId, tenantId, "APPROVED");
+        ticket.setWindowStart(Instant.now().plusSeconds(60));
+        ticket.setWindowEnd(Instant.now().plusSeconds(120));
+        when(repository.findByIdAndTenantId(ticketId, tenantId)).thenReturn(Optional.of(ticket));
 
         assertApiCode(() -> validator.validate(ticketId, tenantId), ErrorCode.CHANGE_TICKET_REQUIRED);
     }
@@ -53,6 +111,11 @@ class ChangeTicketValidatorTest {
         ticket.setTenantId(tenantId);
         ticket.setTitle("rollback_pipeline");
         ticket.setStatus(status);
+        ticket.setWindowStart(Instant.now().minusSeconds(60));
+        ticket.setWindowEnd(Instant.now().plusSeconds(60));
+        ticket.setRollbackPlan("restore previous connector config");
+        ticket.setImpactAnalysis("single connector impact");
+        ticket.setScopeOperation("reset_offsets");
         return ticket;
     }
 

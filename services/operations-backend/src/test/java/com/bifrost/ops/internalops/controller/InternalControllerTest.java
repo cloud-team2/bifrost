@@ -1,14 +1,22 @@
 package com.bifrost.ops.internalops.controller;
 
 import com.bifrost.ops.global.common.datasource.DbType;
+import com.bifrost.ops.internalops.dto.OpsEnvelope;
+import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
 import com.bifrost.ops.provisioning.PipelineProvisioningService;
 import com.bifrost.ops.provisioning.dto.*;
 import com.bifrost.ops.provisioning.impl.strimzi.TenantProvisioner;
+import com.bifrost.ops.provisioning.persistence.entity.ConnectorEntity;
+import com.bifrost.ops.provisioning.persistence.repository.ConnectorRepository;
+import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
+import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.mock.web.MockHttpServletRequest;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -22,8 +30,16 @@ class InternalControllerTest {
 
     private final TenantProvisioner tenantProvisioner = mock(TenantProvisioner.class);
     private final PipelineProvisioningService pipelineService = mock(PipelineProvisioningService.class);
+    private final WorkspaceRepository workspaceRepository = mock(WorkspaceRepository.class);
+    private final PipelineRepository pipelineRepository = mock(PipelineRepository.class);
+    private final ConnectorRepository connectorRepository = mock(ConnectorRepository.class);
     private final InternalController controller =
-            new InternalController(tenantProvisioner, pipelineService);
+            new InternalController(
+                    tenantProvisioner,
+                    pipelineService,
+                    workspaceRepository,
+                    pipelineRepository,
+                    connectorRepository);
 
     private PipelineProvisionCommand command(UUID id) {
         return new PipelineProvisionCommand(
@@ -69,5 +85,43 @@ class InternalControllerTest {
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
         verify(pipelineService).delete(any(PipelineResourceRef.class));
+    }
+
+    @Test
+    void connectorStatusRejectsConnectorOutsideProjectBeforeServiceCall() {
+        UUID tenantId = UUID.randomUUID();
+        UUID pipelineId = UUID.randomUUID();
+        when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId)));
+        when(connectorRepository.findByCrName("orders-sink")).thenReturn(Optional.of(connector(pipelineId)));
+        when(pipelineRepository.findByIdAndTenantId(pipelineId, tenantId)).thenReturn(Optional.empty());
+
+        ResponseEntity<OpsEnvelope<PipelineProvisionStatus>> response =
+                controller.getConnectorStatus("proj-001", "orders-sink", new MockHttpServletRequest());
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().ok()).isFalse();
+        assertThat(response.getBody().error().code()).isEqualTo("RESOURCE_NOT_OWNED_BY_PROJECT");
+        verify(pipelineService, never()).status(any(), any());
+    }
+
+    private static WorkspaceEntity workspace(UUID tenantId) {
+        WorkspaceEntity workspace = new WorkspaceEntity();
+        workspace.setId(tenantId);
+        workspace.setName("Project");
+        workspace.setNamespace("proj-001");
+        workspace.setStatus(WorkspaceEntity.Status.ACTIVE);
+        return workspace;
+    }
+
+    private static ConnectorEntity connector(UUID pipelineId) {
+        ConnectorEntity connector = new ConnectorEntity();
+        connector.setId(UUID.randomUUID());
+        connector.setPipelineId(pipelineId);
+        connector.setCrName("orders-sink");
+        connector.setKind(ConnectorKind.SINK);
+        connector.setConnectorClass("io.confluent.connect.jdbc.JdbcSinkConnector");
+        connector.setTasksMax(1);
+        return connector;
     }
 }

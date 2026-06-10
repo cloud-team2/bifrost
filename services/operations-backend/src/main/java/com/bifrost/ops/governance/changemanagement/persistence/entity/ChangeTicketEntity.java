@@ -20,7 +20,22 @@ public class ChangeTicketEntity {
     private String title;
 
     @Column(nullable = false, length = 20)
-    private String status = "OPEN"; // OPEN / CLOSED
+    private String status = "OPEN"; // OPEN / APPROVED / CLOSED
+
+    @Column(name = "window_start")
+    private Instant windowStart;
+
+    @Column(name = "window_end")
+    private Instant windowEnd;
+
+    @Column(name = "rollback_plan", columnDefinition = "TEXT")
+    private String rollbackPlan;
+
+    @Column(name = "impact_analysis", columnDefinition = "TEXT")
+    private String impactAnalysis;
+
+    @Column(name = "scope_operation", length = 100)
+    private String scopeOperation;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
@@ -39,5 +54,15 @@ public class ChangeTicketEntity {
     public void setTitle(String title) { this.title = title; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public Instant getWindowStart() { return windowStart; }
+    public void setWindowStart(Instant windowStart) { this.windowStart = windowStart; }
+    public Instant getWindowEnd() { return windowEnd; }
+    public void setWindowEnd(Instant windowEnd) { this.windowEnd = windowEnd; }
+    public String getRollbackPlan() { return rollbackPlan; }
+    public void setRollbackPlan(String rollbackPlan) { this.rollbackPlan = rollbackPlan; }
+    public String getImpactAnalysis() { return impactAnalysis; }
+    public void setImpactAnalysis(String impactAnalysis) { this.impactAnalysis = impactAnalysis; }
+    public String getScopeOperation() { return scopeOperation; }
+    public void setScopeOperation(String scopeOperation) { this.scopeOperation = scopeOperation; }
     public Instant getCreatedAt() { return createdAt; }
 }

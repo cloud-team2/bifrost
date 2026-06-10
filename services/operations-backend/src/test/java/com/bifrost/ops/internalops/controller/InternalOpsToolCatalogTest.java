@@ -53,7 +53,7 @@ class InternalOpsToolCatalogTest {
                 tool("search_logs", "POST", "/internal/ops/projects/{projectId}/observability/logs/search"),
                 tool("query_traces", "GET", "/internal/ops/projects/{projectId}/connectors/{connectorName}/traces"),
                 tool("list_alerts", "GET", "/internal/ops/projects/{projectId}/observability/alerts"),
-                tool("get_incident_summary", "GET", "/internal/ops/incidents/{incidentId}/summary"),
+                tool("get_incident_summary", "GET", "/internal/ops/projects/{projectId}/incidents/{incidentId}/summary"),
                 tool("list_project_pipelines", "GET", "/internal/ops/projects/{projectId}/pipelines"),
                 tool("get_pipeline_topology", "GET", "/internal/ops/projects/{projectId}/pipelines/{pipelineId}/topology"),
                 tool("get_connector_status", "GET", "/internal/ops/projects/{projectId}/kafka/connectors/{connectorName}/status"));
@@ -110,8 +110,9 @@ class InternalOpsToolCatalogTest {
         return new InternalOpsObservabilityController(
                 mock(AdminClient.class),
                 mock(LokiClient.class),
-                mock(JdbcTemplate.class),
                 mock(WorkspaceRepository.class),
+                mock(PipelineRepository.class),
+                mock(ConnectorRepository.class),
                 mock(com.bifrost.ops.incident.persistence.repository.IncidentRepository.class),
                 "http://connect.invalid");
     }
@@ -124,7 +125,12 @@ class InternalOpsToolCatalogTest {
     }
 
     private InternalController internalController() {
-        return new InternalController(mock(TenantProvisioner.class), mock(PipelineProvisioningService.class));
+        return new InternalController(
+                mock(TenantProvisioner.class),
+                mock(PipelineProvisioningService.class),
+                mock(WorkspaceRepository.class),
+                mock(PipelineRepository.class),
+                mock(ConnectorRepository.class));
     }
 
     private static Map<String, String> tool(String name, String method, String path) {

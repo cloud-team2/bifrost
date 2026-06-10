@@ -3,10 +3,13 @@ package com.bifrost.ops.governance;
 import com.bifrost.ops.governance.approval.ApprovalValidator;
 import com.bifrost.ops.governance.approval.persistence.entity.ApprovalEntity;
 import com.bifrost.ops.governance.audit.AuditService;
+import com.bifrost.ops.governance.changemanagement.ChangeTicketValidator;
 import com.bifrost.ops.governance.evidence.EvidenceStore;
 import com.bifrost.ops.governance.idempotency.IdempotencyGuard;
 import com.bifrost.ops.governance.policy.PolicyDecision;
 import com.bifrost.ops.governance.policy.PolicyGuard;
+import com.bifrost.ops.global.common.error.ApiException;
+import com.bifrost.ops.global.common.error.ErrorCode;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -30,6 +33,7 @@ public class MutationGate {
 
     private final PolicyGuard policyGuard;
     private final ApprovalValidator approvalValidator;
+    private final ChangeTicketValidator changeTicketValidator;
     private final EvidenceStore evidenceStore;
     private final IdempotencyGuard idempotencyGuard;
     private final AuditService auditService;
@@ -37,12 +41,14 @@ public class MutationGate {
 
     public MutationGate(PolicyGuard policyGuard,
                         ApprovalValidator approvalValidator,
+                        ChangeTicketValidator changeTicketValidator,
                         EvidenceStore evidenceStore,
                         IdempotencyGuard idempotencyGuard,
                         AuditService auditService,
                         ObjectMapper objectMapper) {
         this.policyGuard = policyGuard;
         this.approvalValidator = approvalValidator;
+        this.changeTicketValidator = changeTicketValidator;
         this.evidenceStore = evidenceStore;
         this.idempotencyGuard = idempotencyGuard;
         this.auditService = auditService;
@@ -65,52 +71,15 @@ public class MutationGate {
             }
         }
 
-        // [2] policy evaluation
-        PolicyDecision decision = policyGuard.evaluate(ctx.tenantId(), ctx.operation());
-
-        // [3] approval validation (REQUIRE_APPROVAL)
-        UUID approvalId = null;
-        if (decision == PolicyDecision.REQUIRE_APPROVAL) {
-            if (ctx.approvalId() == null) {
-                return GateResult.requireApproval("operation '" + ctx.operation() + "' requires approval");
-            }
-            try {
-                ApprovalEntity approval = approvalValidator.validateAndConsume(ctx.approvalId(), ctx.paramsHash());
-                approvalId = approval.getId();
-            } catch (Exception e) {
-                return GateResult.blocked("approval validation failed: " + e.getMessage());
-            }
-        } else if (decision == PolicyDecision.DENY) {
-            return GateResult.blocked("operation '" + ctx.operation() + "' denied by policy");
-        }
-
-        // [4] before evidence
-        UUID mutationId = UUID.randomUUID();
-        UUID beforeEvidenceId = null;
-        if (ctx.beforeSnapshot() != null) {
-            beforeEvidenceId = evidenceStore.record(ctx.tenantId(), mutationId, "BEFORE", ctx.beforeSnapshot());
-        }
-
-        // [5] execute
         T result;
         try {
-            result = mutation.get();
-        } catch (Exception e) {
-            log.warn("[gate] mutation failed: op={} cause={}", ctx.operation(), e.getMessage());
-            throw e;
+            result = executeChecked(ctx, mutation);
+        } catch (ApiException e) {
+            if (e.code() == ErrorCode.APPROVAL_NOT_FOUND) {
+                return GateResult.requireApproval(e.getMessage());
+            }
+            return GateResult.blocked(e.getMessage());
         }
-
-        // [6] after evidence
-        UUID afterEvidenceId = evidenceStore.record(ctx.tenantId(), mutationId, "AFTER",
-                Map.of("operation", ctx.operation(), "result", String.valueOf(result)));
-
-        // [7] audit
-        auditService.recordMutation(
-                ctx.tenantId(), ctx.actor(), ctx.operation(),
-                ctx.targetType(), ctx.targetId(),
-                "mutation executed via gate",
-                decision.name(), approvalId,
-                afterEvidenceId != null ? afterEvidenceId : beforeEvidenceId);
 
         // [8] idempotency complete
         if (ctx.idempotencyKey() != null) {
@@ -120,6 +89,75 @@ public class MutationGate {
         return GateResult.ok(result);
     }
 
+    /**
+     * Executes one already-reserved mutation through the governance gates.
+     *
+     * <p>This variant does not own idempotency replay because internal ops controllers need to
+     * preserve HTTP status and cached envelope semantics in {@link IdempotencyGuard}.
+     */
+    public <T> T executeChecked(MutationContext ctx, Supplier<T> mutation) {
+        GovernanceDecision governance = validateGovernance(ctx);
+        UUID mutationId = UUID.randomUUID();
+        UUID beforeEvidenceId = null;
+        if (ctx.beforeSnapshot() != null) {
+            beforeEvidenceId = evidenceStore.record(ctx.tenantId(), mutationId, "BEFORE", ctx.beforeSnapshot());
+        }
+
+        try {
+            T result = mutation.get();
+            UUID afterEvidenceId = evidenceStore.record(ctx.tenantId(), mutationId, "AFTER",
+                    Map.of("operation", ctx.operation(), "result", String.valueOf(result)));
+            auditService.recordMutation(
+                    ctx.tenantId(), ctx.actor(), ctx.operation(),
+                    ctx.targetType(), ctx.targetId(),
+                    "mutation executed via gate",
+                    governance.decision().name(), governance.approvalId(),
+                    afterEvidenceId != null ? afterEvidenceId : beforeEvidenceId);
+            return result;
+        } catch (RuntimeException e) {
+            UUID errorEvidenceId = evidenceStore.record(ctx.tenantId(), mutationId, "AFTER",
+                    Map.of("operation", ctx.operation(), "error", safeMessage(e)));
+            auditService.recordMutation(
+                    ctx.tenantId(), ctx.actor(), ctx.operation(),
+                    ctx.targetType(), ctx.targetId(),
+                    "mutation failed via gate",
+                    governance.decision().name(), governance.approvalId(),
+                    errorEvidenceId != null ? errorEvidenceId : beforeEvidenceId);
+            log.warn("[gate] mutation failed: op={} cause={}", ctx.operation(), safeMessage(e));
+            throw e;
+        }
+    }
+
+    private GovernanceDecision validateGovernance(MutationContext ctx) {
+        PolicyDecision decision = policyGuard.evaluate(ctx.tenantId(), ctx.operation());
+        if (decision == PolicyDecision.DENY) {
+            throw new ApiException(ErrorCode.VALIDATION_FAILED,
+                    "operation '" + ctx.operation() + "' denied by policy");
+        }
+        UUID approvalId = null;
+        if (decision == PolicyDecision.REQUIRE_APPROVAL) {
+            if (ctx.approvalId() == null) {
+                throw new ApiException(ErrorCode.APPROVAL_NOT_FOUND,
+                        "operation '" + ctx.operation() + "' requires approval");
+            }
+            ApprovalEntity approval = approvalValidator.validateAndConsume(
+                    ctx.approvalId(), ctx.tenantId(), ctx.operation(), ctx.paramsHash());
+            approvalId = approval.getId();
+        }
+        if (decision == PolicyDecision.REQUIRE_CHANGE_MANAGEMENT) {
+            if (ctx.changeTicketId() == null) {
+                throw new ApiException(ErrorCode.CHANGE_TICKET_REQUIRED,
+                        "operation '" + ctx.operation() + "' requires change ticket");
+            }
+            changeTicketValidator.validate(ctx.changeTicketId(), ctx.tenantId(), ctx.operation());
+        }
+        return new GovernanceDecision(decision, approvalId);
+    }
+
+    private static String safeMessage(Throwable e) {
+        return e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+    }
+
     private String toJson(Object obj) {
         try {
             return objectMapper.writeValueAsString(obj);
@@ -127,4 +165,6 @@ public class MutationGate {
             return "{}";
         }
     }
+
+    private record GovernanceDecision(PolicyDecision decision, UUID approvalId) {}
 }

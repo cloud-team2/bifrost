@@ -13,6 +13,7 @@ import java.util.UUID;
  * @param targetId       대상 ID
  * @param idempotencyKey 멱등성 키 (null 허용 시 멱등성 미검사)
  * @param approvalId     승인 토큰 ID (PolicyDecision=REQUIRE_APPROVAL일 때 필수)
+ * @param changeTicketId 변경 티켓 ID (PolicyDecision=REQUIRE_CHANGE_MANAGEMENT일 때 필수)
  * @param paramsHash     params SHA-256 해시 (approval 검증용)
  * @param beforeSnapshot mutation 전 상태 스냅샷 (evidence 저장용)
  */
@@ -24,6 +25,7 @@ public record MutationContext(
         UUID targetId,
         String idempotencyKey,
         UUID approvalId,
+        UUID changeTicketId,
         String paramsHash,
         Map<String, Object> beforeSnapshot
 ) {}
