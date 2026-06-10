@@ -23,7 +23,8 @@ WORKDIR /app
 
 ARG DEBEZIUM_VERSION=3.5.1.Final
 ARG JDBC_SINK_VERSION=10.9.4
-ARG POSTGRES_DRIVER_VERSION=42.7.4
+# postgres 드라이버는 Confluent JDBC sink zip에 번들됨(42.7.x) → 별도로 받지 않는다(중복 시 classpath 충돌).
+# mariadb 드라이버는 zip에 미번들 → 직접 추가한다.
 ARG MARIADB_DRIVER_VERSION=3.4.1
 
 # 1) 커스텀 컨버터 JAR 빌드 (#425). 멀티모듈이라 settings.gradle이 참조하는 모든 모듈 디렉토리가 필요.
@@ -44,10 +45,8 @@ RUN set -eux; \
     curl -sL -o /tmp/jdbc-sink.zip "https://hub-downloads.confluent.io/api/plugins/confluentinc/kafka-connect-jdbc/versions/${JDBC_SINK_VERSION}/confluentinc-kafka-connect-jdbc-${JDBC_SINK_VERSION}.zip"; \
     unzip -q /tmp/jdbc-sink.zip -d /plugins/jdbc-sink; \
     rm /tmp/jdbc-sink.zip; \
-    # JDBC 드라이버는 connector와 같은 plugin sandbox(lib 디렉토리)에 둬야 classpath에 잡힌다.
+    # mariadb 드라이버(zip 미번들)는 connector와 같은 plugin sandbox(lib 디렉토리)에 둬야 classpath에 잡힌다.
     JDBC_LIB="$(dirname "$(find /plugins/jdbc-sink -name 'kafka-connect-jdbc-*.jar' | head -1)")"; \
-    curl -sL -o "${JDBC_LIB}/postgresql-${POSTGRES_DRIVER_VERSION}.jar" \
-      "https://repo1.maven.org/maven2/org/postgresql/postgresql/${POSTGRES_DRIVER_VERSION}/postgresql-${POSTGRES_DRIVER_VERSION}.jar"; \
     curl -sL -o "${JDBC_LIB}/mariadb-java-client-${MARIADB_DRIVER_VERSION}.jar" \
       "https://repo1.maven.org/maven2/org/mariadb/jdbc/mariadb-java-client/${MARIADB_DRIVER_VERSION}/mariadb-java-client-${MARIADB_DRIVER_VERSION}.jar"; \
     # timestamptz 커스텀 컨버터(#425)는 Debezium Postgres 커넥터와 같은 plugin 클래스로더에서
