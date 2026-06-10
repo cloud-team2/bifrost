@@ -1,0 +1,28 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPattern": "/internal/ops/projects/[^/]+/observability/logs/search"
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "ok": true,
+      "request_id": "req_e2e_002",
+      "operation": "search_logs",
+      "result": {
+        "match_count": 5,
+        "summary": "5 occurrences of consumer lag p95 increase and offset progression 정체"
+      },
+      "evidence": [
+        {
+          "evidence_id": "ev_log_001",
+          "store_ref": "evidence://e2e/ev_log_001",
+          "summary": "offset progression 둔화: commit rate 감소, offset progression 정체 5건",
+          "redaction_status": "redacted",
+          "type": "log"
+        }
+      ],
+      "audit_event_id": "audit_e2e_002"
+    }
+  }
+}

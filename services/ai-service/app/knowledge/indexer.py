@@ -145,6 +145,37 @@ async def index_default_corpus(
     return await store.upsert_chunks(chunks)
 
 
+async def index_document(
+    *,
+    doc_id: str,
+    doc_type: str,
+    title: str,
+    content: str,
+    scope: str = GLOBAL_SCOPE,
+    doc_version: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    embedder: Embedder | None = None,
+    store: PostgresVectorStore | None = None,
+) -> int:
+    """Build and upsert chunks for one external source document."""
+    vector_store = store or get_vector_store()
+    chunks = await build_chunks(
+        [
+            SourceDocument(
+                doc_id=doc_id,
+                doc_type=doc_type,
+                title=title,
+                content=content,
+                scope=scope,
+                metadata=metadata or {},
+            )
+        ],
+        embedder=embedder,
+        doc_version=doc_version,
+    )
+    return await vector_store.upsert_chunks(chunks)
+
+
 def _runbook_documents() -> list[SourceDocument]:
     documents: list[SourceDocument] = []
     for runbook in getattr(runbook_catalog, "_RUNBOOKS", []):

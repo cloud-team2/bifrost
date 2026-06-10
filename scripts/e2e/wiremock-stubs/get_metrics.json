@@ -1,0 +1,32 @@
+{
+  "request": {
+    "method": "GET",
+    "urlPattern": "/internal/ops/projects/[^/]+/observability/metrics.*"
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "ok": true,
+      "request_id": "req_e2e_003",
+      "operation": "query_metrics",
+      "result": {
+        "metric": "pipeline_lag_seconds",
+        "summary": "topic ingress 증가 and incoming messages increase while consumer lag p95 remains high",
+        "data_points": [
+          {"timestamp": "2026-06-09T11:55:00Z", "value": 42.0},
+          {"timestamp": "2026-06-09T12:00:00Z", "value": 123.0}
+        ]
+      },
+      "evidence": [
+        {
+          "evidence_id": "ev_metric_001",
+          "store_ref": "evidence://e2e/ev_metric_001",
+          "summary": "topic ingress 증가: incoming messages 증가와 lag p95 증가 동시 관측",
+          "redaction_status": "redacted",
+          "type": "metric"
+        }
+      ],
+      "audit_event_id": "audit_e2e_003"
+    }
+  }
+}
