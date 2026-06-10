@@ -58,22 +58,22 @@
 | `send_operator_notification` | low | allow |
 | `create_ticket` | low | allow |
 | `ActionType.ESCALATION` | low | require_approval |
-| `pause_non_critical_pipeline` | high | require_approval |
-| `pause_low_priority_pipeline` | high | require_approval |
-| `reduce_pipeline_pressure` | high | require_approval |
-| `restart_connector_task` | high | require_approval |
+| `pause_non_critical_pipeline` | medium | require_approval |
+| `pause_low_priority_pipeline` | medium | require_approval |
+| `reduce_pipeline_pressure` | medium | require_approval |
+| `restart_connector_task` | medium | require_approval |
 | `restart_connector` | high | require_approval |
-| `pause_connector` | high | require_approval |
-| `resume_connector` | high | require_approval |
-| `scale_consumer_deployment` | high | require_approval |
+| `pause_connector` | medium | require_approval |
+| `resume_connector` | medium | require_approval |
+| `scale_consumer_deployment` | medium | require_approval |
 | `rollout_restart_deployment` | high | require_approval |
-| `pause_pipeline` | high | require_approval |
+| `pause_pipeline` | medium | require_approval |
 | `resume_pipeline` | high | require_approval |
-| `create_rebalance_proposal` | high | require_approval |
-| `approve_rebalance` | high | require_approval |
+| `create_rebalance_proposal` | medium | require_approval |
+| `approve_rebalance` | medium | require_approval |
 | `refresh_rebalance` | high | require_approval |
 | `backfill_pipeline` | high | require_approval |
-| `rollback_pipeline` | medium | require_change_management |
+| `rollback_pipeline` | high | require_change_management |
 | `rollback_deployment` | medium | require_change_management |
 
 ### 5. 변경관리 대상
