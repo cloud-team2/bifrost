@@ -51,3 +51,23 @@ class ActionSummary(StrictModel):
     approval_status: str | None = None
     execution_status: str | None = None
     audit_event_id: str | None = None
+
+
+class ApprovalSummary(StrictModel):
+    """글로벌 approval list/단일 조회용 summary (issue #394).
+
+    `routes_approvals.list_pending` 의 inline dict 와 달리, 글로벌 조회는
+    run_id·status·timestamps 까지 포함한 완전한 ApprovalLink projection.
+    """
+    approval_id: str
+    run_id: str
+    action_id: str
+    params_hash: str
+    status: str
+    approved_by: str | None = None
+    created_at: datetime
+    resolved_at: datetime | None = None
+
+
+class ApprovalsListResponse(StrictModel):
+    approvals: list[ApprovalSummary]
