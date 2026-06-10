@@ -117,9 +117,17 @@ function BrokersTab({ onSelectBroker }: { onSelectBroker: (b: BrokerInfo) => voi
 
   const urp = data.underReplicated
   const controllerLabel = data.controllerId >= 0 ? `broker-${data.controllerId}` : '—'
+  const clusterStatus = data.status ?? 'healthy'
 
   return (
     <div className="space-y-4">
+      {clusterStatus !== 'healthy' && (
+        <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">
+          <StatusBadge status={clusterStatus} label={clusterStatus === 'error' ? 'error' : 'partial'} />
+          <span>{data.message ?? 'Cluster metadata is partially unavailable.'}</span>
+        </div>
+      )}
+
       <div className="grid grid-cols-4 gap-4">
         <MetricCard label="Active controller" value={controllerLabel} icon="cpu" />
         <MetricCard label="Under-replicated" value={urp} icon="alert" tone={urp ? 'warn' : 'good'} />
