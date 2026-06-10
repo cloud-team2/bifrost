@@ -59,7 +59,11 @@ public class SourceDebeziumConnectorMapper {
         PipelineProvisionCommand.Endpoint src = command.source();
         UUID pipelineId = command.pipelineId();
         String name = ConnectorNaming.sourceConnectorName(pipelineId);
-        String topicPrefix = ConnectorNaming.topicPrefix(command.projectKey(), src.dbName(), src.datasourceId());
+        // (#365) Debezium 논리 서버명(=topic.prefix=메트릭 server 라벨)을 테이블 단위로 유일화한다.
+        // 같은 소스 DB의 여러 파이프라인이 server를 공유해 이벤트/소스지연 메트릭이 섞이던 문제를 막는다.
+        // 최종 토픽명을 prefix로 쓰고, Debezium이 또 붙이는 .{schema}.{table} 중복분은 아래 route SMT로 제거.
+        String serverName = ConnectorNaming.topicName(
+                command.projectKey(), src.dbName(), src.datasourceId(), src.schema(), src.table());
         String tableInclude = src.schema() + "." + src.table();
         String connectorClass = connectorClass(src.engine());
 
@@ -78,9 +82,16 @@ public class SourceDebeziumConnectorMapper {
                     .addToConfig("database.user", cred.user())
                     .addToConfig("database.password", cred.password())
                     .addToConfig("database.dbname", src.dbName())
-                    // 토픽 네이밍 (Debezium이 .{schema}.{table} 자동 부여)
-                    .addToConfig("topic.prefix", topicPrefix)
+                    // 토픽 네이밍: topic.prefix를 최종 토픽명으로(테이블 단위 유일한 server). Debezium이 그 뒤에
+                    // 또 .{schema}.{table}을 붙이므로, 아래 route SMT로 중복분을 떼어 최종 토픽명을 복원한다.
+                    .addToConfig("topic.prefix", serverName)
                     .addToConfig("table.include.list", tableInclude)
+                    // Debezium 자동 부여 .{schema}.{table} 중복 제거 → 최종 토픽 = topic.prefix(원래 토픽명, #365).
+                    // 단일 테이블 커넥터라 데이터 토픽만 매칭(끝이 .{schema}.{table}); heartbeat는 기본 비활성.
+                    .addToConfig("transforms", "route")
+                    .addToConfig("transforms.route.type", "org.apache.kafka.connect.transforms.RegexRouter")
+                    .addToConfig("transforms.route.regex", "(.*)\\." + src.schema() + "\\." + src.table() + "$")
+                    .addToConfig("transforms.route.replacement", "$1")
                     // 스키마 인지 JSON: JDBC sink가 키(PK Struct)·값 타입을 알 수 있도록 per-connector로
                     // schemas.enable=true 강제(worker 기본값 false를 오버라이드). sink의 pk.mode=record_key가
                     // 스키마 없는 HashMap 키를 거부하는 문제를 막는다.
@@ -111,6 +122,9 @@ public class SourceDebeziumConnectorMapper {
                     // 프로젝트/파이프라인별 slot·publication 격리 (영소문자·숫자·언더스코어)
                     .addToConfig("slot.name", slotName(projectKey, pipelineId))
                     .addToConfig("publication.name", publicationName(projectKey, pipelineId))
+                    // (#365) publication을 이 파이프라인의 테이블로만 한정(filtered). 기본값(all_tables)이면
+                    // slot이 DB의 모든 테이블 변경을 stream해 "events seen" 메트릭이 테이블 무관하게 합산된다.
+                    .addToConfig("publication.autocreate.mode", "filtered")
                     .endSpec();
             // MariaDB(Debezium binlog): server id는 클러스터 내 유일해야 하므로 pipelineId 해시 사용.
             // 단일 테이블만 캡처하므로 database.include.list = dbName으로 좁힌다.
