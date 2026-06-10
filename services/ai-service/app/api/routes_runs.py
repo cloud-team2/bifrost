@@ -13,7 +13,14 @@ from app.persistence.event_repository import get_event_repo
 from app.persistence.run_repository import get_run_repo
 from app.persistence.state_repository import PostgresStateRepository, StatePatchRecord
 from app.schemas import ApiResponse, ErrorCode
-from app.schemas.api import ActionSummary, MessageRequest, RetryRequest, TimelineItem
+from app.schemas.api import (
+    ActionSummary,
+    MessageRequest,
+    RetryRequest,
+    StateNamespaceSummary,
+    StepSummary,
+    TimelineItem,
+)
 from app.streaming.event_bus import get_event_bus
 from app.tools.registry import get_tool_registry
 from app.workflow.runner import run_workflow
@@ -61,7 +68,7 @@ def _timeline_sort_value(value: Any) -> tuple[datetime, int]:
 
 
 def _merge_timeline(patches: list[StatePatchRecord], events: list[Any]) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
+    items: list[TimelineItem] = []
     for patch in patches:
         created_at = patch.created_at
         if created_at is None:
@@ -69,10 +76,14 @@ def _merge_timeline(patches: list[StatePatchRecord], events: list[Any]) -> list[
         items.append(TimelineItem(
             seq=patch.seq,
             type="state_patch",
-            agent=patch.author,
-            message=f"{patch.namespace}:{patch.op} {patch.path}",
+            agent=_value_as_str(patch.author),
+            message=(
+                f"{_value_as_str(patch.namespace, 'unknown')}:"
+                f"{_value_as_str(patch.op, 'unknown')} "
+                f"{_value_as_str(patch.path, '/')}"
+            ),
             created_at=created_at,
-        ).model_dump())
+        ))
 
     for event in events:
         created_at = _created_at(event)
@@ -81,13 +92,13 @@ def _merge_timeline(patches: list[StatePatchRecord], events: list[Any]) -> list[
         event_type = getattr(getattr(event, "type", None), "value", None) or getattr(event, "type", "event")
         items.append(TimelineItem(
             seq=None,
-            type=event_type,
-            agent=getattr(event, "agent", None),
-            message=getattr(event, "message", ""),
+            type=_value_as_str(event_type, "event") or "event",
+            agent=_value_as_str(getattr(event, "agent", None)),
+            message=_value_as_str(getattr(event, "message", None), "") or "",
             created_at=created_at,
-        ).model_dump())
+        ))
 
-    return sorted(items, key=_timeline_sort_value)
+    return [item.model_dump(mode="json") for item in sorted(items, key=_timeline_sort_value)]
 
 
 def _patch_payloads(value: Any) -> list[dict[str, Any]]:
@@ -107,7 +118,8 @@ def _patch_payloads(value: Any) -> list[dict[str, Any]]:
 def _value_as_str(value: Any, default: str | None = None) -> str | None:
     if value is None:
         return default
-    return getattr(value, "value", str(value))
+    value = getattr(value, "value", value)
+    return value if isinstance(value, str) else str(value)
 
 
 def _action_id_from_patch(path: str, payload: dict[str, Any]) -> str | None:
@@ -122,7 +134,7 @@ def _action_id_from_patch(path: str, payload: dict[str, Any]) -> str | None:
 def _merge_actions(patches: list[StatePatchRecord]) -> list[dict[str, Any]]:
     actions: OrderedDict[str, dict[str, Any]] = OrderedDict()
     for patch in patches:
-        if patch.namespace != "actions":
+        if _value_as_str(patch.namespace) != "actions":
             continue
         for payload in _patch_payloads(patch.patch):
             action_id = _action_id_from_patch(patch.path, payload)
@@ -145,7 +157,7 @@ def _merge_actions(patches: list[StatePatchRecord]) -> list[dict[str, Any]]:
             approval_status=_value_as_str(action.get("approval_status")),
             execution_status=_value_as_str(execution_status),
             audit_event_id=_value_as_str(action.get("audit_event_id")),
-        ).model_dump())
+        ).model_dump(mode="json"))
     return summaries
 
 
@@ -163,20 +175,21 @@ async def get_state_summary(run_id: str) -> ApiResponse:
     patches = await _get_patches(run_id)
     namespaces: dict[str, dict[str, Any]] = {}
     for patch in patches:
-        summary = namespaces.setdefault(patch.namespace, {
+        namespace = _value_as_str(patch.namespace, "unknown") or "unknown"
+        summary = namespaces.setdefault(namespace, {
             "patch_count": 0,
             "last_author": None,
             "last_op": None,
             "last_updated_at": None,
         })
         summary["patch_count"] += 1
-        summary["last_author"] = patch.author
-        summary["last_op"] = patch.op
+        summary["last_author"] = _value_as_str(patch.author)
+        summary["last_op"] = _value_as_str(patch.op)
         summary["last_updated_at"] = patch.created_at
 
     guards = {"step_count": len(patches), "gap_loops": 0}
     for patch in patches:
-        if patch.namespace == "guards" and isinstance(patch.patch, dict):
+        if _value_as_str(patch.namespace) == "guards" and isinstance(patch.patch, dict):
             guards.update({
                 key: value for key, value in patch.patch.items()
                 if key in {"step_count", "gap_loops"} and isinstance(value, int)
@@ -184,10 +197,13 @@ async def get_state_summary(run_id: str) -> ApiResponse:
 
     return ApiResponse.success(request_id, {
         "run_id": run_id,
-        "mode": getattr(run, "mode", None),
-        "status": getattr(run, "status", None),
-        "current_stage": getattr(run, "current_agent", None),
-        "namespaces": namespaces,
+        "mode": _value_as_str(getattr(run, "mode", None)),
+        "status": _value_as_str(getattr(run, "status", None)),
+        "current_stage": _value_as_str(getattr(run, "current_agent", None)),
+        "namespaces": {
+            key: StateNamespaceSummary(**value).model_dump(mode="json")
+            for key, value in namespaces.items()
+        },
         "guards": guards,
     })
 
@@ -216,14 +232,17 @@ async def get_steps(run_id: str) -> ApiResponse:
     patches = await _get_patches(run_id)
     by_author: OrderedDict[str, dict[str, Any]] = OrderedDict()
     for patch in patches:
-        step = by_author.setdefault(patch.author, {
-            "step_id": f"{run_id}:{patch.author}",
-            "agent": patch.author,
+        agent = _value_as_str(patch.author, "unknown") or "unknown"
+        step = by_author.setdefault(agent, {
+            "step_id": f"{run_id}:{agent}",
+            "agent": agent,
             "status": "completed",
             "created_at": patch.created_at,
         })
         step["created_at"] = step["created_at"] or patch.created_at
-    return ApiResponse.success(request_id, {"steps": list(by_author.values())})
+    return ApiResponse.success(request_id, {
+        "steps": [StepSummary(**step).model_dump(mode="json") for step in by_author.values()]
+    })
 
 
 @router.get("/runs/{run_id}/actions")
@@ -293,4 +312,4 @@ async def list_runs(
 ) -> ApiResponse:
     request_id = _request_id()
     runs = await get_run_repo().list(project_id=project_id, status=status, limit=limit)
-    return ApiResponse.success(request_id, {"runs": [run.model_dump() for run in runs]})
+    return ApiResponse.success(request_id, {"runs": [run.model_dump(mode="json") for run in runs]})

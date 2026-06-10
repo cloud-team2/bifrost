@@ -236,6 +236,13 @@ public class PipelineService {
         return PipelineResponse.from(p);
     }
 
+    /** 데이터플레인 추적 per-pipeline 토글(#438). 의심 파이프라인의 source 커넥터에 tracing SMT on/off. */
+    public void setDataplaneTracing(UUID wsId, AuthenticatedUser principal, UUID id, boolean enabled) {
+        accessGuard.requireAccess(wsId, principal);
+        PipelineEntity p = load(wsId, id);
+        provisioningService.setDataplaneTracing(p.getId(), enabled);
+    }
+
     @Transactional
     public void delete(UUID wsId, AuthenticatedUser principal, UUID id, boolean force) {
         accessGuard.requireAccess(wsId, principal);
@@ -252,7 +259,7 @@ public class PipelineService {
         provisioningService.delete(new PipelineResourceRef(p.getId(), null, connectorNames(p)));
         // Kafka 측 잔재(토픽·sink consumer group) 정리(#200). best-effort — 실패해도 삭제는 진행.
         // CR이 모두 제거된 뒤 호출해야 Debezium source가 토픽을 재생성하지 않는다.
-        kafkaResourceCleaner.deleteTopicAndSinkGroup(p.getTopicName(), p.getId());
+        kafkaResourceCleaner.deleteResources(p.getTopicName(), p.getId(), p.getPattern());
         connectorRepository.deleteAll(connectorRepository.findByPipelineId(p.getId()));
         pipelineRepository.delete(p);
         eventService.record(wsId, null, EventLevel.INFO, "PIPELINE_DELETED",

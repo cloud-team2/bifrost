@@ -8,6 +8,7 @@ import com.bifrost.ops.global.common.datasource.DbType;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
 import com.bifrost.ops.pipeline.dto.SyncStatusResponse;
+import com.bifrost.ops.provisioning.dto.PipelinePattern;
 import com.bifrost.ops.pipeline.persistence.entity.PipelineEntity;
 import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
 import com.bifrost.ops.secret.SecretStore;
@@ -57,8 +58,8 @@ public class PipelineSyncService {
         accessGuard.requireAccess(wsId, principal);
         PipelineEntity p = pipelineRepository.findByIdAndTenantId(pipelineId, wsId)
                 .orElseThrow(() -> new ApiException(ErrorCode.PIPELINE_NOT_FOUND, "파이프라인을 찾을 수 없습니다"));
-        if (p.getSinkDatasourceId() == null) {
-            throw new ApiException(ErrorCode.VALIDATION_FAILED, "sink가 없는 파이프라인은 동기화 상태가 없습니다");
+        if (p.getPattern() == PipelinePattern.FAN_OUT) {
+            return SyncStatusResponse.notApplicable();
         }
 
         DatasourceEntity source = requireDatasource(wsId, p.getSourceDatasourceId());
@@ -68,7 +69,7 @@ public class PipelineSyncService {
         long sourceRows = countRows(source, p.getSchemaName(), p.getTableName());
         long sinkRows = countRows(sink, null, p.getTableName());
         long delta = (sourceRows < 0 || sinkRows < 0) ? -1 : sourceRows - sinkRows;
-        return new SyncStatusResponse(sourceRows, sinkRows, delta, Instant.now());
+        return SyncStatusResponse.of(sourceRows, sinkRows, delta, Instant.now());
     }
 
     private DatasourceEntity requireDatasource(UUID wsId, UUID dbId) {

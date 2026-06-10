@@ -2,6 +2,11 @@
 gradlew text eol=lf
 *.sh text eol=lf
 
+# Dockerfile은 항상 LF — 다중행 RUN의 `\` 연속행이 CRLF면 셸 파싱이 깨진다 (#425)
+Dockerfile text eol=lf
+Dockerfile.* text eol=lf
+*.gradle text eol=lf
+
 # Windows 스크립트는 CRLF
 gradlew.bat text eol=crlf
 *.bat text eol=crlf

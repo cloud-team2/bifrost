@@ -7,6 +7,7 @@ import { TechIcon, nodeKind } from '../../components/TechIcon'
 import { useToast } from '../../components/Toast'
 import { useApp } from '../../store/AppStore'
 import { pipelineLabel } from '../../data/helpers'
+import { buildConsumerSnippets, escapeSnippetValue } from '../../lib/pipelineSnippets'
 import type { Edge, Node } from '../../data/types'
 import {
   api,
@@ -197,6 +198,21 @@ function TopicTab({ edge }: { edge: Edge }) {
   const isrPct = topicInfo?.isrPct ?? 100
   const isrOk = isrPct >= 100
 
+  // EDA 핵심 지표: Debezium MilliSecondsBehindSource 추이
+  const [sourceDelaySeries, setSourceDelaySeries] = useState<MetricPoint[]>([])
+  useEffect(() => {
+    if (!wsId) return
+    let cancelled = false
+    const load = () => {
+      api.pipelineSourceDelay(wsId, edge.id).then((d) => { if (!cancelled) setSourceDelaySeries(d) }).catch(() => {})
+    }
+    load()
+    const timer = setInterval(load, 10000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [wsId, edge.id])
+
+  const sourceDelayData = sourceDelaySeries.map((p) => ({ t: p.timestamp, delay: p.value >= 0 ? p.value : null }))
+
   return (
     <div className="space-y-4">
 
@@ -265,6 +281,25 @@ function TopicTab({ edge }: { edge: Edge }) {
           <div className="mx-5 mb-4 mt-1 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[12px] text-amber-700">
             <Icon name="alert" size={13} className="shrink-0" />
             Under-replicated partitions 감지 — 브로커 장애 시 데이터 유실 위험
+          </div>
+        )}
+      </Panel>
+
+      {/* EDA 지표: Debezium MilliSecondsBehindSource(소스 지연) 추이 */}
+      <Panel title="Source Delay"
+        right={<span className="text-[12px] text-gray-400">Debezium MilliSecondsBehindSource · 최근 2시간</span>}>
+        {sourceDelayData.length === 0 ? (
+          <div className="px-5 py-8 text-center text-[12.5px] text-gray-400">
+            지표 없음 — Prometheus 미연동이거나 파이프라인이 아직 활성화되지 않았습니다
+          </div>
+        ) : (
+          <div className="px-5 pb-4 pt-2">
+            <TrendChart
+              data={sourceDelayData}
+              series={[{ key: 'delay', label: '소스 지연 (ms)', color: CHART_COLORS.violet }]}
+              height={160}
+              timeAxis
+            />
           </div>
         )}
       </Panel>
@@ -1196,61 +1231,7 @@ function GuideTab({ edge }: { edge: Edge }) {
   )
 }
 
-function buildConsumerSnippets(
-  guide: ConnectionGuideResponse,
-  topicName: string,
-  template: ConnectionGuideResponse['authenticationTemplates'][number] | null,
-): Record<'Java' | 'Python' | 'Node.js', string> {
-  const javaAuth = template
-    ? Object.entries(template.properties)
-        .map(([key, value]) => `props.put("${escapeSnippetValue(key)}", "${escapeSnippetValue(value)}");`)
-        .join('\n')
-    : '// No client authentication properties returned by backend.'
-  const commentAuth = template
-    ? Object.entries(template.properties)
-        .map(([key, value]) => `# ${key}=${value}`)
-        .join('\n')
-    : '# No client authentication properties returned by backend.'
-  const jsAuth = template
-    ? Object.entries(template.properties)
-        .map(([key, value]) => `// ${key}=${value}`)
-        .join('\n')
-    : '// No client authentication properties returned by backend.'
-
-  return {
-    Java: `var props = new Properties();
-props.put("bootstrap.servers", "${escapeSnippetValue(guide.bootstrapServers)}");
-props.put("group.id", "${escapeSnippetValue(guide.recommendedGroupId)}");
-${javaAuth}
-props.put("key.deserializer", StringDeserializer.class);
-props.put("value.deserializer", StringDeserializer.class);
-
-var consumer = new KafkaConsumer<>(props);
-consumer.subscribe(List.of("${escapeSnippetValue(topicName)}"));`,
-    Python: `from kafka import KafkaConsumer
-
-# Authentication template (${guide.authenticationMethod}) uses Secret ${guide.credentialReference.namespace}/${guide.credentialReference.secretName}.
-${commentAuth}
-consumer = KafkaConsumer(
-    "${topicName}",
-    bootstrap_servers="${guide.bootstrapServers}",
-    group_id="${guide.recommendedGroupId}",
-)
-for msg in consumer:
-    handle(msg.value)`,
-    'Node.js': `const { Kafka } = require("kafkajs")
-
-// Authentication template (${guide.authenticationMethod}) uses Secret ${guide.credentialReference.namespace}/${guide.credentialReference.secretName}.
-${jsAuth}
-const kafka = new Kafka({ brokers: ["${guide.bootstrapServers}"] })
-const consumer = kafka.consumer({ groupId: "${guide.recommendedGroupId}" })
-await consumer.subscribe({ topic: "${topicName}" })`,
-  }
-}
-
-function escapeSnippetValue(value: string) {
-  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')
-}
+// buildConsumerSnippets and escapeSnippetValue are exported from ../../lib/pipelineSnippets
 
 function Row({ label, value, onCopy }: { label: string; value: string; onCopy: () => void }) {
   return (

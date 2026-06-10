@@ -23,7 +23,6 @@ export function Sidebar({ onCreateProject }: { onCreateProject: () => void }) {
     { view: 'pipelines', label: 'Pipeline', icon: 'route' },
     { view: 'databases', label: 'Database', icon: 'database' },
     { view: 'cluster', label: '클러스터', icon: 'server' },
-    { view: 'activity-log', label: '이벤트 로그', icon: 'log' },
     { view: 'alerts', label: '인시던트', icon: 'bell', badge: openIncidents },
   ]
 

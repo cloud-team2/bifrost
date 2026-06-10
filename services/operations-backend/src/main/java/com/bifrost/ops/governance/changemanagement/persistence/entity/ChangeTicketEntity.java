@@ -37,6 +37,18 @@ public class ChangeTicketEntity {
     @Column(name = "scope_operation", length = 100)
     private String scopeOperation;
 
+    @Column(name = "required_approver")
+    private UUID requiredApprover;
+
+    @Column(name = "requested_by")
+    private UUID requestedBy;
+
+    @Column(name = "approved_by")
+    private UUID approvedBy;
+
+    @Column(name = "approved_at")
+    private Instant approvedAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -64,5 +76,13 @@ public class ChangeTicketEntity {
     public void setImpactAnalysis(String impactAnalysis) { this.impactAnalysis = impactAnalysis; }
     public String getScopeOperation() { return scopeOperation; }
     public void setScopeOperation(String scopeOperation) { this.scopeOperation = scopeOperation; }
+    public UUID getRequiredApprover() { return requiredApprover; }
+    public void setRequiredApprover(UUID requiredApprover) { this.requiredApprover = requiredApprover; }
+    public UUID getRequestedBy() { return requestedBy; }
+    public void setRequestedBy(UUID requestedBy) { this.requestedBy = requestedBy; }
+    public UUID getApprovedBy() { return approvedBy; }
+    public void setApprovedBy(UUID approvedBy) { this.approvedBy = approvedBy; }
+    public Instant getApprovedAt() { return approvedAt; }
+    public void setApprovedAt(Instant approvedAt) { this.approvedAt = approvedAt; }
     public Instant getCreatedAt() { return createdAt; }
 }

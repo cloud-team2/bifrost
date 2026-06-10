@@ -23,12 +23,19 @@ management:
     health:
       show-details: when-authorized
   # 분산 추적 → Tempo (OTLP HTTP). 엔드포인트/샘플링은 환경변수로 오버라이드. (#366)
+  # 샘플링 기본 0.1(10%): 100%는 Tempo를 폭주시킴(OOM). 필요 시 env로 일시 상향.
   tracing:
     sampling:
-      probability: ${TRACING_SAMPLE_RATE:1.0}
+      probability: ${TRACING_SAMPLE_RATE:0.1}
   otlp:
     tracing:
       endpoint: ${OTLP_TRACING_ENDPOINT:http://tempo.monitoring:4318/v1/traces}
+
+# 데이터플레인 추적(#371): 신규 source 커넥터에 Debezium tracing SMT 추가. 기본 off(오버헤드 없음).
+# 워커 OTel 계측(infra/k8s/kafka/kafka-connect.yaml) 전제. 켜면 이후 생성되는 파이프라인이 추적됨.
+tracing:
+  dataplane:
+    enabled: ${DATAPLANE_TRACING_ENABLED:false}
 
 springdoc:
   swagger-ui:

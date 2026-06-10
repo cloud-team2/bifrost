@@ -1,6 +1,8 @@
 rootProject.name = 'data-orchestration-platform'
 
 include(
-    'services:operations-backend'
+    'services:operations-backend',
+    // Debezium 커스텀 컨버터(#425): Connect 이미지에 동봉하는 timestamptz→Connect Timestamp 변환 플러그인.
+    'connect-plugins:timestamptz-converter'
 )
 // ai-service는 FastAPI(Python)로 전환되어 Gradle 빌드 대상이 아니다 (ADR 0004, services/ai-service)

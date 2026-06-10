@@ -212,6 +212,15 @@ public class PipelineController {
         return pipelineService.resume(wsId, principal, id);
     }
 
+    /** 데이터플레인 추적 per-pipeline 토글(#438). 의심 파이프라인만 source 커넥터에 tracing SMT on/off. */
+    @PostMapping("/{id}/dataplane-tracing")
+    public void dataplaneTracing(@PathVariable UUID wsId,
+                                 @PathVariable UUID id,
+                                 @RequestParam boolean enabled,
+                                 @AuthenticationPrincipal AuthenticatedUser principal) {
+        pipelineService.setDataplaneTracing(wsId, principal, id, enabled);
+    }
+
     /**
      * 삭제(FR-005). connector CR 삭제 + 행 제거. 정상 삭제는 creating 중 불가.
      * {@code force=true}면 상태 불문 best-effort 청소(#155) — 리소스 정리가 실패해도 행은 제거.

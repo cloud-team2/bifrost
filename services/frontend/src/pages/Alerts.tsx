@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { Icon } from '../components/Icon'
 import { PageHead, StatusBadge } from '../components/blocks'
 import { useApp } from '../store/AppStore'
+import { pipelineLabel } from '../data/helpers'
 import type { IncidentResponse, ResourceEventResponse, EventResponse } from '../lib/api'
+import type { Edge } from '../data/types'
 import type { LogLevel } from '../data/types'
 import { cn } from '../lib/format'
 
@@ -44,6 +46,7 @@ interface UnifiedEvent {
   source: 'pipeline' | 'resource'
   label: string
   pipelineId?: string | null
+  resourceKey?: string | null
 }
 
 type SourceFilter = 'all' | UnifiedEvent['source']
@@ -75,6 +78,14 @@ function fmtDateTime(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('ko-KR')
 }
 
+function fmtTime(value: string | null | undefined): string {
+  if (!value) return '—'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+}
+
 function eventMessage(e: ResourceEventResponse): string {
   return `[${e.resource}] ${e.detail}`
 }
@@ -89,15 +100,58 @@ function buildEvents(events: EventResponse[], resourceEvents: ResourceEventRespo
     label: e.type,
     pipelineId: e.pipelineId,
   }))
-  const resources: UnifiedEvent[] = resourceEvents.map((e) => ({
-    id: `${e.eventType}:${e.resource}:${e.occurredAt}`,
+  const resources: UnifiedEvent[] = resourceEvents.map((e, index) => ({
+    id: `${e.eventType}:${e.resource}:${e.occurredAt}:${index}`,
     occurredAt: e.occurredAt,
     level: null,
     message: eventMessage(e),
     source: 'resource',
     label: e.eventType,
+    resourceKey: e.resource,
   }))
   return [...pipeline, ...resources].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))
+}
+
+function isPipelineSource(incident: IncidentResponse): boolean {
+  return incident.sourceType?.toLowerCase() === 'pipeline' && Boolean(incident.sourceId?.trim())
+}
+
+function incidentPipeline(incident: IncidentResponse, edges: Edge[]): Edge | null {
+  if (!isPipelineSource(incident) || !incident.sourceId) return null
+  return edges.find((edge) => edge.id === incident.sourceId) ?? null
+}
+
+function eventSortAsc(a: UnifiedEvent, b: UnifiedEvent): number {
+  return a.occurredAt.localeCompare(b.occurredAt)
+}
+
+function isPipelineTopicResource(resourceKey: string | null | undefined, pipeline: Edge | null): boolean {
+  const topic = pipeline?.topic.trim()
+  if (!resourceKey || !topic) return false
+  if (resourceKey === topic) return true
+
+  const partitionPrefix = `${topic}-`
+  if (!resourceKey.startsWith(partitionPrefix)) return false
+  return /^\d+$/.test(resourceKey.slice(partitionPrefix.length))
+}
+
+function relatedEventsForIncident(incident: IncidentResponse, allEvents: UnifiedEvent[], edges: Edge[]): UnifiedEvent[] {
+  const sourceId = incident.sourceId?.trim()
+  if (!sourceId) return []
+
+  const pipeline = incidentPipeline(incident, edges)
+  const pipelineId = pipeline?.id ?? (isPipelineSource(incident) ? sourceId : null)
+
+  return allEvents
+    .filter((event) => {
+      if (event.pipelineId && event.pipelineId === sourceId) return true
+      if (pipeline && event.pipelineId === pipeline.id) return true
+      if (event.source !== 'resource') return false
+
+      return event.resourceKey === sourceId || (!!pipelineId && event.resourceKey === pipelineId) ||
+        isPipelineTopicResource(event.resourceKey, pipeline)
+    })
+    .sort(eventSortAsc)
 }
 
 /* ================================================================ main view */
@@ -113,6 +167,14 @@ export function Alerts() {
   const resolvedIncidents = incidents.filter((i) => !isOpenIncident(i))
   const selectedIncident = incidents.find((i) => i.id === selectedIncidentId) ?? null
   const allEvents = useMemo(() => buildEvents(app.events, app.resourceEvents), [app.events, app.resourceEvents])
+  const selectedRelatedEvents = useMemo(
+    () => (selectedIncident ? relatedEventsForIncident(selectedIncident, allEvents, app.edges) : []),
+    [selectedIncident, allEvents, app.edges],
+  )
+  const selectedRelatedEventIds = useMemo(
+    () => new Set(selectedRelatedEvents.map((event) => event.id)),
+    [selectedRelatedEvents],
+  )
   const initialLoading = app.monitoringLoading && incidents.length === 0 && allEvents.length === 0
 
   useEffect(() => {
@@ -121,10 +183,18 @@ export function Alerts() {
     app.clearOpSelectedIncident()
   }, [app.opSelectedIncidentId])
 
-  const filteredEvents = allEvents.filter(
-    (e) =>
-      (sourceFilter === 'all' || e.source === sourceFilter) &&
-      (levelFilter === 'all' || e.level === levelFilter),
+  const filteredEvents = useMemo(
+    () =>
+      allEvents.filter(
+        (e) =>
+          (sourceFilter === 'all' || e.source === sourceFilter) &&
+          (levelFilter === 'all' || e.level === levelFilter),
+      ),
+    [allEvents, sourceFilter, levelFilter],
+  )
+  const visibleRelatedEventIds = useMemo(
+    () => new Set(filteredEvents.filter((event) => selectedRelatedEventIds.has(event.id)).map((event) => event.id)),
+    [filteredEvents, selectedRelatedEventIds],
   )
 
   function toggleIncident(id: string) {
@@ -135,7 +205,6 @@ export function Alerts() {
     <div className="px-6 py-5">
       <PageHead
         title="알람"
-        sub="백엔드 incidents/resource-events API 기준으로 표시합니다"
         actions={
           <button
             onClick={() => app.reloadMonitoring()}
@@ -172,6 +241,7 @@ export function Alerts() {
                   <IncidentBanner
                     key={inc.id}
                     incident={inc}
+                    relatedEventCount={relatedEventsForIncident(inc, allEvents, app.edges).length}
                     selected={selectedIncidentId === inc.id}
                     onClick={() => toggleIncident(inc.id)}
                   />
@@ -224,7 +294,12 @@ export function Alerts() {
                   <div className="py-12 text-center text-[13px] text-gray-400">이벤트가 없습니다</div>
                 ) : (
                   filteredEvents.map((event, i) => (
-                    <EventRow key={event.id} event={event} isLast={i === filteredEvents.length - 1} />
+                    <EventRow
+                      key={event.id}
+                      event={event}
+                      relatedEventIds={visibleRelatedEventIds}
+                      isLast={i === filteredEvents.length - 1}
+                    />
                   ))
                 )}
               </div>
@@ -248,7 +323,11 @@ export function Alerts() {
 
           {selectedIncident && (
             <div className="w-[380px] shrink-0 self-start overflow-hidden rounded-xl border border-gray-200 bg-white">
-              <IncidentPanel incident={selectedIncident} onClose={() => setSelectedIncidentId(null)} />
+              <IncidentPanel
+                incident={selectedIncident}
+                relatedEvents={selectedRelatedEvents}
+                onClose={() => setSelectedIncidentId(null)}
+              />
             </div>
           )}
         </div>
@@ -261,10 +340,12 @@ export function Alerts() {
 
 function IncidentBanner({
   incident,
+  relatedEventCount,
   selected,
   onClick,
 }: {
   incident: IncidentResponse
+  relatedEventCount: number
   selected: boolean
   onClick: () => void
 }) {
@@ -286,7 +367,7 @@ function IncidentBanner({
       <div className="mt-1.5 flex items-center gap-3 text-[12px] text-gray-500">
         <span className="font-mono">{fmtDateTime(incident.openedAt)}</span>
         <span>·</span>
-        <span>{incident.sourceType ?? 'source'}:{' '}{incident.groupingKey}</span>
+        <span>관련 이벤트 {relatedEventCount}건</span>
         <span className="ml-auto text-[11px] text-gray-400">
           {selected ? '닫기 ↑' : '상세 보기 →'}
         </span>
@@ -297,11 +378,30 @@ function IncidentBanner({
 
 /* ---------------------------------------------------------------- EventRow */
 
-function EventRow({ event, isLast }: { event: UnifiedEvent; isLast: boolean }) {
+function EventRow({
+  event,
+  relatedEventIds,
+  isLast,
+}: {
+  event: UnifiedEvent
+  relatedEventIds: Set<string>
+  isLast: boolean
+}) {
   const left = event.level ? LEVEL_LEFT[event.level] : 'border-l-gray-300'
+  const hasSelection = relatedEventIds.size > 0
+  const isHighlighted = hasSelection && relatedEventIds.has(event.id)
+  const isDimmed = hasSelection && !isHighlighted
   return (
-    <div className={cn('flex items-start gap-3 border-l-2 px-4 py-2.5', !isLast && 'border-b border-gray-50', left)}>
-      <span className="w-[118px] shrink-0 pt-px font-mono text-[11px] text-gray-400">{fmtDateTime(event.occurredAt)}</span>
+    <div
+      className={cn(
+        'flex items-start gap-3 border-l-2 px-4 py-2.5',
+        !isLast && 'border-b border-gray-50',
+        left,
+        isHighlighted && 'bg-brand-50/25',
+        isDimmed && 'opacity-40',
+      )}
+    >
+      <span className="w-[52px] shrink-0 pt-px font-mono text-[11px] text-gray-400">{fmtTime(event.occurredAt)}</span>
       {event.level ? (
         <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-[9.5px] font-bold uppercase', LEVEL_BADGE[event.level])}>
           {event.level}
@@ -321,7 +421,18 @@ function EventRow({ event, isLast }: { event: UnifiedEvent; isLast: boolean }) {
 
 /* ---------------------------------------------------------------- IncidentPanel */
 
-function IncidentPanel({ incident, onClose }: { incident: IncidentResponse; onClose: () => void }) {
+function IncidentPanel({
+  incident,
+  relatedEvents,
+  onClose,
+}: {
+  incident: IncidentResponse
+  relatedEvents: UnifiedEvent[]
+  onClose: () => void
+}) {
+  const app = useApp()
+  const pipeline = incidentPipeline(incident, app.edges)
+
   return (
     <div className="flex max-h-[calc(100vh-140px)] flex-col overflow-hidden">
       <div className="flex shrink-0 items-start gap-2.5 border-b border-gray-100 px-4 py-3">
@@ -336,35 +447,72 @@ function IncidentPanel({ incident, onClose }: { incident: IncidentResponse; onCl
         <div className="space-y-1.5 px-4 py-3">
           <div className="flex items-center gap-2">
             <StatusBadge status={incident.status} />
-            <StatusBadge status={incident.severity} />
+            <span className="font-mono text-[11px] text-gray-400">{fmtDateTime(incident.openedAt)}</span>
           </div>
-          <Meta label="Opened" value={fmtDateTime(incident.openedAt)} />
-          <Meta label="Resolved" value={fmtDateTime(incident.resolvedAt)} />
-        </div>
-
-        <div className="space-y-2 px-4 py-3 text-[12.5px]">
-          <Meta label="Tenant" value={incident.tenantId} mono />
-          <Meta label="Grouping key" value={incident.groupingKey} mono />
-          <Meta label="Source type" value={incident.sourceType ?? '—'} />
-          <Meta label="Source id" value={incident.sourceId ?? '—'} mono />
+          {isPipelineSource(incident) && (
+            <div className="text-[12px] text-gray-500">
+              영향 Pipeline:{' '}
+              {pipeline ? (
+                <button
+                  onClick={() => app.openPipeline(pipeline.id)}
+                  className="inline-flex items-center gap-1 font-medium text-brand-600 hover:underline"
+                >
+                  {pipelineLabel(pipeline)}
+                  <Icon name="arrow-right" size={11} />
+                </button>
+              ) : (
+                <span className="text-gray-400">현재 프로젝트에서 찾을 수 없습니다</span>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="px-4 py-3">
-          <div className="mb-1.5 text-[10.5px] font-bold uppercase tracking-wide text-gray-400">RCA</div>
+          <div className="mb-1.5 text-[10.5px] font-bold uppercase tracking-wide text-gray-400">원인 분석</div>
           <p className="text-[12.5px] leading-relaxed text-gray-600">
             {incident.rca?.trim() || '아직 RCA가 기록되지 않았습니다.'}
           </p>
         </div>
-      </div>
-    </div>
-  )
-}
 
-function Meta({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="flex gap-2 text-[12px]">
-      <span className="w-24 shrink-0 text-gray-400">{label}</span>
-      <span className={cn('min-w-0 flex-1 break-all text-gray-700', mono && 'font-mono text-[11.5px]')}>{value}</span>
+        <div className="px-4 py-3">
+          <div className="mb-2 text-[10.5px] font-bold uppercase tracking-wide text-gray-400">
+            관련 이벤트 {relatedEvents.length}건
+          </div>
+          {relatedEvents.length > 0 ? (
+            <div>
+              {relatedEvents.map((event, i) => (
+                <div key={event.id} className="flex gap-2.5 pb-2.5 last:pb-0">
+                  <div className="flex flex-col items-center pt-1">
+                    <span
+                      className={cn(
+                        'h-2 w-2 shrink-0 rounded-full',
+                        event.level === 'error'
+                          ? 'bg-rose-500'
+                          : event.level === 'warning'
+                            ? 'bg-amber-400'
+                            : event.level === 'info'
+                              ? 'bg-sky-400'
+                              : 'bg-gray-300',
+                      )}
+                    />
+                    {i < relatedEvents.length - 1 && <span className="my-0.5 w-px flex-1 bg-gray-100" />}
+                  </div>
+                  <div className="-mt-0.5 min-w-0 flex-1">
+                    <div className="text-[12px] text-gray-700">{event.message}</div>
+                    <div className="mt-0.5 font-mono text-[10.5px] text-gray-400">
+                      {fmtDateTime(event.occurredAt)}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed border-gray-200 py-6 text-center text-[12px] text-gray-400">
+              상관된 이벤트가 없습니다
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

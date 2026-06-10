@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -7,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.api import routes_evidence
 from app.main import app
+from app.persistence.state_repository import StatePatchRecord
 
 client = TestClient(app)
 
@@ -59,6 +61,43 @@ def test_list_evidence_returns_evidence_namespace_only(monkeypatch):
             "collected_at": observed_at.isoformat(),
         }
     ]
+
+
+def test_list_evidence_accepts_asyncpg_jsonb_state_patch_record(monkeypatch):
+    observed_at = datetime(2026, 6, 9, 10, 0, tzinfo=UTC)
+    repo = FakeStateRepo(
+        [
+            StatePatchRecord(
+                run_id="run_001",
+                seq=1,
+                namespace="evidence",
+                author="Retrieval",
+                op="append",
+                path="/evidence/items",
+                patch=json.dumps({
+                    "evidence_id": "ev_001",
+                    "type": "metric",
+                    "store_ref": "evidence://run_001/ev_001",
+                    "summary": "consumer lag snapshot",
+                    "redaction_status": "redacted",
+                }),
+                created_at=observed_at,
+            )
+        ]
+    )
+    monkeypatch.setattr(routes_evidence, "get_state_repo", lambda: repo)
+
+    resp = client.get("/api/v1/agent/runs/run_001/evidence")
+
+    assert resp.status_code == 200
+    assert resp.json()["data"]["items"][0] == {
+        "evidence_id": "ev_001",
+        "type": "metric",
+        "store_ref": "evidence://run_001/ev_001",
+        "summary": "consumer lag snapshot",
+        "redaction_status": "redacted",
+        "collected_at": observed_at.isoformat(),
+    }
 
 
 def test_get_evidence_returns_single(monkeypatch):

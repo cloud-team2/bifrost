@@ -4,14 +4,17 @@ import com.bifrost.ops.adapters.logstore.LokiClient;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
 import com.bifrost.ops.internalops.AgentHeaders;
+import com.bifrost.ops.internalops.WorkspaceLookup;
 import com.bifrost.ops.internalops.dto.AlertListResult;
 import com.bifrost.ops.internalops.dto.AlertSummaryResult;
 import com.bifrost.ops.internalops.dto.ConsumerLagResult;
 import com.bifrost.ops.internalops.dto.IncidentSummaryResult;
 import com.bifrost.ops.internalops.dto.LogSearchResult;
+import com.bifrost.ops.internalops.dto.MetricsResult;
 import com.bifrost.ops.internalops.dto.OpsEnvelope;
 import com.bifrost.ops.incident.persistence.entity.IncidentEntity;
 import com.bifrost.ops.incident.persistence.repository.IncidentRepository;
+import com.bifrost.ops.monitoring.query.ObservabilityMetricsQuery;
 import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
 import com.bifrost.ops.provisioning.persistence.entity.ConnectorEntity;
 import com.bifrost.ops.provisioning.persistence.repository.ConnectorRepository;
@@ -68,6 +71,7 @@ public class InternalOpsObservabilityController {
     private final PipelineRepository pipelineRepository;
     private final ConnectorRepository connectorRepository;
     private final IncidentRepository incidentRepository;
+    private final ObservabilityMetricsQuery metricsQuery;
     private final RestClient connectRestClient;
 
     public InternalOpsObservabilityController(
@@ -77,6 +81,7 @@ public class InternalOpsObservabilityController {
             PipelineRepository pipelineRepository,
             ConnectorRepository connectorRepository,
             IncidentRepository incidentRepository,
+            ObservabilityMetricsQuery metricsQuery,
             @Value("${kafka-connect.rest-url:http://platform-connect-connect-api.platform-kafka.svc:8083}")
             String connectRestUrl) {
         this.adminClient = adminClient;
@@ -85,6 +90,7 @@ public class InternalOpsObservabilityController {
         this.pipelineRepository = pipelineRepository;
         this.connectorRepository = connectorRepository;
         this.incidentRepository = incidentRepository;
+        this.metricsQuery = metricsQuery;
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(2000);
         factory.setReadTimeout(3000);
@@ -142,6 +148,29 @@ public class InternalOpsObservabilityController {
 
         List<Map<String, Object>> logs = lokiClient.queryRange(query, startNs, endNs, limit);
         return ResponseEntity.ok(OpsEnvelope.ok(requestId, "search_logs", LogSearchResult.of(logs)));
+    }
+
+    /**
+     * query_metrics — Prometheus range 메트릭 조회(S4, #391). ai-service get_metrics tool 대응.
+     *
+     * <p>{@code prometheus.enabled=false}(기본)면 well-formed stub을, true면 실 시계열을 반환한다.
+     * 어떤 경우에도 OpsEnvelope + MetricsResult로 200을 반환해 RCA evidence 수집을 막지 않는다.
+     */
+    @GetMapping("/projects/{projectId}/observability/metrics")
+    public ResponseEntity<OpsEnvelope<MetricsResult>> queryMetrics(
+            @PathVariable String projectId,
+            @RequestParam String metric,
+            @RequestParam(required = false) String timeRange,
+            HttpServletRequest request) {
+        String requestId = AgentHeaders.requestId(request);
+        WorkspaceEntity workspace;
+        try {
+            workspace = requireWorkspace(projectId);
+        } catch (ApiException e) {
+            return apiError(requestId, "query_metrics", e);
+        }
+        MetricsResult result = metricsQuery.query(workspace, metric, timeRange);
+        return ResponseEntity.ok(OpsEnvelope.ok(requestId, "query_metrics", result));
     }
 
     /**
@@ -312,7 +341,7 @@ public class InternalOpsObservabilityController {
     }
 
     private Optional<WorkspaceEntity> findWorkspace(String projectId) {
-        return workspaceRepository.findByNamespace(projectId);
+        return WorkspaceLookup.resolve(workspaceRepository, projectId);
     }
 
     private WorkspaceEntity requireWorkspace(String projectId) {

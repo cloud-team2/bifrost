@@ -11,34 +11,18 @@ spec:
   replicas: 2   # HA: 단일 파드 SPOF 제거, 장애 시 task rebalance
   bootstrapServers: platform-kafka-kafka-bootstrap:9092
 
-  # Strimzi spec.build: 클러스터 내부에서 Kaniko로 이미지 빌드 후 Harbor push
-  build:
-    output:
-      type: docker
-      image: harbor.harbor.svc.cluster.local/library/bifrost-kafka-connect:latest
-      pushSecret: harbor-push-secret
-    plugins:
-      - name: debezium-postgres
-        artifacts:
-          - type: tgz
-            url: https://repo1.maven.org/maven2/io/debezium/debezium-connector-postgres/3.5.1.Final/debezium-connector-postgres-3.5.1.Final-plugin.tar.gz
-      - name: debezium-mariadb
-        artifacts:
-          - type: tgz
-            url: https://repo1.maven.org/maven2/io/debezium/debezium-connector-mariadb/3.5.1.Final/debezium-connector-mariadb-3.5.1.Final-plugin.tar.gz
-      # CDC(direct) Sink: Confluent JDBC Sink + JDBC 드라이버.
-      # 드라이버 jar는 connector와 같은 plugin 디렉토리(sandbox)에 있어야 classpath에 잡힌다.
-      - name: jdbc-sink
-        artifacts:
-          - type: zip
-            url: https://hub-downloads.confluent.io/api/plugins/confluentinc/kafka-connect-jdbc/versions/10.7.4/confluentinc-kafka-connect-jdbc-10.7.4.zip
-          - type: jar
-            url: https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.4/postgresql-42.7.4.jar
-          - type: jar
-            url: https://repo1.maven.org/maven2/org/mariadb/jdbc/mariadb-java-client/3.4.1/mariadb-java-client-3.4.1.jar
-          # ExtractNewRecordState SMT(transforms.unwrap)는 debezium-postgres/mariadb 플러그인에
-          # 번들된 debezium-core에서 Connect가 plugin.path 전역으로 로드한다(별도 jar 불필요 —
-          # debezium-core 런타임 jar은 Maven Central에 미배포, tarball에만 포함).
+  # 데이터플레인 추적(#371): Connect 워커 OpenTelemetry 계측 → Tempo(OTLP HTTP).
+  # Debezium tracing SMT(ActivateTracingSpan)가 만든 span을 OTLP로 송신한다.
+  # 켜는 토글은 source 커넥터 config(tracing.dataplane.enabled, ops-backend)이고, 여기는 워커 계측 전제.
+  tracing:
+    type: opentelemetry
+
+  # 커스텀 이미지(#425). 과거 spec.build(Kaniko in-cluster)는 plugin artifact를 URL로만 받아
+  # private repo의 timestamptz 커스텀 컨버터 JAR을 넣을 수 없었다 → spec.image로 일원화.
+  # 이미지 정의·플러그인 버전은 infra/docker/kafka-connect/Dockerfile, 빌드/배포는 Jenkinsfile 참조.
+  # 포함: debezium-postgres/mariadb 3.5.1.Final, Confluent JDBC sink 10.9.4 + JDBC 드라이버,
+  #       timestamptz 커스텀 컨버터(connect-plugins/timestamptz-converter).
+  image: harbor.harbor.svc.cluster.local/library/bifrost-kafka-connect:1.0.0-converter
 
   groupId: platform-connect
   offsetStorageTopic: platform-connect-offsets
@@ -69,19 +53,25 @@ spec:
       memory: 2Gi
       cpu: 2
 
-  # buildah가 HTTP Harbor를 insecure registry로 인식하도록 registries.conf 주입
-  # Strimzi는 /mnt 하위 경로만 허용 → REGISTRIES_CONFIG_PATH로 경로 override
   template:
-    buildPod:
-      volumes:
-        - name: registries-conf
-          configMap:
-            name: buildah-registries
-    buildContainer:
-      volumeMounts:
-        - name: registries-conf
-          mountPath: /mnt/registries/registries.conf
-          subPath: registries.conf
+    # 데이터플레인 추적(#371): OTel SDK exporter 설정. Tempo OTLP HTTP(4318)로 trace 송신.
+    connectContainer:
       env:
-        - name: REGISTRIES_CONFIG_PATH
-          value: /mnt/registries/registries.conf
+        - name: OTEL_SERVICE_NAME
+          value: platform-connect
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://tempo.monitoring:4318
+        - name: OTEL_EXPORTER_OTLP_PROTOCOL
+          value: http/protobuf
+        - name: OTEL_TRACES_EXPORTER
+          value: otlp
+        - name: OTEL_METRICS_EXPORTER
+          value: none
+        - name: OTEL_LOGS_EXPORTER
+          value: none
+        # 샘플링: 워커 Kafka 클라이언트 auto-instrumentation(poll 루프)이 trace를 폭주시켜
+        # Tempo OOM을 유발 → 5%만 송신해 플러드 차단. 특정 파이프라인 정밀 추적은 별도 토글.
+        - name: OTEL_TRACES_SAMPLER
+          value: parentbased_traceidratio
+        - name: OTEL_TRACES_SAMPLER_ARG
+          value: "0.05"

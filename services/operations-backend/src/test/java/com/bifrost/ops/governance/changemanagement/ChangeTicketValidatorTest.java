@@ -83,6 +83,78 @@ class ChangeTicketValidatorTest {
     }
 
     @Test
+    void missingApprovalMetadataUsesRequiredCode() {
+        UUID ticketId = UUID.randomUUID();
+        UUID tenantId = UUID.randomUUID();
+        ChangeTicketEntity ticket = ticket(ticketId, tenantId, "APPROVED");
+        ticket.setApprovedBy(null);
+        when(repository.findByIdAndTenantId(ticketId, tenantId)).thenReturn(Optional.of(ticket));
+
+        assertApiCode(() -> validator.validate(ticketId, tenantId, "reset_offsets"),
+                ErrorCode.CHANGE_TICKET_REQUIRED);
+    }
+
+    @Test
+    void missingRequiredApproverUsesRequiredCode() {
+        UUID ticketId = UUID.randomUUID();
+        UUID tenantId = UUID.randomUUID();
+        ChangeTicketEntity ticket = ticket(ticketId, tenantId, "APPROVED");
+        ticket.setRequiredApprover(null);
+        when(repository.findByIdAndTenantId(ticketId, tenantId)).thenReturn(Optional.of(ticket));
+
+        assertApiCode(() -> validator.validate(ticketId, tenantId, "reset_offsets"),
+                ErrorCode.CHANGE_TICKET_REQUIRED);
+    }
+
+    @Test
+    void missingRequestedByUsesRequiredCode() {
+        UUID ticketId = UUID.randomUUID();
+        UUID tenantId = UUID.randomUUID();
+        ChangeTicketEntity ticket = ticket(ticketId, tenantId, "APPROVED");
+        ticket.setRequestedBy(null);
+        when(repository.findByIdAndTenantId(ticketId, tenantId)).thenReturn(Optional.of(ticket));
+
+        assertApiCode(() -> validator.validate(ticketId, tenantId, "reset_offsets"),
+                ErrorCode.CHANGE_TICKET_REQUIRED);
+    }
+
+    @Test
+    void missingApprovedAtUsesRequiredCode() {
+        UUID ticketId = UUID.randomUUID();
+        UUID tenantId = UUID.randomUUID();
+        ChangeTicketEntity ticket = ticket(ticketId, tenantId, "APPROVED");
+        ticket.setApprovedAt(null);
+        when(repository.findByIdAndTenantId(ticketId, tenantId)).thenReturn(Optional.of(ticket));
+
+        assertApiCode(() -> validator.validate(ticketId, tenantId, "reset_offsets"),
+                ErrorCode.CHANGE_TICKET_REQUIRED);
+    }
+
+    @Test
+    void approverMismatchUsesRequiredCode() {
+        UUID ticketId = UUID.randomUUID();
+        UUID tenantId = UUID.randomUUID();
+        ChangeTicketEntity ticket = ticket(ticketId, tenantId, "APPROVED");
+        ticket.setApprovedBy(UUID.randomUUID());
+        when(repository.findByIdAndTenantId(ticketId, tenantId)).thenReturn(Optional.of(ticket));
+
+        assertApiCode(() -> validator.validate(ticketId, tenantId, "reset_offsets"),
+                ErrorCode.CHANGE_TICKET_REQUIRED);
+    }
+
+    @Test
+    void selfApprovedTicketUsesRequiredCode() {
+        UUID ticketId = UUID.randomUUID();
+        UUID tenantId = UUID.randomUUID();
+        ChangeTicketEntity ticket = ticket(ticketId, tenantId, "APPROVED");
+        ticket.setRequestedBy(ticket.getApprovedBy());
+        when(repository.findByIdAndTenantId(ticketId, tenantId)).thenReturn(Optional.of(ticket));
+
+        assertApiCode(() -> validator.validate(ticketId, tenantId, "reset_offsets"),
+                ErrorCode.CHANGE_TICKET_REQUIRED);
+    }
+
+    @Test
     void operationOutsideTicketScopeUsesScopeMismatchCode() {
         UUID ticketId = UUID.randomUUID();
         UUID tenantId = UUID.randomUUID();
@@ -94,7 +166,7 @@ class ChangeTicketValidatorTest {
     }
 
     @Test
-    void futureWindowUsesRequiredCode() {
+    void futureWindowUsesWindowClosedCode() {
         UUID ticketId = UUID.randomUUID();
         UUID tenantId = UUID.randomUUID();
         ChangeTicketEntity ticket = ticket(ticketId, tenantId, "APPROVED");
@@ -102,7 +174,7 @@ class ChangeTicketValidatorTest {
         ticket.setWindowEnd(Instant.now().plusSeconds(120));
         when(repository.findByIdAndTenantId(ticketId, tenantId)).thenReturn(Optional.of(ticket));
 
-        assertApiCode(() -> validator.validate(ticketId, tenantId), ErrorCode.CHANGE_TICKET_REQUIRED);
+        assertApiCode(() -> validator.validate(ticketId, tenantId), ErrorCode.CHANGE_WINDOW_CLOSED);
     }
 
     private static ChangeTicketEntity ticket(UUID id, UUID tenantId, String status) {
@@ -116,6 +188,12 @@ class ChangeTicketValidatorTest {
         ticket.setRollbackPlan("restore previous connector config");
         ticket.setImpactAnalysis("single connector impact");
         ticket.setScopeOperation("reset_offsets");
+        UUID requester = UUID.randomUUID();
+        UUID approver = UUID.randomUUID();
+        ticket.setRequestedBy(requester);
+        ticket.setRequiredApprover(approver);
+        ticket.setApprovedBy(approver);
+        ticket.setApprovedAt(Instant.now().minusSeconds(30));
         return ticket;
     }
 

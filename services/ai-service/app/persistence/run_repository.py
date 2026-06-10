@@ -5,7 +5,9 @@ from datetime import datetime
 from typing import Union
 
 import asyncpg
-from pydantic import BaseModel, ConfigDict, Field
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.config import settings
 from app.core.db import get_pool
@@ -27,6 +29,12 @@ class RunRecord(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
     closed_at: datetime | None = None
+
+    @field_validator("project_id", "incident_id", "requested_by", mode="before")
+    @classmethod
+    def _uuid_to_str(cls, v: object) -> object:
+        # agent_run.project_id 등은 uuid 컬럼이라 asyncpg가 UUID 객체로 반환한다.
+        return str(v) if isinstance(v, UUID) else v
 
 
 class PostgresRunRepository:

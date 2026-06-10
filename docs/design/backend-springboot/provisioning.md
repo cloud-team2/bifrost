@@ -57,7 +57,13 @@ public interface KafkaPipelineProvisioner {
 
 #### 3.1 KafkaConnect — 플러그인 이미지
 
-KafkaConnect CR의 `spec.build`로 플러그인을 포함한 이미지를 빌드하고 Harbor에 push한다.
+KafkaConnect CR의 `spec.image`로 커스텀 Connect 이미지를 참조한다. 이미지는
+`infra/docker/kafka-connect/Dockerfile`(멀티스테이지)로 빌드해 Harbor에 push하며, 빌드/롤아웃 절차는
+[Kafka Connect 커스텀 이미지 런북](../../guides/kafka-connect-custom-image.md) 참조.
+
+> 과거에는 `spec.build`(in-cluster Kaniko)로 빌드했으나, plugin artifact를 URL로만 받을 수 있어
+> private repo의 timestamptz 커스텀 컨버터 JAR을 넣을 수 없었다(#425). 이미지를 직접 빌드하는
+> `spec.image`로 일원화했다.
 
 | 플러그인 | 역할 |
 | --- | --- |
@@ -66,6 +72,7 @@ KafkaConnect CR의 `spec.build`로 플러그인을 포함한 이미지를 빌드
 | Confluent JDBC Sink | Kafka Topic → PostgreSQL / MariaDB |
 | PostgreSQL JDBC Driver | JDBC Sink 쓰기용 |
 | MariaDB JDBC Driver | JDBC Sink 쓰기용 |
+| timestamptz 커스텀 컨버터 (#425) | Postgres `timestamptz` → Connect Timestamp (sink 타입 불일치 방지) |
 
 `config/offset/status.storage.replication.factor = 3`, Connect REST는 cluster internal(ClusterIP)로만 노출. Agent는 Connect REST를 직접 호출하지 않고 Spring Boot가 호출한다.
 
@@ -131,6 +138,10 @@ KafkaConnector source = new KafkaConnectorBuilder()
         .addToConfig("value.converter.schemas.enable", "true")
         // 시간 타입을 Connect 논리 타입으로(기본 adaptive는 epoch 마이크로초 int64 → sink 컬럼이 BIGINT가 됨)
         .addToConfig("time.precision.mode", "connect")
+        // (#425) timestamptz는 time.precision.mode와 무관하게 Debezium이 ZonedTimestamp(문자열)로 방출 →
+        // JDBC sink가 varchar로 적재 → 타입 불일치. 커스텀 컨버터로 Connect Timestamp로 변환한다(Postgres 전용).
+        .addToConfig("converters", "timestamptz")
+        .addToConfig("converters.timestamptz.type", "com.bifrost.connect.converter.TimestamptzConverter")
     .endSpec()
     .build();
 kubernetesClient.resource(source).inNamespace("platform-kafka").create();

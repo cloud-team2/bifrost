@@ -64,7 +64,7 @@ class StrimziKafkaPipelineProvisionerTest {
     }
 
     private final SourceDebeziumConnectorMapper sourceMapper =
-            new SourceDebeziumConnectorMapper("localhost:9092", 6, 3);
+            new SourceDebeziumConnectorMapper("localhost:9092", false, 6, 3);
     private final JdbcSinkConnectorMapper sinkMapper = new JdbcSinkConnectorMapper();
 
     private PipelineProvisionCommand.Endpoint pgEndpoint(String table) {

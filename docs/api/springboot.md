@@ -247,7 +247,7 @@ Family catalog 요약:
 | Internal `/internal` | tenant provision 200, tenant delete 202, pipeline provision 202 또는 422, status 200, delete 202 | internal control-plane surface |
 | Internal `/internal/ops` read | health/version/tool-catalog 200, ready 200 또는 503, connector status/list/topology/lag/log search/list_alerts/traces/incident summary 200 | `SecurityConfig`상 `/internal/ops/**` permitAll, caller identity 보강은 별도 코드 범위 |
 | Internal `/internal/ops` mutation | connector restart/pause/resume, Kafka Connect consumer group restart: 성공 200, gate 실패 400/403/409, Connect 실패 502/504 | controller가 `X-Agent-Run-Id`·`X-Agent-Step-Id`·`X-Idempotency-Key`·`X-Approval-Id`를 검증하고 `OpsEnvelope`로 응답 |
-| Internal governance | approvals create 201/list/get/decision/validate 200, change-ticket create 201/get/validate 200 | approval decision은 Spring Security principal이 필요하고, create/list/get/validate는 `/internal/ops/**` permitAll 경로에 있다 |
+| Internal governance | approvals create 201/list/get/decision/validate 200, change-ticket create 201/approve 200/get/validate 200 | approval decision과 change-ticket create/approve는 Spring Security principal이 필요하다. 그 외 create/list/get/validate facade는 `/internal/ops/**` permitAll 경로에 있다 |
 | PoC | connector list/get/sample 200, get/delete not found 404, delete accepted 202 | 임시 PoC surface, 제거 또는 내부망 제한 필요 |
 
 ## 권한 매트릭스
@@ -356,11 +356,14 @@ Decision endpoint만 `SecurityContext`의 `AuthenticatedUser`를 요구한다. `
 
 | Method | Path | Status | Request | Result |
 | --- | --- | --- | --- | --- |
-| `POST` | `/internal/ops/change-tickets` | `201` | `tenantId`, `title` 또는 alias `toolName` | `changeTicketId`, `tenantId`, `title`, `status`, `createdAt` |
-| `POST` | `/internal/ops/change-tickets/{changeTicketId}/validate` | `200` | `tenantId` | `changeTicketId`, `status="validated"`, `valid=true` |
+| `POST` | `/internal/ops/change-tickets` | `201` | `tenantId`, `title`, `scopeOperation`(alias `scope_operation`, `toolName`), `windowStart`, `windowEnd`, `rollbackPlan`(alias `rollback_plan`), `impact`/`impactAnalysis`, `requiredApprover` | `ChangeTicketResult` |
+| `POST` | `/internal/ops/change-tickets/{changeTicketId}/approve` | `200` | `tenantId`, `approvedBy`, optional `comment` | `ChangeTicketResult(status="approved")` |
+| `POST` | `/internal/ops/change-tickets/{changeTicketId}/validate` | `200` | `tenantId`, `scopeOperation`(alias `scope_operation`, `toolName`) | `changeTicketId`, `status="validated"`, `valid=true` |
 | `GET` | `/internal/ops/change-tickets/{changeTicketId}?tenantId=` | `200` | query `tenantId` | `ChangeTicketResult` |
 
-현재 Spring change-ticket 구현은 자체 `change_ticket` row를 만들고 status `OPEN`을 외부 응답 `pending`으로 노출한다. 실행 window, rollback plan, impact analysis, scope 검증은 현재 controller/entity 표면에 없다. `ChangeTicketValidator`는 `tenantId` 소속과 status `OPEN`만 검증한다.
+생성과 승인은 controller 레벨에서 `SecurityContext`의 `AuthenticatedUser`를 요구한다. 생성자는 `tenantId`가 principal tenant와 같아야 하며 `requiredApprover`와 달라야 한다. 승인자는 `approvedBy`가 principal user id와 같고 ticket의 `requiredApprover`와 일치해야 한다.
+
+Spring change-ticket 구현은 status `OPEN`을 외부 응답 `pending`으로 노출하고, 승인 시 `APPROVED`로 전이한다. `ChangeTicketValidator`는 `tenantId`, `APPROVED` 상태, 승인 메타데이터, 현재 실행 window, rollback plan, impact analysis, `scopeOperation` 일치를 모두 검증한다. `REQUIRE_CHANGE_MANAGEMENT` mutation은 `MutationGate`가 `X-Change-Ticket-Id`로 전달된 티켓을 operation scope까지 검증한 뒤에만 실행한다.
 
 ### 6.4 Mutation endpoints
 
@@ -375,9 +378,9 @@ Mutation 처리 순서:
 
 1. `X-Agent-Run-Id`, `X-Agent-Step-Id`, `X-Idempotency-Key` 누락 검사. 누락 시 HTTP 400 + `VALIDATION_FAILED`.
 2. `{projectId}` workspace namespace 조회와 connector/pipeline ownership 확인. workspace 없음은 `RESOURCE_NOT_FOUND`, 소유 불일치는 `RESOURCE_NOT_OWNED_BY_PROJECT`. `restart_consumer_group`은 이 단계에서 지원 consumer group(`connect-` prefix)·존재 여부도 먼저 검증한다.
-3. `X-Approval-Id` 검사. 없으면 HTTP 403 + `APPROVAL_REQUIRED`.
+3. `X-Approval-Id`/`X-Change-Ticket-Id` 형식 검사. 정책이 요구하는 증빙이 없으면 gate에서 fail-closed로 차단한다.
 4. `IdempotencyGuard.check(idempotencyKey, tenantId, operation, paramsHash)`.
-5. `ApprovalValidator.validateAndConsume(approvalId, tenantId, operation, paramsHash)`.
+5. `PolicyGuard` 결정에 따라 `ApprovalValidator.validateAndConsume(approvalId, tenantId, operation, paramsHash)` 또는 `ChangeTicketValidator.validate(changeTicketId, tenantId, operation)`를 수행한다.
 6. Kafka Connect REST mutation 실행.
 7. 성공/실패 response snapshot을 idempotency row에 저장.
 

@@ -7,6 +7,7 @@ import com.bifrost.ops.secret.DbCredential;
 import io.strimzi.api.kafka.model.connector.KafkaConnector;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -16,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class SourceDebeziumConnectorMapperTest {
 
     private final SourceDebeziumConnectorMapper mapper =
-            new SourceDebeziumConnectorMapper("localhost:9092", 6, 3);
+            new SourceDebeziumConnectorMapper("localhost:9092", false, 6, 3);
     private static final String NS = "platform-kafka";
     private static final String CLUSTER = "platform-connect";
 
@@ -83,5 +84,78 @@ class SourceDebeziumConnectorMapperTest {
         assertThat(config).containsKey("schema.history.internal.kafka.topic");
         assertThat(config).containsEntry("snapshot.mode", "initial");
         assertThat(config).doesNotContainKey("plugin.name");
+    }
+
+    @Test
+    void postgresSourceRegistersTimestamptzConverter() {
+        // #425: Postgres timestamptz를 Connect Timestamp로 변환하는 커스텀 컨버터를 등록한다.
+        KafkaConnector cr = mapper.map(
+                command(DbType.POSTGRESQL), new DbCredential("svc", "pw"), NS, CLUSTER);
+
+        Map<String, Object> config = cr.getSpec().getConfig();
+        assertThat(config).containsEntry("converters", "timestamptz");
+        assertThat(config).containsEntry("converters.timestamptz.type",
+                SourceDebeziumConnectorMapper.TIMESTAMPTZ_CONVERTER_TYPE);
+    }
+
+    @Test
+    void mariadbSourceDoesNotRegisterTimestamptzConverter() {
+        // timestamptz는 Postgres 전용 타입 → MariaDB 커넥터에는 컨버터를 달지 않는다.
+        KafkaConnector cr = mapper.map(
+                command(DbType.MARIADB), new DbCredential("svc", "pw"), NS, CLUSTER);
+
+        Map<String, Object> config = cr.getSpec().getConfig();
+        assertThat(config).doesNotContainKey("converters");
+    }
+
+    @Test
+    void dataplaneTracingAddsDebeziumTracingSmtWhenEnabled() {
+        // #371: 데이터플레인 추적 on → Debezium ActivateTracingSpan SMT를 route 뒤에 체이닝
+        SourceDebeziumConnectorMapper tracingMapper =
+                new SourceDebeziumConnectorMapper("localhost:9092", true, 6, 3);
+
+        KafkaConnector cr = tracingMapper.map(
+                command(DbType.POSTGRESQL), new DbCredential("svc", "pw"), NS, CLUSTER);
+
+        Map<String, Object> config = cr.getSpec().getConfig();
+        assertThat(config).containsEntry("transforms", "route,tracing");
+        assertThat(config).containsEntry("transforms.tracing.type",
+                "io.debezium.transforms.tracing.ActivateTracingSpan");
+    }
+
+    @Test
+    void dataplaneTracingOffByDefaultKeepsRouteOnly() {
+        // 기본 off → 오버헤드 없음, transforms는 route만 유지
+        KafkaConnector cr = mapper.map(
+                command(DbType.POSTGRESQL), new DbCredential("svc", "pw"), NS, CLUSTER);
+
+        Map<String, Object> config = cr.getSpec().getConfig();
+        assertThat(config).containsEntry("transforms", "route");
+        assertThat(config).doesNotContainKey("transforms.tracing.type");
+    }
+
+    @Test
+    void setTracingSmtEnableAddsTracingPreservingExisting() {
+        // #438 per-pipeline 토글: 기존 커넥터 config에 tracing SMT on (기존 transforms 보존)
+        Map<String, Object> config = new HashMap<>();
+        config.put("transforms", "route");
+
+        SourceDebeziumConnectorMapper.setTracingSmt(config, true);
+
+        assertThat(config).containsEntry("transforms", "route,tracing");
+        assertThat(config).containsEntry("transforms.tracing.type",
+                "io.debezium.transforms.tracing.ActivateTracingSpan");
+    }
+
+    @Test
+    void setTracingSmtDisableRemovesTracing() {
+        Map<String, Object> config = new HashMap<>();
+        config.put("transforms", "route,tracing");
+        config.put("transforms.tracing.type", "io.debezium.transforms.tracing.ActivateTracingSpan");
+
+        SourceDebeziumConnectorMapper.setTracingSmt(config, false);
+
+        assertThat(config).containsEntry("transforms", "route");
+        assertThat(config).doesNotContainKey("transforms.tracing.type");
     }
 }

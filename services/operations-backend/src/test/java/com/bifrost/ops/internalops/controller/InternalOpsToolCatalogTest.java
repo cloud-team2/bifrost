@@ -41,26 +41,38 @@ class InternalOpsToolCatalogTest {
                 .containsExactly(
                         "get_consumer_lag",
                         "search_logs",
+                        "query_metrics",
                         "query_traces",
                         "list_alerts",
                         "get_incident_summary",
                         "list_project_pipelines",
+                        "get_recent_changes",
                         "get_pipeline_topology",
-                        "get_connector_status");
+                        "get_connector_status",
+                        "restart_connector",
+                        "pause_connector",
+                        "resume_connector",
+                        "restart_consumer_group");
 
         assertThat(catalog).containsExactly(
                 tool("get_consumer_lag", "GET", "/internal/ops/projects/{projectId}/kafka/consumer-groups/{consumerGroup}/lag"),
                 tool("search_logs", "POST", "/internal/ops/projects/{projectId}/observability/logs/search"),
+                tool("query_metrics", "GET", "/internal/ops/projects/{projectId}/observability/metrics"),
                 tool("query_traces", "GET", "/internal/ops/projects/{projectId}/connectors/{connectorName}/traces"),
                 tool("list_alerts", "GET", "/internal/ops/projects/{projectId}/observability/alerts"),
                 tool("get_incident_summary", "GET", "/internal/ops/projects/{projectId}/incidents/{incidentId}/summary"),
                 tool("list_project_pipelines", "GET", "/internal/ops/projects/{projectId}/pipelines"),
+                tool("get_recent_changes", "GET", "/internal/ops/projects/{projectId}/pipelines/changes"),
                 tool("get_pipeline_topology", "GET", "/internal/ops/projects/{projectId}/pipelines/{pipelineId}/topology"),
-                tool("get_connector_status", "GET", "/internal/ops/projects/{projectId}/kafka/connectors/{connectorName}/status"));
+                tool("get_connector_status", "GET", "/internal/ops/projects/{projectId}/kafka/connectors/{connectorName}/status"),
+                tool("restart_connector", "POST", "/internal/ops/projects/{projectId}/connectors/{connectorName}/restart"),
+                tool("pause_connector", "POST", "/internal/ops/projects/{projectId}/connectors/{connectorName}/pause"),
+                tool("resume_connector", "POST", "/internal/ops/projects/{projectId}/connectors/{connectorName}/resume"),
+                tool("restart_consumer_group", "POST", "/internal/ops/projects/{projectId}/kafka/consumer-groups/{consumerGroup}/restart"));
 
         assertThat(catalog)
                 .extracting(entry -> entry.get("name"))
-                .doesNotContain("get_metrics", "get_deployments", "get_kafka_lag", "restart_connector");
+                .doesNotContain("get_metrics", "get_deployments", "get_kafka_lag");
     }
 
     @Test
@@ -84,6 +96,7 @@ class InternalOpsToolCatalogTest {
         context.getBeanFactory().registerSingleton("internalOpsController", controller);
         context.getBeanFactory().registerSingleton("internalOpsObservabilityController", observabilityController());
         context.getBeanFactory().registerSingleton("internalOpsPipelineController", pipelineController());
+        context.getBeanFactory().registerSingleton("internalOpsMutationController", mutationController());
         context.getBeanFactory().registerSingleton("internalController", internalController());
         context.refresh();
 
@@ -114,6 +127,7 @@ class InternalOpsToolCatalogTest {
                 mock(PipelineRepository.class),
                 mock(ConnectorRepository.class),
                 mock(com.bifrost.ops.incident.persistence.repository.IncidentRepository.class),
+                mock(com.bifrost.ops.monitoring.query.ObservabilityMetricsQuery.class),
                 "http://connect.invalid");
     }
 
@@ -122,6 +136,18 @@ class InternalOpsToolCatalogTest {
                 mock(WorkspaceRepository.class),
                 mock(PipelineRepository.class),
                 mock(ConnectorRepository.class));
+    }
+
+    private InternalOpsMutationController mutationController() {
+        return new InternalOpsMutationController(
+                mock(WorkspaceRepository.class),
+                mock(PipelineRepository.class),
+                mock(ConnectorRepository.class),
+                mock(com.bifrost.ops.governance.MutationGate.class),
+                mock(com.bifrost.ops.governance.idempotency.IdempotencyGuard.class),
+                mock(com.bifrost.ops.adapters.connect.ConnectRestClient.class),
+                mock(com.bifrost.ops.internalops.operations.kafka.ConsumerGroupVerifier.class),
+                mock(com.fasterxml.jackson.databind.ObjectMapper.class));
     }
 
     private InternalController internalController() {

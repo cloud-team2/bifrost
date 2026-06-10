@@ -24,7 +24,7 @@ def upgrade() -> None:
             run_id        text        NOT NULL REFERENCES agent_run(run_id),
             action_id     text        NOT NULL,
             ticket_id     text        NOT NULL,
-            window        text,
+            "window"      text,
             rollback_plan text,
             status        text        NOT NULL DEFAULT 'submitted',
             created_at    timestamptz NOT NULL DEFAULT now(),

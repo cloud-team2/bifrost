@@ -4,9 +4,11 @@ Uses unittest.mock to replace the asyncpg pool — no real DB needed.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import pytest
 
@@ -38,6 +40,108 @@ def _make_pool(fetchrow_return=None, fetch_return=None, execute_return=None):
 
 def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
+
+
+def _event(event_id: str, run_id: str) -> StreamingEvent:
+    return StreamingEvent(
+        event_id=event_id,
+        run_id=run_id,
+        timestamp=_now(),
+        type=StreamingEventType.TOOL_CALL_STARTED,
+        agent="retrieval",
+        message=event_id,
+    )
+
+
+class _RunEventRaceStore:
+    def __init__(self, participants: int) -> None:
+        self.rows: list[dict] = []
+        self.locks: dict[str, asyncio.Lock] = {}
+        self.lock_count = 0
+        self._participants = participants
+        self._unlocked_insert_count = 0
+        self._unlocked_insert_gate = asyncio.Event()
+
+    async def wait_for_unlocked_insert_race(self) -> None:
+        self._unlocked_insert_count += 1
+        if self._unlocked_insert_count >= self._participants:
+            self._unlocked_insert_gate.set()
+        await self._unlocked_insert_gate.wait()
+
+
+class _RunEventRaceTransaction:
+    def __init__(self, conn: "_RunEventRaceConnection") -> None:
+        self._conn = conn
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        while self._conn.held_locks:
+            self._conn.held_locks.pop().release()
+        return False
+
+
+class _RunEventRaceConnection:
+    def __init__(self, store: _RunEventRaceStore) -> None:
+        self.store = store
+        self.held_locks: list[asyncio.Lock] = []
+
+    def transaction(self) -> _RunEventRaceTransaction:
+        return _RunEventRaceTransaction(self)
+
+    async def execute(self, sql: str, *args):
+        if "FOR UPDATE" in sql:
+            run_id = args[0]
+            lock = self.store.locks.setdefault(run_id, asyncio.Lock())
+            await lock.acquire()
+            self.held_locks.append(lock)
+            self.store.lock_count += 1
+            return "SELECT 1"
+
+        if "INSERT INTO run_event" in sql:
+            event_id, run_id, type_, agent, message, payload = args
+            if any(row["event_id"] == event_id for row in self.store.rows):
+                return "INSERT 0 0"
+            seq = max(
+                (row["seq"] for row in self.store.rows if row["run_id"] == run_id),
+                default=0,
+            ) + 1
+            if not self.held_locks:
+                await self.store.wait_for_unlocked_insert_race()
+            if any(row["run_id"] == run_id and row["seq"] == seq for row in self.store.rows):
+                raise RuntimeError('duplicate key value violates unique constraint "run_event_run_id_seq_key"')
+            self.store.rows.append({
+                "event_id": event_id,
+                "run_id": run_id,
+                "seq": seq,
+                "type": type_,
+                "agent": agent,
+                "message": message,
+                "payload": payload,
+            })
+            return "INSERT 0 1"
+
+        raise AssertionError(f"unexpected SQL: {sql}")
+
+
+class _RunEventRaceAcquire:
+    def __init__(self, store: _RunEventRaceStore) -> None:
+        self._store = store
+
+    async def __aenter__(self) -> _RunEventRaceConnection:
+        return _RunEventRaceConnection(self._store)
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+
+class _RunEventRacePool:
+    def __init__(self, store: _RunEventRaceStore) -> None:
+        self._store = store
+
+    def acquire(self) -> _RunEventRaceAcquire:
+        return _RunEventRaceAcquire(self._store)
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +242,43 @@ async def test_state_repository_append_and_get():
     assert all(isinstance(p, StatePatchRecord) for p in patches)
 
 
+@pytest.mark.asyncio
+async def test_state_repository_get_patches_accepts_asyncpg_jsonb_and_uuid_values():
+    author_id = UUID("8a686502-fc55-4515-b186-396c19293edb")
+    patch_rows = [
+        {
+            "id": 1,
+            "run_id": "run-003",
+            "seq": 1,
+            "namespace": "evidence",
+            "author": author_id,
+            "op": "append",
+            "path": "/evidence/items",
+            "patch": json.dumps({"evidence_id": "ev-001", "summary": "collected"}),
+            "created_at": _now(),
+        },
+        {
+            "id": 2,
+            "run_id": "run-003",
+            "seq": 2,
+            "namespace": "guards",
+            "author": "Supervisor",
+            "op": "append",
+            "path": "/run/guards",
+            "patch": None,
+            "created_at": _now(),
+        },
+    ]
+    pool, _ = _make_pool(fetch_return=patch_rows)
+    repo = PostgresStateRepository(pool=pool)
+
+    patches = await repo.get_patches("run-003")
+
+    assert patches[0].author == str(author_id)
+    assert patches[0].patch == {"evidence_id": "ev-001", "summary": "collected"}
+    assert patches[1].patch == {}
+
+
 # ---------------------------------------------------------------------------
 # test 4: EventRepository get_after filters correctly
 # ---------------------------------------------------------------------------
@@ -205,6 +346,51 @@ async def test_event_repository_get_after_none():
     assert len(events) == 2
     assert events[0].event_id == "evt-001"
     assert events[1].type == StreamingEventType.RUN_COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_event_repository_get_after_coerces_db_row_values():
+    event_id = UUID("44444444-4444-4444-4444-444444444444")
+    run_id = UUID("55555555-5555-5555-5555-555555555555")
+    rows = [
+        {
+            "event_id": event_id,
+            "run_id": run_id,
+            "seq": 1,
+            "type": "agent_completed",
+            "agent": UUID("66666666-6666-6666-6666-666666666666"),
+            "message": None,
+            "payload": json.dumps({"ok": True}),
+            "created_at": _now(),
+        },
+    ]
+    pool, _ = _make_pool(fetch_return=rows)
+    repo = PostgresEventRepository(pool=pool)
+
+    events = await repo.get_after(str(run_id), last_event_id=None)
+
+    assert events[0].event_id == str(event_id)
+    assert events[0].run_id == str(run_id)
+    assert events[0].agent == "66666666-6666-6666-6666-666666666666"
+    assert events[0].message == ""
+    assert events[0].payload == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_event_repository_serializes_concurrent_seq_assignment_per_run():
+    run_id = "run-event-race"
+    store = _RunEventRaceStore(participants=4)
+    repo = PostgresEventRepository(pool=_RunEventRacePool(store))
+
+    await asyncio.wait_for(
+        asyncio.gather(
+            *(repo.append(run_id, _event(f"evt-race-{i}", run_id)) for i in range(4))
+        ),
+        timeout=2,
+    )
+
+    assert [row["seq"] for row in sorted(store.rows, key=lambda row: row["seq"])] == [1, 2, 3, 4]
+    assert store.lock_count == 4
 
 
 # ---------------------------------------------------------------------------
