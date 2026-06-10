@@ -156,6 +156,11 @@ class ToolResult(StrictModel):
 
 
 class ProjectPipelineSummary(SpringResponseModel):
+    """Spring PipelineResponse{id, name, pattern, status, sourceDbId, sinkDbId, createdAt, ...} 수용.
+
+    Spring 은 식별자를 "id"(UUID) 로 반환 — ai-service schema 의 pipeline_id 로 normalize (#474).
+    createdAt 만 제공하고 updatedAt 은 미제공 → updated_at 은 createdAt fallback / 없으면 None.
+    """
     pipeline_id: str
     name: str
     pattern: str
@@ -164,6 +169,17 @@ class ProjectPipelineSummary(SpringResponseModel):
     status: str
     updated_at: datetime | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_spring_pipeline(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            data = dict(data)
+            if "pipeline_id" not in data and "pipelineId" not in data and "id" in data:
+                data["pipeline_id"] = data["id"]
+            if "updated_at" not in data and "updatedAt" not in data and "createdAt" in data:
+                data["updated_at"] = data["createdAt"]
+        return data
+
 
 class ListProjectPipelinesData(SpringResponseModel):
     pipelines: list[ProjectPipelineSummary] = Field(default_factory=list)
@@ -171,23 +187,52 @@ class ListProjectPipelinesData(SpringResponseModel):
 
 class PipelineDependencyRef(SpringResponseModel):
     db_id: str
-    alias: str
+    # Spring PipelineTopologyResult 는 datasource alias 를 제공하지 않음 (sourceDbId/sinkDbId UUID 만) — optional 완화 (#474).
+    alias: str | None = None
 
 
 class PipelineConnectorRef(SpringResponseModel):
-    cr_name: str
+    # Spring ConnectorResponse 는 커넥터 식별자를 "name" 으로 반환 — alias_generator(to_camel) 의 "crName" 과 다르므로 명시 alias (#474).
+    cr_name: str = Field(alias="name")
     kind: str
-    state: str
+    state: str | None = None
 
 
 class PipelineTopologyData(SpringResponseModel):
+    """Spring PipelineTopologyResult{pipelineId, pattern, status, topic, sourceDbId, sinkDbId,
+    sourceConnector, sinkConnector, connectors[]} 의 flat 형태를 nested schema 로 normalize (#474).
+
+    - source/sink: flat sourceDbId/sinkDbId → PipelineDependencyRef{db_id} 로 구성
+    - topics: 단일 topic 문자열 → 리스트로 wrap
+    - connectors: ConnectorResponse(name/kind/state) → PipelineConnectorRef(cr_name 명시 alias)
+    """
     pipeline_id: str
     pattern: str
-    source: PipelineDependencyRef
+    source: PipelineDependencyRef | None = None
     sink: PipelineDependencyRef | None = None
     connectors: list[PipelineConnectorRef] = Field(default_factory=list)
     topics: list[str] = Field(default_factory=list)
     status: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_spring_topology(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        if "source" not in data:
+            source_db = data.get("sourceDbId") or data.get("source_db_id")
+            if source_db is not None:
+                data["source"] = {"db_id": source_db}
+        if "sink" not in data:
+            sink_db = data.get("sinkDbId") or data.get("sink_db_id")
+            if sink_db is not None:
+                data["sink"] = {"db_id": sink_db}
+        if "topics" not in data:
+            topic = data.get("topic")
+            if isinstance(topic, str) and topic:
+                data["topics"] = [topic]
+        return data
 
 
 class ConnectorTaskStatus(SpringResponseModel):
@@ -264,14 +309,30 @@ class TriggerEventSummary(SpringResponseModel):
 
 
 class IncidentSummaryData(SpringResponseModel):
+    """Spring IncidentSummaryResult{incidentId, status, note} 수용 (#474).
+
+    Spring 의 incident read model 은 현재 severity/trigger_event/related_event_count/grouping_key 를
+    제공하지 않으므로 해당 필드를 optional 로 완화한다. note 는 summary 로 normalize.
+    """
     incident_id: str
-    severity: str
     status: str
-    trigger_event: TriggerEventSummary
-    related_event_count: int
-    grouping_key: str
+    severity: str | None = None
+    trigger_event: TriggerEventSummary | None = None
+    related_event_count: int | None = None
+    grouping_key: str | None = None
+    note: str | None = None
+    summary: str | None = None
     affected_rows_estimate: int | None = None
     root_cause_summary: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_spring_incident(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            data = dict(data)
+            if "summary" not in data and "note" in data:
+                data["summary"] = data["note"]
+        return data
 
 
 # ── catalog §8.1 Observability ────────────────────────────────────────────────
