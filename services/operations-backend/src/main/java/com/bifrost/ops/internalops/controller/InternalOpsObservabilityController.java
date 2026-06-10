@@ -4,6 +4,7 @@ import com.bifrost.ops.adapters.logstore.LokiClient;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
 import com.bifrost.ops.internalops.AgentHeaders;
+import com.bifrost.ops.internalops.WorkspaceLookup;
 import com.bifrost.ops.internalops.dto.AlertListResult;
 import com.bifrost.ops.internalops.dto.AlertSummaryResult;
 import com.bifrost.ops.internalops.dto.ConsumerLagResult;
@@ -312,7 +313,7 @@ public class InternalOpsObservabilityController {
     }
 
     private Optional<WorkspaceEntity> findWorkspace(String projectId) {
-        return workspaceRepository.findByNamespace(projectId);
+        return WorkspaceLookup.resolve(workspaceRepository, projectId);
     }
 
     private WorkspaceEntity requireWorkspace(String projectId) {

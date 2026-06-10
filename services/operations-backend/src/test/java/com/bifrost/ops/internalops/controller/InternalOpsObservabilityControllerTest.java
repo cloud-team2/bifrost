@@ -279,6 +279,24 @@ class InternalOpsObservabilityControllerTest {
     }
 
     @Test
+    void searchLogsResolvesProjectByWorkspaceUuid() {
+        // #423: 프론트 챗봇은 project_id로 workspace UUID를 보낸다. findById로 해석해 namespace로 스코프해야 한다.
+        UUID tenantId = UUID.randomUUID();
+        WorkspaceEntity workspace = workspace(tenantId, "proj-001");
+        when(workspaceRepository.findById(tenantId)).thenReturn(Optional.of(workspace));
+        when(lokiClient.queryRange(any(), anyLong(), anyLong(), eq(10))).thenReturn(List.of());
+
+        ResponseEntity<OpsEnvelope<com.bifrost.ops.internalops.dto.LogSearchResult>> response =
+                controller.searchLogs(tenantId.toString(), java.util.Map.of("query", "pipeline events", "limit", 10),
+                        new MockHttpServletRequest());
+
+        assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
+        ArgumentCaptor<String> queryCaptor = ArgumentCaptor.forClass(String.class);
+        verify(lokiClient).queryRange(queryCaptor.capture(), anyLong(), anyLong(), eq(10));
+        assertThat(queryCaptor.getValue()).isEqualTo("{namespace=\"proj-001\"} |= \"pipeline events\"");
+    }
+
+    @Test
     void searchLogsDoesNotTrustCallerProvidedNamespaceSelector() {
         UUID tenantId = UUID.randomUUID();
         when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId, "proj-001")));
