@@ -6,7 +6,9 @@ import com.bifrost.ops.incident.persistence.repository.IncidentRepository;
 import com.bifrost.ops.internalops.dto.AlertListResult;
 import com.bifrost.ops.internalops.dto.AlertSummaryResult;
 import com.bifrost.ops.internalops.dto.ConsumerLagResult;
+import com.bifrost.ops.internalops.dto.MetricsResult;
 import com.bifrost.ops.internalops.dto.OpsEnvelope;
+import com.bifrost.ops.monitoring.query.ObservabilityMetricsQuery;
 import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
 import com.bifrost.ops.provisioning.dto.ConnectorKind;
 import com.bifrost.ops.provisioning.persistence.entity.ConnectorEntity;
@@ -51,6 +53,7 @@ class InternalOpsObservabilityControllerTest {
     private final PipelineRepository pipelineRepository = mock(PipelineRepository.class);
     private final ConnectorRepository connectorRepository = mock(ConnectorRepository.class);
     private final IncidentRepository incidentRepository = mock(IncidentRepository.class);
+    private final ObservabilityMetricsQuery metricsQuery = mock(ObservabilityMetricsQuery.class);
     private final InternalOpsObservabilityController controller = new InternalOpsObservabilityController(
             adminClient,
             lokiClient,
@@ -58,6 +61,7 @@ class InternalOpsObservabilityControllerTest {
             pipelineRepository,
             connectorRepository,
             incidentRepository,
+            metricsQuery,
             "http://connect.invalid");
 
     @Test
@@ -310,6 +314,47 @@ class InternalOpsObservabilityControllerTest {
         ArgumentCaptor<String> queryCaptor = ArgumentCaptor.forClass(String.class);
         verify(lokiClient).queryRange(queryCaptor.capture(), anyLong(), anyLong(), eq(10));
         assertThat(queryCaptor.getValue()).isEqualTo("{namespace=\"proj-001\",app=\"worker\"} |= \"error\"");
+    }
+
+    @Test
+    void queryMetricsReturnsMetricsResultFromQueryService() {
+        // #391: workspace 확인 후 ObservabilityMetricsQuery 결과를 OpsEnvelope로 200 반환.
+        UUID tenantId = UUID.randomUUID();
+        WorkspaceEntity workspace = workspace(tenantId, "proj-001");
+        when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace));
+        MetricsResult expected = MetricsResult.of(
+                "pipeline_lag_seconds",
+                "pipeline_lag_seconds: 1 points, latest=3.000",
+                List.of(new MetricsResult.MetricsDataPoint("2026-06-10T00:00:00Z", 3.0)));
+        when(metricsQuery.query(eq(workspace), eq("pipeline_lag_seconds"), eq("last_30m"))).thenReturn(expected);
+
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader("X-Request-Id", "req-metrics-001");
+        ResponseEntity<OpsEnvelope<MetricsResult>> response =
+                controller.queryMetrics("proj-001", "pipeline_lag_seconds", "last_30m", request);
+
+        assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().ok()).isTrue();
+        assertThat(response.getBody().operation()).isEqualTo("query_metrics");
+        assertThat(response.getBody().result().metric()).isEqualTo("pipeline_lag_seconds");
+        assertThat(response.getBody().result().dataPoints()).hasSize(1);
+        assertThat(response.getBody().result().dataPoints().getFirst().value()).isEqualTo(3.0);
+    }
+
+    @Test
+    void queryMetricsReturnsFastApiCompatibleErrorEnvelopeForUnknownProject() {
+        when(workspaceRepository.findByNamespace("missing-project")).thenReturn(Optional.empty());
+
+        ResponseEntity<OpsEnvelope<MetricsResult>> response =
+                controller.queryMetrics("missing-project", "pipeline_lag_seconds", null, new MockHttpServletRequest());
+
+        assertThat(response.getStatusCode().value()).isEqualTo(404);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().ok()).isFalse();
+        assertThat(response.getBody().operation()).isEqualTo("query_metrics");
+        assertThat(response.getBody().error().code()).isEqualTo("RESOURCE_NOT_FOUND");
+        verifyNoInteractions(metricsQuery);
     }
 
     @Test

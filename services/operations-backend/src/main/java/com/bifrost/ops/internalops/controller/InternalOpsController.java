@@ -71,6 +71,7 @@ public class InternalOpsController {
         var catalog = java.util.List.of(
                 tool("get_consumer_lag",       "GET",  "/internal/ops/projects/{projectId}/kafka/consumer-groups/{consumerGroup}/lag"),
                 tool("search_logs",            "POST", "/internal/ops/projects/{projectId}/observability/logs/search"),
+                tool("query_metrics",          "GET",  "/internal/ops/projects/{projectId}/observability/metrics"),
                 tool("query_traces",           "GET",  "/internal/ops/projects/{projectId}/connectors/{connectorName}/traces"),
                 tool("list_alerts",            "GET",  "/internal/ops/projects/{projectId}/observability/alerts"),
                 tool("get_incident_summary",   "GET",  "/internal/ops/projects/{projectId}/incidents/{incidentId}/summary"),
