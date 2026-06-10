@@ -65,15 +65,16 @@ Approval source of truth는 Spring Boot `approval` 테이블이다.
 
 ### 5. Change-ticket facade
 
-현재 Spring change-ticket 구현은 자체 `change_ticket` row를 만들고 검증한다.
+Spring change-ticket 구현은 자체 `change_ticket` row를 만들고 승인된 실행 window 안에서만 검증한다.
 
 | Endpoint | 구현 |
 | --- | --- |
-| `POST /internal/ops/change-tickets` | `tenantId`, `title` 또는 alias `toolName`으로 ticket 생성. 응답 status는 `pending` |
-| `POST /internal/ops/change-tickets/{changeTicketId}/validate` | `tenantId`와 status `OPEN`만 검증 |
+| `POST /internal/ops/change-tickets` | 인증된 requester가 `tenantId`, `title`, `scopeOperation`(alias `scope_operation`, `toolName`), execution window, rollback plan, impact, `requiredApprover`로 ticket 생성. requester와 approver가 같으면 거부한다. 응답 status는 `pending` |
+| `POST /internal/ops/change-tickets/{changeTicketId}/approve` | 인증된 approver가 `OPEN -> APPROVED`로 전이. tenant·approvedBy·requiredApprover를 모두 대조하고 row를 pessimistic lock으로 조회한다 |
+| `POST /internal/ops/change-tickets/{changeTicketId}/validate` | `tenantId`, operation scope, `APPROVED`, 승인 메타데이터, execution window, rollback plan, impact를 검증 |
 | `GET /internal/ops/change-tickets/{changeTicketId}?tenantId=` | 단건 조회 |
 
-현재 controller/entity 표면에는 execution window, rollback plan, impact analysis, operation scope 검증 필드가 없다. Mutation controller도 change-ticket header나 id를 받지 않는다.
+Mutation controller는 `X-Change-Ticket-Id`를 `MutationContext`로 전달한다. `PolicyGuard`가 `REQUIRE_CHANGE_MANAGEMENT`를 반환한 operation은 `MutationGate`가 `ChangeTicketValidator.validate(changeTicketId, tenantId, operation)`을 통과해야 실행된다. invalid/missing ticket, future/expired window, rollback/impact/scope 누락, scope mismatch는 모두 fail-closed다.
 
 ### 6. Idempotency
 
@@ -86,6 +87,7 @@ Approval source of truth는 Spring Boot `approval` 테이블이다.
 | 같은 key 실행 중 | 409 `CONFLICT` |
 | 같은 key + 다른 operation/params | 409 `CONFLICT` |
 | replay snapshot approval id가 현재 `X-Approval-Id`와 다름 | 403 `APPROVAL_SCOPE_MISMATCH` |
+| replay snapshot change ticket id가 현재 `X-Change-Ticket-Id`와 다름 | 403 `CHANGE_TICKET_REQUIRED` |
 
 Kafka Connect REST timeout은 504 `TIMEOUT`, 그 외 상류 실패는 502 `UPSTREAM_UNAVAILABLE`로 snapshot에 저장되어 replay될 수 있다.
 
@@ -114,7 +116,6 @@ Kafka Connect REST timeout은 504 `TIMEOUT`, 그 외 상류 실패는 502 `UPSTR
 | --- | --- |
 | `/internal/ops/**` service identity 인증 | Security path는 permitAll. 별도 service account gate 미구현 |
 | policy matrix lookup으로 allow/approval/change/deny 결정 | mutation endpoint가 제한되어 있어 별도 policy engine lookup 없음 |
-| change management 실행 window/rollback/impact/scope 검증 | change-ticket facade에는 필드 없음 |
 | before/after evidence writer | mutation 응답 evidence는 빈 배열 |
 | audit_event append-only 기록 | `auditEventId` 값이 null이라 JSON 응답에서 `audit_event_id` field 생략 |
 | Kubernetes/Prometheus/Schema Registry mutation | endpoint 없음 |

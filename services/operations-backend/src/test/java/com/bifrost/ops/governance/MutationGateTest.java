@@ -6,15 +6,19 @@ import com.bifrost.ops.governance.approval.ApprovalValidator;
 import com.bifrost.ops.governance.approval.persistence.entity.ApprovalEntity;
 import com.bifrost.ops.governance.audit.AuditService;
 import com.bifrost.ops.governance.changemanagement.ChangeTicketValidator;
+import com.bifrost.ops.governance.changemanagement.persistence.entity.ChangeTicketEntity;
+import com.bifrost.ops.governance.changemanagement.persistence.repository.ChangeTicketRepository;
 import com.bifrost.ops.governance.evidence.EvidenceStore;
 import com.bifrost.ops.governance.idempotency.IdempotencyGuard;
 import com.bifrost.ops.governance.policy.PolicyDecision;
 import com.bifrost.ops.governance.policy.PolicyGuard;
+import com.bifrost.ops.workspace.persistence.repository.WorkspaceSettingsRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -132,6 +136,55 @@ class MutationGateTest {
     }
 
     @Test
+    void executeCheckedPassesApprovedChangeTicketThroughRealPolicyAndValidator() {
+        UUID tenantId = UUID.randomUUID();
+        UUID changeTicketId = UUID.randomUUID();
+        ChangeTicketRepository repository = mock(ChangeTicketRepository.class);
+        MutationGate realGate = gateWithRealChangeManagement(repository);
+        ChangeTicketEntity ticket = approvedTicket(changeTicketId, tenantId, "reset_offsets");
+        when(repository.findByIdAndTenantId(changeTicketId, tenantId)).thenReturn(Optional.of(ticket));
+        when(evidenceStore.record(eq(tenantId), any(UUID.class), eq("AFTER"), any()))
+                .thenReturn(UUID.randomUUID());
+        AtomicBoolean called = new AtomicBoolean(false);
+
+        String result = realGate.executeChecked(
+                ctx(tenantId, "reset_offsets", null, changeTicketId),
+                () -> {
+                    called.set(true);
+                    return "accepted";
+                });
+
+        assertThat(result).isEqualTo("accepted");
+        assertThat(called).isTrue();
+        verify(repository).findByIdAndTenantId(changeTicketId, tenantId);
+        verifyNoInteractions(approvalValidator);
+    }
+
+    @Test
+    void executeCheckedBlocksScopeMismatchedTicketWithRealPolicyAndValidatorBeforeMutation() {
+        UUID tenantId = UUID.randomUUID();
+        UUID changeTicketId = UUID.randomUUID();
+        ChangeTicketRepository repository = mock(ChangeTicketRepository.class);
+        MutationGate realGate = gateWithRealChangeManagement(repository);
+        ChangeTicketEntity ticket = approvedTicket(changeTicketId, tenantId, "update_connector");
+        when(repository.findByIdAndTenantId(changeTicketId, tenantId)).thenReturn(Optional.of(ticket));
+        AtomicBoolean called = new AtomicBoolean(false);
+
+        assertThatThrownBy(() -> realGate.executeChecked(
+                ctx(tenantId, "reset_offsets", null, changeTicketId),
+                () -> {
+                    called.set(true);
+                    return "accepted";
+                }))
+                .isInstanceOfSatisfying(ApiException.class, ex ->
+                        assertThat(ex.code()).isEqualTo(ErrorCode.CHANGE_SCOPE_MISMATCH));
+
+        assertThat(called).isFalse();
+        verify(repository).findByIdAndTenantId(changeTicketId, tenantId);
+        verifyNoInteractions(approvalValidator, evidenceStore, auditService);
+    }
+
+    @Test
     void executeCheckedRecordsFailureEvidenceAndAuditBeforeRethrowing() {
         UUID tenantId = UUID.randomUUID();
         UUID approvalId = UUID.randomUUID();
@@ -179,6 +232,38 @@ class MutationGateTest {
                 changeTicketId,
                 "hash",
                 null);
+    }
+
+    private MutationGate gateWithRealChangeManagement(ChangeTicketRepository repository) {
+        PolicyGuard realPolicyGuard = new PolicyGuard(mock(WorkspaceSettingsRepository.class));
+        ChangeTicketValidator realChangeTicketValidator = new ChangeTicketValidator(repository);
+        return new MutationGate(
+                realPolicyGuard,
+                approvalValidator,
+                realChangeTicketValidator,
+                evidenceStore,
+                idempotencyGuard,
+                auditService,
+                new ObjectMapper());
+    }
+
+    private static ChangeTicketEntity approvedTicket(UUID id, UUID tenantId, String operation) {
+        ChangeTicketEntity ticket = new ChangeTicketEntity();
+        ticket.setId(id);
+        ticket.setTenantId(tenantId);
+        ticket.setTitle("Change for " + operation);
+        ticket.setStatus("APPROVED");
+        ticket.setWindowStart(Instant.now().minusSeconds(60));
+        ticket.setWindowEnd(Instant.now().plusSeconds(60));
+        ticket.setRollbackPlan("restore previous connector config");
+        ticket.setImpactAnalysis("single connector impact");
+        ticket.setScopeOperation(operation);
+        ticket.setRequestedBy(UUID.randomUUID());
+        UUID approver = UUID.randomUUID();
+        ticket.setRequiredApprover(approver);
+        ticket.setApprovedBy(approver);
+        ticket.setApprovedAt(Instant.now().minusSeconds(30));
+        return ticket;
     }
 
     private static ApprovalEntity approval(UUID approvalId) {

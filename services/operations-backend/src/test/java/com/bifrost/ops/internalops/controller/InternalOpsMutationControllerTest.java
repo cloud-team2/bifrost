@@ -2,6 +2,8 @@ package com.bifrost.ops.internalops.controller;
 
 import com.bifrost.ops.adapters.connect.ConnectRestClient;
 import com.bifrost.ops.adapters.connect.ConnectRestException;
+import com.bifrost.ops.global.common.error.ApiException;
+import com.bifrost.ops.global.common.error.ErrorCode;
 import com.bifrost.ops.governance.MutationContext;
 import com.bifrost.ops.governance.MutationGate;
 import com.bifrost.ops.governance.idempotency.IdempotencyGuard;
@@ -182,6 +184,48 @@ class InternalOpsMutationControllerTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().error().code()).isEqualTo("APPROVAL_SCOPE_MISMATCH");
+        verify(idempotencyGuard).abandon("idem-1", tenantId);
+        verifyNoInteractions(connectRestClient);
+    }
+
+    @Test
+    void changeWindowFailureAsksClientToWaitAndSkipsConnect() {
+        stubOwnedConnector();
+        when(idempotencyGuard.check(eq("idem-1"), eq(tenantId), eq("resume_connector"), any()))
+                .thenReturn(CheckResult.created());
+        when(mutationGate.executeChecked(any(MutationContext.class), any()))
+                .thenThrow(new ApiException(
+                        ErrorCode.CHANGE_WINDOW_CLOSED,
+                        "change ticket execution window has not opened yet"));
+
+        ResponseEntity<OpsEnvelope<ConnectorActionResult>> response =
+                controller.resumeConnector(PROJECT_ID, CONNECTOR, request());
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error().code()).isEqualTo("CHANGE_WINDOW_CLOSED");
+        assertThat(response.getBody().error().requiredAction()).isEqualTo("wait_for_change_window");
+        verify(idempotencyGuard).abandon("idem-1", tenantId);
+        verifyNoInteractions(connectRestClient);
+    }
+
+    @Test
+    void changeScopeMismatchAsksClientToRequestNewTicketAndSkipsConnect() {
+        stubOwnedConnector();
+        when(idempotencyGuard.check(eq("idem-1"), eq(tenantId), eq("resume_connector"), any()))
+                .thenReturn(CheckResult.created());
+        when(mutationGate.executeChecked(any(MutationContext.class), any()))
+                .thenThrow(new ApiException(
+                        ErrorCode.CHANGE_SCOPE_MISMATCH,
+                        "change ticket operation scope mismatch"));
+
+        ResponseEntity<OpsEnvelope<ConnectorActionResult>> response =
+                controller.resumeConnector(PROJECT_ID, CONNECTOR, request());
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error().code()).isEqualTo("CHANGE_SCOPE_MISMATCH");
+        assertThat(response.getBody().error().requiredAction()).isEqualTo("request_change_ticket");
         verify(idempotencyGuard).abandon("idem-1", tenantId);
         verifyNoInteractions(connectRestClient);
     }

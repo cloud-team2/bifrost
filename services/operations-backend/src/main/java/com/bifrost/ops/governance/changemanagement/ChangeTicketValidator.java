@@ -35,13 +35,20 @@ public class ChangeTicketValidator {
             throw new ApiException(ErrorCode.CHANGE_TICKET_REQUIRED,
                     "change ticket not APPROVED: " + ticket.getStatus());
         }
+        if (ticket.getRequiredApprover() == null || ticket.getRequestedBy() == null
+                || ticket.getApprovedBy() == null || ticket.getApprovedAt() == null
+                || !ticket.getRequiredApprover().equals(ticket.getApprovedBy())
+                || ticket.getRequestedBy().equals(ticket.getApprovedBy())) {
+            throw new ApiException(ErrorCode.CHANGE_TICKET_REQUIRED,
+                    "change ticket approval metadata is required");
+        }
         Instant now = Instant.now();
         if (ticket.getWindowStart() == null || ticket.getWindowEnd() == null) {
             throw new ApiException(ErrorCode.CHANGE_WINDOW_CLOSED,
                     "change ticket execution window is required");
         }
         if (now.isBefore(ticket.getWindowStart())) {
-            throw new ApiException(ErrorCode.CHANGE_TICKET_REQUIRED,
+            throw new ApiException(ErrorCode.CHANGE_WINDOW_CLOSED,
                     "change ticket execution window has not opened yet");
         }
         if (now.isAfter(ticket.getWindowEnd())) {
