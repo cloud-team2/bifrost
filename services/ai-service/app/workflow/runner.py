@@ -27,7 +27,13 @@ from app.persistence.report_repository import get_report_repo
 from app.persistence.run_repository import AnyRunRepo
 from app.persistence.state_repository import get_state_repo
 from app.schemas.events import StreamingEvent, StreamingEventType
-from app.schemas.state import ActionCandidate, ActionStatus
+from app.schemas.outputs import (
+    ActionCandidateOutput,
+    PolicyDecisionOutput,
+    PolicyGuardOutput,
+    RemediationOutput,
+)
+from app.schemas.state import ActionCandidate, ActionStatus, AgentMode
 from app.schemas.tools import ToolContext
 from app.streaming.event_bus import EventBus
 from app.supervisor.graph import get_supervisor
@@ -173,6 +179,27 @@ async def run_workflow(
         change_out = None
         executor_out = None
         verifier_out = None
+
+        # ── State 재사용 ────────────────────────────────────────────────────────
+        # action_execution/approval_decision은 policy_guard/approval_gate부터 시작해
+        # 같은 turn 안에서는 조치 후보를 만들지 않는다. 같은 run(멀티턴)의 이전
+        # remediation/policy State를 복원해 빈 action list로 시작하는 문제를 해소한다.
+        if mode in (AgentMode.ACTION_EXECUTION, AgentMode.APPROVAL_DECISION):
+            restored_rem, restored_policy = await _restore_action_state(state_repo, run_id)
+            if restored_rem is not None:
+                remediation_out = restored_rem
+            if restored_policy is not None:
+                policy_out = restored_policy
+            restored_count = (
+                len(restored_rem.action_candidates) if restored_rem else
+                len(restored_policy.policy_decisions) if restored_policy else 0
+            )
+            if restored_count:
+                await _publish(bus, event_repo, run_id, _evt(
+                    run_id, StreamingEventType.PARTIAL_RESULT, "router",
+                    f"이전 분석의 조치 후보 {restored_count}건을 재사용합니다",
+                    {"stage": "state_reuse", "restored_candidates": restored_count},
+                ))
 
         while True:
             try:
@@ -578,6 +605,54 @@ async def run_workflow(
 
     finally:
         await bus.close_run(run_id)
+
+
+async def _restore_action_state(
+    state_repo: Any,
+    run_id: str,
+) -> tuple[RemediationOutput | None, PolicyGuardOutput | None]:
+    """같은 run의 append-only State patch에서 조치 후보·정책 결정을 복원한다.
+
+    action_execution/approval_decision turn은 remediation 단계를 다시 돌지 않으므로,
+    이전 turn(같은 run_id)이 남긴 `/actions/candidates`·`/actions/policy_decisions`
+    patch를 읽어 Policy Guard/Executor에 공급한다. 복원 실패는 빈 결과로 흡수한다.
+    """
+    try:
+        patches = await state_repo.get_patches(run_id)
+    except Exception as exc:
+        logger.warning("state restore: get_patches failed run=%s error=%s", run_id, exc)
+        return None, None
+
+    candidates_raw: list | None = None
+    policy_raw: list | None = None
+    for patch in patches:
+        if getattr(patch, "namespace", None) != "actions":
+            continue
+        body = getattr(patch, "patch", {}) or {}
+        if patch.path == "/actions/candidates" and body.get("candidates"):
+            candidates_raw = body["candidates"]  # 최신 patch가 우선(seq 순회)
+        elif patch.path == "/actions/policy_decisions" and body.get("policy_decisions"):
+            policy_raw = body["policy_decisions"]
+
+    remediation_out: RemediationOutput | None = None
+    if candidates_raw:
+        try:
+            remediation_out = RemediationOutput(
+                action_candidates=[ActionCandidateOutput(**c) for c in candidates_raw]
+            )
+        except Exception as exc:
+            logger.warning("state restore: candidate rebuild failed run=%s error=%s", run_id, exc)
+
+    policy_out: PolicyGuardOutput | None = None
+    if policy_raw:
+        try:
+            policy_out = PolicyGuardOutput(
+                policy_decisions=[PolicyDecisionOutput(**d) for d in policy_raw]
+            )
+        except Exception as exc:
+            logger.warning("state restore: policy rebuild failed run=%s error=%s", run_id, exc)
+
+    return remediation_out, policy_out
 
 
 def _find_tool_name(action_id: str, remediation_out) -> str | None:
