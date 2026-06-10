@@ -20,7 +20,7 @@ import static com.bifrost.ops.database.cdc.CdcReadinessStatus.*;
 /**
  * MariaDB Inspector 실구현.
  *
- * <p>CDC source 점검 항목: log_bin, binlog_format, binlog_row_image, server_id, REPLICATION 권한.
+ * <p>CDC source 점검 항목: log_bin, binlog_format, binlog_row_image, server_id, REPLICATION·RELOAD 전역 권한.
  * <p>CDC sink 점검 항목: CREATE/INSERT/UPDATE/DELETE 권한.
  */
 public class MariaDBInspector implements DatabaseInspector {
@@ -82,10 +82,17 @@ public class MariaDBInspector implements DatabaseInspector {
             checks.add(CdcCheck.of("Server ID", serverId > 0 ? OK : BLOCKED,
                     String.valueOf(serverId), "> 0", "server_id를 0보다 큰 고유 값으로 설정."));
 
-            boolean replication = hasReplicationGrant(conn);
+            boolean replication = hasGlobalPrivilege(conn, "REPLICATION SLAVE");
             checks.add(CdcCheck.of("REPLICATION 권한", replication ? OK : BLOCKED,
-                    String.valueOf(replication), "REPLICATION SLAVE 포함",
+                    String.valueOf(replication), "REPLICATION SLAVE (전역 ON *.*)",
                     "GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO '<user>';"));
+
+            // Debezium 스냅샷의 FLUSH TABLES WITH READ LOCK(전역 읽기 락)에 RELOAD 전역 권한이 필요하다(#457).
+            // 없으면 등록 시엔 통과해도 런타임 스냅샷에서 'Access denied; need RELOAD'로 커넥터가 죽는다.
+            boolean reload = hasGlobalPrivilege(conn, "RELOAD");
+            checks.add(CdcCheck.of("RELOAD 권한", reload ? OK : BLOCKED,
+                    String.valueOf(reload), "RELOAD (전역 ON *.*)",
+                    "GRANT RELOAD ON *.* TO '<user>'; (스냅샷 시 FLUSH TABLES WITH READ LOCK용)"));
 
             return new CdcReadinessResponse(
                     CdcReadinessStatus.worst(checks.stream().map(CdcCheck::status).toList()), checks);
@@ -222,13 +229,20 @@ public class MariaDBInspector implements DatabaseInspector {
         }
     }
 
-    private static boolean hasReplicationGrant(Connection conn) throws SQLException {
+    /**
+     * 전역(ON *.*) 권한 보유 여부. RELOAD·REPLICATION SLAVE 등은 전역 권한이라 db 단위
+     * {@code ALL PRIVILEGES ON db.*}로는 충족되지 않는다 — SHOW GRANTS에서 {@code ON *.*} 라인만 본다.
+     * (기존 hasReplicationGrant는 db단위 ALL PRIVILEGES도 통과시켜 런타임에서야 실패했다, #457.)
+     */
+    private static boolean hasGlobalPrivilege(Connection conn, String privilege) throws SQLException {
+        String p = privilege.toUpperCase();
         try (Statement st = conn.createStatement(); ResultSet rs = st.executeQuery("SHOW GRANTS")) {
             while (rs.next()) {
                 String grant = rs.getString(1);
-                if (grant != null) {
-                    String g = grant.toUpperCase();
-                    if (g.contains("REPLICATION SLAVE") || g.contains("ALL PRIVILEGES")) return true;
+                if (grant == null) continue;
+                String g = grant.toUpperCase();
+                if (g.contains("ON *.*") && (g.contains(p) || g.contains("ALL PRIVILEGES"))) {
+                    return true;
                 }
             }
             return false;
