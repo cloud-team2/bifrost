@@ -76,7 +76,12 @@ public class InternalOpsController {
                 tool("get_incident_summary",   "GET",  "/internal/ops/projects/{projectId}/incidents/{incidentId}/summary"),
                 tool("list_project_pipelines", "GET",  "/internal/ops/projects/{projectId}/pipelines"),
                 tool("get_pipeline_topology",  "GET",  "/internal/ops/projects/{projectId}/pipelines/{pipelineId}/topology"),
-                tool("get_connector_status",   "GET",  "/internal/ops/projects/{projectId}/kafka/connectors/{connectorName}/status")
+                tool("get_connector_status",   "GET",  "/internal/ops/projects/{projectId}/kafka/connectors/{connectorName}/status"),
+                // mutation tool (#395) — InternalOpsMutationController(#308) 실구현과 정합.
+                tool("restart_connector",      "POST", "/internal/ops/projects/{projectId}/connectors/{connectorName}/restart"),
+                tool("pause_connector",        "POST", "/internal/ops/projects/{projectId}/connectors/{connectorName}/pause"),
+                tool("resume_connector",       "POST", "/internal/ops/projects/{projectId}/connectors/{connectorName}/resume"),
+                tool("restart_consumer_group", "POST", "/internal/ops/projects/{projectId}/kafka/consumer-groups/{consumerGroup}/restart")
         );
         return ResponseEntity.ok(OpsEnvelope.ok(requestId, "tool_catalog", catalog));
     }
