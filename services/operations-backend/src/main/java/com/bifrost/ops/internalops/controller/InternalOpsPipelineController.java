@@ -6,8 +6,10 @@ import com.bifrost.ops.internalops.AgentHeaders;
 import com.bifrost.ops.internalops.WorkspaceLookup;
 import com.bifrost.ops.internalops.dto.OpsEnvelope;
 import com.bifrost.ops.internalops.dto.PipelineTopologyResult;
+import com.bifrost.ops.internalops.dto.RecentChangesResult;
 import com.bifrost.ops.pipeline.dto.ConnectorResponse;
 import com.bifrost.ops.pipeline.dto.PipelineResponse;
+import com.bifrost.ops.pipeline.persistence.entity.PipelineEntity;
 import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
 import com.bifrost.ops.provisioning.persistence.repository.ConnectorRepository;
 import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
@@ -17,6 +19,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -57,6 +60,27 @@ public class InternalOpsPipelineController {
                 .map(PipelineResponse::from)
                 .toList();
         return ResponseEntity.ok(OpsEnvelope.ok(requestId, "list_project_pipelines", pipelines));
+    }
+
+    /**
+     * get_recent_changes(ai-service get_deployments) — 프로젝트 단위 최근 파이프라인 변경 이력.
+     *
+     * <p>RECENT_DEPLOY_REGRESSION root_cause 의 배포 diff evidence 수집용.
+     * 현재는 pipeline lifecycle(생성·상태전이)에서 변경 이벤트를 합성한다.
+     */
+    @GetMapping("/changes")
+    public ResponseEntity<OpsEnvelope<RecentChangesResult>> changes(
+            @PathVariable String projectId,
+            @RequestParam(value = "limit", required = false) Integer limit,
+            HttpServletRequest request) {
+        String requestId = AgentHeaders.requestId(request);
+        WorkspaceEntity ws = requireWorkspace(projectId);
+
+        List<PipelineEntity> pipelines = pipelineRepository
+                .findByTenantIdOrderByCreatedAtDesc(ws.getId());
+
+        RecentChangesResult result = RecentChangesResult.of(pipelines, limit);
+        return ResponseEntity.ok(OpsEnvelope.ok(requestId, "get_recent_changes", result));
     }
 
     /** get_pipeline_topology — source/sink/connectors/topics/status. */
