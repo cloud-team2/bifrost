@@ -30,6 +30,12 @@ management:
     tracing:
       endpoint: ${OTLP_TRACING_ENDPOINT:http://tempo.monitoring:4318/v1/traces}
 
+# 데이터플레인 추적(#371): 신규 source 커넥터에 Debezium tracing SMT 추가. 기본 off(오버헤드 없음).
+# 워커 OTel 계측(infra/k8s/kafka/kafka-connect.yaml) 전제. 켜면 이후 생성되는 파이프라인이 추적됨.
+tracing:
+  dataplane:
+    enabled: ${DATAPLANE_TRACING_ENABLED:false}
+
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
