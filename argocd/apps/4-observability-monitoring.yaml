@@ -127,8 +127,9 @@ spec:
                   http:
                     endpoint: 0.0.0.0:4318
             resources:
-              requests: { cpu: 100m, memory: 256Mi }
-              limits: { memory: 512Mi }
+              # 트레이싱 도입(#371/#366)으로 trace 수신 시작 → 512Mi OOM(#433). 누적 블록 로드 + ingest 대비 증설.
+              requests: { cpu: 250m, memory: 1Gi }
+              limits: { cpu: "1", memory: 2Gi }
           persistence:
             enabled: true
             storageClassName: gp3
