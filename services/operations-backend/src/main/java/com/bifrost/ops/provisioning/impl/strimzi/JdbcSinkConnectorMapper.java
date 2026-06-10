@@ -47,7 +47,7 @@ public class JdbcSinkConnectorMapper {
         String name = ConnectorNaming.sinkConnectorName(command.pipelineId());
         // source가 적재하는 토픽을 그대로 구독
         String sourceTopic = ConnectorNaming.topicName(
-                command.projectKey(), src.dbName(), src.datasourceId(), src.schema(), src.table());
+                command.pattern(), command.projectKey(), src.dbName(), src.datasourceId(), src.schema(), src.table());
 
         return new KafkaConnectorBuilder()
                 .withNewMetadata()

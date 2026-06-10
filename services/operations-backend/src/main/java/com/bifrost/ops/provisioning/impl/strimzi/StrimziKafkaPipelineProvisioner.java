@@ -79,7 +79,7 @@ public class StrimziKafkaPipelineProvisioner implements KafkaPipelineProvisioner
     public PipelineProvisionResult createPipelineResources(PipelineProvisionCommand command) {
         List<ConnectorRef> created = new ArrayList<>();
         String topicPrefix = ConnectorNaming.topicPrefix(
-                command.projectKey(), command.source().dbName(), command.source().datasourceId());
+                command.pattern(), command.projectKey(), command.source().dbName(), command.source().datasourceId());
 
         // 1) Source 자격증명 해석 (생성 시점에만)
         DbCredential sourceCred;

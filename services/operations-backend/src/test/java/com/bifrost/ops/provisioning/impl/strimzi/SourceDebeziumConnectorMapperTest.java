@@ -49,7 +49,8 @@ class SourceDebeziumConnectorMapperTest {
         Map<String, Object> config = cr.getSpec().getConfig();
         // (#365) topic.prefix = 최종 토픽명(테이블 단위 유일한 Debezium server). Debezium이 또 붙이는
         // .{schema}.{table} 중복분은 route SMT로 제거 → 최종 토픽명은 동일하게 유지된다.
-        assertThat(config).containsEntry("topic.prefix", "cdc.table.team2.shop-12345678.public.orders");
+        // command()가 FAN_OUT(EDA)이므로 root는 eda.table (#447).
+        assertThat(config).containsEntry("topic.prefix", "eda.table.team2.shop-12345678.public.orders");
         assertThat(config).containsEntry("table.include.list", "public.orders");
         // 토픽 자동생성 기본값(운영 기준 6/3) — 로컬은 env로 1 주입(#402)
         assertThat(config).containsEntry("topic.creation.default.partitions", "6");

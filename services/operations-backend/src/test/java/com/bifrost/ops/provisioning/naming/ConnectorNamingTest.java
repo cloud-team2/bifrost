@@ -1,5 +1,6 @@
 package com.bifrost.ops.provisioning.naming;
 
+import com.bifrost.ops.provisioning.dto.PipelinePattern;
 import org.junit.jupiter.api.Test;
 
 import java.util.UUID;
@@ -19,22 +20,31 @@ class ConnectorNamingTest {
     private static final UUID DS_ID = UUID.fromString("a1b2c3d4-0000-0000-0000-000000000000");
 
     @Test
-    void buildsTopicPrefix() {
-        assertThat(ConnectorNaming.topicPrefix(PROJECT_KEY, DB_NAME, DS_ID))
+    void buildsTopicPrefixCdcForDirect() {
+        assertThat(ConnectorNaming.topicPrefix(PipelinePattern.DIRECT, PROJECT_KEY, DB_NAME, DS_ID))
                 .isEqualTo("cdc.table.team2.shop-a1b2c3d4");
     }
 
     @Test
+    void buildsTopicPrefixEdaForFanOut() {
+        // EDA(FAN_OUT)는 eda.table.* root (#447)
+        assertThat(ConnectorNaming.topicPrefix(PipelinePattern.FAN_OUT, PROJECT_KEY, DB_NAME, DS_ID))
+                .isEqualTo("eda.table.team2.shop-a1b2c3d4");
+    }
+
+    @Test
     void buildsTableCentricTopicName() {
-        assertThat(ConnectorNaming.topicName(PROJECT_KEY, DB_NAME, DS_ID, "public", "orders"))
+        assertThat(ConnectorNaming.topicName(PipelinePattern.DIRECT, PROJECT_KEY, DB_NAME, DS_ID, "public", "orders"))
                 .isEqualTo("cdc.table.team2.shop-a1b2c3d4.public.orders");
+        assertThat(ConnectorNaming.topicName(PipelinePattern.FAN_OUT, PROJECT_KEY, DB_NAME, DS_ID, "public", "orders"))
+                .isEqualTo("eda.table.team2.shop-a1b2c3d4.public.orders");
     }
 
     @Test
     void differentDatasourceIdsAvoidCollisionForSameDbName() {
         UUID other = UUID.fromString("ffffffff-0000-0000-0000-000000000000");
-        assertThat(ConnectorNaming.topicPrefix(PROJECT_KEY, DB_NAME, DS_ID))
-                .isNotEqualTo(ConnectorNaming.topicPrefix(PROJECT_KEY, DB_NAME, other));
+        assertThat(ConnectorNaming.topicPrefix(PipelinePattern.DIRECT, PROJECT_KEY, DB_NAME, DS_ID))
+                .isNotEqualTo(ConnectorNaming.topicPrefix(PipelinePattern.DIRECT, PROJECT_KEY, DB_NAME, other));
     }
 
     @Test
@@ -60,9 +70,9 @@ class ConnectorNamingTest {
 
     @Test
     void rejectsBlankInputs() {
-        assertThatThrownBy(() -> ConnectorNaming.topicPrefix("", DB_NAME, DS_ID))
+        assertThatThrownBy(() -> ConnectorNaming.topicPrefix(PipelinePattern.DIRECT, "", DB_NAME, DS_ID))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> ConnectorNaming.topicPrefix(PROJECT_KEY, DB_NAME, null))
+        assertThatThrownBy(() -> ConnectorNaming.topicPrefix(PipelinePattern.DIRECT, PROJECT_KEY, DB_NAME, null))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> ConnectorNaming.sourceConnectorName(null))
                 .isInstanceOf(IllegalArgumentException.class);
