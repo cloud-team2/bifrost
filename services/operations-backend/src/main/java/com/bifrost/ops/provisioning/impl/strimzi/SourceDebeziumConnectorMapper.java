@@ -94,7 +94,7 @@ public class SourceDebeziumConnectorMapper {
         // 같은 소스 DB의 여러 파이프라인이 server를 공유해 이벤트/소스지연 메트릭이 섞이던 문제를 막는다.
         // 최종 토픽명을 prefix로 쓰고, Debezium이 또 붙이는 .{schema}.{table} 중복분은 아래 route SMT로 제거.
         String serverName = ConnectorNaming.topicName(
-                command.projectKey(), src.dbName(), src.datasourceId(), src.schema(), src.table());
+                command.pattern(), command.projectKey(), src.dbName(), src.datasourceId(), src.schema(), src.table());
         String tableInclude = src.schema() + "." + src.table();
         String connectorClass = connectorClass(src.engine());
 

@@ -1,5 +1,7 @@
 package com.bifrost.ops.provisioning.naming;
 
+import com.bifrost.ops.provisioning.dto.PipelinePattern;
+
 import java.util.UUID;
 
 /**
@@ -30,32 +32,40 @@ import java.util.UUID;
  */
 public final class ConnectorNaming {
 
-    private static final String TOPIC_ROOT = "cdc.table";
+    private static final String TOPIC_ROOT_CDC = "cdc.table";
+    private static final String TOPIC_ROOT_EDA = "eda.table";
     private static final String SOURCE_SUFFIX = "-source";
     private static final String SINK_SUFFIX = "-sink";
 
     private ConnectorNaming() {
     }
 
+    /** 패턴별 토픽 root: CDC(DIRECT)=cdc.table, EDA(FAN_OUT)=eda.table (#447). */
+    public static String topicRoot(PipelinePattern pattern) {
+        requireNotNull(pattern, "pattern");
+        return pattern == PipelinePattern.FAN_OUT ? TOPIC_ROOT_EDA : TOPIC_ROOT_CDC;
+    }
+
     /**
-     * Debezium {@code topic.prefix}: {@code cdc.table.{projectKey}.{dbSlug}}.
+     * Debezium {@code topic.prefix}: {@code {root}.{projectKey}.{dbSlug}} ({@code root}는 패턴별, #447).
      *
      * <p>{@code dbSlug = {dbName}-{datasourceId 앞 8 hex}}. 표시 이름({@code dbName})은
      * datasource 등록 시 사용자가 지은 이름이라 서로 다른 물리 DB라도 같을 수 있어, 같은 프로젝트·
      * 테이블이면 토픽이 충돌했다(#265). datasource 고유 id를 슬러그에 섞어 충돌을 막는다.
      */
-    public static String topicPrefix(String projectKey, String dbName, UUID datasourceId) {
+    public static String topicPrefix(PipelinePattern pattern, String projectKey, String dbName, UUID datasourceId) {
         requireNotBlank(projectKey, "projectKey");
         requireNotBlank(dbName, "dbName");
         requireNotNull(datasourceId, "datasourceId");
-        return TOPIC_ROOT + "." + projectKey + "." + datasourceSlug(dbName, datasourceId);
+        return topicRoot(pattern) + "." + projectKey + "." + datasourceSlug(dbName, datasourceId);
     }
 
-    /** table 중심 토픽 이름: {@code cdc.table.{projectKey}.{dbSlug}.{schema}.{table}}. */
-    public static String topicName(String projectKey, String dbName, UUID datasourceId, String schema, String table) {
+    /** table 중심 토픽 이름: {@code {root}.{projectKey}.{dbSlug}.{schema}.{table}}. */
+    public static String topicName(PipelinePattern pattern, String projectKey, String dbName,
+                                   UUID datasourceId, String schema, String table) {
         requireNotBlank(schema, "schema");
         requireNotBlank(table, "table");
-        return topicPrefix(projectKey, dbName, datasourceId) + "." + schema + "." + table;
+        return topicPrefix(pattern, projectKey, dbName, datasourceId) + "." + schema + "." + table;
     }
 
     /** datasource 식별 슬러그: {@code {dbName}-{datasourceId 앞 8 hex}} — 표시 이름 충돌 방지(#265). */
@@ -65,10 +75,14 @@ public final class ConnectorNaming {
         return dbName + "-" + datasourceId.toString().substring(0, 8);
     }
 
-    /** KafkaUser ACL prefix(끝에 {@code .} 포함): {@code cdc.table.{projectKey}.}. */
+    /**
+     * KafkaUser ACL prefix(끝에 {@code .} 포함): {@code cdc.table.{projectKey}.}.
+     * <p>주의(#447): EDA 토픽은 {@code eda.table.*}를 쓰므로, authorizer를 켜서 ACL을 강제한다면
+     * {@code eda.table.{projectKey}.*}도 함께 부여해야 한다(현재 cluster는 authorizer 미활성으로 미강제).
+     */
     public static String topicAclPrefix(String projectKey) {
         requireNotBlank(projectKey, "projectKey");
-        return TOPIC_ROOT + "." + projectKey + ".";
+        return TOPIC_ROOT_CDC + "." + projectKey + ".";
     }
 
     /** 워크스페이스 KafkaUser principal: {@code proj-{projectKey}-user}. */
@@ -99,7 +113,7 @@ public final class ConnectorNaming {
         requireNotNull(pipelineId, "pipelineId");
     }
 
-    private static void requireNotNull(UUID value, String field) {
+    private static void requireNotNull(Object value, String field) {
         if (value == null) {
             throw new IllegalArgumentException(field + " must not be null");
         }

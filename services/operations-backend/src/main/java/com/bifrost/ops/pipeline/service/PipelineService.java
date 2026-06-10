@@ -150,7 +150,7 @@ public class PipelineService {
         p.setTableName(req.table());
         p.setTables(tablesJson(req.schema(), req.table()));
         p.setTopicName(com.bifrost.ops.provisioning.naming.ConnectorNaming
-                .topicName(projectKey, source.getDbName(), source.getId(), req.schema(), req.table()));
+                .topicName(pattern, projectKey, source.getDbName(), source.getId(), req.schema(), req.table()));
         p.setStatus(PipelineLifecycle.CREATING);
         try {
             p = pipelineRepository.saveAndFlush(p);
