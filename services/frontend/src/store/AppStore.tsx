@@ -24,7 +24,6 @@ export type View =
   | 'pipeline-detail'
   | 'databases'
   | 'database-detail'
-  | 'activity-log'
   | 'alerts'
   | 'cluster'
   | 'settings'
@@ -125,7 +124,6 @@ const VIEWS = new Set<View>([
   'pipeline-detail',
   'databases',
   'database-detail',
-  'activity-log',
   'alerts',
   'cluster',
   'settings',
