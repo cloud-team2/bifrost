@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from app.core.config import settings
 from app.knowledge.vector_store import get_vector_store
-from app.persistence.event_repository import AnyEventRepo, InMemoryEventRepository
+from app.persistence.event_repository import AnyEventRepo, InMemoryEventRepository, append_event
 from app.schemas.events import StreamingEvent, StreamingEventType
 from app.schemas.outputs import PlannerOutput, RetrievalOutput
 from app.schemas.state import AgentMode, EvidenceItem, EvidenceType, RedactionStatus
@@ -21,10 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 async def _pub(bus: EventBus, repo: AnyEventRepo, run_id: str, event: StreamingEvent) -> None:
-    if isinstance(repo, InMemoryEventRepository):
-        repo.append(run_id, event)
-    else:
-        await repo.append(run_id, event)
+    await append_event(repo, run_id, event)
     await bus.publish(run_id, event)
 
 
