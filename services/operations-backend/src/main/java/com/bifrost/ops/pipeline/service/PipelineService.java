@@ -252,7 +252,7 @@ public class PipelineService {
         provisioningService.delete(new PipelineResourceRef(p.getId(), null, connectorNames(p)));
         // Kafka 측 잔재(토픽·sink consumer group) 정리(#200). best-effort — 실패해도 삭제는 진행.
         // CR이 모두 제거된 뒤 호출해야 Debezium source가 토픽을 재생성하지 않는다.
-        kafkaResourceCleaner.deleteTopicAndSinkGroup(p.getTopicName(), p.getId());
+        kafkaResourceCleaner.deleteResources(p.getTopicName(), p.getId(), p.getPattern());
         connectorRepository.deleteAll(connectorRepository.findByPipelineId(p.getId()));
         pipelineRepository.delete(p);
         eventService.record(wsId, null, EventLevel.INFO, "PIPELINE_DELETED",

@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "NODE_OPTIONS=--disable-warning=DEP0205 vite",
     "build": "tsc --noEmit && NODE_OPTIONS=--disable-warning=DEP0205 vite build",
-    "preview": "NODE_OPTIONS=--disable-warning=DEP0205 vite preview"
+    "preview": "NODE_OPTIONS=--disable-warning=DEP0205 vite preview",
+    "test": "vitest run"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -21,6 +22,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "tailwindcss": "^4.1.0",
     "typescript": "^5.7.2",
-    "vite": "^6.0.7"
+    "vite": "^6.0.7",
+    "vitest": "^4.1.8"
   }
 }
