@@ -10,17 +10,17 @@
       "request_id": "req_e2e_004",
       "operation": "get_connector_status",
       "result": {
-        "connector_name": "default-connector",
+        "connectorName": "default-connector",
         "state": "RUNNING",
         "tasks": [
           {
-            "task_id": 0,
+            "taskId": 0,
             "state": "RUNNING",
-            "worker_id": "connect-worker-1"
+            "workerId": "connect-worker-1"
           }
         ],
-        "last_error": null,
-        "observed_at": "2026-06-09T12:00:00Z"
+        "lastError": null,
+        "observedAt": "2026-06-09T12:00:00Z"
       },
       "evidence": [
         {
