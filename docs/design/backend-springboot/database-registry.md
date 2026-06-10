@@ -35,7 +35,7 @@ try (HikariDataSource ds = new HikariDataSource(config)) {
 
 ### 3. Step 2 — 자격증명 secretRef 보관
 
-연결 성공 시 password를 **외부 Secret 저장소(K8s Secret 또는 Secrets Manager)** 에 저장하고, `database` 테이블에는 그 **참조(`secret_ref`)만** 저장한다. 자격증명 평문·암호문을 메타DB에 두지 않는다.
+연결 성공 시 password를 `SecretStore`에 저장하고, datasource row에는 그 **참조(`secret_ref`)만** 저장한다. 현재 기본 구현체 `DbSecretStore`는 metadb `secrets` 테이블에 `credential_json`(`{"user":"...","password":"..."}`)을 영속한다. 즉 datasource/pipeline row와 API 응답에는 secret material을 두지 않지만, 현재 provider 기준 자격증명 원문은 metadb 내부 `secrets.credential_json`에 저장된다. 추후 K8s Secret/Secrets Manager 구현체로 교체 가능하도록 인터페이스를 유지한다.
 
 - secretRef 추상화: `SecretStore` 인터페이스 → 현재 구현체는 `DbSecretStore`(metadb `secrets` 테이블 영속). 추후 K8s Secret/Secrets Manager로 교체 가능(인터페이스 동일).
 - API 응답에서 password는 항상 `****`로 마스킹(secretRef도 노출하지 않음).
@@ -66,12 +66,12 @@ DatabaseHealthProbeJob (@Scheduled 60s)
       HEALTHY 회복 → connector 상태 기반 active 복귀
 ```
 
-- 컬럼: `datasources.connection_status`/`connection_error`/`connection_checked_at`(V10 마이그레이션).
+- 컬럼: `datasources.connection_status`/`connection_error`/`connection_checked_at`(V13 마이그레이션).
 - 프론트 DB 노드 색상: `UNREACHABLE` → error(빨강). 파이프라인 상태로의 전이·attribution 정본은 [lifecycle.md §2·§5](./lifecycle.md).
 
 ### 4. Step 3 — CDC 준비도 점검 (FR-015)
 
-DB 등록 직후 자동 실행하며, Database 상세 화면에서 수동 재점검도 가능하다. **DB 엔진별로 구현체를 선택하는 인터페이스 추상화**로 설계한다.
+현재 구현은 DB 등록 시 secret/datasource를 저장하고, CDC 준비도 점검은 별도 endpoint에서 수동 실행한다. **DB 엔진별로 구현체를 선택하는 인터페이스 추상화**로 설계한다.
 
 #### 4.1 인터페이스
 
@@ -144,7 +144,7 @@ try (DatabaseInspector inspector = factory.create(datasource, password)) {
 
 ### 5. 새 엔진 추가
 
-엔진을 추가하려면 `CdcReadinessChecker` 구현체와 `checkerRegistry` 등록만 추가하면 된다. 연결 테스트(`jdbcUrl` 빌더)와 데이터 모델(engine enum)도 함께 확장한다.
+엔진을 추가하려면 `DatabaseInspector` 구현체와 `DatabaseInspectorFactory`의 `DbType` switch를 확장한다. 연결 테스트(`jdbcUrl` 빌더)와 데이터 모델(engine enum)도 함께 확장한다.
 
 ### 6. API (frontend-facing)
 
@@ -155,6 +155,14 @@ try (DatabaseInspector inspector = factory.create(datasource, password)) {
 | `POST` | `/api/v1/workspaces/{wsId}/databases` | 등록(자격증명은 secretRef로 보관) |
 | `GET` | `/api/v1/workspaces/{wsId}/databases/{dbId}` | 상세(password 마스킹) |
 | `GET` | `/api/v1/workspaces/{wsId}/databases/{dbId}/cdc-readiness` | CDC 준비도 점검 |
+| `GET` | `/api/v1/workspaces/{wsId}/databases/{dbId}/sink-readiness` | Sink 준비도 점검 |
 | `GET` | `/api/v1/workspaces/{wsId}/databases/{dbId}/schema` | 스키마(FR-016) |
 | `GET` | `/api/v1/workspaces/{wsId}/databases/{dbId}/metrics` | 지표(FR-017) |
 | `GET` | `/api/v1/workspaces/{wsId}/databases/{dbId}/pipelines` | 연결된 파이프라인 목록(FR-018) |
+
+DTO 정본:
+
+| API | Request | Response |
+| --- | --- | --- |
+| connection-test | `engine`, `host`, `port`, `dbName`, `user`, `password` | `success`, `reason`, `message`, `latencyMs`. 실패도 HTTP 200으로 분류 결과를 반환 |
+| register | `name`, `engine`, `host`, `port`, `dbName`, `username`, `password` | `id`, `name`, `engine`, `host`, `port`, `dbName`, `username`, `password="****"`, `cdcReadinessStatus`, `sinkReadinessStatus`, `connectionStatus`, `connectionError`, `connectionCheckedAt`, `roles`, `createdAt` |

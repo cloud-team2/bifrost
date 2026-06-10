@@ -6,9 +6,9 @@
 
 ## 1. 설계 원칙
 
-1. **상태 쓰기의 단일 출처는 `PipelineStatusService`**. Watcher·폴링·헬스 프로브·사용자 조치가 동시에 들어와도 이 서비스의 `recompute`/`transition` 한 경로로만 파이프라인 상태가 바뀐다(일관성·감사·SSE 일원화).
+1. **상태 쓰기 경로**: 자동 전이(Watcher·헬스 프로브·timeout)는 `PipelineStatusServiceImpl`이 처리한다. 현재 사용자 pause/resume은 `PipelineService`가 직접 pipeline status를 저장한다.
 2. **상태는 "등록 시점 값"이 아니라 "현재 실제 상태"를 반영해야 한다.** DB 연결은 주기적으로 프로브하고, connector 상태는 watch로 갱신한다.
-3. **삭제는 잔재를 남기지 않는다.** KafkaConnector CR은 반드시 제거(고아 CR 0 보장), Kafka 토픽·consumer group도 정리한다.
+3. **삭제는 잔재를 줄인다.** 결정적 이름의 KafkaConnector CR은 제거하고 pid 접두사 sweep으로 보강한다. sweep 실패와 Kafka 토픽·consumer group 정리는 best-effort 경로가 있어 잔재 0건을 트랜잭션으로 보장하지는 않는다.
 4. **실패는 원인을 특정해 보여준다.** 파이프라인이 `error`면 "어디가" 원인인지(DB/connector) 메시지로 노출한다.
 
 ## 2. 파이프라인 상태 = f(connector, connect, cluster, db)
@@ -86,19 +86,19 @@ message = (next == error)      ? (dbReason ?? firstConnectorError)
 
 ```text
 1) provisioning.delete(ref)                 # KafkaConnector CR 삭제 (Source[+Sink] + pid 접두사 sweep)
-     └ 반드시 성공해야 함 — 실패 시 예외가 트랜잭션을 롤백 → 행이 남아 다음 시도에서 재정리
-       ⇒ 고아 KafkaConnector CR이 절대 남지 않는다(#155)
+     └ 결정적 이름 삭제는 수행하되, pid 접두사 sweep 조회 실패는 warn log 후 진행 가능
+       ⇒ 고아 KafkaConnector CR 0건을 트랜잭션으로 보장하지는 않는다(#155)
 2) kafkaResourceCleaner.deleteTopicAndSinkGroup(topic, pid)   # best-effort (#200)
      ① sink consumer group(connect-<pid>-sink)을 "비워질 때까지" 재시도하며 삭제
      ② 그 다음 토픽 삭제
 3) connector 행 삭제 → pipeline 행 삭제 → event/audit
 ```
 
-- **CR 정리는 강제(롤백 보장), Kafka 토픽·group 정리는 best-effort**(Kafka 일시 장애가 삭제 자체를 막지 않게). 토픽·group은 수동적 데이터라 잠시 남아도 위험하지 않다.
+- **CR 정리는 결정적 이름 삭제 + best-effort pid 접두사 sweep**, Kafka 토픽·group 정리도 best-effort다(Kafka 일시 장애가 삭제 자체를 막지 않게). 토픽·group은 수동적 데이터라 잠시 남아도 위험하지 않다.
 - **순서가 중요하다**(라이브 검증으로 확인, #200):
   - CR을 막 지운 직후엔 sink consumer가 아직 group에 남아 있어, group을 바로 지우면 `GroupNotEmptyException`. → consumer가 빠질 때까지 재시도(6회·1.2초).
   - consumer가 남은 채 토픽을 지우면, 빠져나가는 consumer의 메타데이터 요청이 `auto.create.topics.enable=true` 환경에서 **빈 토픽을 즉시 재생성**한다. → group을 먼저 비우고 **토픽은 맨 마지막**에 지운다.
-- **삭제 정책 = 토픽·group 항상 삭제**(완전 정리). 단, EDA(fan-out) 토픽을 외부 컨슈머가 구독 중이면 그 컨슈머는 끊긴다(합의된 트레이드오프).
+- **삭제 정책 = 토픽·group 정리 시도**. 현재 `KafkaResourceCleaner`는 group/topic 삭제 실패를 warn log로 남기고 진행할 수 있다. EDA(fan-out) 토픽을 외부 컨슈머가 구독 중이면 그 컨슈머는 끊길 수 있다(합의된 트레이드오프).
 
 > **아직 남는 잔재(개선 대상)**: 삭제는 KafkaConnector CR·토픽·sink consumer group을 정리하지만, **PostgreSQL source의 publication·replication slot**은 아직 정리하지 않는다(`bif_{project}_{pid}_pub` 등이 누적). 후속 작업으로 source DB 측 정리를 추가한다.
 

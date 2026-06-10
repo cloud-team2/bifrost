@@ -71,7 +71,7 @@ RCA Agent는 [§8 Root Cause Catalog](catalog/catalog-root-causes.md#8-catalog-r
 
 모든 분석 단계는 먼저 evidence를 수집한 뒤 판단한다.
 
-State에는 원문을 inline으로 넣지 않는다. 로그 원문, metric query 결과, trace, event payload는 Evidence Store에 저장하고 State에는 `evidence_id`, `store_ref`, `summary`, `redaction_status`만 둔다.
+State에는 원문을 inline으로 넣지 않는다. 현재 Retrieval은 synthetic `store_ref`와 summary metadata를 State에 남기며, raw evidence 저장·hydrate는 아직 구현되어 있지 않다.
 
 세부 schema는 [§14 State Schema](contract/contract-state-schema.md#14-contract-state-schema)를 따른다.
 
@@ -90,14 +90,7 @@ State에는 원문을 inline으로 넣지 않는다. 로그 원문, metric query
 
 #### 3.4 검증 실패는 정상 경로
 
-검증 실패는 예외가 아니라 workflow의 일부다.
-
-- evidence가 부족하면 Retrieval로 돌아간다.
-- incident scope가 불명확하면 Classifier로 돌아간다.
-- action 위험도가 높으면 Remediation을 수정한다.
-- Verifier가 `needs_revision`을 반환하면 책임 Agent로 되돌아간다.
-
-자세한 분기 규칙은 [§15 Workflow Control](contract/contract-workflow-control.md#15-contract-workflow-control)에 둔다.
+검증 실패는 예외가 아니라 workflow의 일부라는 설계 원칙은 유지한다. 다만 현재 구현은 static transition으로 `verifier` 뒤 항상 `report`로 진행하고, Verifier status에 따른 Retrieval/Classifier/Remediation 되돌림은 아직 없다. 자세한 현재 분기 상태는 [§15 Workflow Control](contract/contract-workflow-control.md#15-contract-workflow-control)에 둔다.
 
 ### 4. Alert와 Incident 상관관계
 
@@ -162,7 +155,7 @@ Router
 
 Classifier는 Retrieval이 수집한 evidence summary를 사용하므로 Retrieval 뒤에 둔다.
 
-이 순서는 "항상 전체를 실행한다"는 뜻이 아니다. Router는 매 사용자 메시지마다 mode를 재판정하고, 기존 run State가 유효하면 재사용해 필요한 단계만 실행한다. `incident_analysis`는 기본적으로 원인까지만 보고하고(`diagnose_only`), 조치 후보 생성과 실행은 사용자가 요청할 때만 진행한다. 단순 질의·승인 처리·조치 실행은 더 짧은 경로를 탄다. 의도별 최소 실행 단계는 [§15 Workflow Control](contract/contract-workflow-control.md#15-contract-workflow-control)를 따른다.
+현재 구현은 Router가 매 사용자 메시지마다 mode를 재판정하고, 기존 run State를 복원해 재사용하지 않는다. `incident_analysis`는 기본적으로 원인까지만 보고하고(`diagnose_only`), 조치 후보 생성과 실행은 transition table에 따라 별도 mode에서 처리한다. 실제 단계 순서는 [§15 Workflow Control](contract/contract-workflow-control.md#15-contract-workflow-control)의 현재 구현 메모를 따른다.
 
 메인 workflow와 실패 시 되돌림 규칙은 [§15 Workflow Control](contract/contract-workflow-control.md#15-contract-workflow-control)를 기준으로 한다.
 

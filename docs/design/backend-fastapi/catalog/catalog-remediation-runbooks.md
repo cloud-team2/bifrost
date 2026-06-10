@@ -21,6 +21,8 @@
 
 Runbook의 `Action`은 항상 Spring Boot mutation tool을 뜻하지 않는다. 추가 evidence 수집은 `workflow_action`, 고객사/플랫폼 전달은 `escalation`, 알림은 `notification`, 여러 조치 후보로 분해해야 하는 의도는 `composite_action`으로 둔다. 실제 실행 가능한 단일 tool은 [§4 Tool Catalog](../tool-catalog.md#4-tool-catalog)의 `runtime_tool` catalog에 등록되어야 한다.
 
+현재 코드에는 legacy action name이 남아 있을 수 있다. 예를 들어 `restart_connector_task` action template은 실행 tool name으로 `restart_connector`를 사용한다. 실제 Spring endpoint에 넘기는 값은 `tool_name`과 Tool Registry definition이 정본이다.
+
 ### 3. Root Cause Coverage Matrix
 
 이 표는 [§8 Root Cause Catalog](catalog-root-causes.md#8-catalog-root-cause)의 모든 `root_cause_id`에 대해 v1에서 Remediation Agent가 어떤 수준의 대응 후보를 만들 수 있는지 정의한다. 상세 runbook이 없는 root cause라도 이 표의 `v1 처리`를 따라야 하며, 표에 없는 root cause에 대해 Remediation Agent가 임의 action을 만들면 안 된다.
@@ -228,8 +230,8 @@ Unknown 상태에서는 mutation action을 만들지 않는다.
   "root_cause_id": "CONNECTOR_TASK_FAILED",
   "action_name": "restart_connector_task",
   "action_type": "runtime_tool",
-  "tool_name": "restart_connector_task",
-  "risk": "medium",
+  "tool_name": "restart_connector",
+  "risk": "high",
   "requires_human_approval": true,
   "reason": "connector task is FAILED and no schema/config regression evidence found",
   "expected_effect": "task restart may clear transient failure",
@@ -244,7 +246,7 @@ Action type 예시:
 
 | Action | action_type | 해석 |
 | --- | --- | --- |
-| `collect_connector_trace` | `workflow_action` | `get_connector_task_trace`와 관련 로그 수집 계획 |
+| `collect_connector_trace` | `workflow_action` | `get_traces`, `search_logs`, `get_connector_status` 수집 계획 |
 | `pause_low_priority_pipeline` | `composite_action` | 대상 pipeline을 선택한 뒤 `pause_pipeline` 후보로 분해 |
 | `escalate_to_customer_owner` | `escalation` | evidence summary를 고객사 owner에게 전달 |
 | `send_operator_notification` | `notification` | 운영자 알림 생성 |

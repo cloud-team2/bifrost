@@ -1,6 +1,6 @@
 # FastAPI Agent — Server Design (§2)
 
-> 요약은 [overview.md](./overview.md). 판단 원리는 [agent-principles.md](./agent-principles.md). 식별자: 내부 API `project_id`=프론트 `workspace_id`(v1 동일).
+> 요약은 [overview.md](./overview.md). 판단 원리는 [agent-principles.md](./agent-principles.md). 식별자: agentdb `project_id`는 현재 프론트 `workspace_id` UUID를 저장한다. Spring `/internal/ops/projects/{projectId}`는 대부분 workspace `projectKey`/namespace slug를 기대하므로 현재 FastAPI tool registry에는 UUID↔projectKey 매핑 gap이 있다.
 
 ## 2. Server Design
 
@@ -31,7 +31,7 @@ FastAPI가 담당한다.
 - Evidence metadata 관리
 - Tool Client Registry 관리
 - Spring Boot Operations API 호출
-- SSE/WebSocket event streaming
+- SSE event streaming
 - approval/change management 대기 상태 관리
 - Verifier와 Report 실행
 
@@ -51,14 +51,14 @@ FastAPI가 담당하지 않는다.
 app/
   api/                       # 라우트 = api.md 표면(§5~§17)과 1:1
     routes_health.py         #   health/ready/version/capabilities (§5)
-    routes_agent.py          #   runs·chat·plan·incidents/analyze (§6)
+    routes_agent.py          #   runs create/get (§6). chat·plan·incidents/analyze route 없음
     routes_runs.py           #   run 조회·state/timeline·steps·actions (§6·§8)
-    routes_events.py         #   SSE stream·history (§7)
+    routes_events.py         #   SSE stream (§7). history route 없음
     routes_evidence.py       #   evidence 조회·hydrate (§9)
     routes_approvals.py      #   approval facade (§10)
     routes_change.py         #   change management (§11)
-    routes_actions.py        #   action execution·verify (§12)
-    routes_reports.py        #   report·preview·regenerate (§13)
+    routes_actions.py        #   action run/approval-decision facade + run actions summary (§12). execute/verify route 없음
+    routes_reports.py        #   report get/list (§13). preview/regenerate route 없음
     routes_catalogs.py       #   catalog/tool metadata (§15)
     routes_feedback.py       #   feedback·audit UI 요약 (§16)
     routes_admin.py          #   models·dependencies·replay·reload (§17)
@@ -92,7 +92,7 @@ app/
       policy_guard.py
       executor.py
       approval_gate.py
-      change_management_gate.py
+      change_gate.py
     guards.py
   tools/
     registry.py
@@ -119,7 +119,7 @@ app/
   knowledge/                 # RAG (Knowledge Vector Store)
     vector_store.py          #   pgvector client (또는 외부 벡터 DB)
     embedder.py
-    indexer.py               #   runbook/문서 임베딩 인덱싱(배치)
+    indexer.py               #   knowledge_chunk/pgvector 인덱싱(배치)
   streaming/
     event_bus.py
     sse.py
@@ -135,6 +135,8 @@ app/
 
 `api/` 라우트는 [api.md](../../api/fastapi.md) 표면(§5~§17)과 1:1로 맞춘다(run-scoped state/timeline·steps·actions는 `routes_runs`가 묶는다). `catalogs/`는 failure type, root cause, evidence matrix, runbook, policy처럼 운영 기준이 되는 정적 계약을 담고, `schemas/`는 State·streaming event·structured output·tool I/O·API DTO 같은 **공유 검증 schema**를 담아 Agent 구현 파일 안에 상수와 모델이 흩어지지 않게 한다(에이전트 고유 output schema도 여기 둔다).
 
+현재 `main.py` mount 기준으로 health, agent, runs, events, actions, approvals, change, reports, evidence, catalogs route는 외부 API에 연결되어 있다. `routes_admin.py`와 `routes_feedback.py`는 파일이 있어도 현재 app에 mount되지 않는다.
+
 ### 4. State 관리
 
 State는 Agent workflow의 단일 공유 컨텍스트다. FastAPI는 State namespace와 patch version을 관리한다.
@@ -144,7 +146,7 @@ State는 Agent workflow의 단일 공유 컨텍스트다. FastAPI는 State names
 - raw evidence는 State에 넣지 않는다.
 - Agent는 자기 namespace만 수정한다.
 - State 변경은 patch로 append한다.
-- Verifier가 승인한 내용만 Report가 출력한다.
+- 현재 runner는 verifier 결과와 무관하게 Report를 생성한다. `report_snapshot.verified`만 verifier 승인 여부를 표시한다.
 
 상세 schema는 [§14 State Schema](contract/contract-state-schema.md#14-contract-state-schema)를 따른다.
 
@@ -234,7 +236,7 @@ FastAPI는 성격이 다른 **세 종류의 저장소**를 쓴다(운영 raw dat
 | run metadata | run 조회와 재개 | `agent_run` |
 | state patch | workflow replay와 audit(append-only) | `state_patch` |
 | event log | SSE 재연결(resume) | `run_event` |
-| approval 연계 | 승인 대기 상태(Spring facade) | `approval_link` |
+| approval 연계 | 승인 대기 상태(Spring facade) | 현재 마이그레이션 테이블 없음. repository factory는 in-memory 구현을 반환 |
 | report snapshot | 최종 응답 재조회 | `report_snapshot` |
 
 **ERD**
@@ -243,15 +245,14 @@ FastAPI는 성격이 다른 **세 종류의 저장소**를 쓴다(운영 raw dat
 erDiagram
     agent_run ||--o{ state_patch     : "append-only State"
     agent_run ||--o{ run_event       : "SSE replay"
-    agent_run ||--o{ approval_link    : "facade(SoT=Spring)"
     agent_run ||--o{ report_snapshot  : "최종 응답"
 
     agent_run {
         text   run_id PK
-        uuid   project_id "= workspace_id (Spring metadb 논리 참조)"
+        uuid   project_id "현재 run 생성 입력 workspace UUID; internal-ops namespace와 다름"
         text   mode "simple_query/incident_analysis/action_execution/approval_decision"
-        bool   remediation_requested
-        text   incident_id "Spring incident 논리 참조(nullable)"
+        bool   remediation_requested "repository field. 현재 create_run route는 request 값을 persistence에 넘기지 않아 기본 false로 저장"
+        text   incident_id "Spring incident 논리 참조(nullable). 현재 create_run route는 request 값을 persistence에 넘기지 않아 null로 저장"
         text   status "running/waiting_for_approval/completed/failed/cancelled"
         text   catalog_version "replay 재현 기준"
     }
@@ -272,24 +273,16 @@ erDiagram
         text   message "사용자 표시용 요약"
         jsonb  payload "민감정보·raw 금지(nullable)"
     }
-    approval_link {
-        uuid   id PK
-        text   run_id FK
-        text   action_id
-        text   approval_id "Spring approval id(원본)"
-        text   params_hash "표시·precheck용"
-        text   status_cache "Spring 응답 캐시: pending/approved/rejected/expired"
-    }
     report_snapshot {
         uuid   id PK
         text   run_id FK
         text   root_cause_id "§8 catalog id(nullable)"
         bool   verified "Verifier approved_for_final_response"
-        jsonb  body "final_response(§17) 스냅샷"
+        jsonb  body "{\"answer\",\"mode\",\"evidence\"}"
     }
 ```
 
-> 텍스트 요약: `agent_run`이 `state_patch`(State 변경 이력)·`run_event`(SSE 재연결)·`approval_link`(승인 facade)·`report_snapshot`(최종 응답)을 1:N으로 소유한다. `project_id`/`incident_id`/`approval_id`/evidence `store_ref`는 모두 Spring `metadb`로 가는 **논리 참조**이며 DB FK를 걸지 않는다(서비스 경계).
+> 텍스트 요약: `agent_run`이 `state_patch`(State 변경 이력)·`run_event`(SSE 재연결)·`report_snapshot`(최종 응답)을 1:N으로 소유한다. approval link는 현재 persistent table이 아니라 in-memory repository 상태다. `project_id`/`incident_id`/`approval_id`/evidence `store_ref`는 모두 Spring `metadb`로 가는 **논리 참조**이며 DB FK를 걸지 않는다(서비스 경계).
 
 **테이블**
 
@@ -298,11 +291,11 @@ erDiagram
 | 컬럼 | 타입 | 설명 |
 | --- | --- | --- |
 | `run_id` | text PK | 예: `run_20260601_001` |
-| `project_id` | uuid | = `workspace_id`(scope). Spring `metadb` workspace 논리 참조 |
+| `project_id` | uuid | 현재 run 생성 경로가 받는 workspace UUID. FastAPI registry가 이 값을 internal-ops path에 그대로 넣으면 Spring의 namespace lookup과 맞지 않는다(`list_alerts`만 UUID fallback) |
 | `requested_by` | text | 요청 사용자 |
-| `mode` | text | `simple_query`/`incident_analysis`/`action_execution`/`approval_decision`(현재 turn 기준) |
-| `remediation_requested` | bool | 조치 후보 생성 요청 여부(기본 false=diagnose_only) |
-| `incident_id` | text null | 분석 대상 Spring incident 논리 참조 |
+| `mode` | text | run 생성 route가 넘긴 mode/default가 저장된다. workflow runner는 user message를 router로 다시 판정하며, 현재 `agent_run.mode`를 갱신하지 않는다 |
+| `remediation_requested` | bool | repository field. 현재 `POST /api/v1/agent/runs` route는 request 값을 persistence에 넘기지 않아 기본 false로 저장 |
+| `incident_id` | text null | Spring incident 논리 참조. 현재 create-run route는 request 값을 persistence에 넘기지 않아 null로 저장 |
 | `status` | text | `running`/`waiting_for_approval`/`completed`/`failed`/`cancelled` |
 | `current_agent` | text null | 진행 중 단계 |
 | `catalog_version` | text | tool/catalog 버전(replay 재현 기준, [§4.18](tool-catalog.md#4-tool-catalog)) |
@@ -315,7 +308,7 @@ erDiagram
 | `id` | bigint PK | |
 | `run_id` | text FK | → `agent_run` |
 | `seq` | int | run 내 순서. `unique(run_id, seq)` |
-| `namespace` | text | `run`/`incident`/`correlation`/`evidence`/`analysis`/`actions`/`verification`/`report` |
+| `namespace` | text | 현재 코드에서 관측되는 값: `run`, `run.plan`, `incident`, `correlation`, `evidence`, `analysis`, `actions`, `verification`, `report` |
 | `author` | text | 작성 주체(Agent 또는 Supervisor). 자기 namespace만 기록 |
 | `op` | text | `append`/`version`(수정)/`tombstone`(삭제 대체) |
 | `path` | text | namespace 내 경로 |
@@ -335,19 +328,9 @@ erDiagram
 | `payload` | jsonb null | 부가 컨텍스트(secret·connection string·원문 로그·내부 prompt 금지) |
 | `created_at` | timestamptz | |
 
-**`approval_link`** — approval facade 연계 (**SoT는 Spring**, [Spring api §19](../../api/springboot.md#19-approval-api))
+**approval link** — approval facade 연계
 
-| 컬럼 | 타입 | 설명 |
-| --- | --- | --- |
-| `id` | uuid PK | |
-| `run_id` | text FK | → `agent_run` |
-| `action_id` | text | State `actions` 후보의 action |
-| `approval_id` | text | Spring approval id(원본) |
-| `params_hash` | text | UI 표시·실행 직전 precheck용(검증 원본은 Spring) |
-| `status_cache` | text | Spring 응답 캐시 `pending`/`approved`/`rejected`/`expired` |
-| `created_at` `updated_at` | timestamptz | |
-
-> approval record(상태·params hash·승인자·만료·single-use)의 **원본·검증·감사는 Spring**이 집행한다. 이 표는 run↔approval 연계와 UI 표시용 캐시이며, 동일 approval을 양쪽에 중복 생성하지 않는다([§핵심 동작 Approval SoT](overview.md#핵심-동작)).
+현재 Alembic migration은 `approval_link` 테이블을 만들지 않는다. `approval_link_repository` factory도 persistent backend 대신 in-memory repository를 반환하므로 run↔approval 연계는 프로세스 메모리 상태다. approval record(상태·params hash·승인자·만료·single-use)의 원본·검증·감사는 Spring facade가 담당한다.
 
 **`report_snapshot`** — 최종 report 재조회 (Report API [api.md §13](../../api/fastapi.md))
 
@@ -359,8 +342,11 @@ erDiagram
 | `root_cause_id` | text null | [§8 Root Cause Catalog](catalog/catalog-root-causes.md#8-catalog-root-cause) id |
 | `confidence` | numeric null | |
 | `verified` | bool | Verifier `approved_for_final_response`=true만 노출 |
-| `body` | jsonb | `final_response`([§17](contract/contract-output-schemas.md#17-contract-output-schemas)) 스냅샷 |
+| `body` | jsonb | 현재 workflow runner가 저장하는 `{"answer", "mode", "evidence"}` JSON. `run_report()` 자체는 plain string answer를 반환한다. |
 | `created_at` | timestamptz | |
+
+Repository의 최신/목록 조회는 기본적으로 `verified=true` snapshot만 반환한다. Workflow runner는 verifier 결과 중 `approved_for_final_response`가 하나 이상 있을 때만 `verified=true`로 저장한다.
+현재 workflow runner는 report snapshot 생성 시 `incident_id`를 넘기지 않으므로 workflow가 만든 snapshot의 `incident_id`는 null이다. `GET /api/v1/incidents/{incident_id}/reports` route와 repository filter는 존재하지만, 현재 runner 산출물만으로는 incident별 목록이 채워지지 않는다.
 
 #### 9.3 Knowledge Vector Store (RAG)
 
@@ -377,15 +363,16 @@ Retrieval 에이전트의 **문서 RAG**([§1 Agent Principles](agent-principles
 | `doc_type` | text | `runbook`/`glossary`/`ops_doc`/`catalog`/`incident_report` |
 | `title` | text | |
 | `content` | text | 청크 본문(큐레이션 지식; 운영 raw 아님) |
-| `embedding` | vector(N) | 차원 N은 임베딩 모델에 맞춰 고정 |
+| `embedding` | vector(1536) | 현재 Alembic migration 기준 |
 | `scope` | text | `global`(플랫폼 공통) 또는 `project:{project_id}`(과거 인시던트 등) |
 | `doc_version` | text | 문서/카탈로그 버전(재인덱싱 기준) |
 | `metadata` | jsonb | 태그·링크 |
 | `updated_at` | timestamptz | |
 
-- 인덱스: `embedding`에 hnsw/ivfflat(pgvector), `scope`·`doc_type` 필터.
-- 임베딩 인덱싱은 오프라인 배치(`knowledge/indexer`). runbook·catalog·문서 버전이 바뀌면 재인덱싱한다.
+- 인덱스: `embedding` ivfflat cosine index, `scope`·`doc_type`, `doc_id`·`doc_version` 필터.
+- 임베딩 인덱싱은 오프라인 배치(`knowledge/indexer`). 현재 indexer는 runbook catalog에서 `_RUNBOOKS` attribute를 찾지만 실제 catalog는 `ROOT_CAUSE_RUNBOOKS`를 노출하므로, 그 경로로는 runbook 문서가 인덱싱되지 않는다. vector store와 chunk upsert 자체는 구현되어 있다.
 - `scope=project:{id}` 청크는 해당 project로만 검색되게 테넌시 격리한다.
+- `store_ref`는 `knowledge://{scope}/{doc_id}/{chunk_id}` 형식으로 생성한다.
 
 #### 9.4 운영 규칙
 
@@ -395,12 +382,12 @@ Retrieval 에이전트의 **문서 RAG**([§1 Agent Principles](agent-principles
 4. **FK 경계**: `project_id`·`incident_id`·`approval_id`·evidence `store_ref`는 Spring 소유라 **DB FK를 걸지 않는다**(논리 참조, 유효성은 API로 검증 — [ADR 0004](../../adr/0004-monorepo-monolith.md)).
 5. **retention**: 오래된 run의 `state_patch`/`run_event`는 보존 정책에 따라 아카이브·tombstone한다(무한 적재 금지).
 6. **replay 재현성**: `agent_run.catalog_version`을 고정해 동일 catalog 기준으로 run을 재생한다([admin replay api.md §17](../../api/fastapi.md)).
-7. **지식 코퍼스 인덱싱·격리**: Knowledge Vector Store는 runbook/catalog/문서 버전 변경 시 재인덱싱하고, `scope=project:*` 청크는 해당 project로만 검색되게 격리한다.
+7. **지식 코퍼스 인덱싱·격리**: Knowledge Vector Store는 `knowledge_chunk.embedding vector(1536)` 기반으로 검색한다. 현재 `knowledge.indexer._runbook_documents()`는 `runbook_catalog._RUNBOOKS`를 조회하지만 실제 catalog는 `ROOT_CAUSE_RUNBOOKS`로 노출되어, runbook corpus 인덱싱 경로는 그대로 동작하지 않는다. `scope=project:*` 청크는 해당 project로만 검색되게 격리한다.
 
 ### 10. 보안
 
-1. Frontend 사용자는 FastAPI에서 인증한다.
-2. Spring Boot 호출은 service-to-service identity로 제한한다.
+1. 현재 FastAPI route에는 frontend 사용자 JWT 검증 dependency가 연결되어 있지 않다.
+2. 현재 Spring `/internal/ops/**`는 `permitAll`이고 FastAPI는 agent context header만 보낸다. service-to-service identity gate는 구현되어 있지 않다.
 3. LLM output으로 API path를 직접 만들지 않는다.
 4. tool allowlist 밖 요청은 거부한다.
 5. Secret, token, connection string은 prompt와 report에 넣지 않는다.
@@ -414,7 +401,7 @@ Retrieval 에이전트의 **문서 RAG**([§1 Agent Principles](agent-principles
 - approval 없는 mutation 실행 차단
 - Spring Boot error envelope 처리
 - SSE reconnect 시 event resume 가능
-- Verifier 미통과 report 출력 차단
+- 현재 Verifier 미통과 report를 차단하지 않고 `report_snapshot.verified=false`로 저장
 
 ### 12. 결론
 

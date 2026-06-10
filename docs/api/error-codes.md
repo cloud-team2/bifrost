@@ -18,7 +18,45 @@ Bifrost API가 반환하는 에러 코드의 단일 출처. 코드 추가/변경
 
 - `code` (string): 본 문서에 정의된 비즈니스 에러 코드 번호 (문자열로 직렬화)
 - `message` (string): 한국어 사용자 메시지 (그대로 노출 가능)
-- `details` (array, optional): 필드별 validation 오류
+- `details` (array): 필드별 validation 오류. 오류 상세가 없으면 빈 배열이다.
+
+## Internal Ops 문자열 코드
+
+`/internal/ops/**`의 agent-facing API는 플랫폼 숫자형 `ErrorResponse`가 아니라 `OpsEnvelope`를 사용한다. 이 표면의 실패 코드는 문자열이며 `error.code`, `error.message`, `error.retryable`, `error.required_action`에 담긴다.
+
+```json
+{
+  "ok": false,
+  "request_id": "req-1",
+  "operation": "restart_connector",
+  "evidence": [],
+  "error": {
+    "code": "APPROVAL_REQUIRED",
+    "message": "approval is required for mutation",
+    "retryable": false,
+    "required_action": "request_approval"
+  }
+}
+```
+
+현재 Spring 구현 기준 문자열 코드는 다음과 같다.
+
+| Code | HTTP | 주 사용처 |
+| --- | --- | --- |
+| `VALIDATION_FAILED` | 400 | mutation 필수 header 누락, `list_alerts` limit 형식/범위 오류 |
+| `APPROVAL_REQUIRED` | 403 | `X-Approval-Id` 누락, approval status가 승인 상태가 아님 |
+| `APPROVAL_EXPIRED` | 403 | mutation approval 만료. 내부 mutation mapper는 expired approval도 forbidden response로 반환 |
+| `APPROVAL_SCOPE_MISMATCH` | 403 | approval tenant/operation/params hash/single-use replay scope 불일치 |
+| `CONFLICT` | 409 | idempotency key 처리 중, 같은 key의 다른 operation/params, approval already used |
+| `RESOURCE_NOT_FOUND` | 404 | internal project/workspace 또는 alert projection 대상 없음 |
+| `RESOURCE_NOT_OWNED_BY_PROJECT` | 403 | connector/resource가 `{projectId}` workspace 소유가 아님 |
+| `CONNECTOR_NOT_FOUND` | 404 | mutation 대상 Kafka connector 없음 |
+| `CONSUMER_GROUP_NOT_FOUND` | 404 | mutation 대상 Kafka Connect-managed consumer group 없음 |
+| `TIMEOUT` | 504 | Kafka Connect REST timeout |
+| `UPSTREAM_UNAVAILABLE` | 502 | Kafka Connect REST/상류 시스템 호출 실패 |
+| `INTERNAL_ERROR` | 500 | 내부 운영 API fallback 오류 |
+
+Approval/Change Ticket controller가 명시적으로 `OpsEnvelope`를 반환하는 경로는 위 문자열 envelope을 따른다. Bean Validation, JSON parse, 일부 `ApiException` fallback은 전역 `GlobalExceptionHandler`를 거쳐 숫자형 `ErrorResponse`로 내려갈 수 있으므로, 클라이언트는 `/internal/ops/**`에서 두 envelope을 모두 허용해야 한다.
 
 ## 코드 번호 규칙
 
