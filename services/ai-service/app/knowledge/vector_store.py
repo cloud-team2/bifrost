@@ -198,6 +198,12 @@ class PostgresVectorStore:
             return 0
 
 
+class InMemoryVectorStore:
+    async def health(self) -> bool:
+        """InMemory 는 항상 ok (테스트/로컬용)."""
+        return True
+
+
 def get_vector_store() -> PostgresVectorStore:
     return PostgresVectorStore()
 
