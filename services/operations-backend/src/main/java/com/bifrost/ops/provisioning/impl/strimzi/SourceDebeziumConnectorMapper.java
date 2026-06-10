@@ -9,6 +9,9 @@ import io.strimzi.api.kafka.model.connector.KafkaConnectorBuilder;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -34,6 +37,29 @@ public class SourceDebeziumConnectorMapper {
     public static final String CLUSTER_LABEL = "strimzi.io/cluster";
     public static final String POSTGRES_CLASS = "io.debezium.connector.postgresql.PostgresConnector";
     public static final String MARIADB_CLASS = "io.debezium.connector.mariadb.MariaDbConnector";
+    /** 데이터플레인 추적 SMT(#371/#438). 변경 이벤트마다 span 생성 + trace context를 Kafka 헤더에 주입. */
+    public static final String TRACING_SMT_TYPE = "io.debezium.transforms.tracing.ActivateTracingSpan";
+
+    /**
+     * source 커넥터 config의 transforms에 데이터플레인 tracing SMT를 on/off (per-pipeline 토글, #438).
+     * 기존 transforms(예: route)는 보존하고 {@code tracing}만 추가/제거한다.
+     */
+    public static void setTracingSmt(Map<String, Object> config, boolean enabled) {
+        String existing = config.get("transforms") == null ? "" : String.valueOf(config.get("transforms"));
+        List<String> parts = new ArrayList<>();
+        for (String p : existing.split(",")) {
+            p = p.trim();
+            if (!p.isEmpty() && !p.equals("tracing")) parts.add(p);
+        }
+        if (enabled) {
+            parts.add("tracing");
+            config.put("transforms", String.join(",", parts));
+            config.put("transforms.tracing.type", TRACING_SMT_TYPE);
+        } else {
+            config.put("transforms", String.join(",", parts));
+            config.remove("transforms.tracing.type");
+        }
+    }
 
     /** MariaDB schema history를 저장할 Kafka bootstrap. Connect 내부 접근이므로 plain 9092 사용. */
     private final String kafkaBootstrapServers;
@@ -120,8 +146,7 @@ public class SourceDebeziumConnectorMapper {
             // (전제: Connect 워커에 OTel agent. 워커 미계측 시 SMT는 사실상 no-op.)
             builder.editSpec()
                     .addToConfig("transforms", "route,tracing")
-                    .addToConfig("transforms.tracing.type",
-                            "io.debezium.transforms.tracing.ActivateTracingSpan")
+                    .addToConfig("transforms.tracing.type", TRACING_SMT_TYPE)
                     .endSpec();
         }
         return builder.build();

@@ -25,4 +25,7 @@ public interface KafkaPipelineProvisioner {
 
     /** 파이프라인이 점유한 connector CR을 삭제한다(생명주기 delete). */
     void deletePipelineResources(PipelineResourceRef resourceRef);
+
+    /** 데이터플레인 추적 SMT를 source 커넥터에 on/off (per-pipeline 토글, #438). */
+    void setSourceTracing(String connectorName, boolean enabled);
 }
