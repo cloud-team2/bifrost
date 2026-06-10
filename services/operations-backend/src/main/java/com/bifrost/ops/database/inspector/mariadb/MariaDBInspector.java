@@ -174,13 +174,17 @@ public class MariaDBInspector implements DatabaseInspector {
         List<TableInfo> result = new ArrayList<>();
         try (ResultSet rs = md.getTables(catalog, null, "%", new String[]{"TABLE"})) {
             while (rs.next()) {
-                String schema = rs.getString("TABLE_SCHEM");
+                // MariaDB/MySQL은 database를 JDBC catalog(TABLE_CAT)으로 보고하고 TABLE_SCHEM은 NULL이다.
+                // JDBC 메타데이터 호출은 catalog+null schema를 써야 하지만, 우리 모델의 schema 자리에는
+                // database를 채워야 한다(빈 schema면 파이프라인 생성 @NotBlank 검증 실패, #444).
+                String jdbcSchema = rs.getString("TABLE_SCHEM");
                 String name = rs.getString("TABLE_NAME");
-                if (isSystemSchema(schema)) continue;
-                List<ColumnInfo> cols = columns(md, catalog, schema, name);
+                if (isSystemSchema(jdbcSchema)) continue;
+                List<ColumnInfo> cols = columns(md, catalog, jdbcSchema, name);
                 boolean hasPk = cols.stream().anyMatch(ColumnInfo::isPrimaryKey);
                 List<String> pkCols = cols.stream()
                         .filter(ColumnInfo::isPrimaryKey).map(ColumnInfo::name).toList();
+                String schema = firstNonBlank(jdbcSchema, rs.getString("TABLE_CAT"), catalog);
                 result.add(new TableInfo(schema, name, 0L, hasPk, cols, pkCols));
             }
         }
@@ -261,5 +265,13 @@ public class MariaDBInspector implements DatabaseInspector {
         String s = schema.toLowerCase();
         return s.equals("information_schema") || s.equals("performance_schema")
                 || s.equals("mysql") || s.equals("sys");
+    }
+
+    /** 첫 번째 비어있지 않은 값(null·공백 제외). 모두 비면 null. */
+    private static String firstNonBlank(String... values) {
+        for (String v : values) {
+            if (v != null && !v.isBlank()) return v;
+        }
+        return null;
     }
 }
