@@ -20,6 +20,7 @@ from app.api import (
     routes_health,
     routes_reports,
 )
+from app.api import routes_runs
 from app.core.config import settings
 from app.core.db import close_pool, init_pool
 
@@ -47,6 +48,7 @@ def create_app() -> FastAPI:
     # 설계 API 표면: /api/v1
     app.include_router(routes_health.router, prefix="/api/v1", tags=["health"])
     app.include_router(routes_agent.router, prefix="/api/v1/agent", tags=["agent"])
+    app.include_router(routes_runs.router, prefix="/api/v1/agent", tags=["runs"])
     app.include_router(routes_events.router, prefix="/api/v1/agent", tags=["events"])
     app.include_router(routes_actions.router, prefix="/api/v1/agent", tags=["actions"])
     app.include_router(routes_approvals.router, prefix="/api/v1/agent", tags=["approvals"])
