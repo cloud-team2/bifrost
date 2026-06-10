@@ -91,6 +91,8 @@ PipelineStatusService.recompute(pipelineId):
 - 테이블 `pipeline`·`connector` — [data-model §3.4·§3.5](./data-model.md#4-data-model).
 - API: `GET/POST .../pipelines`·`{id}/pause|resume`·`DELETE`는 [Spring Boot API Controller Coverage](../../api/springboot.md#controller-coverage)의 `PipelineController` family를 따른다.
 - 상세 탭 read는 현재 `PipelineController`가 pipeline-domain service(`PipelineSyncService`/`PipelineTopicService`/`PipelineMessageService`)를 직접 호출한다.
+- **EDA Sync 탭**: `GET /{id}/sync-status`는 EDA(`FAN_OUT`) 파이프라인에서 `{"applicable": false, ...}` 를 반환한다(sink가 없으므로 동기화 지표 없음, #359). CDC(`DIRECT`)만 실제 row 수·delta를 반환한다.
+- **EDA 지표**: EDA 파이프라인의 핵심 지표는 `GET /{id}/metrics/source-delay`(Debezium `MilliSecondsBehindSource` 시계열). 프론트 Topic 탭에 Source Delay 차트로 표시된다. CDC의 consumer lag(`/{id}/metrics/unsynced`)은 EDA에 적용되지 않는다.
 - `GET /api/v1/workspaces/{wsId}/pipelines/{id}/connection-guide`와 `GET /api/v1/workspaces/{wsId}/pipelines/{id}/table-mapping`은 현재 `PipelineController`에 구현되어 있다.
 
 Connection Guide 응답:

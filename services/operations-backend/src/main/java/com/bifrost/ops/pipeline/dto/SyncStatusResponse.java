@@ -8,10 +8,24 @@ import java.time.Instant;
  * <p>{@code sourceRows}/{@code sinkRows}는 조회 시점에 각 DB에 {@code SELECT COUNT(*)}를 실행한
  * 실값이며, 접속 실패·테이블 미존재(생성 중) 시 {@code -1}이다. {@code delta}는 source-sink
  * 차이(미반영 추정 행수)로, 한쪽이라도 -1이면 -1이다.
+ *
+ * <p>EDA(fan-out) 파이프라인은 sink가 없어 동기화 개념이 없으므로 {@code applicable=false}로 반환된다.
+ * 이때 나머지 필드는 모두 {@code -1}이다.
  */
 public record SyncStatusResponse(
     long sourceRows,
     long sinkRows,
     long delta,
-    Instant checkedAt
-) {}
+    Instant checkedAt,
+    boolean applicable
+) {
+    /** CDC(direct) 응답 생성. */
+    public static SyncStatusResponse of(long sourceRows, long sinkRows, long delta, Instant checkedAt) {
+        return new SyncStatusResponse(sourceRows, sinkRows, delta, checkedAt, true);
+    }
+
+    /** EDA(fan-out) — sync 개념 없음. */
+    public static SyncStatusResponse notApplicable() {
+        return new SyncStatusResponse(-1, -1, -1, Instant.now(), false);
+    }
+}

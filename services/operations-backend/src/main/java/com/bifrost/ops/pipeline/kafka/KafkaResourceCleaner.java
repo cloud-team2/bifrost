@@ -1,5 +1,6 @@
 package com.bifrost.ops.pipeline.kafka;
 
+import com.bifrost.ops.provisioning.dto.PipelinePattern;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.common.errors.GroupIdNotFoundException;
 import org.apache.kafka.common.errors.GroupNotEmptyException;
@@ -47,15 +48,23 @@ public class KafkaResourceCleaner {
     }
 
     /**
-     * 이 파이프라인의 sink consumer group({@code connect-<pid>-sink})을 비워질 때까지 기다렸다
-     * 삭제하고, 그 다음 토픽을 삭제한다. 둘 다 best-effort.
+     * 파이프라인 삭제 시 Kafka 잔재를 정리한다. best-effort — 실패해도 예외를 던지지 않는다.
+     *
+     * <ul>
+     *   <li>CDC({@code DIRECT}): sink consumer group({@code connect-<pid>-sink})을 비워질 때까지
+     *       기다렸다 삭제한 뒤 토픽 삭제. group이 먼저여야 토픽 재생성이 안 된다.
+     *   <li>EDA({@code FAN_OUT}): sink connector가 없으므로 sink consumer group이 존재하지 않는다.
+     *       토픽만 삭제한다.
+     * </ul>
      */
-    public void deleteTopicAndSinkGroup(String topic, UUID pipelineId) {
+    public void deleteResources(String topic, UUID pipelineId, PipelinePattern pattern) {
         Map<String, Object> props = kafkaAdmin.getConfigurationProperties();
         try (Admin admin = Admin.create(props)) {
-            // 1) consumer가 빠질 때까지 기다렸다 group 삭제 — 토픽보다 먼저(빈 group이어야 토픽 재생성 안 됨).
-            deleteSinkGroup(admin, "connect-" + pipelineId + "-sink");
-            // 2) 토픽 삭제 — consumer가 사라진 뒤라야 auto-create로 재생성되지 않는다.
+            if (pattern == PipelinePattern.DIRECT) {
+                // CDC: sink consumer group을 먼저 제거해야 topic 재생성이 안 된다.
+                deleteSinkGroup(admin, "connect-" + pipelineId + "-sink");
+            }
+            // EDA: sink group이 없으므로 topic만 삭제한다.
             deleteTopic(admin, topic);
         } catch (Exception e) {
             log.warn("Kafka 리소스 정리 실패(무시): topic={}, pipeline={}, cause={}",

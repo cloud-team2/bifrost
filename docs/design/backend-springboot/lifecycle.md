@@ -88,9 +88,12 @@ message = (next == error)      ? (dbReason ?? firstConnectorError)
 1) provisioning.delete(ref)                 # KafkaConnector CR 삭제 (Source[+Sink] + pid 접두사 sweep)
      └ 결정적 이름 삭제는 수행하되, pid 접두사 sweep 조회 실패는 warn log 후 진행 가능
        ⇒ 고아 KafkaConnector CR 0건을 트랜잭션으로 보장하지는 않는다(#155)
-2) kafkaResourceCleaner.deleteTopicAndSinkGroup(topic, pid)   # best-effort (#200)
-     ① sink consumer group(connect-<pid>-sink)을 "비워질 때까지" 재시도하며 삭제
-     ② 그 다음 토픽 삭제
+2) kafkaResourceCleaner.deleteResources(topic, pid, pattern)   # best-effort (#200, #359)
+     CDC(DIRECT):
+       ① sink consumer group(connect-<pid>-sink)을 "비워질 때까지" 재시도하며 삭제
+       ② 그 다음 토픽 삭제
+     EDA(FAN_OUT):
+       sink connector/consumer group이 없으므로 토픽만 삭제한다 (group 삭제 시도 없음)
 3) connector 행 삭제 → pipeline 행 삭제 → event/audit
 ```
 
