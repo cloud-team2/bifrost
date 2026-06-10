@@ -266,12 +266,39 @@ function MembersSection() {
   }
 
   useEffect(() => {
-    if (wsId) reload(wsId)
+    if (!wsId) {
+      setMembers([])
+      setLoadError(null)
+      setEmail('')
+      setRole('MEMBER')
+      setBusy(false)
+      setLoading(false)
+      return
+    }
+    let alive = true
+    setLoading(true)
+    setLoadError(null)
+    api
+      .listMembers(wsId)
+      .then((data) => {
+        if (alive) setMembers(data)
+      })
+      .catch((e) => {
+        if (!alive) return
+        setMembers([])
+        setLoadError(e instanceof ApiError ? e.message : '멤버 목록을 불러오지 못했습니다')
+      })
+      .finally(() => {
+        if (alive) setLoading(false)
+      })
+    return () => {
+      alive = false
+    }
   }, [wsId])
 
   // 현재 사용자의 워크스페이스 역할로 관리 권한 판별 (OWNER/ADMIN만 변경·제거·초대)
   const myRole = members.find((m) => m.email === myEmail)?.role
-  const canManage = myRole === 'OWNER' || myRole === 'ADMIN'
+  const canManage = !!wsId && (myRole === 'OWNER' || myRole === 'ADMIN')
 
   async function invite() {
     if (!wsId) return
@@ -322,7 +349,9 @@ function MembersSection() {
     <div>
       <Head title="멤버" sub="이 프로젝트에 접근할 수 있는 사용자" />
       <Panel title="팀">
-        {loading ? (
+        {!wsId ? (
+          <div className="px-4 py-10 text-center text-[13px] text-gray-400">워크스페이스를 먼저 선택하세요.</div>
+        ) : loading ? (
           <div className="px-4 py-6 text-center text-[12.5px] text-gray-400">불러오는 중…</div>
         ) : loadError ? (
           <div className="px-4 py-6 text-center text-[12.5px] text-rose-500">{loadError}</div>
@@ -375,7 +404,7 @@ function MembersSection() {
             </tbody>
           </table>
         )}
-        {canManage && (
+        {wsId && canManage && (
           <div className="flex items-center gap-2 border-t border-gray-100 px-4 py-3">
             <input
               value={email}
@@ -401,7 +430,7 @@ function MembersSection() {
           </div>
         )}
       </Panel>
-      {!loading && !loadError && !canManage && (
+      {wsId && !loading && !loadError && !canManage && (
         <p className="mt-2 px-1 text-[11.5px] text-gray-400">
           멤버 초대·역할 변경·제거는 소유자/관리자만 가능합니다.
         </p>
@@ -410,7 +439,18 @@ function MembersSection() {
   )
 }
 
-function SettingsLoadState({ loading, error }: { loading: boolean; error: string | null }) {
+function SettingsLoadState({
+  loading,
+  error,
+  workspaceRequired = false,
+}: {
+  loading: boolean
+  error: string | null
+  workspaceRequired?: boolean
+}) {
+  if (workspaceRequired) {
+    return <div className="rounded-xl border border-gray-200 bg-white py-12 text-center text-[13px] text-gray-400">워크스페이스를 먼저 선택하세요.</div>
+  }
   if (loading) {
     return <div className="rounded-xl border border-gray-200 bg-white py-12 text-center text-[13px] text-gray-400">불러오는 중…</div>
   }
@@ -431,7 +471,14 @@ function NotificationsSection() {
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    if (!wsId) return
+    if (!wsId) {
+      setDraft(null)
+      setRecipient('')
+      setError(null)
+      setSaving(false)
+      setLoading(false)
+      return
+    }
     let alive = true
     setLoading(true)
     setError(null)
@@ -470,7 +517,7 @@ function NotificationsSection() {
     }
   }
 
-  const loadState = SettingsLoadState({ loading, error })
+  const loadState = SettingsLoadState({ loading, error, workspaceRequired: !wsId })
   if (loadState) {
     return (
       <div>
@@ -587,7 +634,15 @@ function ThresholdsSection() {
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    if (!wsId) return
+    if (!wsId) {
+      setSettings(null)
+      setWarning('')
+      setCritical('')
+      setError(null)
+      setSaving(false)
+      setLoading(false)
+      return
+    }
     let alive = true
     setLoading(true)
     setError(null)
@@ -632,7 +687,7 @@ function ThresholdsSection() {
     }
   }
 
-  const loadState = SettingsLoadState({ loading, error })
+  const loadState = SettingsLoadState({ loading, error, workspaceRequired: !wsId })
   if (loadState) {
     return (
       <div>
@@ -705,7 +760,13 @@ function AiSection() {
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    if (!wsId) return
+    if (!wsId) {
+      setPolicy(null)
+      setError(null)
+      setSaving(false)
+      setLoading(false)
+      return
+    }
     let alive = true
     setLoading(true)
     setError(null)
@@ -739,7 +800,7 @@ function AiSection() {
     }
   }
 
-  const loadState = SettingsLoadState({ loading, error })
+  const loadState = SettingsLoadState({ loading, error, workspaceRequired: !wsId })
   if (loadState) {
     return (
       <div>
@@ -837,7 +898,35 @@ export function KafkaUsersSection() {
   }
 
   useEffect(() => {
-    if (wsId) reload(wsId)
+    if (!wsId) {
+      setRows([])
+      setUsername('')
+      setSecretRef('')
+      setError(null)
+      setBusyId(null)
+      setCreating(false)
+      setLoading(false)
+      return
+    }
+    let alive = true
+    setLoading(true)
+    setError(null)
+    api
+      .listKafkaPrincipals(wsId)
+      .then((data) => {
+        if (alive) setRows(data)
+      })
+      .catch((e) => {
+        if (!alive) return
+        setRows([])
+        setError(e instanceof ApiError ? e.message : 'Kafka 사용자를 불러오지 못했습니다')
+      })
+      .finally(() => {
+        if (alive) setLoading(false)
+      })
+    return () => {
+      alive = false
+    }
   }, [wsId])
 
   async function create() {
@@ -875,7 +964,7 @@ export function KafkaUsersSection() {
     }
   }
 
-  const loadState = SettingsLoadState({ loading, error })
+  const loadState = SettingsLoadState({ loading, error, workspaceRequired: !wsId })
   if (loadState) {
     return (
       <div>
