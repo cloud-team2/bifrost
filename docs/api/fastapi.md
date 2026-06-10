@@ -79,7 +79,7 @@ Spring Boot 내부 운영 API와 governance/mutation 계약은 [Spring Boot API 
 | `RUN_NOT_FOUND` | run을 찾을 수 없음 |
 | `INCIDENT_NOT_FOUND` | incident를 찾을 수 없음 |
 | `ACTION_NOT_FOUND` | action을 찾을 수 없음 |
-| `APPROVAL_NOT_FOUND` | approval을 찾을 수 없음. 현재 approval routes는 이 code envelope 대신 plain `HTTPException` detail을 반환한다 |
+| `APPROVAL_NOT_FOUND` | approval을 찾을 수 없음. `GET /api/v1/approvals/{approval_id}`는 이 code envelope을 반환하고, approve/reject/decision shortcut route는 plain `HTTPException` detail을 반환한다 |
 | `RUN_ALREADY_CLOSED` | 완료/취소된 run에 변경 요청 |
 | `POLICY_DENIED` | 정책상 실행 차단 |
 | `SPRING_BACKEND_ERROR` | Spring Boot Operations Backend 호출 실패 |
@@ -208,8 +208,8 @@ Spring Boot 내부 운영 API와 governance/mutation 계약은 [Spring Boot API 
 | `POST` | `/api/v1/agent/approvals/{approval_id}/approve` | 구현됨 | 승인 shortcut |
 | `POST` | `/api/v1/agent/approvals/{approval_id}/reject` | 구현됨 | 거절 shortcut |
 | `POST` | `/api/v1/approvals/{approval_id}/decision` | 구현됨 | approval decision router. request body: `decision`, `comment` |
-| `GET` | `/api/v1/approvals` | 미구현 | route 없음 |
-| `GET` | `/api/v1/approvals/{approval_id}` | 미구현 | route 없음 |
+| `GET` | `/api/v1/approvals` | 구현됨 | 글로벌 approval 목록. query filter `status`(`pending\|approved\|rejected`), `project_id` 지원. `created_at` desc 정렬 |
+| `GET` | `/api/v1/approvals/{approval_id}` | 구현됨 | 단일 approval 상세(`ApprovalSummary`). 없으면 `APPROVAL_NOT_FOUND` envelope |
 | `POST` | `/api/v1/agent/runs/{run_id}/approvals/{approval_id}/decision` | 미구현 | route 없음 |
 
 현재 FastAPI approval route는 local approval-link repository만 갱신한다. Spring Boot approval facade와 mutation single-use 검증 표면은 존재하지만, FastAPI executor는 Spring mutation 호출에 `X-Approval-Id`를 전달하지 않으므로 현재 실행 경로와 연결되어 있지 않다.
