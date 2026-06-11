@@ -17,6 +17,13 @@ const commands = buildSlashCommands([
     path: '/internal/ops/projects/{project_id}/kafka/connectors/{connector_name}/status',
     params_schema: { required: ['connector_name'] },
   },
+  {
+    name: 'query_topic_partition_lag',
+    method: 'GET',
+    risk: 'read_only',
+    path: '/internal/ops/projects/{project_id}/kafka/topics/{topic_name}/partitions/{partition_id}/lag',
+    params_schema: { required: ['topic_name', 'partition_id'] },
+  },
 ])
 
 describe('routeAgentInput', () => {
@@ -62,8 +69,38 @@ describe('routeAgentInput', () => {
 
     expect(routed).toEqual({
       kind: 'slash_missing_args',
-      message: '필수 값을 입력하세요: /connectors-status <connector_name>',
+      message: 'connector_name을 입력해주세요 (사용법: /connectors-status <connector_name>)',
       input: '/connectors-status ',
+    })
+  })
+
+  it('lists multiple missing argument names in the slash guidance', () => {
+    const routed = routeAgentInput('/topics-partitions-lag', {
+      slashCommands: true,
+      slashLoading: false,
+      slashError: null,
+      commands,
+    })
+
+    expect(routed).toEqual({
+      kind: 'slash_missing_args',
+      message: 'topic_name, partition_id 값을 입력해주세요 (사용법: /topics-partitions-lag <topic_name> <partition_id>)',
+      input: '/topics-partitions-lag ',
+    })
+  })
+
+  it('preserves already provided slash args while asking for the remaining args', () => {
+    const routed = routeAgentInput('/topics-partitions-lag orders', {
+      slashCommands: true,
+      slashLoading: false,
+      slashError: null,
+      commands,
+    })
+
+    expect(routed).toEqual({
+      kind: 'slash_missing_args',
+      message: 'partition_id을 입력해주세요 (사용법: /topics-partitions-lag <topic_name> <partition_id>)',
+      input: '/topics-partitions-lag orders ',
     })
   })
 

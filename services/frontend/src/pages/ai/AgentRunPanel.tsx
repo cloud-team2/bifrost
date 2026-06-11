@@ -89,6 +89,8 @@ const DONE_PROGRESS_EVENTS: AgentStreamingEventType[] = [
   'run_started',
 ]
 const RUNNING_PROGRESS_EVENTS: AgentStreamingEventType[] = ['execution_started', 'agent_started']
+const GENERIC_HEADLINE_KEYS = ['summary', 'title', 'message', 'name', 'connector', 'pipeline', 'group', 'id']
+const GENERIC_BADGE_KEYS = new Set(['severity', 'status', 'state', 'level', 'type', 'risk', 'health', 'result'])
 
 const THEMES = {
   brand: {
@@ -178,6 +180,34 @@ interface EvidenceMsg extends ChatEvidence {
   summary: string | null
   redactionStatus: string | null
 }
+export interface RcaPreviewMsg {
+  id: number
+  kind: 'rcaPreview'
+  runId: string
+  rootCauseId: string | null
+  confidence: number | null
+  verified: boolean | null
+  message: string
+}
+export interface RemediationCandidate {
+  actionId: string
+  actionType: string | null
+  actionName: string
+  rootCauseId: string | null
+  risk: string | null
+  reason: string | null
+  expectedEffect: string | null
+  rollbackPlan: string | null
+  estimatedDuration: string | null
+  toolName: string | null
+}
+export interface RemediationMsg {
+  id: number
+  kind: 'remediation'
+  runId: string
+  message: string
+  candidates: RemediationCandidate[]
+}
 type PipelineWizardStep = 'source' | 'target' | 'table' | 'readiness' | 'created'
 type PipelineWizardLoading = 'databases' | 'schema' | 'readiness' | 'creating' | null
 interface PipelineWizardMsg {
@@ -200,7 +230,16 @@ interface PipelineWizardMsg {
   loading: PipelineWizardLoading
   error: string | null
 }
-type AgentMsg = TextMsg | StatusMsg | ProgressMsg | ToolPanelMsg | ApprovalMsg | EvidenceMsg | PipelineWizardMsg
+type AgentMsg =
+  | TextMsg
+  | StatusMsg
+  | ProgressMsg
+  | ToolPanelMsg
+  | ApprovalMsg
+  | EvidenceMsg
+  | RcaPreviewMsg
+  | RemediationMsg
+  | PipelineWizardMsg
 
 const STRUCTURED_TOOL_INTRO: Record<string, string> = {
   get_consumer_groups: 'Consumer Group의 lag 현황과 상태를 조회합니다.',
@@ -1070,17 +1109,32 @@ export function AgentRunPanel({
       return
     }
     if (event.type === 'report_preview' || event.type === 'report_preview_available') {
+      const handledRca = upsertRcaPreviewCard(event)
+      const handledRemediation = upsertRemediationCard(event)
+      if (handledRca || handledRemediation) return
       upsertAssistantText(runAnswerKey(event.run_id), event.message)
       return
     }
     if (event.type === 'partial_result') {
       const answer = payloadString(event, 'answer')
       const stage = payloadString(event, 'stage')
+      if (stage === 'rca') {
+        appendProgressStatus(event, 'done')
+        upsertRcaPreviewCard(event)
+        return
+      }
+      if (stage === 'remediation') {
+        appendProgressStatus(event, 'done')
+        upsertRemediationCard(event, true)
+        return
+      }
+      if (upsertRemediationCard(event)) {
+        appendProgressStatus(event, 'done')
+        return
+      }
       if (answer) {
         appendProgressStatus(event, 'done')
         upsertFinalAssistantAnswer(event.run_id, answer)
-      } else if (stage === 'rca') {
-        appendProgressStatus(event, 'done')
       } else appendProgressStatus(event, 'done')
       return
     }
@@ -1122,8 +1176,86 @@ export function AgentRunPanel({
       toast(failed ? 'Agent Run 실패' : 'Agent Run 완료', failed ? 'error' : 'success')
       return
     }
+    if (isRcaStageEvent(event) && event.type === 'agent_completed') {
+      appendProgressStatus(event, progressStateForEvent(event))
+      upsertRcaPreviewCard(event)
+      return
+    }
+    if (isRemediationStageEvent(event) && event.type === 'agent_completed') {
+      appendProgressStatus(event, progressStateForEvent(event))
+      upsertRemediationCard(event, true)
+      return
+    }
 
     appendProgressStatus(event, progressStateForEvent(event))
+  }
+
+  function upsertRcaPreviewCard(event: AgentRunEvent) {
+    if (!isRcaStageEvent(event)) return false
+    const rootCauseId = payloadRootCauseId(event)
+    const confidence = payloadNumber(event, 'confidence')
+    const verified = payloadBoolean(event, 'verified')
+    const message = event.message.trim()
+    updateMsgs((prev) => {
+      const existingIndex = prev.findIndex((msg): msg is RcaPreviewMsg => msg.kind === 'rcaPreview' && msg.runId === event.run_id)
+      if (existingIndex < 0) {
+        return [
+          ...prev,
+          {
+            id: ++seq.current,
+            kind: 'rcaPreview',
+            runId: event.run_id,
+            rootCauseId,
+            confidence,
+            verified,
+            message,
+          },
+        ]
+      }
+      return prev.map((msg, index) =>
+        index === existingIndex && msg.kind === 'rcaPreview'
+          ? {
+              ...msg,
+              rootCauseId: rootCauseId ?? msg.rootCauseId,
+              confidence: confidence ?? msg.confidence,
+              verified: verified ?? msg.verified,
+              message: message || msg.message,
+            }
+          : msg,
+      )
+    })
+    return true
+  }
+
+  function upsertRemediationCard(event: AgentRunEvent, allowEmpty = false) {
+    const candidates = remediationCandidatesFromPayload(event.payload)
+    if (!allowEmpty && candidates.length === 0) return false
+    const message = event.message.trim()
+    updateMsgs((prev) => {
+      const existingIndex = prev.findIndex((msg): msg is RemediationMsg => msg.kind === 'remediation' && msg.runId === event.run_id)
+      if (existingIndex < 0) {
+        return [
+          ...prev,
+          {
+            id: ++seq.current,
+            kind: 'remediation',
+            runId: event.run_id,
+            message,
+            candidates,
+          },
+        ]
+      }
+      return prev.map((msg, index) =>
+        index === existingIndex && msg.kind === 'remediation'
+          ? {
+              ...msg,
+              message: message || msg.message,
+              candidates: candidates.length > 0 ? mergeRemediationCandidates(msg.candidates, candidates) : msg.candidates,
+            }
+          : msg,
+      )
+    })
+    return true
   }
 
   function appendStatus(event: AgentRunEvent, state: StatusMsg['state']) {
@@ -1460,6 +1592,8 @@ export function AgentRunPanel({
           if (m.kind === 'evidence') {
             return <EvidenceCard key={m.id} msg={m} onOpenTrace={app.openPipelineTrace} />
           }
+          if (m.kind === 'rcaPreview') return <RcaPreviewCard key={m.id} msg={m} />
+          if (m.kind === 'remediation') return <RemediationCard key={m.id} msg={m} />
           if (m.kind === 'pipelineWizard') {
             return (
               <PipelineWizardCard
@@ -2236,6 +2370,108 @@ function EvidenceCard({
   )
 }
 
+export function RcaPreviewCard({ msg }: { msg: RcaPreviewMsg }) {
+  return (
+    <div className="rounded-xl border border-sky-200 bg-white px-3 py-2.5 text-[12px] text-gray-700">
+      <div className="mb-2 flex min-w-0 items-center gap-1.5">
+        <Icon name="search" size={13} className="shrink-0 text-sky-600" />
+        <span className="shrink-0 font-semibold text-gray-900">RCA</span>
+        {msg.rootCauseId && (
+          <span className="min-w-0 truncate rounded bg-sky-50 px-1.5 py-0.5 font-mono text-[10.5px] font-semibold text-sky-700">
+            {msg.rootCauseId}
+          </span>
+        )}
+        {msg.confidence != null && (
+          <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[10.5px] text-gray-500">
+            {Math.round(msg.confidence * 100)}%
+          </span>
+        )}
+        {msg.verified && (
+          <span className="shrink-0 rounded bg-emerald-50 px-1.5 py-0.5 text-[10.5px] font-semibold text-emerald-700">
+            verified
+          </span>
+        )}
+      </div>
+      <div className="break-words leading-relaxed text-gray-600">
+        {msg.message || (msg.rootCauseId ? '근본 원인 후보가 도착했습니다.' : '근본 원인 분석 결과를 기다리는 중입니다.')}
+      </div>
+    </div>
+  )
+}
+
+export function RemediationCard({ msg }: { msg: RemediationMsg }) {
+  return (
+    <div className="rounded-xl border border-amber-200 bg-white text-[12px] text-gray-700">
+      <div className="flex min-w-0 items-center gap-1.5 border-b border-amber-100 bg-amber-50 px-3 py-2">
+        <Icon name="shield" size={13} className="shrink-0 text-amber-700" />
+        <span className="shrink-0 font-semibold text-amber-950">권장 조치</span>
+        <span className="shrink-0 rounded bg-white px-1.5 py-0.5 font-mono text-[10.5px] font-semibold text-amber-700">
+          {msg.candidates.length}
+        </span>
+        {msg.message && <span className="min-w-0 truncate text-[11.5px] text-amber-800">{msg.message}</span>}
+      </div>
+      <div className="space-y-2 px-3 py-2.5">
+        {msg.candidates.length === 0 ? (
+          <PanelEmpty text="권장 조치 후보 데이터가 아직 없습니다." />
+        ) : (
+          msg.candidates.map((candidate, index) => (
+            <div key={`${candidate.actionId}:${index}`} className="rounded-lg border border-gray-100 bg-gray-50 px-2.5 py-2">
+              <div className="flex min-w-0 items-start gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                    <span className="break-words font-semibold text-gray-900">{candidate.actionName}</span>
+                    {candidate.risk && (
+                      <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-[10.5px] font-semibold', riskChipClass(candidate.risk))}>
+                        {candidate.risk}
+                      </span>
+                    )}
+                    {candidate.actionType && (
+                      <span className="shrink-0 rounded bg-white px-1.5 py-0.5 font-mono text-[10.5px] text-gray-500">
+                        {candidate.actionType}
+                      </span>
+                    )}
+                  </div>
+                  {candidate.reason && <div className="mt-1 break-words leading-relaxed text-gray-600">{candidate.reason}</div>}
+                  {candidate.expectedEffect && (
+                    <div className="mt-1 break-words text-[11.5px] leading-relaxed text-gray-500">
+                      기대 효과: {candidate.expectedEffect}
+                    </div>
+                  )}
+                  {candidate.rollbackPlan && (
+                    <div className="mt-1 break-words text-[11.5px] leading-relaxed text-gray-500">
+                      롤백: {candidate.rollbackPlan}
+                    </div>
+                  )}
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    <span className="max-w-full break-all rounded bg-white px-1.5 py-0.5 font-mono text-[10.5px] text-gray-500">
+                      {candidate.actionId}
+                    </span>
+                    {candidate.rootCauseId && (
+                      <span className="max-w-full break-all rounded bg-white px-1.5 py-0.5 font-mono text-[10.5px] text-gray-500">
+                        {candidate.rootCauseId}
+                      </span>
+                    )}
+                    {candidate.toolName && (
+                      <span className="max-w-full break-all rounded bg-white px-1.5 py-0.5 font-mono text-[10.5px] text-gray-500">
+                        {candidate.toolName}
+                      </span>
+                    )}
+                    {candidate.estimatedDuration && (
+                      <span className="max-w-full break-all rounded bg-white px-1.5 py-0.5 font-mono text-[10.5px] text-gray-500">
+                        {candidate.estimatedDuration}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
 function ProgressCard({
   msg,
   theme,
@@ -2378,12 +2614,140 @@ function ToolPanelCard({ msg }: { msg: ToolPanelMsg }) {
   )
 }
 
-function GenericToolResultPanel({ result }: { result: unknown }) {
+export function GenericToolResultPanel({ result }: { result: unknown }) {
   if (result == null) return <PanelEmpty text="표시할 결과가 없습니다" />
   return (
-    <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-gray-50 px-2 py-2 font-mono text-[10.5px] leading-relaxed text-gray-600">
-      {JSON.stringify(result, null, 2)}
-    </pre>
+    <div className="max-h-72 overflow-auto space-y-2 font-mono text-[11px] leading-relaxed text-gray-600">
+      <GenericToolValue value={result} depth={0} />
+    </div>
+  )
+}
+
+function GenericToolValue({ value, depth }: { value: unknown; depth: number }) {
+  if (Array.isArray(value)) return <GenericArrayValue items={value} depth={depth} />
+  const record = asRecord(value)
+  if (record) return <GenericObjectValue record={record} depth={depth} />
+  return <GenericPrimitiveBlock value={value} />
+}
+
+function GenericObjectValue({ record, depth }: { record: Record<string, unknown>; depth: number }) {
+  const entries = Object.entries(record).filter(([, value]) => value !== undefined)
+  if (entries.length === 0) return <PanelEmpty text="표시할 결과가 없습니다" />
+
+  const scalarEntries = entries.filter(([, value]) => isGenericScalar(value))
+  const nestedEntries = entries.filter(([, value]) => !isGenericScalar(value))
+
+  return (
+    <div className="space-y-2">
+      {scalarEntries.length > 0 && (
+        <div className="grid gap-1.5 sm:grid-cols-2">
+          {scalarEntries.map(([key, value]) => (
+            <GenericScalarField key={key} label={key} value={value} />
+          ))}
+        </div>
+      )}
+      {nestedEntries.map(([key, value]) => (
+        <GenericNestedSection key={key} label={key} value={value} depth={depth + 1} />
+      ))}
+    </div>
+  )
+}
+
+function GenericArrayValue({ items, depth }: { items: unknown[]; depth: number }) {
+  const visibleItems = items.filter((item) => item !== undefined)
+  if (visibleItems.length === 0) return <PanelEmpty text="표시할 항목이 없습니다" />
+
+  return (
+    <div className="space-y-1.5">
+      {visibleItems.map((item, index) => {
+        const record = asRecord(item)
+        if (record) return <GenericRecordCard key={index} record={record} index={index} depth={depth + 1} />
+        return (
+          <div key={index} className="rounded border border-gray-100 bg-gray-50 px-2 py-1.5">
+            <GenericToolValue value={item} depth={depth + 1} />
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function GenericNestedSection({ label, value, depth }: { label: string; value: unknown; depth: number }) {
+  return (
+    <section className="space-y-1">
+      <div className="text-[10.5px] font-semibold uppercase text-gray-400">{formatGenericLabel(label)}</div>
+      <GenericToolValue value={value} depth={depth} />
+    </section>
+  )
+}
+
+function GenericRecordCard({
+  record,
+  index,
+  depth,
+}: {
+  record: Record<string, unknown>
+  index: number
+  depth: number
+}) {
+  const headline = genericRecordHeadline(record, index)
+  const badges = Object.entries(record).filter(([key, value]) => isGenericBadgeKey(key) && isGenericScalar(value))
+  const entries = Object.entries(record).filter(
+    ([key, value]) => value !== undefined && key !== headline.key && !isGenericBadgeKey(key),
+  )
+  const scalarEntries = entries.filter(([, value]) => isGenericScalar(value))
+  const nestedEntries = entries.filter(([, value]) => !isGenericScalar(value))
+
+  return (
+    <article className="space-y-1.5 rounded-md border border-gray-100 bg-gray-50 px-2 py-2">
+      <div className="flex flex-wrap items-start gap-1.5">
+        <div className="min-w-0 flex-1 break-words font-semibold text-gray-700">{headline.text}</div>
+        {badges.map(([key, value]) => (
+          <GenericBadge key={key} label={key} value={value} />
+        ))}
+      </div>
+      {scalarEntries.length > 0 && (
+        <div className="grid gap-1.5 sm:grid-cols-2">
+          {scalarEntries.map(([key, value]) => (
+            <GenericScalarField key={key} label={key} value={value} compact />
+          ))}
+        </div>
+      )}
+      {nestedEntries.map(([key, value]) => (
+        <GenericNestedSection key={key} label={key} value={value} depth={depth + 1} />
+      ))}
+    </article>
+  )
+}
+
+function GenericScalarField({ label, value, compact = false }: { label: string; value: unknown; compact?: boolean }) {
+  return (
+    <div className={cn('min-w-0 rounded border border-gray-100 bg-white px-2', compact ? 'py-1' : 'py-1.5')}>
+      <div className="text-[10px] font-semibold uppercase text-gray-400">{formatGenericLabel(label)}</div>
+      <div className="mt-0.5 break-words text-gray-700">
+        {isGenericBadgeKey(label) || typeof value === 'boolean' ? (
+          <GenericBadge label={label} value={value} />
+        ) : (
+          formatGenericScalar(value)
+        )}
+      </div>
+    </div>
+  )
+}
+
+function GenericPrimitiveBlock({ value }: { value: unknown }) {
+  return (
+    <div className="break-words rounded bg-gray-50 px-2 py-2 text-gray-700">
+      {formatGenericScalar(value)}
+    </div>
+  )
+}
+
+function GenericBadge({ label, value }: { label: string; value: unknown }) {
+  return (
+    <span className={cn('inline-flex max-w-full rounded px-1.5 py-0.5 text-[10.5px] font-semibold', genericBadgeClass(label, value))}>
+      <span className="truncate">{formatGenericScalar(value)}</span>
+    </span>
   )
 }
 
@@ -2746,6 +3110,25 @@ function failureSummary(event: AgentRunEvent) {
   return event.message || error || 'Agent Run 처리 중 오류가 발생했습니다.'
 }
 
+function isRcaStageEvent(event: AgentRunEvent) {
+  const stage = payloadString(event, 'stage')?.toLowerCase()
+  const agent = event.agent?.toLowerCase()
+  return stage === 'rca' || agent === 'rca' || payloadRootCauseId(event) != null
+}
+
+function isRemediationStageEvent(event: AgentRunEvent) {
+  const stage = payloadString(event, 'stage')?.toLowerCase()
+  const agent = event.agent?.toLowerCase()
+  return stage === 'remediation' || agent === 'remediation' || remediationCandidatesFromPayload(event.payload).length > 0
+}
+
+function payloadRootCauseId(event: AgentRunEvent) {
+  return payloadString(event, 'root_cause_id')
+    ?? payloadString(event, 'rootCauseId')
+    ?? payloadString(event, 'selected_root_cause_id')
+    ?? payloadString(event, 'selectedRootCauseId')
+}
+
 function isSameApproval(msg: AgentMsg, runId: string, actionId: string, approvalId: string | null) {
   if (msg.kind !== 'approval') return false
   if (approvalId && msg.approvalId === approvalId) return true
@@ -2755,6 +3138,16 @@ function isSameApproval(msg: AgentMsg, runId: string, actionId: string, approval
 function payloadString(event: AgentRunEvent, key: string): string | null {
   const value = event.payload[key]
   return typeof value === 'string' ? value : null
+}
+
+function payloadNumber(event: AgentRunEvent, key: string): number | null {
+  const value = event.payload[key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function payloadBoolean(event: AgentRunEvent, key: string): boolean | null {
+  const value = event.payload[key]
+  return typeof value === 'boolean' ? value : null
 }
 
 function payloadRecord(event: AgentRunEvent, key: string): Record<string, unknown> | null {
@@ -2801,6 +3194,116 @@ function recordNumber(record: Record<string, unknown> | null, ...keys: string[])
     }
   }
   return null
+}
+
+function isGenericScalar(value: unknown) {
+  return value == null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+}
+
+function genericRecordHeadline(record: Record<string, unknown>, index: number) {
+  for (const key of GENERIC_HEADLINE_KEYS) {
+    const value = record[key]
+    if (isGenericScalar(value)) {
+      const text = formatGenericScalar(value)
+      if (text !== '-') return { key, text }
+    }
+  }
+  return { key: null, text: `item ${index + 1}` }
+}
+
+function isGenericBadgeKey(key: string) {
+  return GENERIC_BADGE_KEYS.has(key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase())
+}
+
+function formatGenericLabel(key: string) {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .trim()
+}
+
+function formatGenericScalar(value: unknown) {
+  if (value == null || value === '') return '-'
+  if (typeof value === 'number') return Number.isFinite(value) ? value.toLocaleString() : '-'
+  if (typeof value === 'boolean') return value ? 'true' : 'false'
+  return String(value)
+}
+
+function genericBadgeClass(label: string, value: unknown) {
+  const normalized = formatGenericScalar(value).toLowerCase()
+  if (typeof value === 'boolean') return value ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-600'
+  if (['critical', 'error', 'failed', 'failure', 'blocked', 'down', 'high'].some((token) => normalized.includes(token))) {
+    return 'bg-rose-50 text-rose-700'
+  }
+  if (['warning', 'warn', 'degraded', 'pending', 'rebalancing', 'medium'].some((token) => normalized.includes(token))) {
+    return 'bg-amber-50 text-amber-700'
+  }
+  if (['ok', 'healthy', 'running', 'success', 'succeeded', 'active', 'resolved', 'closed', 'low'].some((token) => normalized.includes(token))) {
+    return 'bg-emerald-50 text-emerald-700'
+  }
+  return isGenericBadgeKey(label) ? 'bg-sky-50 text-sky-700' : 'bg-gray-100 text-gray-600'
+}
+export function remediationCandidatesFromPayload(payload: unknown): RemediationCandidate[] {
+  const seen = new Set<string>()
+  const candidates: RemediationCandidate[] = []
+  for (const raw of actionCandidateRecords(payload)) {
+    const candidate = normalizeRemediationCandidate(raw)
+    if (!candidate) continue
+    const key = candidate.actionId || candidate.actionName
+    if (seen.has(key)) continue
+    seen.add(key)
+    candidates.push(candidate)
+  }
+  return candidates
+}
+
+function actionCandidateRecords(payload: unknown): Record<string, unknown>[] {
+  const record = asRecord(payload)
+  if (!record) return []
+  const records: Record<string, unknown>[] = []
+  for (const key of ['action_candidates', 'actionCandidates', 'candidates']) {
+    const value = record[key]
+    if (Array.isArray(value)) {
+      records.push(...value.map(asRecord).filter((item): item is Record<string, unknown> => item != null))
+    }
+  }
+  for (const key of ['final_response', 'finalResponse', 'remediation']) {
+    records.push(...actionCandidateRecords(record[key]))
+  }
+  return records
+}
+
+function normalizeRemediationCandidate(record: Record<string, unknown>): RemediationCandidate | null {
+  const id = recordString(record, 'action_id', 'actionId', 'id')
+  const actionName = recordString(record, 'action_name', 'actionName', 'name', 'label') ?? id
+  if (!actionName) return null
+  return {
+    actionId: id ?? actionName,
+    actionType: recordString(record, 'action_type', 'actionType', 'type'),
+    actionName,
+    rootCauseId: recordString(record, 'root_cause_id', 'rootCauseId'),
+    risk: recordString(record, 'risk'),
+    reason: recordString(record, 'reason', 'detail', 'description'),
+    expectedEffect: recordString(record, 'expected_effect', 'expectedEffect', 'effect'),
+    rollbackPlan: recordString(record, 'rollback_plan', 'rollbackPlan'),
+    estimatedDuration: recordString(record, 'estimated_duration', 'estimatedDuration', 'estimated_time', 'estimatedTime'),
+    toolName: recordString(record, 'tool_name', 'toolName'),
+  }
+}
+
+function mergeRemediationCandidates(current: RemediationCandidate[], next: RemediationCandidate[]) {
+  const merged = new Map<string, RemediationCandidate>()
+  for (const candidate of current) merged.set(candidate.actionId || candidate.actionName, candidate)
+  for (const candidate of next) merged.set(candidate.actionId || candidate.actionName, candidate)
+  return [...merged.values()]
+}
+
+function riskChipClass(risk: string) {
+  const normalized = risk.toLowerCase()
+  if (normalized === 'read_only' || normalized === 'low') return 'bg-emerald-50 text-emerald-700'
+  if (normalized === 'medium') return 'bg-amber-100 text-amber-800'
+  if (normalized === 'high' || normalized === 'forbidden') return 'bg-rose-50 text-rose-700'
+  return 'bg-gray-100 text-gray-600'
 }
 
 function paramChips(toolName: string, params: Record<string, unknown>): [string, unknown][] {

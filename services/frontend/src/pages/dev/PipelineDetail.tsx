@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Bar, BarChart, CartesianGrid, Cell, Tooltip, XAxis, YAxis } from 'recharts'
 import { Icon } from '../../components/Icon'
-import { MetricCard, Panel, StatusBadge } from '../../components/blocks'
+import { Panel, StatusBadge } from '../../components/blocks'
 import { TrendChart, CHART_COLORS, ResponsiveChart } from '../../components/Charts'
 import { TechIcon, nodeKind } from '../../components/TechIcon'
 import { useToast } from '../../components/Toast'
@@ -20,11 +20,9 @@ import {
   type KafkaMessageRecord,
   type MessagePageResponse,
   type MetricPoint,
-  type PipelineMetricsResponse,
   type SchemaColumn,
   type SyncStatusResponse,
   type TableMappingResponse,
-  type ThroughputPoint,
   type TopicInfoResponse,
   type TraceSummaryResponse,
 } from '../../lib/api'
@@ -152,9 +150,7 @@ export function PipelineDetail() {
       </div>
 
       <div className="mt-4">
-        {tab === 'Overview'          && (
-          <OverviewTab edge={edge}>{isEda ? <TopicTab edge={edge} /> : <SyncTab edge={edge} />}</OverviewTab>
-        )}
+        {tab === 'Overview'          && (isEda ? <TopicTab edge={edge} /> : <SyncTab edge={edge} />)}
         {tab === 'Topic'             && <TopicTab edge={edge} />}
         {tab === 'Consumers'         && <ConsumersTab edge={edge} />}
         {tab === 'Connector'         && <ConnectorTab edge={edge} />}
@@ -265,164 +261,8 @@ function RangeSelector({ value, onChange }: { value: number; onChange: (m: numbe
   )
 }
 
-/* ---------------------------------------------------------------- Overview tab (FR-006 metrics) */
-
-const LAG_WARNING_MESSAGES = 5000
-
-function OverviewTab({ edge, children }: { edge: Edge; children: ReactNode }) {
-  const app = useApp()
-  const wsId = app.currentProject?.id
-  const [metrics, setMetrics] = useState<PipelineMetricsResponse | null>(null)
-  const [throughput, setThroughput] = useState<ThroughputPoint[]>([])
-  const [unsynced, setUnsynced] = useState<MetricPoint[]>([])
-  const [consumerGroups, setConsumerGroups] = useState<ConsumerGroupInfo[] | null>(null)
-  const [rangeMin, setRangeMin] = useState(30)
-  const [metricsError, setMetricsError] = useState(false)
-  const [seriesError, setSeriesError] = useState(false)
-  const [consumerLagError, setConsumerLagError] = useState(false)
-  const isDirect = edge.pattern === 'direct'
-
-  useEffect(() => {
-    if (!wsId) return
-    let cancelled = false
-    setMetrics(null)
-    setThroughput([])
-    setUnsynced([])
-    setMetricsError(false)
-    setSeriesError(false)
-
-    const load = () => {
-      api.pipelineMetrics(wsId, edge.id)
-        .then((m) => { if (!cancelled) { setMetrics(m); setMetricsError(false) } })
-        .catch(() => { if (!cancelled) setMetricsError(true) })
-      const seriesRequests = isDirect
-        ? Promise.all([api.pipelineThroughput(wsId, edge.id, rangeMin), api.pipelineUnsynced(wsId, edge.id, rangeMin)])
-        : api.pipelineThroughput(wsId, edge.id, rangeMin).then((t) => [t, [] as MetricPoint[]] as const)
-      seriesRequests
-        .then(([t, u]) => { if (!cancelled) { setThroughput(t); setUnsynced(u); setSeriesError(false) } })
-        .catch(() => { if (!cancelled) setSeriesError(true) })
-    }
-
-    load()
-    const timer = setInterval(load, 10000)
-    return () => { cancelled = true; clearInterval(timer) }
-  }, [wsId, edge.id, isDirect, rangeMin])
-
-  useEffect(() => {
-    if (!wsId || isDirect) {
-      setConsumerGroups(null)
-      setConsumerLagError(false)
-      return
-    }
-    let cancelled = false
-    setConsumerGroups(null)
-    setConsumerLagError(false)
-    api.pipelineConsumerGroups(wsId, edge.id)
-      .then((groups) => { if (!cancelled) setConsumerGroups(groups) })
-      .catch(() => { if (!cancelled) { setConsumerGroups([]); setConsumerLagError(true) } })
-    return () => { cancelled = true }
-  }, [wsId, edge.id, isDirect])
-
-  const throughputData = throughput.map((p) => ({
-    t: p.timestamp,
-    produce: p.produceRate,
-    consume: p.consumeRate,
-  }))
-  const unsyncedData = unsynced.map((p) => ({ t: p.timestamp, unsynced: p.value >= 0 ? p.value : null }))
-  const externalLag = consumerGroups?.length
-    ? consumerGroups.reduce((sum, group) => sum + group.totalLag, 0)
-    : null
-  const lag = isDirect ? metrics?.lagMessages : externalLag
-  const errorPct = metrics?.errorPct
-  const lagLabel = isDirect ? 'Consumer lag' : 'External lag'
-  const lagSub = isDirect
-    ? 'messages'
-    : consumerLagError
-      ? '조회 실패'
-      : consumerGroups == null
-        ? '불러오는 중'
-        : consumerGroups.length === 0
-          ? 'Consumer group 없음'
-          : `${consumerGroups.length} groups`
-
-  return (
-    <div className="space-y-4">
-      {metricsError && (
-        <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-[12.5px] text-rose-700">
-          Overview metrics를 불러오지 못했습니다
-        </div>
-      )}
-      <div className="grid gap-3 md:grid-cols-4">
-        <MetricCard label="Produce rate" value={formatMetricValue(metrics?.produceRate)} sub="msg/s" icon="arrow-up" />
-        <MetricCard label="Consume rate" value={formatMetricValue(metrics?.consumeRate)} sub="msg/s" icon="arrow-right" />
-        <MetricCard
-          label={lagLabel}
-          value={lag == null ? '—' : formatNum(lag)}
-          sub={lagSub}
-          icon="alert"
-          tone={lag == null ? 'default' : lag >= LAG_WARNING_MESSAGES ? 'warn' : 'good'}
-        />
-        <MetricCard
-          label="Error rate"
-          value={errorPct == null ? '—' : `${formatMetricValue(errorPct)}%`}
-          icon="pulse"
-          tone={errorPct == null ? 'default' : errorPct > 0 ? 'bad' : 'good'}
-        />
-      </div>
-
-      <Panel title="Produce / Consume Rate" right={<RangeSelector value={rangeMin} onChange={setRangeMin} />}>
-        {seriesError ? (
-          <div className="px-5 py-8 text-center text-[12.5px] text-rose-500">처리량 지표를 불러오지 못했습니다</div>
-        ) : throughputData.length === 0 ? (
-          <div className="px-5 py-8 text-center text-[12.5px] text-gray-400">처리량 지표 없음</div>
-        ) : (
-          <div className="px-5 py-3">
-            <TrendChart
-              data={throughputData}
-              series={[
-                { key: 'produce', label: 'Produce', color: CHART_COLORS.brand },
-                { key: 'consume', label: 'Consume', color: CHART_COLORS.emerald },
-              ]}
-              height={170}
-              timeAxis
-            />
-          </div>
-        )}
-      </Panel>
-
-      {isDirect && (
-        <Panel title="Unsynced rows">
-          {seriesError ? (
-            <div className="px-5 py-8 text-center text-[12.5px] text-rose-500">미동기화 지표를 불러오지 못했습니다</div>
-          ) : unsyncedData.length === 0 ? (
-            <div className="px-5 py-8 text-center text-[12.5px] text-gray-400">미동기화 지표 없음</div>
-          ) : (
-            <div className="px-5 py-3">
-              <TrendChart
-                data={unsyncedData}
-                series={[{ key: 'unsynced', label: 'Unsynced rows', color: CHART_COLORS.amber }]}
-                height={150}
-                timeAxis
-              />
-            </div>
-          )}
-        </Panel>
-      )}
-
-      {children}
-    </div>
-  )
-}
-
-function formatMetricValue(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return '—'
-  if (Math.abs(value) >= 100) return formatNum(Math.round(value))
-  const digits = Math.abs(value) >= 10 ? 1 : 2
-  return value.toFixed(digits).replace(/\.0+$/, '').replace(/(\.\d*[1-9])0+$/, '$1')
-}
-
 /* ---------------------------------------------------------------- Topic tab (토픽 & 파티션) */
-/* Topic & Partition은 독립 탭이며, Overview는 FR-006 metric cards/chart를 함께 렌더한다. */
+/* Topic & Partition은 독립 탭이며, Overview는 Sync/Topic 내용을 직접 렌더한다. */
 
 function TopicTab({ edge }: { edge: Edge }) {
   const app = useApp()
