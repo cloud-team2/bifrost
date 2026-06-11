@@ -123,6 +123,18 @@ interface ProgressMsg {
   terminalText: string | null
   items: ProgressItem[]
 }
+interface ToolPanelMsg {
+  id: number
+  kind: 'toolPanel'
+  runId: string
+  panelKey: string
+  toolName: string
+  params: Record<string, unknown>
+  state: ProgressState
+  summary: string | null
+  result: unknown
+  error: string | null
+}
 interface ApprovalMsg {
   id: number
   kind: 'approval'
@@ -134,7 +146,14 @@ interface ApprovalMsg {
   state: 'pending' | 'submitting' | 'approved' | 'rejected' | 'error'
   error: string | null
 }
-type AgentMsg = TextMsg | StatusMsg | ProgressMsg | ApprovalMsg
+type AgentMsg = TextMsg | StatusMsg | ProgressMsg | ToolPanelMsg | ApprovalMsg
+
+const STRUCTURED_TOOL_INTRO: Record<string, string> = {
+  get_consumer_groups: 'Consumer Group의 lag 현황과 상태를 조회합니다.',
+  list_pipelines: '현재 프로젝트의 파이프라인 상태를 조회합니다.',
+  list_connectors: 'Kafka Connector 상태 및 Task 정보를 조회합니다.',
+  analyze_event_log: '최근 2시간 이벤트 로그와 인시던트 현황을 분석합니다.',
+}
 
 type ThemeName = keyof typeof THEMES
 
@@ -405,15 +424,15 @@ export function AgentRunPanel({
   function applyAgentEvent(event: AgentRunEvent) {
     if (event.type === 'debug_trace') return
     if (event.type === 'tool_call_started') {
-      upsertTool(event, 'running')
+      upsertToolEvent(event, 'running')
       return
     }
     if (event.type === 'tool_call_completed') {
-      upsertTool(event, 'done')
+      upsertToolEvent(event, 'done')
       return
     }
     if (event.type === 'tool_call_failed') {
-      upsertTool(event, 'failed')
+      upsertToolEvent(event, 'failed')
       return
     }
     if (event.type === 'evidence_collected') {
@@ -516,6 +535,58 @@ export function AgentRunPanel({
       text: event.message,
       state,
       summary,
+    })
+  }
+
+  function upsertToolEvent(event: AgentRunEvent, state: ProgressState) {
+    const toolName = payloadString(event, 'tool') ?? 'tool'
+    if (isStructuredTool(toolName)) {
+      upsertStructuredToolPanel(event, state)
+      return
+    }
+    upsertTool(event, state)
+  }
+
+  function upsertStructuredToolPanel(event: AgentRunEvent, state: ProgressState) {
+    const toolName = payloadString(event, 'tool') ?? 'tool'
+    if (!isStructuredTool(toolName)) return
+    const panelKey = `${event.run_id}:${payloadString(event, 'step_id') ?? toolName}`
+    const summary = payloadString(event, 'summary')
+    const params = payloadRecord(event, 'params') ?? {}
+    const result = event.payload.result ?? null
+    const error = payloadErrorMessage(event)
+    updateMsgs((prev) => {
+      const existingIndex = prev.findIndex((msg): msg is ToolPanelMsg => msg.kind === 'toolPanel' && msg.panelKey === panelKey)
+      if (existingIndex < 0) {
+        return [
+          ...prev,
+          {
+            id: ++seq.current,
+            kind: 'toolPanel',
+            runId: event.run_id,
+            panelKey,
+            toolName,
+            params,
+            state,
+            summary,
+            result,
+            error,
+          },
+        ]
+      }
+      return prev.map((msg, index) =>
+        index === existingIndex && msg.kind === 'toolPanel'
+          ? {
+              ...msg,
+              toolName,
+              params,
+              state: mergeProgressState(msg.state, state),
+              summary: summary ?? msg.summary,
+              result: result ?? msg.result,
+              error: error ?? msg.error,
+            }
+          : msg,
+      )
     })
   }
 
@@ -753,6 +824,7 @@ export function AgentRunPanel({
           if (m.kind === 'progress') {
             return <ProgressCard key={m.id} msg={m} theme={theme} onToggle={() => toggleProgress(m.id)} />
           }
+          if (m.kind === 'toolPanel') return <ToolPanelCard key={m.id} msg={m} />
           if (m.kind === 'approval') {
             return (
               <ApprovalCard
@@ -927,6 +999,232 @@ function ProgressDot({ state }: { state: ProgressState }) {
   if (state === 'failed') return <Icon name="alert" size={12} className="mt-0.5 text-rose-500" />
   if (state === 'waiting') return <Icon name="clock" size={12} className="mt-0.5 text-amber-500" />
   return <Icon name="check" size={12} strokeWidth={3} className="mt-0.5 text-emerald-500" />
+}
+
+function ToolPanelCard({ msg }: { msg: ToolPanelMsg }) {
+  const result = asRecord(msg.result)
+  const resultError = result ? recordString(result, 'error') : null
+  const error = msg.error ?? resultError
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white text-[12px] text-gray-700">
+      <div className="space-y-2 border-b border-gray-100 px-3 py-2.5">
+        <div className="flex items-start gap-2">
+          {msg.state === 'running' ? (
+            <Spinner size={13} />
+          ) : msg.state === 'failed' ? (
+            <Icon name="alert" size={13} className="mt-0.5 text-rose-500" />
+          ) : (
+            <Icon name="table" size={13} className="mt-0.5 text-gray-500" />
+          )}
+          <div className="min-w-0 flex-1">
+            <div className="break-words leading-relaxed text-gray-700">{STRUCTURED_TOOL_INTRO[msg.toolName]}</div>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              <span className="max-w-full break-all rounded bg-gray-900 px-1.5 py-0.5 font-mono text-[10.5px] text-white">{msg.toolName}</span>
+              {paramChips(msg.toolName, msg.params).map(([key, value]) => (
+                <span key={key} className="max-w-full break-all rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 font-mono text-[10.5px] text-gray-500">
+                  {key}={formatParamValue(value)}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+        {error && (
+          <div className="break-words rounded border border-rose-100 bg-rose-50 px-2 py-1.5 text-[11.5px] text-rose-700">
+            {error}
+          </div>
+        )}
+      </div>
+      <div className="px-3 py-2.5">
+        {msg.state === 'running' ? (
+          <PanelEmpty text="조회 중" />
+        ) : msg.toolName === 'get_consumer_groups' ? (
+          <ConsumerGroupsPanel result={result} />
+        ) : msg.toolName === 'list_pipelines' ? (
+          <PipelineStatusPanel result={result} />
+        ) : msg.toolName === 'list_connectors' ? (
+          <ConnectorStatusPanel result={result} />
+        ) : msg.toolName === 'analyze_event_log' ? (
+          <EventSummaryPanel result={result} />
+        ) : (
+          <PanelEmpty text="표시할 결과가 없습니다" />
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ConsumerGroupsPanel({ result }: { result: Record<string, unknown> | null }) {
+  const rows = recordArray(result, 'consumerGroups', 'consumer_groups')
+  if (rows.length === 0) return <PanelEmpty text="Consumer Group 데이터 없음" />
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-full table-fixed font-mono text-[11px]">
+        <thead className="text-left text-gray-400">
+          <tr>
+            <th className="w-[42%] py-1 pr-3 font-medium">consumerGroup</th>
+            <th className="w-[20%] py-1 pr-3 font-medium">groupState</th>
+            <th className="w-[16%] py-1 pr-3 text-right font-medium">lag</th>
+            <th className="w-[22%] py-1 font-medium">label(owner)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, index) => {
+            const group = recordString(row, 'group') ?? '-'
+            const state = recordString(row, 'state') ?? 'UNKNOWN'
+            const lag = recordNumber(row, 'lag')
+            const rowError = recordString(row, 'error')
+            const warning = state === 'REBALANCING' || state === 'UNKNOWN' || (lag != null && lag >= 5000) || !!rowError
+            return (
+              <tr key={`${group}:${index}`} className="border-t border-gray-100 align-top">
+                <td className="break-all py-1.5 pr-3 text-gray-700">{warning ? '⚠ ' : ''}{group}</td>
+                <td className="break-words py-1.5 pr-3 text-gray-600">{state}</td>
+                <td className="py-1.5 pr-3 text-right text-gray-700">{lag == null ? '-' : lag.toLocaleString()}</td>
+                <td className="break-words py-1.5 text-gray-500">
+                  {recordString(row, 'owner') ?? '-'}
+                  {rowError && <div className="mt-0.5 text-[10px] text-rose-600">{rowError}</div>}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function PipelineStatusPanel({ result }: { result: Record<string, unknown> | null }) {
+  const rows = recordArray(result, 'pipelines')
+  if (rows.length === 0) return <PanelEmpty text="파이프라인 데이터 없음" />
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-full table-fixed font-mono text-[11px]">
+        <thead className="text-left text-gray-400">
+          <tr>
+            <th className="w-[24%] py-1 pr-3 font-medium">id</th>
+            <th className="w-[34%] py-1 pr-3 font-medium">name</th>
+            <th className="w-[20%] py-1 pr-3 font-medium">status</th>
+            <th className="w-[22%] py-1 text-right font-medium">lag</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, index) => {
+            const id = recordString(row, 'id') ?? '-'
+            const status = recordString(row, 'status') ?? 'unknown'
+            const lag = recordNumber(row, 'lag')
+            const rowError = recordString(row, 'error')
+            const warning = status === 'error' || status === 'lag' || (lag != null && lag >= 5000) || !!rowError
+            return (
+              <tr key={`${id}:${index}`} className="border-t border-gray-100 align-top">
+                <td className="break-all py-1.5 pr-3 text-gray-500">{shortId(id)}</td>
+                <td className="break-words py-1.5 pr-3 text-gray-700">{warning ? '⚠ ' : ''}{recordString(row, 'name') ?? '-'}</td>
+                <td className="break-words py-1.5 pr-3 text-gray-600">{status}</td>
+                <td className="py-1.5 text-right text-gray-700">
+                  {lag == null ? '-' : lag.toLocaleString()}
+                  {rowError && <div className="mt-0.5 text-[10px] text-rose-600">{rowError}</div>}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function ConnectorStatusPanel({ result }: { result: Record<string, unknown> | null }) {
+  const rows = recordArray(result, 'connectors')
+  if (rows.length === 0) return <PanelEmpty text="Connector 데이터 없음" />
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-full table-fixed font-mono text-[11px]">
+        <thead className="text-left text-gray-400">
+          <tr>
+            <th className="w-[34%] py-1 pr-3 font-medium">connector</th>
+            <th className="w-[14%] py-1 pr-3 font-medium">type</th>
+            <th className="w-[22%] py-1 pr-3 font-medium">status</th>
+            <th className="w-[14%] py-1 pr-3 text-right font-medium">tasks</th>
+            <th className="w-[16%] py-1 text-right font-medium">throughput(/s)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, index) => {
+            const connector = recordString(row, 'connector') ?? '-'
+            const status = recordString(row, 'status') ?? 'UNKNOWN'
+            const running = recordNumber(row, 'tasksRunning', 'tasks_running')
+            const total = recordNumber(row, 'tasksTotal', 'tasks_total')
+            const throughput = recordNumber(row, 'throughputPerSecond', 'throughput_per_second')
+            const rowError = recordString(row, 'error')
+            const taskWarning = running != null && total != null && running < total
+            const warning = status.includes('FAILED') || status === 'UNKNOWN' || taskWarning || !!rowError
+            return (
+              <tr key={`${connector}:${index}`} className="border-t border-gray-100 align-top">
+                <td className="break-all py-1.5 pr-3 text-gray-700">{warning ? '⚠ ' : ''}{connector}</td>
+                <td className="break-words py-1.5 pr-3 text-gray-600">{recordString(row, 'type') ?? '-'}</td>
+                <td className="break-words py-1.5 pr-3 text-gray-600">{status}</td>
+                <td className="py-1.5 pr-3 text-right text-gray-700">{running == null || total == null ? '-/-' : `${running}/${total}`}</td>
+                <td className="py-1.5 text-right text-gray-700">
+                  {throughput == null ? '-' : throughput.toLocaleString()}
+                  {rowError && <div className="mt-0.5 text-[10px] text-rose-600">{rowError}</div>}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function EventSummaryPanel({ result }: { result: Record<string, unknown> | null }) {
+  if (!result) return <PanelEmpty text="이벤트/인시던트 데이터 없음" />
+  const open = recordNumber(result, 'openIncidents', 'open_incidents') ?? 0
+  const criticalCount = recordNumber(result, 'criticalIncidents', 'critical_incidents') ?? 0
+  const critical = recordArray(result, 'critical')
+  const warnings = recordArray(result, 'warnings')
+
+  return (
+    <div className="space-y-3 font-mono text-[11px]">
+      <div className="rounded bg-gray-50 px-2 py-1.5 text-gray-700">
+        인시던트 open:{open.toLocaleString()}건 (critical:{criticalCount.toLocaleString()}건)
+      </div>
+      <div>
+        <div className="mb-1 text-[10.5px] font-semibold uppercase text-gray-400">critical</div>
+        {critical.length === 0 ? (
+          <PanelEmpty text="critical 인시던트 없음" />
+        ) : (
+          <div className="space-y-1">
+            {critical.map((item, index) => (
+              <div key={`${recordString(item, 'incidentId', 'incident_id') ?? index}`} className="break-words border-t border-gray-100 pt-1 text-gray-700">
+                ⚠ {recordString(item, 'severity') ?? '-'} · {recordString(item, 'title') ?? '-'} · {shortId(recordString(item, 'incidentId', 'incident_id') ?? '-')}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div>
+        <div className="mb-1 text-[10.5px] font-semibold uppercase text-gray-400">warnings</div>
+        {warnings.length === 0 ? (
+          <PanelEmpty text="주요 경고 이벤트 없음" />
+        ) : (
+          <div className="space-y-1">
+            {warnings.map((item, index) => (
+              <div key={`${recordString(item, 'eventId', 'event_id') ?? index}`} className="break-words border-t border-gray-100 pt-1 text-gray-600">
+                {recordString(item, 'level') ?? '-'} · {recordString(item, 'type') ?? '-'} · {recordString(item, 'message') ?? ''}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function PanelEmpty({ text }: { text: string }) {
+  return <div className="rounded bg-gray-50 px-2 py-2 text-[11.5px] text-gray-400">{text}</div>
 }
 
 function ApprovalCard({
@@ -1116,4 +1414,74 @@ function isSameApproval(msg: AgentMsg, runId: string, actionId: string, approval
 function payloadString(event: AgentRunEvent, key: string): string | null {
   const value = event.payload[key]
   return typeof value === 'string' ? value : null
+}
+
+function payloadRecord(event: AgentRunEvent, key: string): Record<string, unknown> | null {
+  return asRecord(event.payload[key])
+}
+
+function payloadErrorMessage(event: AgentRunEvent): string | null {
+  const error = event.payload.error
+  if (typeof error === 'string') return error
+  const record = asRecord(error)
+  return recordString(record, 'message') ?? (event.type === 'tool_call_failed' ? event.message : null)
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value != null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+}
+
+function recordArray(record: Record<string, unknown> | null, ...keys: string[]): Record<string, unknown>[] {
+  if (!record) return []
+  for (const key of keys) {
+    const value = record[key]
+    if (Array.isArray(value)) return value.map(asRecord).filter((item): item is Record<string, unknown> => item != null)
+  }
+  return []
+}
+
+function recordString(record: Record<string, unknown> | null, ...keys: string[]): string | null {
+  if (!record) return null
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'string' && value) return value
+  }
+  return null
+}
+
+function recordNumber(record: Record<string, unknown> | null, ...keys: string[]): number | null {
+  if (!record) return null
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'number' && Number.isFinite(value)) return value
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value)
+      if (Number.isFinite(parsed)) return parsed
+    }
+  }
+  return null
+}
+
+function paramChips(toolName: string, params: Record<string, unknown>): [string, unknown][] {
+  const entries = Object.entries(params)
+  if (entries.length > 0) return entries
+  if (toolName === 'get_consumer_groups' || toolName === 'list_pipelines' || toolName === 'list_connectors') {
+    return [['scope', 'current_project']]
+  }
+  return []
+}
+
+function isStructuredTool(toolName: string) {
+  return Object.prototype.hasOwnProperty.call(STRUCTURED_TOOL_INTRO, toolName)
+}
+
+function formatParamValue(value: unknown) {
+  if (typeof value === 'string') return `"${value}"`
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (value == null) return 'null'
+  return JSON.stringify(value)
+}
+
+function shortId(value: string) {
+  return value.length > 12 ? value.slice(0, 8) : value
 }

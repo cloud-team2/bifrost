@@ -114,6 +114,68 @@ async def test_retrieval_stores_redacted_raw_evidence() -> None:
 
 
 @pytest.mark.asyncio
+async def test_retrieval_emits_params_and_result_only_for_structured_panel_tools() -> None:
+    async def call_tool(tool_name, params, context):
+        if tool_name == "analyze_event_log":
+            return ToolResult(
+                tool_name=tool_name,
+                status=ToolStatus.SUCCESS,
+                risk=RiskLevel.READ_ONLY,
+                summary="event summary",
+                evidence_ids=[],
+                result={"openIncidents": 0, "criticalIncidents": 0, "critical": [], "warnings": []},
+            )
+        return ToolResult(
+            tool_name=tool_name,
+            status=ToolStatus.SUCCESS,
+            risk=RiskLevel.READ_ONLY,
+            summary="log summary",
+            evidence_ids=[],
+            result={"raw": "should-not-be-streamed"},
+        )
+
+    registry = AsyncMock()
+    registry.call_tool.side_effect = call_tool
+    bus = EventBus()
+    published = []
+    bus.publish = AsyncMock(side_effect=lambda run_id, evt: published.append(evt))
+    event_repo = InMemoryEventRepository()
+    plan = PlannerOutput(
+        retrieval_plan=[
+            RetrievalPlanStep(
+                step_id="logs",
+                tool_name="search_logs",
+                params={"query": "token=secret"},
+                purpose="logs",
+                depends_on=[],
+                plan_hash="abc",
+            ),
+            RetrievalPlanStep(
+                step_id="events",
+                tool_name="analyze_event_log",
+                params={"window": "2h", "level": "warn+"},
+                purpose="events",
+                depends_on=[],
+                plan_hash="abc",
+            ),
+        ]
+    )
+
+    await run_retrieval("r1", plan, _context(), registry, bus, event_repo)
+
+    started = {e.payload["step_id"]: e.payload for e in published if e.type == StreamingEventType.TOOL_CALL_STARTED}
+    completed = {
+        e.payload["step_id"]: e.payload for e in published if e.type == StreamingEventType.TOOL_CALL_COMPLETED
+    }
+    assert "params" not in started["logs"]
+    assert "params" not in completed["logs"]
+    assert "result" not in completed["logs"]
+    assert started["events"]["params"] == {"window": "2h", "level": "warn+"}
+    assert completed["events"]["params"] == {"window": "2h", "level": "warn+"}
+    assert completed["events"]["result"]["openIncidents"] == 0
+
+
+@pytest.mark.asyncio
 async def test_retrieval_failure_emits_tool_call_failed() -> None:
     registry = AsyncMock()
     registry.call_tool.return_value = ToolResult(

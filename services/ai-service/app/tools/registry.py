@@ -12,15 +12,19 @@ from app.schemas.state import RiskLevel
 from app.schemas.tools import (
     AlertsData,
     ConnectorActionData,
+    ConnectorStatusListData,
     ConnectorStatusData,
     ConnectorTaskTraceData,
     ConsumerGroupActionData,
+    ConsumerGroupsData,
     ConsumerLagData,
     DeploymentsData,
+    EventIncidentSummaryData,
     GetAlertsParams,
     GetConnectorTaskTraceParams,
     GetTracesParams,
     IncidentSummaryData,
+    PipelineStatusListData,
     ListProjectPipelinesData,
     LogSearchData,
     MetricsData,
@@ -59,12 +63,29 @@ class ConnectorStatusParams(ToolParams):
     connector_name: str
 
 
+class ListConnectorsParams(ToolParams):
+    pass
+
+
 class ConsumerLagParams(ToolParams):
     consumer_group: str
 
 
+class GetConsumerGroupsParams(ToolParams):
+    pass
+
+
 class ListProjectPipelinesParams(ToolParams):
     pass
+
+
+class ListPipelinesParams(ToolParams):
+    pass
+
+
+class AnalyzeEventLogParams(ToolParams):
+    window: str = "2h"
+    level: str = "warn+"
 
 
 class PipelineTopologyParams(ToolParams):
@@ -104,6 +125,7 @@ class ToolDefinition:
     sends_body: bool = False
     requires_approval: bool = False
     alias_for: str | None = None
+    structured_result: bool = False
 
     def validate_params(self, params: dict[str, Any]) -> BaseModel:
         return self.params_model.model_validate(params)
@@ -173,6 +195,16 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
             path_params=("connector_name",),
         ),
         ToolDefinition(
+            name="list_connectors",
+            operation="list_connectors",
+            method="GET",
+            path_template="/internal/ops/projects/{project_id}/kafka/connectors/status",
+            risk=RiskLevel.READ_ONLY,
+            params_model=ListConnectorsParams,
+            result_model=ConnectorStatusListData,
+            structured_result=True,
+        ),
+        ToolDefinition(
             name="get_consumer_lag",
             operation="get_consumer_lag",
             method="GET",
@@ -181,6 +213,16 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
             params_model=ConsumerLagParams,
             result_model=ConsumerLagData,
             path_params=("consumer_group",),
+        ),
+        ToolDefinition(
+            name="get_consumer_groups",
+            operation="get_consumer_groups",
+            method="GET",
+            path_template="/internal/ops/projects/{project_id}/kafka/consumer-groups",
+            risk=RiskLevel.READ_ONLY,
+            params_model=GetConsumerGroupsParams,
+            result_model=ConsumerGroupsData,
+            structured_result=True,
         ),
         ToolDefinition(
             name="get_kafka_lag",
@@ -202,6 +244,16 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
             risk=RiskLevel.READ_ONLY,
             params_model=ListProjectPipelinesParams,
             result_model=ListProjectPipelinesData,
+        ),
+        ToolDefinition(
+            name="list_pipelines",
+            operation="list_pipelines",
+            method="GET",
+            path_template="/internal/ops/projects/{project_id}/pipelines/status",
+            risk=RiskLevel.READ_ONLY,
+            params_model=ListPipelinesParams,
+            result_model=PipelineStatusListData,
+            structured_result=True,
         ),
         ToolDefinition(
             name="get_pipeline_topology",
@@ -299,6 +351,16 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
             risk=RiskLevel.READ_ONLY,
             params_model=GetAlertsParams,
             result_model=AlertsData,
+        ),
+        ToolDefinition(
+            name="analyze_event_log",
+            operation="analyze_event_log",
+            method="GET",
+            path_template="/internal/ops/projects/{project_id}/observability/events/summary",
+            risk=RiskLevel.READ_ONLY,
+            params_model=AnalyzeEventLogParams,
+            result_model=EventIncidentSummaryData,
+            structured_result=True,
         ),
     ]
     return {definition.name: definition for definition in definitions}
@@ -435,8 +497,9 @@ class ToolClientRegistry:
         if result.status != ToolStatus.SUCCESS:
             return result, None
 
+        sanitized_result: dict[str, Any] | None = None
         try:
-            definition.validate_result(response.result)
+            validated_result = definition.result_model.model_validate(response.result or {})
         except ValidationError as exc:
             return (
                 failed_tool_result(
@@ -446,5 +509,15 @@ class ToolClientRegistry:
                     message=f"Invalid Spring operation result: {exc.errors()[0]['msg']}",
                 ),
                 None,
+            )
+        if definition.structured_result:
+            sanitized_result = validated_result.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+            result = result_from_spring_response(
+                tool_name=tool_name,
+                risk=definition.risk,
+                response=response,
+                requires_approval=definition.requires_approval,
+                result=sanitized_result,
             )
         return result, response.result

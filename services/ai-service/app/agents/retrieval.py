@@ -26,6 +26,25 @@ logger = logging.getLogger(__name__)
 # 그 외 도구(list_project_pipelines·get_connector_status·get_consumer_lag 등)는 명시적
 # 운영 조회 의도를 뜻하므로, knowledge 근거가 있어도 실제 운영 데이터를 조회한다 (#478).
 _FALLBACK_ONLY_TOOLS = frozenset({"search_logs"})
+_STRUCTURED_PANEL_TOOLS = frozenset({
+    "get_consumer_groups",
+    "list_pipelines",
+    "list_connectors",
+    "analyze_event_log",
+})
+
+
+def _tool_event_payload(
+    tool_name: str,
+    step_id: str,
+    params: dict[str, Any],
+    **extra: Any,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"tool": tool_name, "step_id": step_id}
+    if tool_name in _STRUCTURED_PANEL_TOOLS:
+        payload["params"] = params
+    payload.update({key: value for key, value in extra.items() if value is not None})
+    return payload
 
 
 def _has_operational_tool(plan: PlannerOutput) -> bool:
@@ -81,7 +100,7 @@ async def run_retrieval(
             type=StreamingEventType.TOOL_CALL_STARTED,
             agent="retrieval",
             message=f"{step.tool_name} 조회 중...",
-            payload={"tool": step.tool_name, "step_id": step.step_id},
+            payload=_tool_event_payload(step.tool_name, step.step_id, step.params),
         ))
 
         result = await registry.call_tool(step.tool_name, step.params, context)
@@ -113,7 +132,13 @@ async def run_retrieval(
                 type=StreamingEventType.TOOL_CALL_COMPLETED,
                 agent="retrieval",
                 message=summary,
-                payload={"tool": step.tool_name, "step_id": step.step_id, "summary": summary},
+                payload=_tool_event_payload(
+                    step.tool_name,
+                    step.step_id,
+                    step.params,
+                    summary=summary,
+                    result=result.result if step.tool_name in _STRUCTURED_PANEL_TOOLS else None,
+                ),
             ))
             await _pub(bus, event_repo, run_id, StreamingEvent(
                 event_id=str(uuid4()),
@@ -148,11 +173,12 @@ async def run_retrieval(
                 type=StreamingEventType.TOOL_CALL_FAILED,
                 agent="retrieval",
                 message=f"{step.tool_name} 호출 실패: {error_msg}",
-                payload={
-                    "tool": step.tool_name,
-                    "step_id": step.step_id,
-                    "error": redact_payload(result.error.model_dump(mode="json")) if result.error else {},
-                },
+                payload=_tool_event_payload(
+                    step.tool_name,
+                    step.step_id,
+                    step.params,
+                    error=redact_payload(result.error.model_dump(mode="json")) if result.error else {},
+                ),
             ))
             evidence = EvidenceItem(
                 evidence_id=evidence_id,

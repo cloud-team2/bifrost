@@ -104,12 +104,12 @@ async def test_get_traces_returns_tempo_trace_summary():
 
     result = await registry.call_tool(
         "get_traces",
-        {"connector_name": "default-connector"},
+        {"connector_name": "orders-sink"},
         _context(),
     )
 
     assert captured_request is not None
-    assert captured_request.url.path == "/internal/ops/projects/proj_001/connectors/default-connector/traces"
+    assert captured_request.url.path == "/internal/ops/projects/proj_001/connectors/orders-sink/traces"
     assert result.status == ToolStatus.SUCCESS
     assert result.risk == RiskLevel.READ_ONLY
     # 구조적 요약(민감정보 미노출): span 수 + 상태
@@ -132,7 +132,7 @@ async def test_get_connector_task_trace_call_to_spring_mocked():
                 "request_id": "req_001",
                 "operation": "get_connector_task_trace",
                 "result": {
-                    "connector": "default-connector",
+                    "connector": "orders-sink",
                     "summary": "1 connector task trace collected",
                     "traces": [
                         {
@@ -159,13 +159,13 @@ async def test_get_connector_task_trace_call_to_spring_mocked():
 
     result = await registry.call_tool(
         "get_connector_task_trace",
-        {"connector_name": "default-connector"},
+        {"connector_name": "orders-sink"},
         _context(),
     )
 
     assert captured_request is not None
     assert captured_request.method == "GET"
-    assert captured_request.url.path == "/internal/ops/projects/proj_001/connectors/default-connector/task-trace"
+    assert captured_request.url.path == "/internal/ops/projects/proj_001/connectors/orders-sink/task-trace"
     assert result.status == ToolStatus.SUCCESS
     assert result.summary == "1 connector task trace collected"
     assert result.evidence_ids == ["ev_tasktrace_001"]
@@ -200,6 +200,10 @@ def test_existing_tools_intact():
         "get_pipeline_topology",
         "get_connector_status",
         "get_consumer_lag",
+        "get_consumer_groups",
+        "list_pipelines",
+        "list_connectors",
+        "analyze_event_log",
         "get_kafka_lag",
         "search_logs",
         "get_metrics",

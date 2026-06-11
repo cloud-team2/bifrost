@@ -173,6 +173,7 @@ class ToolResult(StrictModel):
     risk: RiskLevel
     requires_approval: bool = False
     summary: str
+    result: dict[str, Any] | list[Any] | None = None
     evidence_ids: list[str] = Field(default_factory=list)
     audit_event_id: str | None = None
     error: ToolError | None = None
@@ -207,6 +208,72 @@ class ProjectPipelineSummary(SpringResponseModel):
 
 class ListProjectPipelinesData(SpringResponseModel):
     pipelines: list[ProjectPipelineSummary] = Field(default_factory=list)
+
+
+class ConsumerGroupStatusData(SpringResponseModel):
+    group: str
+    state: str | None = None
+    lag: int | None = None
+    owner: str | None = None
+    error: str | None = None
+
+
+class ConsumerGroupsData(SpringResponseModel):
+    consumer_groups: list[ConsumerGroupStatusData] = Field(default_factory=list)
+    error: str | None = None
+
+
+class PipelineStatusSummaryData(SpringResponseModel):
+    id: str
+    name: str
+    status: str
+    lag: int | None = None
+    error: str | None = None
+
+
+class PipelineStatusListData(SpringResponseModel):
+    pipelines: list[PipelineStatusSummaryData] = Field(default_factory=list)
+
+
+class ConnectorStatusSummaryData(SpringResponseModel):
+    connector: str
+    type: str | None = None
+    status: str | None = None
+    tasks_running: int | None = None
+    tasks_total: int | None = None
+    throughput_per_second: float | None = None
+    error: str | None = None
+
+
+class ConnectorStatusListData(SpringResponseModel):
+    connectors: list[ConnectorStatusSummaryData] = Field(default_factory=list)
+
+
+class CriticalIncidentData(SpringResponseModel):
+    incident_id: str
+    severity: str
+    status: str
+    title: str
+    opened_at: datetime | None = None
+
+
+class WarningEventData(SpringResponseModel):
+    event_id: str
+    level: str
+    type: str
+    message: str | None = None
+    pipeline_id: str | None = None
+    incident_id: str | None = None
+    created_at: datetime | None = None
+
+
+class EventIncidentSummaryData(SpringResponseModel):
+    window: str
+    level: str
+    open_incidents: int = 0
+    critical_incidents: int = 0
+    critical: list[CriticalIncidentData] = Field(default_factory=list)
+    warnings: list[WarningEventData] = Field(default_factory=list)
 
 
 class PipelineDependencyRef(SpringResponseModel):
