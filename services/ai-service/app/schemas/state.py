@@ -133,6 +133,11 @@ class RunState(StrictModel):
     step_count: int = 0
     guards: RunGuards = Field(default_factory=RunGuards)
     plan: RunPlanState = Field(default_factory=RunPlanState)
+    # 종료 보장 budget 집행용 시간·자원 카운터 (#481).
+    started_at: datetime | None = None
+    stage_started_at: datetime | None = None
+    llm_call_count: int = 0
+    token_count: int = 0
 
 
 class IncidentState(StrictModel):

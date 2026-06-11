@@ -45,6 +45,11 @@ _KEYWORD_TOOL_MAP: list[tuple[set[str], str, dict]] = [
 _DEFAULT_TOOL = ("search_logs", _LOG_PARAMS)
 _CONNECTOR_PARAM_TOOLS = frozenset({"get_connector_status", "get_traces", "get_connector_task_trace"})
 _CONSUMER_GROUP_PARAM_TOOLS = frozenset({"get_consumer_lag", "get_kafka_lag"})
+# discovery tool — 파이프라인/커넥터 식별자를 산출한다. 식별자에 의존하는 조회는
+# 이 step들이 끝난 뒤 실행돼야 정확하므로 retrieval에서 순차 chain으로 풀린다 (#481).
+_DISCOVERY_TOOLS = frozenset({"list_project_pipelines", "get_pipeline_topology"})
+# 특정 connector/consumer 식별자를 파라미터로 받는 조회 — discovery에 의존한다.
+_IDENTIFIER_DEPENDENT_TOOLS = _CONNECTOR_PARAM_TOOLS | _CONSUMER_GROUP_PARAM_TOOLS
 _IDENTIFIER_STOPWORDS = {
     "connector",
     "connectors",
@@ -116,14 +121,25 @@ async def run_planner(
             for tool, params in selected
         ]
 
+    # depends_on 채우기 (#481): 식별자 의존 조회는 같은 plan의 discovery step에
+    # 의존시켜 retrieval이 순차 chain으로 풀게 한다. 그 외 독립 tool은 depends_on을
+    # 비워 병렬(fan-out) 실행을 유지한다.
+    step_ids = [f"step_{i + 1:03d}" for i in range(len(selected))]
+    discovery_step_ids = [
+        sid for sid, (tool, _) in zip(step_ids, selected) if tool in _DISCOVERY_TOOLS
+    ]
     steps = [
         RetrievalPlanStep(
-            step_id=f"step_{i + 1:03d}",
+            step_id=step_ids[i],
             tool_name=tool,
             params=params,
             purpose=f"{tool} 조회",
             required=True,
-            depends_on=[],
+            depends_on=(
+                [sid for sid in discovery_step_ids if sid != step_ids[i]]
+                if tool in _IDENTIFIER_DEPENDENT_TOOLS
+                else []
+            ),
             plan_hash=_plan_hash(tool, params),
         )
         for i, (tool, params) in enumerate(selected)

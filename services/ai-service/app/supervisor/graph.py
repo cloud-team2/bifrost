@@ -5,6 +5,8 @@ Does NOT contain LLM logic; actual agent execution is delegated in later issues.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from app.schemas.state import AgentMode, AgentState, RunStatus, VerificationStatus
 from app.supervisor.retry_policy import RetryPolicy, default_retry_policy
 from app.supervisor.state_store import InMemoryStateStore, get_state_store
@@ -34,7 +36,11 @@ class Supervisor:
         remediation_requested: bool = False,
     ) -> AgentState:
         self._remediation_flags[run_id] = remediation_requested
-        return self._store.create(run_id, mode, incident_id)
+        state = self._store.create(run_id, mode, incident_id)
+        # #481: wall-clock 예산 기준점. stage_started_at은 첫 advance에서 설정된다.
+        now = datetime.now(timezone.utc)
+        self._store.patch(run_id, lambda s: _mark_started(s, now))
+        return state
 
     def get_state(self, run_id: str) -> AgentState | None:
         return self._store.get(run_id)
@@ -71,9 +77,14 @@ class Supervisor:
             remediation_requested = self._remediation_flags.get(run_id, False)
             nxt = next_stage(mode, current, remediation_requested)
 
+        stage_start = datetime.now(timezone.utc)
+
         def _apply(s: AgentState) -> AgentState:
             s.run.step_count += 1
             s.run.current_agent = nxt
+            # #481: 새 stage 진입 시각을 기록한다. 다음 advance에서 check_stage_timeout이
+            # 직전 stage의 체류 시간을 이 값 기준으로 검사한다.
+            s.run.stage_started_at = stage_start
             if nxt is None:
                 s.run.status = RunStatus.COMPLETED
             return s
@@ -174,6 +185,28 @@ class Supervisor:
             limit=self._policy.max_revise_action_loops,
             next_agent=next_agent,
         )
+
+    def record_llm_usage(self, run_id: str, *, calls: int = 1, tokens: int = 0) -> None:
+        """LLM 호출/토큰 사용량을 run state에 누적한다(#481).
+
+        누적된 ``llm_call_count``·``token_count``는 다음 advance의 check_all_global이
+        ``max_llm_calls``·``max_tokens`` 예산과 비교해 초과 시 run을 안전 종료한다.
+        run을 찾지 못하면 무시한다(계측 실패가 흐름을 막지 않도록).
+        """
+        if self._store.get(run_id) is None:
+            return
+        self._store.patch(run_id, lambda s: _bump_usage(s, calls, tokens))
+
+
+def _bump_usage(state: AgentState, calls: int, tokens: int) -> AgentState:
+    state.run.llm_call_count += max(0, calls)
+    state.run.token_count += max(0, tokens)
+    return state
+
+
+def _mark_started(state: AgentState, now: datetime) -> AgentState:
+    state.run.started_at = now
+    return state
 
 
 def _bump_guard(state: AgentState, counter: str) -> AgentState:
