@@ -49,6 +49,13 @@ export function PipelineDetail() {
 
   const [tab, setTab] = useState(tabs[0])
 
+  useEffect(() => {
+    if (app.pipelineTab && tabs.includes(app.pipelineTab)) {
+      setTab(app.pipelineTab)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [app.pipelineTab, app.selectedPipelineId])
+
   // (#267) 탭별 에러 위치 표시용 — 커넥터 상태를 폴링해 FAILED/lastError를 감지(복구 시 자동 해제).
   const wsId = app.currentProject?.id
   const [connectors, setConnectors] = useState<ConnectorInfo[] | null>(null)
@@ -644,6 +651,7 @@ function ConnectorTab({ edge }: { edge: Edge }) {
 function TraceTab({ edge }: { edge: Edge }) {
   const app = useApp()
   const wsId = app.currentProject?.id
+  const traceId = app.selectedTraceId ?? undefined
   const [trace, setTrace] = useState<TraceSummaryResponse | null>(null)
   const [error, setError] = useState(false)
 
@@ -652,11 +660,11 @@ function TraceTab({ edge }: { edge: Edge }) {
     let cancelled = false
     setTrace(null)
     setError(false)
-    api.pipelineTrace(wsId, edge.id)
+    api.pipelineTrace(wsId, edge.id, traceId)
       .then((t) => { if (!cancelled) setTrace(t) })
       .catch(() => { if (!cancelled) setError(true) })
     return () => { cancelled = true }
-  }, [wsId, edge.id])
+  }, [wsId, edge.id, traceId])
 
   if (error) {
     return (
