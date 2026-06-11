@@ -37,6 +37,10 @@ env:
   PROMETHEUS_ENABLED: "true"
   PROVISIONING_MODE: real
   AI_SERVICE_URL: http://ai-service.bifrost-system.svc.cluster.local:8082
+  # 앱 trace tail-sampling(#370): OTLP를 OTel Collector 경유로 보내고, 샘플링 1.0(전량 송신)으로
+  # 올린다 → Collector의 tail_sampling이 에러/지연 trace만 Tempo에 저장. (데이터플레인 워커는 범위 밖)
+  OTLP_TRACING_ENDPOINT: http://otel-collector.monitoring:4318/v1/traces
+  TRACING_SAMPLE_RATE: "1.0"
 
 # kubectl create secret generic operations-backend-secrets 으로 사전 생성 필요
 secrets:
