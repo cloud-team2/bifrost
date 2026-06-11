@@ -52,8 +52,8 @@ v1은 SSE를 기본으로 한다.
 | `partial_result` | 부분 결과(단계 완료 시점의 중간 결론·진행 요약) | yes |
 | `approval_required` | 승인 필요 | yes |
 | `change_management_required` | 변경관리 필요 | yes |
-| `execution_started` | enum은 있으나 현재 runner/executor가 emit하지 않음 | no |
-| `execution_completed` | enum은 있으나 현재 runner/executor가 emit하지 않음 | no |
+| `execution_started` | Executor 조치 실행 시작 시 runner가 emit | yes |
+| `execution_completed` | Executor 조치 실행 완료 시 runner가 emit | yes |
 | `verification_completed` | 검증 완료 | yes |
 | `run_completed` | 최종 완료 | yes |
 | `debug_trace` | 내부 debug | no |
