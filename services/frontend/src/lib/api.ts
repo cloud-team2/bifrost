@@ -209,6 +209,12 @@ export interface SchemaTable {
 export interface DatabaseSchemaResponse {
   tables: SchemaTable[]
 }
+export interface DatabaseMetricsResponse {
+  tps: number
+  queryResponseMs: number
+  activeConnections: number
+  stub: boolean
+}
 export interface PipelineResponse {
   id: string
   name: string
@@ -698,6 +704,8 @@ export const api = {
     request<CdcReadinessResponse>('GET', `/api/v1/workspaces/${wsId}/databases/${dbId}/sink-readiness`),
   databaseSchema: (wsId: string, dbId: string) =>
     request<DatabaseSchemaResponse>('GET', `/api/v1/workspaces/${wsId}/databases/${dbId}/schema`),
+  databaseMetrics: (wsId: string, dbId: string) =>
+    request<DatabaseMetricsResponse>('GET', `/api/v1/workspaces/${wsId}/databases/${dbId}/metrics`),
 
   // pipelines (FR-003~005)
   listPipelines: (wsId: string, status?: string) =>
