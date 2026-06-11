@@ -18,7 +18,7 @@
 
 | 검증 | 규칙 |
 | --- | --- |
-| pattern | `fan_out`(EDA)→`sinkDbId` 없음 / `direct`(CDC)→`sinkDbId` 필수 |
+| pattern | `fan-out`(EDA)→`sinkDbId` 없음 / `direct`(CDC)→`sinkDbId` 필수 |
 | ownership | `sourceDbId`·`sinkDbId`가 해당 workspace 소유 |
 | CDC 준비도 | source DB `cdc_readiness_status` ≠ `BLOCKED` ([database-registry.md](./database-registry.md#3-database-registry)) |
 | 단일 테이블 | `schema`·`table` 단일 지정 |
@@ -46,13 +46,13 @@ validate
 | (없음) → `creating` | 생성 요청 | pipeline.service |
 | `creating` → `active` | 기대 connector 수만큼 모두 RUNNING | ConnectorWatcher |
 | `creating` → `error` | 생성 부분 실패 / connector FAILED | provisioning result · Watcher |
-| `active` ↔ `lag` | 일부 task FAILED(`PARTIALLY_FAILED`) ↔ 정상 RUNNING | Watcher |
-| `active`/`lag` → `error` | connector FAILED 또는 source/sink DB `UNREACHABLE` | Watcher · DatabaseHealthProbeJob |
+| `active` ↔ `lag` | RUNNING 상태에서 consumer group lag ≥ 5,000 ↔ < 5,000 (스펙 B.1) | KafkaAdminPoller → PipelineStatusService |
+| `active`/`lag` → `error` | connector FAILED 또는 일부 task FAILED(`PARTIALLY_FAILED`, 스펙 B.4) 또는 source/sink DB `UNREACHABLE` | Watcher · DatabaseHealthProbeJob |
 | `*` → `paused` | 사용자 pause | pipeline.service |
 | `paused` → `active` | 사용자 resume | pipeline.service |
 | `*` → (삭제) | 사용자 delete | pipeline.service |
 
-- **EDA(fan_out)**: expected connector 수가 1개이므로 Source connector state로 산정한다.
+- **EDA(fan-out)**: expected connector 수가 1개이므로 Source connector state로 산정한다.
 - `creating`이 timeout을 넘기면 `PipelineStatusServiceImpl.failTimedOutCreating(...)`이 `error`로 전이한다.
 
 ### 4. 생명주기 (FR-005)

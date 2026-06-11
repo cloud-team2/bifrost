@@ -1,6 +1,8 @@
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { buildRunCandidate, reportActions } from './Alerts'
-import type { IncidentReportResponse } from '../lib/api'
+import { buildEvents, buildRunCandidate, EventDetailPanel, reportActions } from './Alerts'
+import type { IncidentReportResponse, IncidentResponse } from '../lib/api'
 import type { Edge } from '../data/types'
 
 function report(body: unknown): IncidentReportResponse {
@@ -28,6 +30,23 @@ function pipeline(overrides: Partial<Edge> = {}): Edge {
     sinkConnector: 'orders-sink',
     status: 'active',
     partitions: 3,
+    ...overrides,
+  }
+}
+
+function incident(overrides: Partial<IncidentResponse> = {}): IncidentResponse {
+  return {
+    id: 'incident-1',
+    tenantId: 'workspace-1',
+    groupingKey: 'pipeline-1:lag',
+    severity: 'WARN',
+    status: 'OPEN',
+    title: 'Orders lag',
+    rca: null,
+    sourceType: 'pipeline',
+    sourceId: 'pipeline-1',
+    openedAt: '2026-06-11T01:00:00.000Z',
+    resolvedAt: null,
     ...overrides,
   }
 }
@@ -141,5 +160,149 @@ describe('incident report actions', () => {
     ])
 
     expect(buildRunCandidate(action, [pipeline()])).toBeNull()
+  })
+})
+
+describe('alert event stream', () => {
+  it('keeps API-backed pipeline/resource event fields available for event details', () => {
+    const events = buildEvents(
+      [
+        {
+          id: 'event-1',
+          pipelineId: 'pipeline-1',
+          incidentId: 'incident-1',
+          level: 'WARN',
+          type: 'PIPELINE_LAG',
+          message: 'consumer lag above threshold',
+          createdAt: '2026-06-11T01:00:00.000Z',
+        },
+      ],
+      [
+        {
+          eventType: 'PARTITION_REASSIGNMENT',
+          resource: 'orders-0',
+          detail: 'replicas changed',
+          occurredAt: '2026-06-11T01:01:00.000Z',
+        },
+      ],
+    )
+
+    expect(events).toHaveLength(2)
+    expect(events[0]).toEqual(expect.objectContaining({
+      source: 'resource',
+      label: 'PARTITION_REASSIGNMENT',
+      resourceKey: 'orders-0',
+      message: '[orders-0] replicas changed',
+    }))
+    expect(events[1]).toEqual(expect.objectContaining({
+      source: 'pipeline',
+      level: 'warning',
+      pipelineId: 'pipeline-1',
+      incidentId: 'incident-1',
+      label: 'PIPELINE_LAG',
+    }))
+  })
+
+  it('keeps resource event identity stable across refresh timestamps', () => {
+    const [first] = buildEvents([], [
+      {
+        eventType: 'PARTITION_REASSIGNMENT',
+        resource: 'orders-0',
+        detail: 'replicas=[0,1,2] addingReplicas=[]',
+        occurredAt: '2026-06-11T01:00:00.000Z',
+      },
+    ])
+    const [second] = buildEvents([], [
+      {
+        eventType: 'PARTITION_REASSIGNMENT',
+        resource: 'orders-0',
+        detail: 'replicas=[0,1,2] addingReplicas=[]',
+        occurredAt: '2026-06-11T01:00:10.000Z',
+      },
+    ])
+
+    expect(second.id).toBe(first.id)
+  })
+
+  it('disambiguates duplicate resource event rows without using volatile timestamps', () => {
+    const events = buildEvents([], [
+      {
+        eventType: 'PARTITION_REASSIGNMENT',
+        resource: 'orders-0',
+        detail: 'replicas=[0,1,2] addingReplicas=[]',
+        occurredAt: '2026-06-11T01:00:00.000Z',
+      },
+      {
+        eventType: 'PARTITION_REASSIGNMENT',
+        resource: 'orders-0',
+        detail: 'replicas=[0,1,2] addingReplicas=[]',
+        occurredAt: '2026-06-11T01:00:00.000Z',
+      },
+    ])
+
+    expect(events.map((event) => event.id)).toEqual([
+      'resource:PARTITION_REASSIGNMENT:orders-0:replicas=[0,1,2] addingReplicas=[]',
+      'resource:PARTITION_REASSIGNMENT:orders-0:replicas=[0,1,2] addingReplicas=[]#2',
+    ])
+  })
+
+  it('renders event detail fields from loaded API rows', () => {
+    const [event] = buildEvents(
+      [
+        {
+          id: 'event-1',
+          pipelineId: 'pipeline-1',
+          incidentId: 'incident-1',
+          level: 'WARN',
+          type: 'PIPELINE_LAG',
+          message: 'consumer lag above threshold',
+          createdAt: '2026-06-11T01:00:00.000Z',
+        },
+      ],
+      [],
+    )
+
+    const html = renderToStaticMarkup(createElement(EventDetailPanel, {
+      event,
+      pipeline: pipeline(),
+      incident: incident(),
+      onClose: () => {},
+      onOpenIncident: () => {},
+      onOpenPipeline: () => {},
+    }))
+
+    expect(html).toContain('PIPELINE_LAG')
+    expect(html).toContain('consumer lag above threshold')
+    expect(html).toContain('Orders CDC')
+    expect(html).toContain('Orders lag')
+    expect(html).toContain('event-1')
+  })
+
+  it('renders resource event detail fields from loaded API rows', () => {
+    const [event] = buildEvents(
+      [],
+      [
+        {
+          eventType: 'PARTITION_REASSIGNMENT',
+          resource: 'orders-0',
+          detail: 'replicas=[0,1,2] addingReplicas=[]',
+          occurredAt: '2026-06-11T01:00:00.000Z',
+        },
+      ],
+    )
+
+    const html = renderToStaticMarkup(createElement(EventDetailPanel, {
+      event,
+      pipeline: null,
+      incident: null,
+      onClose: () => {},
+      onOpenIncident: () => {},
+      onOpenPipeline: () => {},
+    }))
+
+    expect(html).toContain('PARTITION_REASSIGNMENT')
+    expect(html).toContain('[orders-0] replicas=[0,1,2] addingReplicas=[]')
+    expect(html).toContain('orders-0')
+    expect(html).toContain('resource:PARTITION_REASSIGNMENT:orders-0:replicas=[0,1,2] addingReplicas=[]')
   })
 })

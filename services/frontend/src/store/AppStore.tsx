@@ -103,6 +103,7 @@ interface Store {
   /* actions */
   createProject: (name: string) => Promise<Project | null>
   reloadProjectData: () => void
+  refreshDatabaseNode: (id: string) => Promise<void>
   addDatabaseNode: (n: Node) => void
   deleteDatabase: (id: string) => Promise<void>
   createPipeline: (input: PipelineCreateInput) => Promise<Edge | null>
@@ -112,6 +113,11 @@ interface Store {
   deletePipeline: (id: string) => Promise<void>
   runIncidentAction: (incidentId: string, actionId: string) => void
   reloadMonitoring: () => Promise<void>
+}
+
+interface LoadMonitoringOptions {
+  showLoading?: boolean
+  clearOnError?: boolean
 }
 
 const Ctx = createContext<Store | null>(null)
@@ -155,6 +161,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [currentProject, setCurrentProject] = useState<Project | null>(null)
   const currentProjectIdRef = useRef<string | null>(null)
+  const projectLoadIdRef = useRef(0)
+  const databaseRefreshIdRef = useRef<Record<string, number>>({})
   const monitoringLoadIdRef = useRef(0)
   const [view, setViewRaw] = useState<View>('pipelines')
   const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(null)
@@ -176,6 +184,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [resourceEvents, setResourceEvents] = useState<ResourceEventResponse[]>([])
   const [monitoringLoading, setMonitoringLoading] = useState(false)
   const [monitoringError, setMonitoringError] = useState<string | null>(null)
+  const viewRef = useRef<View>('pipelines')
+  const incidentLoadIdRef = useRef(0)
 
   const selectProject = (project: Project | null) => {
     currentProjectIdRef.current = project?.id ?? null
@@ -184,6 +194,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const clearMonitoringData = () => {
     monitoringLoadIdRef.current += 1
+    incidentLoadIdRef.current += 1
     setIncidents([])
     setEvents([])
     setResourceEvents([])
@@ -194,6 +205,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     currentProjectIdRef.current = currentProject?.id ?? null
   }, [currentProject?.id])
+
+  useEffect(() => {
+    viewRef.current = view
+  }, [view])
 
   /** A snapshot of the current navigable position, with optional overrides. */
   const snapshot = (o: Partial<NavSnapshot> = {}): NavSnapshot => ({
@@ -242,12 +257,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const wsId = currentProject?.id
     if (!wsId) return
     const es = new EventSource(api.eventStreamUrl(wsId))
+    const refreshMonitoring = () => {
+      if (viewRef.current !== 'alerts') return
+      void loadMonitoringData(wsId, { showLoading: false, clearOnError: false })
+    }
     es.addEventListener('pipeline_status_changed', (e) => {
       try {
         const data = JSON.parse((e as MessageEvent).data) as { pipelineId: string; status: Edge['status'] }
         setEdges((prev) =>
           prev.map((edge) => (edge.id === data.pipelineId ? { ...edge, status: data.status } : edge)),
         )
+        refreshMonitoring()
       } catch {
         /* malformed payload — ignore */
       }
@@ -262,10 +282,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
             : [data, ...prev]
           return next.sort((a, b) => b.openedAt.localeCompare(a.openedAt))
         })
+        refreshMonitoring()
       } catch {
         /* malformed payload — ignore */
       }
     }
+    es.addEventListener('connector_state_changed', refreshMonitoring)
     es.addEventListener('incident_opened', onIncident)
     es.addEventListener('incident_updated', onIncident)
     // onerror 시 EventSource가 자동 재연결한다(워크스페이스 변경/언마운트 시 close).
@@ -283,14 +305,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function loadMonitoringData(wsId: string) {
+  async function loadMonitoringData(wsId: string, options: LoadMonitoringOptions = {}) {
     const targetWsId = wsId
     if (currentProjectIdRef.current !== targetWsId) return
+    const { showLoading = true, clearOnError = true } = options
     const loadId = ++monitoringLoadIdRef.current
     const isActiveLoad = () =>
       monitoringLoadIdRef.current === loadId && currentProjectIdRef.current === targetWsId
 
-    setMonitoringLoading(true)
+    if (showLoading) setMonitoringLoading(true)
     setMonitoringError(null)
     try {
       const [incidentRows, eventRows, resourceRows] = await Promise.all([
@@ -304,14 +327,42 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setResourceEvents(resourceRows)
     } catch (e) {
       if (!isActiveLoad()) return
-      setIncidents([])
-      setEvents([])
-      setResourceEvents([])
+      if (clearOnError) {
+        setIncidents([])
+        setEvents([])
+        setResourceEvents([])
+      }
       setMonitoringError(e instanceof Error ? e.message : '모니터링 데이터를 불러오지 못했습니다')
     } finally {
       if (isActiveLoad()) setMonitoringLoading(false)
     }
   }
+
+  async function loadIncidentData(wsId: string) {
+    const targetWsId = wsId
+    if (currentProjectIdRef.current !== targetWsId) return
+    const loadId = ++incidentLoadIdRef.current
+    const isActiveLoad = () =>
+      incidentLoadIdRef.current === loadId && currentProjectIdRef.current === targetWsId
+
+    setMonitoringError(null)
+    try {
+      const incidentRows = await api.listIncidents(targetWsId)
+      if (isActiveLoad()) setIncidents(incidentRows)
+    } catch (e) {
+      if (isActiveLoad()) setMonitoringError(e instanceof Error ? e.message : '인시던트 데이터를 불러오지 못했습니다')
+    }
+  }
+
+  useEffect(() => {
+    const wsId = currentProject?.id
+    if (!wsId || view !== 'alerts') return
+    void loadMonitoringData(wsId, { showLoading: false, clearOnError: false })
+    const timer = window.setInterval(() => {
+      void loadMonitoringData(wsId, { showLoading: false, clearOnError: false })
+    }, 10000)
+    return () => window.clearInterval(timer)
+  }, [currentProject?.id, view])
 
   /* 새로고침 시 세션 복원: 토큰이 있으면 me()로 사용자/워크스페이스를 되살린다(없으면 토큰 폐기). */
   useEffect(() => {
@@ -339,8 +390,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   /** 워크스페이스 선택 시 DB·파이프라인을 백엔드에서 로드하고 project 인덱스를 채운다. */
   async function loadProjectData(wsId: string) {
+    const loadId = ++projectLoadIdRef.current
+    const isActiveLoad = () =>
+      projectLoadIdRef.current === loadId && currentProjectIdRef.current === wsId
     try {
       const [dbs, pls] = await Promise.all([api.listDatabases(wsId), api.listPipelines(wsId)])
+      if (!isActiveLoad()) return
       const nextNodes = dbs.map((d, i) => datasourceToNode(d, i))
       const nextEdges = pls.map(pipelineToEdge)
       setNodes(nextNodes)
@@ -357,10 +412,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         w && w.id === wsId ? { ...w, dbIds, pipelineIds, pipelineCount, activeCount } : w,
       )
     } catch {
+      if (!isActiveLoad()) return
       setNodes([])
       setEdges([])
     }
-    await loadMonitoringData(wsId)
+    if (isActiveLoad()) await loadMonitoringData(wsId)
+    if (isActiveLoad()) await loadIncidentData(wsId)
   }
 
   async function applyAuth(tokens: AuthTokens) {
@@ -541,6 +598,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (currentProject) loadProjectData(currentProject.id)
     },
 
+    async refreshDatabaseNode(id) {
+      const wsId = currentProjectIdRef.current
+      if (!wsId) return
+      const projectLoadId = projectLoadIdRef.current
+      const requestId = (databaseRefreshIdRef.current[id] ?? 0) + 1
+      databaseRefreshIdRef.current[id] = requestId
+      const db = await api.getDatabase(wsId, id)
+      if (
+        currentProjectIdRef.current !== wsId
+        || projectLoadIdRef.current !== projectLoadId
+        || databaseRefreshIdRef.current[id] !== requestId
+      ) return
+      setNodes((prev) =>
+        prev.map((node, index) => {
+          if (node.id !== id) return node
+          const next = datasourceToNode(db, index)
+          return { ...next, x: node.x, y: node.y }
+        }),
+      )
+    },
+
     addDatabaseNode(node) {
       setNodes((p) => [...p, node])
       if (currentProject) {
@@ -623,8 +701,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (currentProject) {
         try {
           await api.deletePipeline(currentProject.id, id)
-        } catch {
-          return
+        } catch (e) {
+          throw e
         }
       }
       const removed = edges.find((e) => e.id === id)
@@ -645,12 +723,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     runIncidentAction() {
       if (currentProject) {
-        void loadMonitoringData(currentProject.id)
+        void loadMonitoringData(currentProject.id, { clearOnError: false })
       }
     },
 
     async reloadMonitoring() {
-      if (currentProject) await loadMonitoringData(currentProject.id)
+      if (currentProject) await loadMonitoringData(currentProject.id, { clearOnError: false })
     },
   }
 

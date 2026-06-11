@@ -135,7 +135,7 @@ app/
 
 `api/` 라우트는 [api.md](../../api/fastapi.md) 표면(§5~§17)과 1:1로 맞춘다(run-scoped state/timeline·steps·actions는 `routes_runs`가 묶는다). `catalogs/`는 failure type, root cause, evidence matrix, runbook, policy처럼 운영 기준이 되는 정적 계약을 담고, `schemas/`는 State·streaming event·structured output·tool I/O·API DTO 같은 **공유 검증 schema**를 담아 Agent 구현 파일 안에 상수와 모델이 흩어지지 않게 한다(에이전트 고유 output schema도 여기 둔다).
 
-현재 `main.py` mount 기준으로 health, agent, runs, events, actions, approvals, change, reports, evidence, catalogs route는 외부 API에 연결되어 있다. `routes_admin.py`와 `routes_feedback.py`는 파일이 있어도 현재 app에 mount되지 않는다.
+현재 `main.py` mount 기준으로 health, agent, runs, events, actions, approvals, change, reports, feedback, admin, evidence, catalogs route는 외부 API에 연결되어 있다.
 
 ### 4. State 관리
 

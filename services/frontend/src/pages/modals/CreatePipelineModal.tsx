@@ -7,11 +7,24 @@ import { useApp } from '../../store/AppStore'
 import type { EdgePattern, Node } from '../../data/types'
 import { nodeName } from '../../data/helpers'
 import { cn } from '../../lib/format'
-import { ApiError, api, type SchemaTable } from '../../lib/api'
+import { ApiError, api, type CdcStatus, type SchemaTable } from '../../lib/api'
 
 interface SelectedTable {
   schema: string
   name: string
+}
+
+export function pipelineModalSteps(pattern: EdgePattern | null): string[] {
+  return pattern === 'direct'
+    ? ['연결 방식', 'Source DB', '테이블', 'Sink DB', '확인']
+    : ['연결 방식', 'Source DB', '테이블', '확인']
+}
+
+export function tableReadinessStatus(table: SchemaTable, sourceStatus: CdcStatus | null | undefined): CdcStatus | null {
+  if (sourceStatus === 'BLOCKED') return 'BLOCKED'
+  if (table.columns.length === 0) return null
+  if (!table.columns.some((c) => c.primaryKey)) return 'WARNING'
+  return sourceStatus ?? null
 }
 
 /* ---------------------------------------------------------------- Glossary tooltip */
@@ -84,8 +97,11 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
       .then((res) => {
         if (!cancelled) setTables(res.tables)
       })
-      .catch(() => {
-        if (!cancelled) setTables([])
+      .catch((e) => {
+        if (!cancelled) {
+          setTables([])
+          setError(e instanceof ApiError ? e.message : '스키마를 불러오지 못했습니다.')
+        }
       })
       .finally(() => {
         if (!cancelled) setTablesLoading(false)
@@ -94,9 +110,8 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
       cancelled = true
     }
   }, [wsId, sourceId])
-  const steps = pattern === 'direct'
-    ? ['연결 방식', 'Source DB', 'Sink DB', '테이블', '확인']
-    : ['연결 방식', 'Source DB', '테이블', '확인']
+  const steps = pipelineModalSteps(pattern)
+  const sourceDb = dbs.find((d) => d.id === sourceId) ?? null
 
   function reset() {
     setStep(0)
@@ -129,6 +144,7 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
 
   async function create() {
     if (!pattern || !sourceId || !selTable || !wsId || busy) return
+    if (pattern === 'direct' && !sinkId) return
     setBusy(true)
     setError('')
     const created = await app.createPipeline({
@@ -280,7 +296,9 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
             if (stepKey === 'Sink DB') setSinkId(id)
             else {
               setSourceId(id)
+              setSinkId('')
               setSelTable(null)
+              setError('')
             }
           }}
           label={stepKey === 'Sink DB' ? '데이터를 받을 DB를 선택하세요' : '변경을 감지할 DB를 선택하세요'}
@@ -292,6 +310,11 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
       {stepKey === '테이블' && (
         <div>
           <div className="mb-2 text-[12.5px] text-gray-500">변경을 감지할 테이블을 하나 선택하세요</div>
+          {error && (
+            <div className="mb-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-600">
+              {error}
+            </div>
+          )}
           {tablesLoading ? (
             <div className="rounded-lg border border-dashed border-gray-200 px-3 py-6 text-center text-[12.5px] text-gray-400">
               스키마를 불러오는 중…
@@ -304,6 +327,7 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
             <div className="max-h-[280px] space-y-1.5 overflow-y-auto">
               {tables.map((t) => {
                 const selected = selTable?.schema === t.schema && selTable?.name === t.name
+                const readiness = tableReadinessStatus(t, sourceDb?.cdcReadinessStatus)
                 return (
                   <label
                     key={`${t.schema}.${t.name}`}
@@ -340,6 +364,7 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
                       {t.schema}.{t.name}
                     </span>
                     <span className="text-[11px] text-gray-400">{t.columns.length} cols</span>
+                    <TableReadinessBadge status={readiness} />
                   </label>
                 )
               })}
@@ -392,6 +417,19 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
       )}
     </Modal>
   )
+}
+
+function TableReadinessBadge({ status }: { status: CdcStatus | null }) {
+  if (status === 'OK') {
+    return <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">OK</span>
+  }
+  if (status === 'WARNING') {
+    return <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">WARNING</span>
+  }
+  if (status === 'BLOCKED') {
+    return <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700">BLOCKED</span>
+  }
+  return <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">미점검</span>
 }
 
 function DbPicker({

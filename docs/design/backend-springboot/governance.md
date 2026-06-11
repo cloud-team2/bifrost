@@ -10,7 +10,7 @@
 
 | 범위 | 구현 |
 | --- | --- |
-| read tools | `/internal/ops/admin/tool-catalog`의 8개 read operation과 health/ready/version |
+| runtime tools | `/internal/ops/admin/tool-catalog`의 read operation + approval-gated mutation operation과 health/ready/version |
 | governance facade | `/internal/ops/approvals/**`, `/internal/ops/change-tickets/**` |
 | mutation subset | connector restart/pause/resume, Kafka Connect-managed consumer group restart |
 
@@ -104,9 +104,9 @@ Kafka Connect REST timeout은 504 `TIMEOUT`, 그 외 상류 실패는 502 `UPSTR
 
 이외 deployment scale, rollback, backfill, topic config patch, KafkaUser ACL patch, pod exec, arbitrary SQL, secret raw read 같은 operation은 현재 Spring endpoint가 없다. Secret 원문 read는 정책상 금지이며 Kafka principal secret API도 `MASKED_REFERENCE_ONLY`만 반환한다.
 
-### 8. Read tool catalog
+### 8. Runtime tool catalog
 
-`GET /internal/ops/admin/tool-catalog`는 read operation 8개만 반환한다. Mutation endpoint는 이 catalog에 포함되지 않는다. 상세 목록은 [internal-ops-read-tools.md](../../api/internal-ops-read-tools.md)를 따른다.
+`GET /internal/ops/admin/tool-catalog`는 read operation과 approval-gated mutation operation을 함께 반환한다. 상세 목록은 [internal-ops-read-tools.md](../../api/internal-ops-read-tools.md)를 따른다.
 
 ### 9. 현재 미구현/계획 상태
 
@@ -124,7 +124,7 @@ Kafka Connect REST timeout은 504 `TIMEOUT`, 그 외 상류 실패는 502 `UPSTR
 
 현재 구현 기준 regression 대상:
 
-- tool catalog는 read operation 8개만 포함하고 mutation과 미구현 read alias를 포함하지 않는다.
+- tool catalog는 read operation과 approval-gated mutation operation을 함께 포함하며 FastAPI 전용 alias와 미구현 operation은 포함하지 않는다.
 - mutation은 `X-Agent-Run-Id`, `X-Agent-Step-Id`, `X-Idempotency-Key` 누락 시 400 `VALIDATION_FAILED`.
 - mutation은 `X-Approval-Id` 누락 시 403 `APPROVAL_REQUIRED`.
 - approval params hash/tenant/operation 불일치와 expired/used 상태가 차단된다.

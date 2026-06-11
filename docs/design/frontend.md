@@ -30,12 +30,12 @@ flowchart LR
 
 | 소유 | 경로 그룹 |
 | --- | --- |
-| FastAPI(AI, route mount) | `/api/v1/agent/**`, `/api/v1/approvals/{id}/decision`, `/api/v1/catalogs/**`, `/api/v1/tools/**`, `/api/v1/incidents/{id}/reports`, `/api/v1/health`, `/api/v1/ready`, `/api/v1/version`, `/api/v1/capabilities` |
-| Frontend proxy → FastAPI(현재) | Vite/nginx는 현재 `/api/v1/agent/**`, `/api/v1/approvals/**`만 AI service로 보낸다. 그 외 `/api/**`는 Spring Boot로 fallback된다. |
+| FastAPI(AI, route mount) | `/api/v1/agent/**`, `/api/v1/approvals/{id}/decision`, `/api/v1/catalogs/**`, `/api/v1/tools/**`, `/api/v1/incidents/{id}/reports`, `/api/v1/health`, `/api/v1/ready`, `/api/v1/version`, `/api/v1/capabilities`, `/api/v1/admin/**` |
+| Frontend proxy → FastAPI(현재) | Vite/nginx는 `/api/v1/agent/**`, `/api/v1/approvals/**`, `/api/v1/tools/**`, `/api/v1/catalogs/**`, `/api/v1/health`, `/api/v1/ready`, `/api/v1/version`, `/api/v1/capabilities`를 AI service로 보낸다. 그 외 `/api/**`는 Spring Boot로 fallback된다. |
 | Spring Boot(플랫폼) | `/api/v1/auth/**`, `/api/v1/workspaces/**`, `/api/v1/clusters/**`, `/api/v1/workspaces/{wsId}/monitoring/**`, `/api/v1/workspaces/{wsId}/events/**`, `/api/v1/workspaces/{wsId}/kafka/principals/**` |
 | Spring Boot(agent-facing) | `/internal/ops/**`. Frontend가 직접 호출하지 않는다 |
 
-FastAPI admin/feedback API는 현재 mount되지 않는다. `/api/v1/change-tickets/**` 조회도 현재 FastAPI route가 없다.
+FastAPI feedback API는 `/api/v1/agent/**` proxy로 노출된다. FastAPI admin API는 mount되어 있지만 현재 frontend Vite/nginx proxy에는 `/api/v1/admin/**` 전용 rule이 없어 frontend origin에서는 `/api/**` fallback을 탄다. `/api/v1/change-tickets/**` 조회도 현재 FastAPI route가 없다.
 
 ### 1.2 Frontend screen routing
 
@@ -45,7 +45,6 @@ FastAPI admin/feedback API는 현재 mount되지 않는다. `/api/v1/change-tick
 
 | View | 주요 화면 |
 | --- | --- |
-| `overview` | 운영 overview / alerts 중심 |
 | `pipelines` | Pipeline 목록 |
 | `pipeline-detail` | Pipeline 상세 |
 | `databases` | DB 목록 |
@@ -54,7 +53,7 @@ FastAPI admin/feedback API는 현재 mount되지 않는다. `/api/v1/change-tick
 | `cluster` | Kafka/Connect cluster |
 | `settings` | workspace/member/Kafka principal 설정 |
 
-따라서 `/monitoring`과 `/clusters`는 frontend route prefix가 아니라 backend API group이다. `ActivityLog` 컴포넌트는 `services/frontend/src/pages/dev/ActivityLog.tsx`에 있지만 `View`, `App.tsx`, `Sidebar`에 연결되어 있지 않아 현재 표준 UI 동선에서는 접근되지 않는다.
+따라서 `/monitoring`과 `/clusters`는 frontend route prefix가 아니라 backend API group이다. 이벤트 로그는 별도 route가 아니라 `alerts` view의 통합 이벤트 로그로 제공한다.
 
 ## 2. 공통 호출 규칙
 
@@ -105,7 +104,7 @@ DatabaseDetail
 | connection-test | `user` | 실패도 HTTP 200이며 `success=false`, `reason`, `message`로 분류 |
 | register | `username` | `DatabaseResponse`: `id`, `name`, `engine`, `host`, `port`, `dbName`, `username`, `password="****"`, `cdcReadinessStatus`, `sinkReadinessStatus`, `connectionStatus`, `connectionError`, `connectionCheckedAt`, `roles`, `createdAt` |
 
-프론트 `DatabaseResponse` 타입은 현재 backend의 `sinkReadinessStatus`를 아직 포함하지 않는다. 문서의 API 계약 정본은 Spring Boot DTO다.
+프론트 `DatabaseResponse` 타입은 backend의 `sinkReadinessStatus`를 포함한다. 문서의 API 계약 정본은 Spring Boot DTO다.
 `cdcReadiness()` wrapper는 AddDatabaseModal의 등록 직후 점검에서 사용된다. `sinkReadiness()` wrapper는 현재 frontend call site가 없다.
 
 ## 5. Pipeline 생성·생명주기 (FR-004, FR-005)
@@ -131,8 +130,8 @@ PipelineDetail header
 
 | 패턴 | 탭 |
 | --- | --- |
-| EDA(`fan-out`) | `Overview`, `Consumers`, `Connector`, `Messages`, `Connection Guide` |
-| CDC(`direct`) | `Overview`, `Topic`, `Connector`, `Messages`, `Table Mapping` |
+| EDA(`fan-out`) | `Overview`, `Consumers`, `Connector`, `Messages`, `Connection Guide`, `Tracing` |
+| CDC(`direct`) | `Overview`, `Topic`, `Connector`, `Messages`, `Table Mapping`, `Tracing` |
 
 FR-006 Overview의 실제 구현:
 
@@ -150,9 +149,10 @@ FR-006 Overview의 실제 구현:
 | Consumers (FR-007) | `GET /api/v1/workspaces/{wsId}/pipelines/{id}/consumer-groups` |
 | Connector (FR-008) | `GET /api/v1/workspaces/{wsId}/pipelines/{id}/connectors` |
 | Topic/Sync (FR-009) | `topic-info` 또는 `sync-status` + `metrics/event-distribution` |
-| Messages (FR-010) | `GET /api/v1/workspaces/{wsId}/pipelines/{id}/messages` |
+| Messages (FR-010) | `GET /api/v1/workspaces/{wsId}/pipelines/{id}/messages`, 단일 파티션 오프셋 페이징은 `GET /api/v1/workspaces/{wsId}/pipelines/{id}/messages/page?partition=...&startOffset=...&limit=...` |
 | Connection Guide (FR-011) | `GET /api/v1/workspaces/{wsId}/pipelines/{id}/connection-guide` |
 | Table Mapping (FR-012) | `GET /api/v1/workspaces/{wsId}/pipelines/{id}/table-mapping` |
+| Tracing | `GET /api/v1/workspaces/{wsId}/pipelines/{id}/trace`, `GET/POST /api/v1/workspaces/{wsId}/pipelines/{id}/dataplane-tracing` |
 
 Connection Guide 응답은 `pipelineId`, `pipelineName`, `bootstrapServers`, `recommendedGroupId`, `authenticationMethod`, `credentialReference`, `authenticationTemplates`, `topics`다. Secret은 namespace/name/key reference만 노출하고 원문은 반환하지 않는다.
 
@@ -161,18 +161,20 @@ Table Mapping 응답은 `pipelineId`, `sourceConnector`, `sinkConnector`, `mappi
 ## 7. 모니터링·이벤트 (FR-019, FR-023, FR-024)
 
 ```text
-ActivityLogView (FR-019)     GET /api/v1/workspaces/{wsId}/events?level=&pipelineId=
-                              Sidebar '이벤트 로그'에서 진입
+AlertsView event log (FR-019)
+                              GET /api/v1/workspaces/{wsId}/events?level=&pipelineId=
+                              GET /api/v1/workspaces/{wsId}/monitoring/resource-events
+                              Sidebar '인시던트'에서 진입, 이벤트 row 클릭 시 상세 패널
 OperatorClusterView (FR-023)  GET /api/v1/clusters/kafka
                               GET /api/v1/clusters/kafka/throughput?minutes=30
                               GET /api/v1/clusters/connect   (Broker·Connect worker, workspace scope 없음)
 ResourceEvents (FR-024)       GET /api/v1/workspaces/{wsId}/monitoring/resource-events
-                              (별도 OperatorResourceEventsView는 AlertsView 통합 이벤트 로그로 흡수 — #324)
+                              (별도 화면 없이 AlertsView 통합 이벤트 로그로 흡수 — #324)
 ```
 
-`MonitoringController`의 `/monitoring/**` 4개 handler는 모두 workspace access를 요구한다. Spring에는 `monitoring/overview`와 incident detail route도 구현되어 있지만 현재 frontend `api.ts` wrapper와 `loadMonitoringData()`는 incidents list, workspace events, resource-events만 호출한다. Alerts detail은 이미 로드된 incident list에서 선택하며 `api.getIncident(...)` wrapper는 현재 미사용이다. `/api/v1/clusters/**`는 인증 사용자 대상이지만 workspace path scope는 없다.
+`MonitoringController`의 `/monitoring/**` 4개 handler는 모두 workspace access를 요구한다. Spring에는 `monitoring/overview`와 incident detail route도 구현되어 있다. Frontend는 프로젝트 전환 시 sidebar 배지를 위해 incidents list만 선로딩하고, Alerts 화면 진입/갱신 때 workspace events와 resource-events를 함께 호출한다. Alerts incident detail은 `api.getIncidentDetail(...)`로 관련 events/reports를 다시 읽고, 이벤트 상세는 이미 로드된 event/resource-event row의 실 API 필드를 표시한다. `/api/v1/clusters/**`는 인증 사용자 대상이지만 workspace path scope는 없다.
 
-`ActivityLog`는 개발용 컴포넌트로 남아 있으며 현재 앱 내 route/sidebar에 연결되어 있지 않다. 표준 운영 화면에서 event log는 Alerts 데이터와 store-level platform SSE 갱신으로 소비된다.
+표준 운영 화면에서 event log는 Alerts 데이터로 소비된다. store-level platform SSE는 파이프라인/인시던트 전이를 즉시 반영하고, Alerts 화면에서는 이벤트/리소스 이벤트 목록을 동일 REST API로 주기 재조회해 자동 갱신한다. Broker 화면은 `/clusters/kafka` 응답을 사용하지만 FR-023 정책에 따라 broker별 CPU/디스크/네트워크/heap 같은 인프라 지표는 렌더링하지 않는다.
 
 ## 8. 인시던트 + AI Agent (FR-021, FR-022, FR-025, FR-026)
 
@@ -183,13 +185,13 @@ AlertsView (FR-021) — 조회는 Spring Boot
 
 BifrostAgentPanel — AI는 FastAPI
   POST /api/v1/agent/runs
-       {project_id, mode?, message, incident_id?, remediation_requested?, stream?}
+       {project_id, mode?, message, incident_id?, remediation_requested?, stream?, action_candidate?}
   GET  /api/v1/agent/runs/{runId}/events?access_token=<jwt>
   GET  /api/v1/agent/runs/{runId}/approvals
   POST /api/v1/approvals/{approvalId}/decision {decision, comment}
 ```
 
-FastAPI `POST /api/v1/agent/runs`의 현재 DTO에는 `alert_ids`가 없다. `AgentRunPanel`은 `incident_id`와 `remediation_requested`를 보낼 수 있지만, 현재 FastAPI `create_run()`은 이 두 값을 persistence와 `run_workflow()`에 넘기지 않아 실행 컨텍스트에는 반영되지 않는다([FastAPI API §5](../api/fastapi.md#post-apiv1agentruns)). FastAPI에는 state/timeline/evidence/actions/report 조회 route가 있지만 현재 `AgentRunPanel`은 evidence와 report preview를 별도 GET이 아니라 SSE event(`evidence_collected`, `report_preview_available`)로 소비한다.
+FastAPI `POST /api/v1/agent/runs`의 현재 DTO에는 `alert_ids`가 없다. `AgentRunPanel`은 `incident_id`, `remediation_requested`, `action_candidate`를 보낼 수 있고, FastAPI `create_run()`은 `incident_id`와 `remediation_requested`를 persistence에 저장하며 세 값을 `run_workflow()` 요청 컨텍스트로 넘긴다([FastAPI API §5](../api/fastapi.md#post-apiv1agentruns)). FastAPI에는 state/timeline/evidence/actions/report 조회 route가 있지만 현재 `AgentRunPanel`은 evidence와 report preview를 별도 GET이 아니라 SSE event(`evidence_collected`, `report_preview_available`)로 소비한다.
 
 ## 9. Kafka Principal Secret 보안정책
 
@@ -217,7 +219,7 @@ GET /api/v1/workspaces/{wsId}/kafka/principals/{principalId}/secret
 | 연결 테스트 실패 | `success=false`와 `reason`(`CONNECTION_REFUSED`/`AUTH_FAILED`/`DB_NOT_FOUND`/`TIMEOUT`/`UNKNOWN`)을 안내 |
 | CDC `BLOCKED` | 마법사에서 source 선택 불가 + hint 노출 |
 | 승인 필요 | 현재 UI는 `approval_required` SSE event로 승인 카드를 만들고, pending approval 조회로 approval id를 보강한다. action state route 기반 연결은 없다 |
-| SSE 끊김 | 현재 FE는 `EventSource` 자동 재연결과 상태 메시지에 의존한다. FastAPI `/events/history`는 route 없음 |
+| SSE 끊김 | 현재 FE는 주로 `EventSource` 자동 재연결과 상태 메시지에 의존한다. FastAPI에는 missed event catchup용 `/events/history` JSON route가 있다 |
 
 ## 11. 확정 사항
 

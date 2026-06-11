@@ -101,7 +101,11 @@ function eventMessage(e: ResourceEventResponse): string {
   return `[${e.resource}] ${e.detail}`
 }
 
-function buildEvents(events: EventResponse[], resourceEvents: ResourceEventResponse[]): UnifiedEvent[] {
+function resourceEventId(e: ResourceEventResponse): string {
+  return `resource:${e.eventType}:${e.resource}:${e.detail}`
+}
+
+export function buildEvents(events: EventResponse[], resourceEvents: ResourceEventResponse[]): UnifiedEvent[] {
   const pipeline: UnifiedEvent[] = events.map((e) => ({
     id: e.id,
     occurredAt: e.createdAt,
@@ -112,15 +116,21 @@ function buildEvents(events: EventResponse[], resourceEvents: ResourceEventRespo
     pipelineId: e.pipelineId,
     incidentId: e.incidentId,
   }))
-  const resources: UnifiedEvent[] = resourceEvents.map((e, index) => ({
-    id: `${e.eventType}:${e.resource}:${e.occurredAt}:${index}`,
-    occurredAt: e.occurredAt,
-    level: null,
-    message: eventMessage(e),
-    source: 'resource',
-    label: e.eventType,
-    resourceKey: e.resource,
-  }))
+  const resourceCounts = new Map<string, number>()
+  const resources: UnifiedEvent[] = resourceEvents.map((e) => {
+    const baseId = resourceEventId(e)
+    const duplicateIndex = resourceCounts.get(baseId) ?? 0
+    resourceCounts.set(baseId, duplicateIndex + 1)
+    return {
+      id: duplicateIndex === 0 ? baseId : `${baseId}#${duplicateIndex + 1}`,
+      occurredAt: e.occurredAt,
+      level: null,
+      message: eventMessage(e),
+      source: 'resource',
+      label: e.eventType,
+      resourceKey: e.resource,
+    }
+  })
   return [...pipeline, ...resources].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))
 }
 
@@ -450,6 +460,7 @@ export function buildRunCandidate(action: ReportAction, pipelines: Edge[]): Acti
 export function Alerts() {
   const app = useApp()
   const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(() => app.opSelectedIncidentId)
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null)
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all')
   const [levelFilter, setLevelFilter] = useState<'all' | LogLevel>('all')
 
@@ -458,6 +469,7 @@ export function Alerts() {
   const resolvedIncidents = incidents.filter((i) => !isOpenIncident(i))
   const selectedIncident = incidents.find((i) => i.id === selectedIncidentId) ?? null
   const allEvents = useMemo(() => buildEvents(app.events, app.resourceEvents), [app.events, app.resourceEvents])
+  const selectedEvent = allEvents.find((event) => event.id === selectedEventId) ?? null
   const selectedRelatedEvents = useMemo(
     () => (selectedIncident ? relatedEventsForIncident(selectedIncident, allEvents, app.edges) : []),
     [selectedIncident, allEvents, app.edges],
@@ -466,13 +478,20 @@ export function Alerts() {
     () => new Set(selectedRelatedEvents.map((event) => event.id)),
     [selectedRelatedEvents],
   )
-  const initialLoading = app.monitoringLoading && incidents.length === 0 && allEvents.length === 0
+  const hasMonitoringData = incidents.length > 0 || allEvents.length > 0
+  const initialLoading = app.monitoringLoading && !hasMonitoringData
 
   useEffect(() => {
     if (!app.opSelectedIncidentId) return
     setSelectedIncidentId(app.opSelectedIncidentId)
+    setSelectedEventId(null)
     app.clearOpSelectedIncident()
   }, [app.opSelectedIncidentId])
+
+  useEffect(() => {
+    if (!selectedEventId) return
+    if (!allEvents.some((event) => event.id === selectedEventId)) setSelectedEventId(null)
+  }, [allEvents, selectedEventId])
 
   const filteredEvents = useMemo(
     () =>
@@ -489,7 +508,19 @@ export function Alerts() {
   )
 
   function toggleIncident(id: string) {
-    setSelectedIncidentId((prev) => (prev === id ? null : id))
+    setSelectedIncidentId((prev) => {
+      const next = prev === id ? null : id
+      if (next) setSelectedEventId(null)
+      return next
+    })
+  }
+
+  function toggleEvent(id: string) {
+    setSelectedEventId((prev) => {
+      const next = prev === id ? null : id
+      if (next) setSelectedIncidentId(null)
+      return next
+    })
   }
 
   return (
@@ -507,7 +538,7 @@ export function Alerts() {
         }
       />
 
-      {app.monitoringError ? (
+      {app.monitoringError && !hasMonitoringData ? (
         <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700">
           {app.monitoringError}
         </div>
@@ -518,6 +549,11 @@ export function Alerts() {
       ) : (
         <div className="mt-4 flex min-h-0 flex-col gap-4 xl:flex-row">
           <div className="min-w-0 flex-1 space-y-3">
+            {app.monitoringError && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-800">
+                {app.monitoringError} · 기존 데이터로 표시합니다
+              </div>
+            )}
             {activeIncidents.length > 0 ? (
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
@@ -589,7 +625,9 @@ export function Alerts() {
                       key={event.id}
                       event={event}
                       relatedEventIds={visibleRelatedEventIds}
+                      selected={selectedEventId === event.id}
                       isLast={i === filteredEvents.length - 1}
+                      onClick={() => toggleEvent(event.id)}
                     />
                   ))
                 )}
@@ -612,13 +650,27 @@ export function Alerts() {
             </div>
           </div>
 
-          {selectedIncident && (
+          {(selectedIncident || selectedEvent) && (
             <div className="w-full shrink-0 self-start overflow-hidden rounded-xl border border-gray-200 bg-white xl:w-[380px]">
-              <IncidentPanel
-                incident={selectedIncident}
-                relatedEvents={selectedRelatedEvents}
-                onClose={() => setSelectedIncidentId(null)}
-              />
+              {selectedIncident ? (
+                <IncidentPanel
+                  incident={selectedIncident}
+                  relatedEvents={selectedRelatedEvents}
+                  onClose={() => setSelectedIncidentId(null)}
+                />
+              ) : selectedEvent ? (
+                <EventDetailPanel
+                  event={selectedEvent}
+                  pipeline={selectedEvent.pipelineId ? app.edges.find((edge) => edge.id === selectedEvent.pipelineId) ?? null : null}
+                  incident={selectedEvent.incidentId ? incidents.find((incident) => incident.id === selectedEvent.incidentId) ?? null : null}
+                  onClose={() => setSelectedEventId(null)}
+                  onOpenIncident={(id) => {
+                    setSelectedEventId(null)
+                    setSelectedIncidentId(id)
+                  }}
+                  onOpenPipeline={(id) => app.openPipeline(id)}
+                />
+              ) : null}
             </div>
           )}
         </div>
@@ -672,23 +724,29 @@ function IncidentBanner({
 function EventRow({
   event,
   relatedEventIds,
+  selected,
   isLast,
+  onClick,
 }: {
   event: UnifiedEvent
   relatedEventIds: Set<string>
+  selected: boolean
   isLast: boolean
+  onClick: () => void
 }) {
   const left = event.level ? LEVEL_LEFT[event.level] : 'border-l-gray-300'
   const hasSelection = relatedEventIds.size > 0
   const isHighlighted = hasSelection && relatedEventIds.has(event.id)
   const isDimmed = hasSelection && !isHighlighted
   return (
-    <div
+    <button
+      type="button"
+      onClick={onClick}
       className={cn(
-        'flex items-start gap-3 border-l-2 px-4 py-2.5',
+        'flex w-full items-start gap-3 border-l-2 px-4 py-2.5 text-left transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-200',
         !isLast && 'border-b border-gray-50',
         left,
-        isHighlighted && 'bg-brand-50/25',
+        (isHighlighted || selected) && 'bg-brand-50/25',
         isDimmed && 'opacity-40',
       )}
     >
@@ -706,6 +764,122 @@ function EventRow({
         {event.label}
       </span>
       <span className="flex-1 text-[12.5px] text-gray-700">{event.message}</span>
+      <Icon name="chevron-right" size={13} className="mt-0.5 shrink-0 text-gray-300" />
+    </button>
+  )
+}
+
+/* ---------------------------------------------------------------- EventDetailPanel */
+
+export function EventDetailPanel({
+  event,
+  pipeline,
+  incident,
+  onClose,
+  onOpenIncident,
+  onOpenPipeline,
+}: {
+  event: UnifiedEvent
+  pipeline: Edge | null
+  incident: IncidentResponse | null
+  onClose: () => void
+  onOpenIncident: (id: string) => void
+  onOpenPipeline: (id: string) => void
+}) {
+  const sourceLabel = event.source === 'pipeline' ? 'Pipeline' : 'Resource'
+
+  return (
+    <div className="flex max-h-[calc(100vh-140px)] flex-col overflow-hidden">
+      <div className="flex shrink-0 items-start gap-2.5 border-b border-gray-100 px-4 py-3">
+        <Icon name={event.source === 'pipeline' ? 'route' : 'server'} size={15} className="mt-0.5 text-gray-400" />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[13px] font-semibold text-gray-900">{event.label}</div>
+          <div className="mt-0.5 font-mono text-[10.5px] text-gray-400">{fmtDateTime(event.occurredAt)}</div>
+        </div>
+        <button onClick={onClose} className="shrink-0 text-gray-400 hover:text-gray-600">
+          <Icon name="x" size={15} />
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-auto divide-y divide-gray-100">
+        <div className="space-y-3 px-4 py-3">
+          <div className="grid grid-cols-2 gap-2">
+            <DetailMetric label="Source">
+              <span className="font-medium text-gray-700">{sourceLabel}</span>
+            </DetailMetric>
+            <DetailMetric label="Level">
+              {event.level ? (
+                <StatusBadge status={event.level} />
+              ) : (
+                <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-gray-500">
+                  event
+                </span>
+              )}
+            </DetailMetric>
+            <DetailMetric label="Occurred">
+              <span className="break-all font-mono">{fmtDateTime(event.occurredAt)}</span>
+            </DetailMetric>
+            <DetailMetric label="Type">
+              <span className="break-all font-mono">{event.label}</span>
+            </DetailMetric>
+          </div>
+
+          <div>
+            <div className="mb-1 text-[10.5px] font-bold uppercase tracking-wide text-gray-400">Message</div>
+            <p className="whitespace-pre-wrap break-words text-[12.5px] leading-relaxed text-gray-700">
+              {event.message}
+            </p>
+          </div>
+
+          {event.pipelineId && (
+            <div>
+              <div className="mb-1 text-[10.5px] font-bold uppercase tracking-wide text-gray-400">Pipeline</div>
+              {pipeline ? (
+                <button
+                  onClick={() => onOpenPipeline(pipeline.id)}
+                  className="inline-flex items-center gap-1 text-[12px] font-medium text-brand-600 hover:underline"
+                >
+                  {pipelineLabel(pipeline)}
+                  <Icon name="arrow-right" size={11} />
+                </button>
+              ) : (
+                <div className="break-all font-mono text-[11px] text-gray-400">{event.pipelineId}</div>
+              )}
+            </div>
+          )}
+
+          {event.incidentId && (
+            <div>
+              <div className="mb-1 text-[10.5px] font-bold uppercase tracking-wide text-gray-400">Incident</div>
+              {incident ? (
+                <button
+                  onClick={() => onOpenIncident(incident.id)}
+                  className="inline-flex items-center gap-1 text-[12px] font-medium text-brand-600 hover:underline"
+                >
+                  {incident.title}
+                  <Icon name="arrow-right" size={11} />
+                </button>
+              ) : (
+                <div className="break-all font-mono text-[11px] text-gray-400">{event.incidentId}</div>
+              )}
+            </div>
+          )}
+
+          {event.resourceKey && (
+            <div>
+              <div className="mb-1 text-[10.5px] font-bold uppercase tracking-wide text-gray-400">Resource</div>
+              <div className="break-all font-mono text-[11px] text-gray-600">{event.resourceKey}</div>
+            </div>
+          )}
+
+          <dl className="space-y-1 rounded-lg bg-gray-50 px-3 py-2 text-[11px]">
+            <RawField label="eventId" value={event.id} />
+            <RawField label="source" value={event.source} />
+            {event.pipelineId && <RawField label="pipelineId" value={event.pipelineId} />}
+            {event.incidentId && <RawField label="incidentId" value={event.incidentId} />}
+          </dl>
+        </div>
+      </div>
     </div>
   )
 }

@@ -118,6 +118,14 @@ main (always deployable)
 - CI 통과 필수
 - 본인 PR은 본인이 머지 (Squash and merge)
 
+### GitHub 작업 로그 동기화
+
+GitHub 이슈/PR 이벤트는 `.github/workflows/notion_sync.yml`에서 Notion의 "GitHub 작업 로그" DB로 동기화한다. 레포 시크릿 `NOTION_TOKEN`을 설정해야 하며, `NOTION_DB_ID`는 필요 시 설정한다. `NOTION_DB_ID`를 생략하면 `37cb7cb3-2d91-81cf-b930-f137189b41c4`를 사용한다.
+
+DB 속성은 `제목`(title), `번호`(number), `타입`(select 또는 text), `상태`(select/status 또는 text), `작성자`(text), `머지일`(date), `링크`(url 또는 text)를 기대한다. select/status 속성을 쓰는 경우 옵션명은 `feat`/`fix` 같은 제목 타입과 `open`/`closed`/`merged` 상태값에 맞춘다.
+
+이전 슬랙 요약 봇을 제거했으므로 더 이상 쓰지 않는 `SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID`, `BOT_GITHUB_TOKEN`, `MONITOR_REPOS` 시크릿은 레포 설정에서 정리한다.
+
 ## 팀
 
 | Role | Name | 담당 |

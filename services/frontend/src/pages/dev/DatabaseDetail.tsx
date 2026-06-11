@@ -1,40 +1,65 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Icon } from '../../components/Icon'
 import { TechIcon, nodeKind } from '../../components/TechIcon'
 import { MetricCard, Panel, StatusBadge } from '../../components/blocks'
 import { useToast } from '../../components/Toast'
 import { useApp } from '../../store/AppStore'
 import { dbPipelines, nodeName, pipelineLabel } from '../../data/helpers'
-import type { CapabilityCheck, Edge, Node } from '../../data/types'
+import type { Node } from '../../data/types'
 import { cn } from '../../lib/format'
-import { api, type SchemaTable } from '../../lib/api'
+import { api, type CdcCheck, type CdcReadinessResponse, type DatabaseMetricsResponse, type SchemaTable } from '../../lib/api'
 
-function defaultChecks(node: Node): CapabilityCheck[] {
-  if (node.checks) return node.checks
-  if (node.tech === 'mariadb')
-    return [
-      { label: 'binlog_format = ROW', state: 'pass', detail: 'Row-based binary logging is enabled.' },
-      { label: 'REPLICATION SLAVE privilege', state: 'pass', detail: 'The CDC user can read the binlog.' },
-      { label: 'GTID mode', state: node.status === 'healthy' ? 'pass' : 'warn', detail: 'GTID enables safe failover repositioning.' },
-      { label: 'binlog retention', state: 'pass', detail: 'Retention window is 7 days.' },
-    ]
-  return [
-    { label: 'wal_level = logical', state: 'pass', detail: 'Logical decoding is enabled.' },
-    { label: 'REPLICATION privilege', state: 'pass', detail: 'The CDC user can create replication slots.' },
-    { label: 'Replication slot capacity', state: node.cdc?.slots?.startsWith('0') ? 'pass' : 'pass', detail: `Slots in use: ${node.cdc?.slots}.` },
-    { label: 'REPLICA IDENTITY FULL', state: node.status === 'healthy' ? 'pass' : 'warn', detail: 'Some tables use DEFAULT — updates ship key columns only.' },
-  ]
+interface ResourceState<T> {
+  data: T | null
+  loading: boolean
+  error: string | null
+  loaded: boolean
 }
 
 export function DatabaseDetail() {
   const app = useApp()
-  const toast = useToast()
   const node = app.nodes.find((n) => n.id === app.selectedDatabaseId)
-  const [tab, setTab] = useState('Overview')
-  const tabs = ['Overview', 'Schema', '연결 검사', 'Pipelines']
-
   if (!node) return <div className="px-6 py-10 text-sm text-gray-500">Database not found.</div>
+  return <DatabaseDetailContent key={`${app.currentProject?.id ?? 'none'}:${node.id}`} node={node} />
+}
+
+function DatabaseDetailContent({ node }: { node: Node }) {
+  const app = useApp()
+  const toast = useToast()
+  const [tab, setTab] = useState('Overview')
+  const [rescanning, setRescanning] = useState(false)
+  const tabs = ['Overview', 'Schema', '연결 검사', 'Metrics', 'Pipelines']
+
   const pipelines = dbPipelines(node.id, app.edges)
+  const wsId = app.currentProject?.id ?? null
+  const readiness = useDatabaseReadiness(wsId, node.id)
+  const schema = useDatabaseSchema(wsId, node.id)
+  const metrics = useDatabaseMetrics(wsId, node.id)
+  const liveMetrics = liveDatabaseMetrics(metrics.data)
+  const displayStatus = databaseStatusFromReadinessResources(node, readiness.source, readiness.sink)
+
+  const handleRescan = async () => {
+    if (!wsId) {
+      toast('워크스페이스를 먼저 선택하세요.')
+      return
+    }
+    setRescanning(true)
+    try {
+      let failed = (await rescanDatabaseDetailResources([
+        readiness.reload,
+        schema.reload,
+        metrics.reload,
+      ])).failed
+      try {
+        await app.refreshDatabaseNode(node.id)
+      } catch {
+        failed = true
+      }
+      toast(failed ? '재검사가 완료됐지만 일부 API를 불러오지 못했습니다.' : 'Database capabilities re-scanned.')
+    } finally {
+      setRescanning(false)
+    }
+  }
 
   return (
     <div className="px-6 py-5">
@@ -54,17 +79,18 @@ export function DatabaseDetail() {
             <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
               {node.techLabel}
             </span>
-            <StatusBadge status={node.status} label={node.status === 'healthy' ? 'connected' : node.status} />
+            <StatusBadge status={displayStatus} label={displayStatus === 'healthy' ? 'connected' : displayStatus} />
           </div>
           <div className="mt-0.5 font-mono text-[12px] text-gray-400">{node.host}</div>
         </div>
         <div className="flex-1" />
         <button
-          onClick={() => toast('Re-scanning database capabilities…')}
-          className="flex items-center gap-1.5 rounded-md border border-gray-300 px-2.5 py-1.5 text-[12.5px] font-medium text-gray-700 hover:bg-gray-50"
+          onClick={handleRescan}
+          disabled={rescanning}
+          className="flex items-center gap-1.5 rounded-md border border-gray-300 px-2.5 py-1.5 text-[12.5px] font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <Icon name="refresh" size={13} />
-          Re-scan
+          {rescanning ? 'Scanning…' : 'Re-scan'}
         </button>
         <button
           onClick={async () => {
@@ -100,11 +126,24 @@ export function DatabaseDetail() {
       <div className="mt-4">
         {tab === 'Overview' && (
           <div className="space-y-4">
-            <div className="grid grid-cols-4 gap-4">
-              <MetricCard label="Status" value={<StatusBadge status={node.status} />} />
-              <MetricCard label="TPS" value={node.metrics?.tps ?? 0} />
-              <MetricCard label="Replication lag" value={`${node.metrics?.lag_ms ?? 0}`} sub="ms" tone={(node.metrics?.lag_ms ?? 0) > 1000 ? 'warn' : 'good'} />
-              <MetricCard label="Schema size" value={node.schema?.size ?? '—'} sub={`${node.schema?.tables ?? 0} tables`} />
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <MetricCard label="Status" value={<StatusBadge status={displayStatus} />} />
+              <MetricCard
+                label="TPS"
+                value={metricValue(metrics, liveMetrics?.tps)}
+                sub={metricSub(metrics, liveMetrics ? 'transactions/sec' : undefined)}
+              />
+              <MetricCard
+                label="Query response"
+                value={metricValue(metrics, liveMetrics?.queryResponseMs)}
+                sub={liveMetrics ? 'ms avg' : metricSub(metrics)}
+                tone={liveMetrics && liveMetrics.queryResponseMs > 1000 ? 'warn' : 'default'}
+              />
+              <MetricCard
+                label="Tables"
+                value={schemaTableValue(schema)}
+                sub={schemaTableSub(schema)}
+              />
             </div>
             <Panel title="Pipeline 역할">
               {pipelines.length === 0 ? (
@@ -148,10 +187,14 @@ export function DatabaseDetail() {
           </div>
         )}
 
-        {tab === 'Schema' && <SchemaTab wsId={app.currentProject?.id ?? null} dbId={node.id} />}
+        {tab === 'Schema' && <SchemaTab state={schema} />}
 
         {tab === '연결 검사' && (
-          <ConnectionCheckTab node={node} edges={pipelines} />
+          <ConnectionCheckTab state={readiness} />
+        )}
+
+        {tab === 'Metrics' && (
+          <MetricsTab state={metrics} />
         )}
 
         {tab === 'Pipelines' && (
@@ -191,70 +234,348 @@ export function DatabaseDetail() {
 }
 
 
-/* ---- 친화적 Capability Check 라벨 매핑 ---- */
-const FRIENDLY_LABELS: Record<string, { label: string; desc: string }> = {
-  'wal_level = logical':       { label: '변경 감지 활성화',       desc: 'DB가 데이터 변경 이력을 기록하도록 설정되어 있습니다.' },
-  'REPLICATION privilege':     { label: '연결 권한',               desc: 'Bifrost가 DB에 접근할 수 있는 권한이 있습니다.' },
-  'Replication slot capacity': { label: '연결 슬롯 여유 공간',     desc: '파이프라인을 추가로 연결할 수 있는 슬롯이 있습니다.' },
-  'REPLICA IDENTITY FULL':     { label: '변경 데이터 완전성',      desc: '일부 테이블이 변경 전/후 데이터를 완전히 기록하지 않을 수 있습니다.' },
-  'binlog_format = ROW':       { label: '변경 감지 방식',          desc: '행 단위로 변경이 감지됩니다. 정확한 복제에 필요한 설정입니다.' },
-  'REPLICATION SLAVE privilege':{ label: '연결 권한',              desc: 'Bifrost가 DB 변경 이력을 읽을 수 있는 권한이 있습니다.' },
-  'GTID mode':                  { label: '안전한 장애 복구',       desc: '서버 장애 시 파이프라인이 올바른 위치에서 재시작됩니다.' },
-  'binlog retention':           { label: '변경 이력 보존 기간',    desc: '변경 이력이 7일간 보존됩니다.' },
+type ReadinessPayload = {
+  source: CdcReadinessResponse | null
+  sink: CdcReadinessResponse | null
 }
 
-/* ---- Sink 연결 검사 항목 ---- */
-const SINK_CHECKS: CapabilityCheck[] = [
-  { label: '연결 확인', state: 'pass', detail: 'Bifrost가 Sink DB에 성공적으로 접속할 수 있습니다.' },
-  { label: '쓰기 권한', state: 'pass', detail: 'Sink DB에 INSERT/UPDATE/DELETE 권한이 있습니다.' },
-  { label: '스키마 호환성', state: 'warn', detail: 'Sink 테이블이 Source 스키마와 일부 다를 수 있습니다. 테이블 매핑을 확인하세요.' },
-  { label: '트랜잭션 격리 수준', state: 'pass', detail: 'READ COMMITTED 이상의 격리 수준이 설정되어 있습니다.' },
-]
+type ReadinessState = {
+  source: ResourceState<CdcReadinessResponse>
+  sink: ResourceState<CdcReadinessResponse>
+  reload: () => Promise<ReadinessPayload>
+}
 
-function CheckSection({
+type ReloadableResourceState<T> = ResourceState<T> & {
+  reload: () => Promise<T>
+}
+
+type DatabaseReadinessClient = Pick<typeof api, 'cdcReadiness' | 'sinkReadiness'>
+
+interface DatabaseReadinessLoadResult {
+  source: Promise<CdcReadinessResponse>
+  sink: Promise<CdcReadinessResponse | null>
+}
+
+function emptyResource<T>(): ResourceState<T> {
+  return { data: null, loading: false, error: null, loaded: false }
+}
+
+function errorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && error.message.trim() ? error.message : fallback
+}
+
+export function cdcStatusToNodeStatus(
+  status: CdcReadinessResponse['overallStatus'] | null | undefined,
+): Node['status'] | null {
+  if (status === 'OK') return 'healthy'
+  if (status === 'WARNING') return 'warning'
+  if (status === 'BLOCKED') return 'error'
+  return null
+}
+
+export function databaseStatusFromReadiness(
+  node: Pick<Node, 'status' | 'connectionStatus'>,
+  readinessStatus: CdcReadinessResponse['overallStatus'] | null | undefined,
+): Node['status'] {
+  if (node.connectionStatus === 'UNREACHABLE') return 'error'
+  return cdcStatusToNodeStatus(readinessStatus) ?? node.status
+}
+
+const NODE_STATUS_RANK: Record<Node['status'], number> = {
+  healthy: 0,
+  warning: 1,
+  error: 2,
+}
+
+export function worstNodeStatus(statuses: Array<Node['status'] | null | undefined>): Node['status'] | null {
+  return statuses.reduce<Node['status'] | null>((worst, status) => {
+    if (!status) return worst
+    if (!worst || NODE_STATUS_RANK[status] > NODE_STATUS_RANK[worst]) return status
+    return worst
+  }, null)
+}
+
+export function readinessResourceStatus(
+  state: ResourceState<CdcReadinessResponse> | null | undefined,
+): Node['status'] | null {
+  if (!state) return null
+  if (state.data) return cdcStatusToNodeStatus(state.data.overallStatus)
+  if (state.error) return 'warning'
+  return null
+}
+
+export function databaseStatusFromReadinessResources(
+  node: Pick<Node, 'status' | 'connectionStatus'>,
+  source: ResourceState<CdcReadinessResponse>,
+  sink: ResourceState<CdcReadinessResponse> | null,
+): Node['status'] {
+  if (node.connectionStatus === 'UNREACHABLE') return 'error'
+  return worstNodeStatus([
+    readinessResourceStatus(source),
+    readinessResourceStatus(sink),
+  ]) ?? node.status
+}
+
+export function liveDatabaseMetrics(metrics: DatabaseMetricsResponse | null | undefined): DatabaseMetricsResponse | null {
+  return metrics && !metrics.stub ? metrics : null
+}
+
+export function resourceFromSettled<T>(
+  result: PromiseSettledResult<T>,
+  fallbackMessage: string,
+): ResourceState<T> {
+  if (result.status === 'fulfilled') {
+    return { data: result.value, loading: false, error: null, loaded: true }
+  }
+  return {
+    data: null,
+    loading: false,
+    error: errorMessage(result.reason, fallbackMessage),
+    loaded: true,
+  }
+}
+
+export function loadDatabaseReadiness(
+  client: DatabaseReadinessClient,
+  wsId: string,
+  dbId: string,
+  includeSink: boolean,
+): DatabaseReadinessLoadResult {
+  return {
+    source: client.cdcReadiness(wsId, dbId),
+    sink: includeSink ? client.sinkReadiness(wsId, dbId) : Promise.resolve(null),
+  }
+}
+
+export async function rescanDatabaseDetailResources(reloaders: Array<() => Promise<unknown>>) {
+  const results = await Promise.allSettled(reloaders.map((reload) => reload()))
+  return { failed: results.some((result) => result.status === 'rejected') }
+}
+
+function useDatabaseMetrics(wsId: string | null, dbId: string): ReloadableResourceState<DatabaseMetricsResponse> {
+  const [state, setState] = useState<ResourceState<DatabaseMetricsResponse>>(() => emptyResource())
+  const requestId = useRef(0)
+  const reload = useCallback(async () => {
+    const currentRequestId = ++requestId.current
+    if (!wsId) {
+      const error = new Error('워크스페이스가 선택되지 않았습니다.')
+      setState({ data: null, loading: false, error: error.message, loaded: true })
+      throw error
+    }
+    setState((prev) => ({ ...prev, loading: true, error: null }))
+    try {
+      const data = await api.databaseMetrics(wsId, dbId)
+      if (requestId.current === currentRequestId) {
+        setState({ data, loading: false, error: null, loaded: true })
+      }
+      return data
+    } catch (error) {
+      const message = errorMessage(error, 'DB metrics를 불러오지 못했습니다.')
+      if (requestId.current === currentRequestId) {
+        setState({ data: null, loading: false, error: message, loaded: true })
+      }
+      throw error instanceof Error ? error : new Error(message)
+    }
+  }, [wsId, dbId])
+
+  useEffect(() => {
+    void reload().catch(() => undefined)
+  }, [reload])
+  useEffect(() => () => {
+    requestId.current += 1
+  }, [])
+
+  return { ...state, reload }
+}
+
+function useDatabaseSchema(wsId: string | null, dbId: string): ReloadableResourceState<{ tables: SchemaTable[] }> {
+  const [state, setState] = useState<ResourceState<{ tables: SchemaTable[] }>>(() => emptyResource())
+  const requestId = useRef(0)
+  const reload = useCallback(async () => {
+    const currentRequestId = ++requestId.current
+    if (!wsId) {
+      const error = new Error('워크스페이스가 선택되지 않았습니다.')
+      setState({ data: null, loading: false, error: error.message, loaded: true })
+      throw error
+    }
+    setState((prev) => ({ ...prev, loading: true, error: null }))
+    try {
+      const data = await api.databaseSchema(wsId, dbId)
+      if (requestId.current === currentRequestId) {
+        setState({ data, loading: false, error: null, loaded: true })
+      }
+      return data
+    } catch (error) {
+      const message = errorMessage(error, '스키마를 불러오지 못했습니다.')
+      if (requestId.current === currentRequestId) {
+        setState({ data: null, loading: false, error: message, loaded: true })
+      }
+      throw error instanceof Error ? error : new Error(message)
+    }
+  }, [wsId, dbId])
+
+  useEffect(() => {
+    void reload().catch(() => undefined)
+  }, [reload])
+  useEffect(() => () => {
+    requestId.current += 1
+  }, [])
+
+  return { ...state, reload }
+}
+
+function useDatabaseReadiness(wsId: string | null, dbId: string): ReadinessState {
+  const [source, setSource] = useState<ResourceState<CdcReadinessResponse>>(() => emptyResource())
+  const [sink, setSink] = useState<ResourceState<CdcReadinessResponse>>(() => emptyResource())
+  const requestId = useRef(0)
+  const reload = useCallback(async () => {
+    const currentRequestId = ++requestId.current
+    if (!wsId) {
+      const error = new Error('워크스페이스가 선택되지 않았습니다.')
+      setSource({ data: null, loading: false, error: error.message, loaded: true })
+      setSink({ data: null, loading: false, error: error.message, loaded: true })
+      throw error
+    }
+    setSource((prev) => ({ ...prev, loading: true, error: null }))
+    setSink((prev) => ({ ...prev, loading: true, error: null }))
+
+    const { source: sourceRequest, sink: sinkRequest } = loadDatabaseReadiness(api, wsId, dbId, true)
+    const sourceTracked = sourceRequest.then(
+      (data) => {
+        if (requestId.current === currentRequestId) {
+          setSource({ data, loading: false, error: null, loaded: true })
+        }
+        return data
+      },
+      (error: unknown) => {
+        if (requestId.current === currentRequestId) {
+          setSource(resourceFromSettled({ status: 'rejected', reason: error }, 'Source 연결 검사를 불러오지 못했습니다.'))
+        }
+        throw error
+      },
+    )
+    const sinkTracked = sinkRequest.then(
+      (data) => {
+        if (requestId.current === currentRequestId) {
+          setSink(data ? { data, loading: false, error: null, loaded: true } : emptyResource())
+        }
+        return data
+      },
+      (error: unknown) => {
+        if (requestId.current === currentRequestId) {
+          setSink(resourceFromSettled({ status: 'rejected', reason: error }, 'Sink 연결 검사를 불러오지 못했습니다.'))
+        }
+        throw error
+      },
+    )
+
+    const [sourceResult, sinkResult] = await Promise.allSettled([sourceTracked, sinkTracked])
+
+    const data = {
+      source: sourceResult.status === 'fulfilled' ? sourceResult.value : null,
+      sink: sinkResult.status === 'fulfilled' ? sinkResult.value : null,
+    }
+    const failures = sourceResult.status === 'rejected' || sinkResult.status === 'rejected'
+    if (failures) throw new Error('연결 검사 일부를 불러오지 못했습니다.')
+    return data
+  }, [wsId, dbId])
+
+  useEffect(() => {
+    void reload().catch(() => undefined)
+  }, [reload])
+  useEffect(() => () => {
+    requestId.current += 1
+  }, [])
+
+  return { source, sink, reload }
+}
+
+function formatMetric(value: number) {
+  if (!Number.isFinite(value)) return '—'
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: value < 10 ? 2 : 1 }).format(value)
+}
+
+function metricValue(state: ResourceState<DatabaseMetricsResponse>, value: number | undefined) {
+  if (state.loading && !state.loaded) return '…'
+  return value == null ? '—' : formatMetric(value)
+}
+
+function metricSub(state: ResourceState<DatabaseMetricsResponse>, liveLabel?: string) {
+  if (state.loading && !state.loaded) return '불러오는 중'
+  if (state.error) return '불러오기 실패'
+  if (state.data?.stub) return '수집된 지표 없음'
+  return liveLabel
+}
+
+function schemaTableValue(state: ResourceState<{ tables: SchemaTable[] }>) {
+  if (state.loading && !state.loaded) return '…'
+  if (state.error || !state.data) return '—'
+  return state.data.tables.length
+}
+
+function schemaTableSub(state: ResourceState<{ tables: SchemaTable[] }>) {
+  if (state.loading && !state.loaded) return '스키마 불러오는 중'
+  if (state.error) return '스키마 조회 실패'
+  if (state.data) {
+    const columnCount = state.data.tables.reduce((sum, table) => sum + table.columns.length, 0)
+    return `${columnCount} columns`
+  }
+  return undefined
+}
+
+/* ---- 친화적 Capability Check 라벨 매핑: 표시명만 보정하고 실제 detail은 API 응답을 쓴다. ---- */
+const FRIENDLY_LABELS: Record<string, string> = {
+  'wal_level = logical': '변경 감지 활성화',
+  'REPLICATION privilege': '연결 권한',
+  'Replication slot capacity': '연결 슬롯 여유 공간',
+  'REPLICA IDENTITY FULL': '변경 데이터 완전성',
+  'binlog_format = ROW': '변경 감지 방식',
+  'REPLICATION SLAVE privilege': '연결 권한',
+  'GTID mode': '안전한 장애 복구',
+  'binlog retention': '변경 이력 보존 기간',
+}
+
+function ReadinessSection({
   title,
   subtitle,
-  checks,
+  readiness,
 }: {
   title: string
   subtitle: string
-  checks: CapabilityCheck[]
+  readiness: CdcReadinessResponse
 }) {
-  const allPass = checks.every((c) => c.state === 'pass')
-  const warnCount = checks.filter((c) => c.state === 'warn').length
-  const failCount = checks.filter((c) => c.state === 'fail').length
   const [showDetail, setShowDetail] = useState(false)
+  const tone = readinessTone(readiness.overallStatus)
+  const blockedCount = readiness.checks.filter((c) => c.status === 'BLOCKED').length
+  const warningCount = readiness.checks.filter((c) => c.status === 'WARNING').length
 
   return (
     <div className="space-y-2">
       <div
         className={cn(
           'flex items-center gap-3 rounded-xl border px-5 py-4',
-          allPass
-            ? 'border-emerald-200 bg-emerald-50'
-            : warnCount > 0
-              ? 'border-amber-200 bg-amber-50'
-              : 'border-rose-200 bg-rose-50',
+          tone.box,
         )}
       >
         <Icon
-          name={allPass ? 'check' : 'alert'}
+          name={readiness.overallStatus === 'OK' ? 'check' : 'alert'}
           size={20}
-          strokeWidth={allPass ? 3 : 2}
-          className={allPass ? 'text-emerald-600' : warnCount > 0 ? 'text-amber-600' : 'text-rose-600'}
+          strokeWidth={readiness.overallStatus === 'OK' ? 3 : 2}
+          className={tone.icon}
         />
         <div className="flex-1">
-          <div className={cn('text-[14px] font-semibold', allPass ? 'text-emerald-800' : warnCount > 0 ? 'text-amber-800' : 'text-rose-800')}>
+          <div className={cn('text-[14px] font-semibold', tone.title)}>
             {title}
           </div>
-          <div className={cn('text-[12px]', allPass ? 'text-emerald-600' : 'text-amber-600')}>
-            {allPass
+          <div className={cn('text-[12px]', tone.text)}>
+            {readiness.overallStatus === 'OK'
               ? subtitle
-              : failCount > 0
-                ? `${failCount}개 항목 해결 필요`
-                : `${warnCount}개 항목 확인 권장`}
+              : blockedCount > 0
+                ? `${blockedCount}개 항목 해결 필요`
+                : `${warningCount}개 항목 확인 권장`}
           </div>
         </div>
+        <ReadinessBadge status={readiness.overallStatus} />
         <button
           onClick={() => setShowDetail((v) => !v)}
           className="flex items-center gap-1 text-[12px] font-medium text-gray-500 hover:text-gray-700"
@@ -266,24 +587,25 @@ function CheckSection({
 
       {showDetail && (
         <div className="rounded-xl border border-gray-200 bg-white divide-y divide-gray-50 overflow-hidden">
-          {checks.map((c) => {
-            const friendly = FRIENDLY_LABELS[c.label] ?? { label: c.label, desc: c.detail }
+          {readiness.checks.map((c, index) => {
+            const friendly = FRIENDLY_LABELS[c.name] ?? c.name
+            const checkTone = readinessTone(c.status)
             return (
-              <div key={c.label} className="flex gap-3 px-4 py-3">
+              <div key={`${c.name}-${index}`} className="flex gap-3 px-4 py-3">
                 <Icon
-                  name={c.state === 'pass' ? 'check' : c.state === 'warn' ? 'alert' : 'x'}
+                  name={c.status === 'OK' ? 'check' : c.status === 'WARNING' ? 'alert' : 'x'}
                   size={14}
-                  strokeWidth={c.state === 'pass' ? 3 : 2}
-                  className={cn(
-                    'mt-0.5 shrink-0',
-                    c.state === 'pass' ? 'text-emerald-500' : c.state === 'warn' ? 'text-amber-500' : 'text-rose-500',
-                  )}
+                  strokeWidth={c.status === 'OK' ? 3 : 2}
+                  className={cn('mt-0.5 shrink-0', checkTone.icon)}
                 />
                 <div className="flex-1">
-                  <div className="text-[13px] font-medium text-gray-800">{friendly.label}</div>
-                  <div className="text-[12px] text-gray-500">{friendly.desc}</div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[13px] font-medium text-gray-800">{friendly}</span>
+                    <ReadinessBadge status={c.status} />
+                  </div>
+                  <div className="mt-1 text-[12px] text-gray-500">{readinessDetail(c)}</div>
                 </div>
-                <span className="mt-0.5 shrink-0 font-mono text-[10px] text-gray-300">{c.label}</span>
+                <span className="mt-0.5 shrink-0 font-mono text-[10px] text-gray-300">{c.name}</span>
               </div>
             )
           })}
@@ -293,66 +615,159 @@ function CheckSection({
   )
 }
 
-function ConnectionCheckTab({ node, edges }: { node: Node; edges: Edge[] }) {
-  const sourceChecks = defaultChecks(node)
-  const isSink = edges.some((e) => e.sink === node.id)
+function readinessTone(status: CdcReadinessResponse['overallStatus']) {
+  if (status === 'OK') {
+    return {
+      box: 'border-emerald-200 bg-emerald-50',
+      badge: 'bg-emerald-50',
+      dot: 'bg-emerald-500',
+      icon: 'text-emerald-600',
+      title: 'text-emerald-800',
+      text: 'text-emerald-600',
+    }
+  }
+  if (status === 'WARNING') {
+    return {
+      box: 'border-amber-200 bg-amber-50',
+      badge: 'bg-amber-50',
+      dot: 'bg-amber-500',
+      icon: 'text-amber-600',
+      title: 'text-amber-800',
+      text: 'text-amber-600',
+    }
+  }
+  return {
+    box: 'border-rose-200 bg-rose-50',
+    badge: 'bg-rose-50',
+    dot: 'bg-rose-500',
+    icon: 'text-rose-600',
+    title: 'text-rose-800',
+    text: 'text-rose-600',
+  }
+}
 
+function ReadinessBadge({ status }: { status: CdcReadinessResponse['overallStatus'] }) {
+  const tone = readinessTone(status)
   return (
-    <div className="space-y-4">
-      <CheckSection
-        title="Source 연결 검사"
-        subtitle="이 DB를 변경 감지(CDC) Source로 사용할 수 있습니다."
-        checks={sourceChecks}
-      />
-      {isSink && (
-        <CheckSection
-          title="Sink 연결 검사"
-          subtitle="이 DB를 동기화 대상(Sink)으로 사용할 수 있습니다."
-          checks={SINK_CHECKS}
-        />
-      )}
-      {!isSink && (
-        <div className="rounded-xl border border-dashed border-gray-200 px-5 py-4 text-[13px] text-gray-400">
-          이 DB가 CDC Sink로 사용되는 파이프라인이 없습니다. Sink로 연결된 파이프라인이 생성되면 Sink 연결 검사가 표시됩니다.
-        </div>
-      )}
+    <span className={cn(
+      'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide',
+      tone.badge,
+      tone.text,
+    )}>
+      <span className={cn('h-1.5 w-1.5 rounded-full', tone.dot)} />
+      {status}
+    </span>
+  )
+}
+
+function readinessDetail(check: CdcCheck) {
+  const details: string[] = []
+  if (check.hint?.trim()) details.push(check.hint.trim())
+  const actual = check.actual?.trim()
+  const expected = check.expected?.trim()
+  if (actual || expected) details.push(`actual: ${actual || '—'} / expected: ${expected || '—'}`)
+  return details.length > 0 ? details.join(' ') : 'API returned no detail.'
+}
+
+function ReadinessStateSection({
+  title,
+  subtitle,
+  state,
+}: {
+  title: string
+  subtitle: string
+  state: ResourceState<CdcReadinessResponse>
+}) {
+  if (state.data) return <ReadinessSection title={title} subtitle={subtitle} readiness={state.data} />
+  const message = state.loading && !state.loaded
+    ? '연결 검사를 불러오는 중…'
+    : state.error ?? '조회된 연결 검사 결과가 없습니다.'
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white px-5 py-4">
+      <div className="text-[14px] font-semibold text-gray-800">{title}</div>
+      <div className={cn('mt-1 text-[12px]', state.error ? 'text-rose-500' : 'text-gray-400')}>
+        {message}
+      </div>
     </div>
   )
 }
 
-function SchemaTab({ wsId, dbId }: { wsId: string | null; dbId: string }) {
-  const [tables, setTables] = useState<SchemaTable[]>([])
-  const [loading, setLoading] = useState(false)
+function ConnectionCheckTab({ state }: { state: ReadinessState }) {
+  return (
+    <div className="space-y-4">
+      <ReadinessStateSection
+        title="Source 연결 검사"
+        subtitle="이 DB를 변경 감지(CDC) Source로 사용할 수 있습니다."
+        state={state.source}
+      />
+      <ReadinessStateSection
+        title="Sink 연결 검사"
+        subtitle="이 DB를 동기화 대상(Sink)으로 사용할 수 있습니다."
+        state={state.sink}
+      />
+    </div>
+  )
+}
+
+function MetricsTab({ state }: { state: ResourceState<DatabaseMetricsResponse> }) {
+  const metrics = liveDatabaseMetrics(state.data)
+
+  if (state.loading && !state.loaded) {
+    return (
+      <Panel title="Database metrics">
+        <div className="px-4 py-8 text-center text-[12.5px] text-gray-400">Metrics를 불러오는 중…</div>
+      </Panel>
+    )
+  }
+  if (state.error) {
+    return (
+      <Panel title="Database metrics">
+        <div className="px-4 py-8 text-center text-[12.5px] text-rose-500">{state.error}</div>
+      </Panel>
+    )
+  }
+  if (!metrics) {
+    return (
+      <Panel title="Database metrics">
+        <div className="px-4 py-8 text-center text-[12.5px] text-gray-400">수집된 DB metrics가 없습니다.</div>
+      </Panel>
+    )
+  }
+
+  return (
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+      <MetricCard label="TPS" value={formatMetric(metrics.tps)} sub="transactions/sec" />
+      <MetricCard
+        label="Query response"
+        value={formatMetric(metrics.queryResponseMs)}
+        sub="ms avg"
+        tone={metrics.queryResponseMs > 1000 ? 'warn' : 'good'}
+      />
+      <MetricCard label="Active connections" value={formatMetric(metrics.activeConnections)} />
+    </div>
+  )
+}
+
+function SchemaTab({ state }: { state: ResourceState<{ tables: SchemaTable[] }> }) {
   const [open, setOpen] = useState<string | null>(null)
+  const tables = state.data?.tables ?? []
 
-  // 실제 DB 스키마 introspection(FR-016). 어떤 DB를 열었느냐(dbId)에 따라 라이브 조회.
   useEffect(() => {
-    if (!wsId) return
-    let cancelled = false
-    setLoading(true)
-    api
-      .databaseSchema(wsId, dbId)
-      .then((res) => {
-        if (cancelled) return
-        setTables(res.tables)
-        const first = res.tables[0]
-        setOpen(first ? `${first.schema}.${first.name}` : null)
-      })
-      .catch(() => {
-        if (!cancelled) setTables([])
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [wsId, dbId])
+    const first = state.data?.tables[0]
+    setOpen(first ? `${first.schema}.${first.name}` : null)
+  }, [state.data])
 
-  if (loading) {
+  if (state.loading && !state.loaded) {
     return (
       <Panel title="Tables">
         <div className="px-4 py-8 text-center text-[12.5px] text-gray-400">스키마를 불러오는 중…</div>
+      </Panel>
+    )
+  }
+  if (state.error) {
+    return (
+      <Panel title="Tables">
+        <div className="px-4 py-8 text-center text-[12.5px] text-rose-500">{state.error}</div>
       </Panel>
     )
   }

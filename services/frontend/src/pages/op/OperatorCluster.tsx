@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../../components/Icon'
-import { Gauge, MetricCard, PageHead, Panel, StatusBadge } from '../../components/blocks'
+import { MetricCard, PageHead, Panel, StatusBadge } from '../../components/blocks'
 import { TrendChart, CHART_COLORS, ChartLegend } from '../../components/Charts'
-import { formatNum, cn } from '../../lib/format'
+import { cn } from '../../lib/format'
 import {
   api,
   type BrokerInfo,
@@ -11,13 +11,6 @@ import {
   type ThroughputPoint,
 } from '../../lib/api'
 
-/* 초당 바이트 → 사람이 읽는 단위(KB/MB/s). */
-function fmtRate(bytesPerSec: number | null): string {
-  if (bytesPerSec == null) return '—'
-  if (bytesPerSec >= 1e6) return `${(bytesPerSec / 1e6).toFixed(1)} MB/s`
-  if (bytesPerSec >= 1e3) return `${(bytesPerSec / 1e3).toFixed(0)} KB/s`
-  return `${Math.round(bytesPerSec)} B/s`
-}
 function fmtBytes(bytes: number): string {
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`
   if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(0)} MB`
@@ -90,12 +83,35 @@ export function OperatorCluster() {
 function BrokersTab({ onSelectBroker }: { onSelectBroker: (b: BrokerInfo) => void }) {
   const [data, setData] = useState<KafkaClusterResponse | null>(null)
   const [throughput, setThroughput] = useState<ThroughputPoint[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [throughputError, setThroughputError] = useState<string | null>(null)
+  const loadIdRef = useRef(0)
 
   useEffect(() => {
     let cancelled = false
     const load = () => {
-      api.clusterKafka().then((d) => { if (!cancelled) setData(d) }).catch(() => {})
-      api.clusterThroughput(30).then((t) => { if (!cancelled) setThroughput(t) }).catch(() => {})
+      const loadId = ++loadIdRef.current
+      const isActive = () => !cancelled && loadIdRef.current === loadId
+      api.clusterKafka()
+        .then((d) => {
+          if (isActive()) {
+            setData(d)
+            setError(null)
+          }
+        })
+        .catch((e) => {
+          if (isActive()) setError(e instanceof Error ? e.message : 'Kafka 클러스터 정보를 불러오지 못했습니다')
+        })
+      api.clusterThroughput(30)
+        .then((t) => {
+          if (isActive()) {
+            setThroughput(t)
+            setThroughputError(null)
+          }
+        })
+        .catch((e) => {
+          if (isActive()) setThroughputError(e instanceof Error ? e.message : '클러스터 처리량을 불러오지 못했습니다')
+        })
     }
     load()
     const timer = setInterval(load, 5000)
@@ -113,7 +129,13 @@ function BrokersTab({ onSelectBroker }: { onSelectBroker: (b: BrokerInfo) => voi
     { key: 'consume', label: 'Consume msg/s', color: CHART_COLORS.brand },
   ]
 
-  if (!data) return <div className="px-2 py-10 text-center text-[13px] text-gray-400">불러오는 중…</div>
+  if (!data) {
+    return (
+      <div className="px-2 py-10 text-center text-[13px] text-gray-400">
+        {error ?? '불러오는 중…'}
+      </div>
+    )
+  }
 
   const urp = data.underReplicated
   const controllerLabel = data.controllerId >= 0 ? `broker-${data.controllerId}` : '—'
@@ -125,6 +147,16 @@ function BrokersTab({ onSelectBroker }: { onSelectBroker: (b: BrokerInfo) => voi
         <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">
           <StatusBadge status={clusterStatus} label={clusterStatus === 'error' ? 'error' : 'partial'} />
           <span>{data.message ?? 'Cluster metadata is partially unavailable.'}</span>
+        </div>
+      )}
+      {error && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">
+          {error} · 기존 클러스터 데이터로 표시합니다
+        </div>
+      )}
+      {throughputError && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">
+          {throughputError} · 기존 처리량 데이터로 표시합니다
         </div>
       )}
 
@@ -155,21 +187,21 @@ function BrokersTab({ onSelectBroker }: { onSelectBroker: (b: BrokerInfo) => voi
                     <Icon name="chevron-right" size={13} className="text-gray-400" />
                   </div>
                 </div>
-                <div className="mt-1 text-[11.5px] text-gray-400">{b.leaderPartitions} leader partitions · {fmtBytes(b.logDirBytes)}</div>
-                <div className="mt-3 space-y-2.5">
-                  <Gauge label="CPU" value={b.cpuPct ?? 0} />
-                  <Gauge label="Mem" value={b.heapUsedBytes != null && b.heapMaxBytes ? Math.round((b.heapUsedBytes / b.heapMaxBytes) * 100) : 0} />
-                  <Gauge label="Disk" value={b.diskUsedPct ?? 0} />
-                </div>
-                <div className="mt-3 flex gap-4 border-t border-gray-100 pt-2.5 text-[11.5px]">
-                  <span className="text-gray-500">Net in <span className="font-medium text-gray-800">{fmtRate(b.netInBytesPerSec)}</span></span>
-                  <span className="text-gray-500">Net out <span className="font-medium text-gray-800">{fmtRate(b.netOutBytesPerSec)}</span></span>
+                <div className="mt-1 text-[11.5px] text-gray-400">{b.leaderPartitions} leader partitions</div>
+                <div className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-[11.5px]">
+                  <div className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Endpoint</div>
+                  <div className="mt-0.5 truncate font-mono text-gray-600">{b.host}:{b.port}</div>
                 </div>
               </div>
             </Panel>
           </button>
         ))}
       </div>
+      {data.brokers.length === 0 && (
+        <div className="rounded-xl border border-dashed border-gray-200 bg-white py-10 text-center text-[13px] text-gray-400">
+          브로커 정보가 없습니다
+        </div>
+      )}
 
       <Panel title="Cluster throughput" right={<ChartLegend series={tputSeries} />}>
         <div className="px-3 py-3">
@@ -185,28 +217,11 @@ function BrokersTab({ onSelectBroker }: { onSelectBroker: (b: BrokerInfo) => voi
 function BrokerDetail({ broker }: { broker: BrokerInfo }) {
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-5 gap-4">
+      <div className="grid grid-cols-3 gap-4">
         <MetricCard label="Leader partitions" value={broker.leaderPartitions} icon="server" />
-        <MetricCard label="CPU" value={broker.cpuPct != null ? `${broker.cpuPct}%` : '—'} tone={(broker.cpuPct ?? 0) > 80 ? 'warn' : 'good'} />
-        <MetricCard label="Memory (heap)"
-          value={broker.heapUsedBytes != null && broker.heapMaxBytes ? `${fmtBytes(broker.heapUsedBytes)} / ${fmtBytes(broker.heapMaxBytes)}` : '—'}
-          tone={broker.heapUsedBytes != null && broker.heapMaxBytes && broker.heapUsedBytes / broker.heapMaxBytes > 0.85 ? 'warn' : 'good'} />
-        <MetricCard label="Disk" value={broker.diskUsedPct != null ? `${broker.diskUsedPct}%` : '—'} tone={(broker.diskUsedPct ?? 0) > 80 ? 'warn' : 'good'} />
-        <MetricCard label="Log dir" value={fmtBytes(broker.logDirBytes)} icon="server" />
+        <MetricCard label="Broker ID" value={broker.id} />
+        <MetricCard label="Controller" value={broker.controller ? 'yes' : 'no'} />
       </div>
-
-      <Panel title="네트워크">
-        <div className="grid grid-cols-2 divide-x divide-gray-100">
-          <div className="px-6 py-4">
-            <div className="text-[11px] uppercase tracking-wide text-gray-400">Inbound</div>
-            <div className="mt-1 text-[22px] font-semibold text-gray-900">{fmtRate(broker.netInBytesPerSec)}</div>
-          </div>
-          <div className="px-6 py-4">
-            <div className="text-[11px] uppercase tracking-wide text-gray-400">Outbound</div>
-            <div className="mt-1 text-[22px] font-semibold text-gray-900">{fmtRate(broker.netOutBytesPerSec)}</div>
-          </div>
-        </div>
-      </Panel>
 
       <Panel title="브로커 정보">
         <div className="divide-y divide-gray-50 px-4">
@@ -232,16 +247,37 @@ function BrokerDetail({ broker }: { broker: BrokerInfo }) {
 
 function KafkaConnectTab() {
   const [data, setData] = useState<ConnectClusterResponse | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const loadIdRef = useRef(0)
 
   useEffect(() => {
     let cancelled = false
-    const load = () => { api.clusterConnect().then((d) => { if (!cancelled) setData(d) }).catch(() => {}) }
+    const load = () => {
+      const loadId = ++loadIdRef.current
+      const isActive = () => !cancelled && loadIdRef.current === loadId
+      api.clusterConnect()
+        .then((d) => {
+          if (isActive()) {
+            setData(d)
+            setError(null)
+          }
+        })
+        .catch((e) => {
+          if (isActive()) setError(e instanceof Error ? e.message : 'Kafka Connect 정보를 불러오지 못했습니다')
+        })
+    }
     load()
     const timer = setInterval(load, 5000)
     return () => { cancelled = true; clearInterval(timer) }
   }, [])
 
-  if (!data) return <div className="px-2 py-10 text-center text-[13px] text-gray-400">불러오는 중…</div>
+  if (!data) {
+    return (
+      <div className="px-2 py-10 text-center text-[13px] text-gray-400">
+        {error ?? '불러오는 중…'}
+      </div>
+    )
+  }
 
   const running = data.workers.filter((w) => w.state === 'Running').length
   const notRunning = data.workers.length - running
@@ -249,6 +285,11 @@ function KafkaConnectTab() {
 
   return (
     <div className="space-y-4">
+      {error && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">
+          {error} · 기존 Connect 데이터로 표시합니다
+        </div>
+      )}
       <div className="grid grid-cols-4 gap-4">
         <MetricCard label="Workers" value={data.workers.length} icon="server" />
         <MetricCard label="Running" value={running} tone="good" />

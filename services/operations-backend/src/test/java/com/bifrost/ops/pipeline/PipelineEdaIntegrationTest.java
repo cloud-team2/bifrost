@@ -6,6 +6,7 @@ import com.bifrost.ops.database.persistence.repository.DatasourceRepository;
 import com.bifrost.ops.event.EventService;
 import com.bifrost.ops.global.common.datasource.DbType;
 import com.bifrost.ops.governance.audit.AuditService;
+import com.bifrost.ops.incident.IncidentService;
 import com.bifrost.ops.pipeline.dto.PipelineCreateRequest;
 import com.bifrost.ops.pipeline.dto.PipelineResponse;
 import com.bifrost.ops.pipeline.kafka.KafkaResourceCleaner;
@@ -24,6 +25,7 @@ import com.bifrost.ops.streaming.SsePublisher;
 import com.bifrost.ops.workspace.WorkspaceAccessGuard;
 import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
+import com.bifrost.ops.workspace.persistence.repository.WorkspaceSettingsRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -57,9 +59,11 @@ class PipelineEdaIntegrationTest {
     @Mock PipelineProvisioningService provisioningService;
     @Mock WorkspaceAccessGuard accessGuard;
     @Mock EventService eventService;
+    @Mock IncidentService incidentService;
     @Mock AuditService auditService;
     @Mock KafkaResourceCleaner kafkaResourceCleaner;
     @Mock SsePublisher ssePublisher;
+    @Mock WorkspaceSettingsRepository settingsRepository;
 
     // ---- subjects ----
     PipelineService pipelineService;
@@ -76,7 +80,7 @@ class PipelineEdaIntegrationTest {
                 accessGuard, eventService, auditService, kafkaResourceCleaner,
                 org.mockito.Mockito.mock(com.bifrost.ops.database.service.CdcReadinessService.class));
         statusService = new PipelineStatusServiceImpl(pipelineRepository, connectorRepository,
-                datasourceRepository, eventService, auditService, ssePublisher);
+                datasourceRepository, eventService, incidentService, auditService, ssePublisher, settingsRepository);
     }
 
     // ---- 생성 → creating -----------------------------------------------

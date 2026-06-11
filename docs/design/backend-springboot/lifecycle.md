@@ -36,7 +36,7 @@ message = (next == error)      ? (dbReason ?? firstConnectorError)
 - **DB 우선**: source/sink 중 하나라도 `UNREACHABLE`이면 connector가 `RUNNING`이어도 파이프라인은 `error`다. 이유: Debezium source는 source DB가 끊겨도 한동안 `RUNNING`을 유지하지만(트래픽이 없으면 실패를 늦게 감지) 파이프라인은 이미 비정상이기 때문(#179 검증: source DB kill → connector RUNNING인데 파이프라인 error).
 - **creating 중에는 DB 사유를 보지 않는다**: 프로비저닝 진행 중 race를 피하기 위해.
 - **connector 규칙**(`computeStatus`): 하나라도 `FAILED`→`error`, 일부 task만 실패(`PARTIALLY_FAILED`)→`lag`, `PAUSED`→`paused`, 기대 수(CDC 2·EDA 1)만큼 모두 `RUNNING`→`active`, 그 외→`creating`.
-- **EDA(fan_out)**: sink consumer가 없으므로 lag을 보지 않고 source connector state로만 산정.
+- **EDA(fan-out)**: sink consumer가 없으므로 lag을 보지 않고 source connector state로만 산정.
 
 ### 2.2 상태 머신
 

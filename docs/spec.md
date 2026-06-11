@@ -31,12 +31,12 @@
 | FR-016 | 중 | 일반 | 사용자가 Database의 스키마(테이블·컬럼·인덱스)를 탐색한다 | DatabaseDetail → Schema 탭 |
 | FR-017 | 중 | 일반 | 사용자가 Database의 TPS·쿼리 응답 시간·활성 연결 지표를 확인한다 | DatabaseDetail → Metrics 탭 |
 | FR-018 | 중 | 일반 | 사용자가 Database에 연결된 Pipeline 목록과 상태를 확인한다 | DatabaseDetail → Pipelines 탭 |
-| FR-019 | 중 | 일반 | 사용자가 Kafka 이벤트 로그를 레벨·파이프라인별로 필터링하여 조회한다 | ActivityLogView |
+| FR-019 | 중 | 일반 | 사용자가 Kafka 이벤트 로그를 Source·레벨별로 필터링하고 상세를 조회한다 | AlertsView |
 | FR-020 | - | 일반 | v1 와이어프레임 기준 운영 현황 대시보드는 제공하지 않는다 | 제거됨 |
 | FR-021 | 상 | 일반 | 사용자가 인시던트 목록을 확인하고 상세 원인·영향 범위를 조회한다 | AlertsView |
 | FR-022 | 상 | 에이전트 | 사용자가 AI 추천 조치를 위험도·예상 소요시간과 함께 검토한 뒤 Run으로 승인 실행한다 (HITL) | AlertsView, BifrostAgentPanel |
 | FR-023 | 중 | 일반 | 사용자가 Kafka Broker·Kafka Connect Worker 현황을 클러스터 탭에서 확인한다 | OperatorClusterView |
-| FR-024 | 중 | 일반 | 사용자가 클러스터 레이어에서 발생하는 리소스 이벤트 로그를 조회한다 | OperatorResourceEventsView |
+| FR-024 | 중 | 일반 | 사용자가 클러스터 레이어에서 발생하는 리소스 이벤트 로그를 조회한다 | AlertsView |
 | FR-025 | 상 | 에이전트 | 사용자가 AI 채팅 패널에서 Pipeline 조회·상태 확인·Pause/Resume를 자연어로 요청하며 Tool Call이 카드로 시각화된다 | BifrostAgentPanel |
 | FR-026 | 상 | 에이전트 | AI가 다중 파이프라인 랙 급증·커넥터 중단을 자동 감지하여 장애 리포트와 근본 원인·조치 옵션을 생성한다 | BifrostAgentPanel |
 
@@ -86,7 +86,7 @@
 - **기본 흐름**: 1) Step1 연결 방식(EDA fan-out / CDC direct) → 2) Step2 Source DB 선택 → 3) Step3 대상 테이블 선택(ok/warning/blocked 즉시 표시) → 4) Step4 (CDC만) Sink DB 선택 → 5) Step5 이름 입력 → "생성" → `creating` → `active`로 전이(와이어프레임 mock은 약 3초, 실제는 Connector RUNNING까지 최대 30초 — 부록 B.1).
 - **예외 흐름**: ① 등록 Source DB 없음 → 등록 안내 ② 테이블 `blocked` → 생성 비활성화 + 준비도 안내 ③ 이름 미입력·중복 → 오류 ④ 생성 중 오류 → `error` + 재시도 안내.
 - **사후 조건**: 워크스페이스 pipeline에 추가, Kafka Topic 자동 생성, 상태 `active` 전이.
-- **비고**: EDA `pattern='fan_out'` sink=null / CDC `pattern='direct'` sink=DB id. FR-015 점검 권장.
+- **비고**: EDA `pattern='fan-out'` sink=null / CDC `pattern='direct'` sink=DB id. 백엔드는 `fan_out`도 하위 호환으로 파싱하지만 API 응답과 프론트 정본 표기는 `fan-out`이다. FR-015 점검 권장.
 
 ### FR-005 — Pipeline 일시정지·재개·삭제
 - **액터**: 사용자
@@ -173,9 +173,9 @@
 - **기본 흐름**: 1) Pipelines 탭 → 2) 목록(이름·역할·상태) → 3) 클릭 → PipelineDetail.
 
 ### FR-019 — 이벤트 로그 조회
-- **기능 설명**: Kafka 파이프라인 레이어 이벤트 로그를 레벨(INFO/WARN/ERROR)·Pipeline별 필터로 타임라인 조회.
-- **기본 흐름**: 1) ActivityLogView → 2) 레벨 필터 → 3) Pipeline 필터 → 4) 클릭 → 상세.
-- **비고**: Kafka 브로커 내부 인프라 이벤트는 노출하지 않음.
+- **기능 설명**: AlertsView 통합 이벤트 로그에서 Kafka 파이프라인 이벤트와 리소스 이벤트를 실 API 데이터로 조회한다.
+- **기본 흐름**: 1) AlertsView → 2) Source/레벨 필터 → 3) 이벤트 row 클릭 → 4) 상세 패널(시각·타입·메시지·연결 Pipeline/Incident/Resource).
+- **비고**: 데이터는 `/events`와 `/monitoring/resource-events` 응답을 사용하며, 자동 갱신은 동일 API 재조회로 처리한다. Kafka 브로커 내부 인프라 이벤트는 노출하지 않음.
 
 ### FR-020 — 운영 현황 대시보드
 - **상태**: v1 와이어프레임 기준 제거됨.
@@ -195,11 +195,11 @@
 
 ### FR-023 — 클러스터 현황
 - **기능 설명**: Broker·Kafka Connect Worker 현황(탭별). Topic·Consumer Group은 Pipeline 상세에서 관리. Broker CPU/디스크/네트워크 인프라 지표는 인프라 운영 영역으로 미노출.
-- **기본 흐름**: 1) OperatorClusterView(Brokers·Kafka Connect 탭) → 2) Brokers(목록·상태·리더 파티션 수) → 3) Kafka Connect(Worker JVM Heap·CPU·GC + Connector 목록).
+- **기본 흐름**: 1) OperatorClusterView(Brokers·Kafka Connect 탭) → 2) Brokers(목록·상태·리더 파티션 수·연결 정보) → 3) Kafka Connect(Worker JVM Heap·CPU·GC + Connector 목록).
 
 ### FR-024 — 리소스 이벤트 로그
 - **기능 설명**: 파티션 재분배·리더 선출·컨슈머 그룹 리밸런싱 등 클러스터 리소스 이벤트 타임라인.
-- **기본 흐름**: 1) OperatorResourceEventsView → 2) 유형·심각도 필터 → 3) 클릭 → 상세.
+- **기본 흐름**: 1) AlertsView → 2) Resource 필터 → 3) 이벤트 row 클릭 → 4) 상세.
 
 ### FR-025 — AI 채팅 어시스턴트
 - **액터**: 사용자, AI 에이전트
@@ -239,7 +239,7 @@
 | creating | blue(pulse) |
 
 ### 라우팅 맵
-`login` LoginView · `workspaces` WorkspaceListView · `pipelines` PipelinesView · `pipeline-detail` PipelineDetail · `databases` DatabasesView · `database-detail` DatabaseDetail · `activity-log` ActivityLogView · `alerts` AlertsView · `cluster` OperatorClusterView · `resource-events` OperatorResourceEventsView · `settings` SettingsView
+`login` LoginView · `workspaces` WorkspaceListView · `pipelines` PipelinesView · `pipeline-detail` PipelineDetail · `databases` DatabasesView · `database-detail` DatabaseDetail · `alerts` AlertsView · `cluster` OperatorClusterView · `settings` SettingsView
 
 ---
 
@@ -254,8 +254,8 @@
 
 | 상태값 | 정의 | 표시 색상 |
 |---|---|---|
-| `active` | Connector RUNNING + 모든 Consumer Group lag < 5,000 | emerald |
-| `lag` | Connector RUNNING이지만 하나 이상 Consumer Group lag ≥ 5,000 | amber |
+| `active` | Connector RUNNING + CDC sink consumer group lag < 경고 임계값(기본 5,000) | emerald |
+| `lag` | Connector RUNNING이지만 CDC sink consumer group lag ≥ 경고 임계값(기본 5,000) | amber |
 | `error` | Connector FAILED 상태이거나 Error Rate > 2% | red |
 | `paused` | 사용자가 명시적으로 일시정지 | gray |
 | `creating` | 생성 후 Connector RUNNING 전이 대기(최대 30초) | blue |
@@ -264,8 +264,8 @@
 
 | 조건 | 심각도 | 이벤트 레벨 | 비고 |
 |---|---|---|---|
-| Consumer Group lag ≥ 5,000 | WARNING | WARN | Pipeline `lag` 전이 |
-| Consumer Group lag ≥ 50,000 | CRITICAL | ERROR | 사실상 정지 수준 |
+| CDC sink consumer group lag ≥ 5,000 | WARNING | WARN | Pipeline `lag` 전이 |
+| CDC sink consumer group lag ≥ 50,000 | CRITICAL | ERROR | 사실상 정지 수준 |
 | Connector Task FAILED | CRITICAL | ERROR | Pipeline `error` 전이 |
 | Error Rate > 0.5% | WARNING | WARN | |
 | Error Rate > 2% | CRITICAL | ERROR | Pipeline `error` 전이 |
@@ -273,7 +273,7 @@
 
 **구현**: Consumer lag = `ListOffsets endOffset − OffsetFetch committedOffset` · Connector 상태 = Connect REST `GET /connectors/{name}/status` `tasks[].state` · Error Rate = 처리량 대비 실패/누락 비율(예: Source `(poll-write)/poll`). 정확한 JMX 지표·산식은 구현 시 확정한다(현 `poll/write` 단순 비율 표기는 정의가 모호해 보정 대상).
 
-> **EDA(fan_out) vs CDC(direct)의 lag 적용 범위**: lag 기반 상태(`lag`)와 lag 인시던트는 Bifrost가 컨슈머를 소유하는 **CDC(JDBC Sink consumer group)** 에만 적용한다. EDA는 Sink가 없어 토픽을 외부 구독자만 소비하므로, EDA 파이프라인 상태는 **Source Connector state로만** 산정하고(`creating`/`active`/`error`/`paused`), 외부 consumer group lag으로 `lag` 전이나 인시던트를 만들지 않는다(외부 컨슈머는 Bifrost 직접 복구 대상이 아님). EDA 토픽의 외부 구독자 lag은 참고 지표로만 노출한다.
+> **EDA(fan-out) vs CDC(direct)의 lag 적용 범위**: lag 기반 상태(`lag`)와 lag 인시던트는 Bifrost가 컨슈머를 소유하는 **CDC(JDBC Sink consumer group)** 에만 적용한다. EDA는 Sink가 없어 토픽을 외부 구독자만 소비하므로, EDA 파이프라인 상태는 **Source Connector state로만** 산정하고(`creating`/`active`/`error`/`paused`), 외부 consumer group lag으로 `lag` 전이나 인시던트를 만들지 않는다(외부 컨슈머는 Bifrost 직접 복구 대상이 아님). EDA 토픽의 외부 구독자 lag은 참고 지표로만 노출한다.
 
 ### B.2 Connector 인스턴스 상태값
 **데이터 소스**: Kafka Connect REST `GET /connectors/{name}/status`
@@ -355,7 +355,7 @@
 | Error Rate > 0.5% / > 2% | WARN / ERROR | – / → `error` | WARNING / CRITICAL |
 | Connector 자동 재시작 1회 / 1시간 3회 | WARN / ERROR | – / → `error` | 없음 / CRITICAL |
 
-> Consumer lag 행(`≥ 5,000`/`≥ 50,000`)과 `PARTIALLY_FAILED`의 `lag` 전이는 Bifrost가 컨슈머를 소유하는 **CDC(JDBC Sink) consumer group**에만 적용한다. EDA(fan_out)는 Source Connector state로만 상태를 산정하고 외부 구독자 lag으로 인시던트를 만들지 않는다(B.1).
+> Consumer lag 행(`≥ 5,000`/`≥ 50,000`)은 Bifrost가 컨슈머를 소유하는 **CDC(JDBC Sink) consumer group**에만 적용한다. EDA(fan-out)는 Source Connector state로만 상태를 산정하고 외부 구독자 lag으로 인시던트를 만들지 않는다(B.1).
 
 #### B.6.2 Database 이벤트 (ping 5초, lag 30초)
 | 트리거 | 레벨 | DB 상태 | 인시던트 |

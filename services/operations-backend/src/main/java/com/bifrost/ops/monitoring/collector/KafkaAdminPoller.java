@@ -2,6 +2,9 @@ package com.bifrost.ops.monitoring.collector;
 
 import com.bifrost.ops.event.EventLevel;
 import com.bifrost.ops.event.EventService;
+import com.bifrost.ops.incident.IncidentGroupingKeys;
+import com.bifrost.ops.incident.IncidentService;
+import com.bifrost.ops.pipeline.PipelineStatusService;
 import com.bifrost.ops.pipeline.persistence.entity.PipelineEntity;
 import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
 import com.bifrost.ops.workspace.persistence.entity.WorkspaceSettingsEntity;
@@ -37,6 +40,8 @@ public class KafkaAdminPoller {
     private final PipelineRepository pipelineRepository;
     private final WorkspaceSettingsRepository settingsRepository;
     private final EventService eventService;
+    private final IncidentService incidentService;
+    private final com.bifrost.ops.pipeline.PipelineStatusService pipelineStatusService;
 
     // consumer group → 직전 알람 레벨 ("NONE" | "WARN" | "ERROR")
     private final ConcurrentHashMap<String, String> lagAlarmState = new ConcurrentHashMap<>();
@@ -44,11 +49,15 @@ public class KafkaAdminPoller {
     public KafkaAdminPoller(AdminClient adminClient,
                              PipelineRepository pipelineRepository,
                              WorkspaceSettingsRepository settingsRepository,
-                             EventService eventService) {
+                             EventService eventService,
+                             IncidentService incidentService,
+                             com.bifrost.ops.pipeline.PipelineStatusService pipelineStatusService) {
         this.adminClient = adminClient;
         this.pipelineRepository = pipelineRepository;
         this.settingsRepository = settingsRepository;
         this.eventService = eventService;
+        this.incidentService = incidentService;
+        this.pipelineStatusService = pipelineStatusService;
     }
 
     @Scheduled(fixedRate = 30_000, initialDelay = 15_000)
@@ -59,7 +68,8 @@ public class KafkaAdminPoller {
             String group = "connect-" + p.getSinkConnectorName();
             try {
                 long lag = calculateLag(group);
-                evaluateLag(group, lag, p);
+                evaluateLag(group, lag, p);                          // 이벤트(WARNING/CRITICAL/회복)
+                pipelineStatusService.applyConsumerLag(p.getId(), lag); // (#559) pipeline status 전이
             } catch (Exception e) {
                 log.debug("consumer lag 수집 실패(무시): group={} cause={}", group, e.getMessage());
             }
@@ -98,9 +108,11 @@ public class KafkaAdminPoller {
 
         if (lag >= settings.getLagCriticalThreshold()) {
             if (!"ERROR".equals(prev)) {
-                eventService.record(p.getTenantId(), p.getId(), EventLevel.ERROR,
-                        "CONSUMER_LAG_CRITICAL",
-                        "consumer lag 임계 초과: group=" + group + " lag=" + lag);
+                String message = "consumer lag 임계 초과: group=" + group + " lag=" + lag;
+                incidentService.onThresholdViolation(p.getTenantId(), IncidentGroupingKeys.consumerLag(group),
+                        "CONSUMER_GROUP", null, EventLevel.ERROR,
+                        "Consumer lag critical: " + group,
+                        "CONSUMER_LAG_CRITICAL", message, p.getId());
             }
             lagAlarmState.put(group, "ERROR");
         } else if (lag >= settings.getLagWarningThreshold()) {
@@ -112,9 +124,12 @@ public class KafkaAdminPoller {
             lagAlarmState.put(group, "WARN");
         } else {
             if (!NONE.equals(prev)) {
-                eventService.record(p.getTenantId(), p.getId(), EventLevel.INFO,
-                        "CONSUMER_LAG_RECOVERED",
-                        "consumer lag 정상화: group=" + group + " lag=" + lag);
+                String message = "consumer lag 정상화: group=" + group + " lag=" + lag;
+                if (!incidentService.onRecovery(p.getTenantId(), IncidentGroupingKeys.consumerLag(group),
+                        "CONSUMER_LAG_RECOVERED", message, p.getId())) {
+                    eventService.record(p.getTenantId(), p.getId(), EventLevel.INFO,
+                            "CONSUMER_LAG_RECOVERED", message);
+                }
             }
             lagAlarmState.put(group, NONE);
         }

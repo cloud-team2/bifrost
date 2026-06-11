@@ -122,7 +122,7 @@ public class PipelineController {
         return pipelineTopicService.stageStatus(wsId, principal, id);
     }
 
-    /** Consumer group 목록(#126, Consumers 탭). Kafka 미연결 시 빈 목록 반환. */
+    /** Consumer group 목록(#126, Consumers 탭). 구독 그룹이 없으면 빈 목록, Kafka 조회 실패 시 오류. */
     @GetMapping("/{id}/consumer-groups")
     public List<ConsumerGroupInfo> consumerGroups(@PathVariable UUID wsId,
                                                   @PathVariable UUID id,
