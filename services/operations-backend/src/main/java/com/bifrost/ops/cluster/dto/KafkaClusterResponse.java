@@ -43,6 +43,8 @@ public record KafkaClusterResponse(
      * @param leaderPartitions 이 브로커가 leader인 파티션 수
      * @param logDirBytes Kafka 로그 디렉토리 사용 바이트(데이터 크기)
      * @param cpuPct 컨테이너 CPU 사용률(%, null=메트릭 없음)
+     * @param heapUsedBytes 브로커 JVM heap 사용 바이트(null=메트릭 없음)
+     * @param heapMaxBytes 브로커 JVM heap 최대 바이트(null=메트릭 없음)
      * @param diskUsedPct 노드 디스크 사용률(%, null=메트릭 없음)
      * @param netInBytesPerSec 초당 수신 바이트(null=메트릭 없음)
      * @param netOutBytesPerSec 초당 송신 바이트(null=메트릭 없음)
@@ -56,6 +58,8 @@ public record KafkaClusterResponse(
             long leaderPartitions,
             long logDirBytes,
             Double cpuPct,
+            Long heapUsedBytes,
+            Long heapMaxBytes,
             Double diskUsedPct,
             Double netInBytesPerSec,
             Double netOutBytesPerSec,

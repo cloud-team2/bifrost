@@ -205,6 +205,11 @@ public class ClusterService {
         // CPU: JVM process CPU(%). container CPU(cAdvisor)는 라벨 미스로 0이라 process_cpu로 교정.
         Double cpu = scalarOrNull(
                 "rate(process_cpu_seconds_total{job=\"kafka-broker\",instance=~\"" + inst + "\"}[2m]) * 100");
+        // Memory: 브로커 JVM heap used/max(JMX exporter, area=heap). Kafka heap 압박을 보여주는 표준 지표.
+        Double heapUsed = scalarOrNull(
+                "sum(jvm_memory_used_bytes{job=\"kafka-broker\",area=\"heap\",instance=~\"" + inst + "\"})");
+        Double heapMax = scalarOrNull(
+                "sum(jvm_memory_max_bytes{job=\"kafka-broker\",area=\"heap\",instance=~\"" + inst + "\"})");
         // Net: 컨테이너 네트워크가 아니라 Kafka 브로커 처리량(BytesIn/OutPerSec) — 모든 토픽 합.
         Double netIn = scalarOrNull(
                 "sum(rate(kafka_server_brokertopicmetrics_bytesin_total{instance=~\"" + inst + "\"}[2m]))");
@@ -214,9 +219,12 @@ public class ClusterService {
         Double disk = diskFromLogDirs != null ? diskFromLogDirs : scalarOrNull(
                 "(1 - sum(node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|squashfs\"}) "
                         + "/ sum(node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|squashfs\"})) * 100");
-        String status = (cpu != null && cpu > 90) || (disk != null && disk > 85) ? "warning" : "healthy";
+        Double memPct = (heapUsed != null && heapMax != null && heapMax > 0) ? heapUsed / heapMax * 100 : null;
+        String status = (cpu != null && cpu > 90) || (disk != null && disk > 85)
+                || (memPct != null && memPct > 90) ? "warning" : "healthy";
         return new BrokerInfo(n.id(), n.host(), n.port(), n.id() == controllerId,
-                leaderPartitions, logDirBytes, round(cpu), round(disk), netIn, netOut, status);
+                leaderPartitions, logDirBytes, round(cpu), toLong(heapUsed), toLong(heapMax),
+                round(disk), netIn, netOut, status);
     }
 
     /** 클러스터 처리량 추이(produce/consume msg/s) — broker JMX messagesin/out. */

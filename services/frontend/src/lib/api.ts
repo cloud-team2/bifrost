@@ -279,6 +279,8 @@ export interface BrokerInfo {
   leaderPartitions: number
   logDirBytes: number
   cpuPct: number | null
+  heapUsedBytes: number | null
+  heapMaxBytes: number | null
   diskUsedPct: number | null
   netInBytesPerSec: number | null
   netOutBytesPerSec: number | null
