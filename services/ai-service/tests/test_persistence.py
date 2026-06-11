@@ -447,12 +447,16 @@ async def test_change_ticket_repository_upsert_list_and_status_update():
         "CHG-001",
         window="2026-06-09T10:00Z/2026-06-09T11:00Z",
         rollback_plan="rollback connector config",
+        impact_analysis="tenant-local connector restart impact",
+        verifier_plan="check connector task health after restart",
     )
     updated = await repo.update_status("run-change-001", "act-change-001", STATUS_VERIFIED)
     listed = await repo.list_by_run("run-change-001")
 
     assert updated is not None
     assert created.id == updated.id
+    assert created.impact_analysis == "tenant-local connector restart impact"
+    assert created.verifier_plan == "check connector task health after restart"
     assert updated.status == STATUS_VERIFIED
     assert [ticket.action_id for ticket in listed] == ["act-change-001"]
 
@@ -473,8 +477,10 @@ async def test_postgres_change_ticket_repository_upsert_uses_conflict_key():
         "run_id": "run-change-002",
         "action_id": "act-change-002",
         "ticket_id": "CHG-002",
-        "window": "maintenance-window",
+        "change_window": "maintenance-window",
         "rollback_plan": "rollback",
+        "impact_analysis": "tenant-local impact",
+        "verifier_plan": "verify health",
         "status": "submitted",
         "created_at": _now(),
         "updated_at": _now(),
@@ -488,10 +494,14 @@ async def test_postgres_change_ticket_repository_upsert_uses_conflict_key():
         "CHG-002",
         window="maintenance-window",
         rollback_plan="rollback",
+        impact_analysis="tenant-local impact",
+        verifier_plan="verify health",
     )
 
     assert ticket.ticket_id == "CHG-002"
     assert ticket.action_id == "act-change-002"
+    assert ticket.impact_analysis == "tenant-local impact"
+    assert ticket.verifier_plan == "verify health"
     sql = conn.fetchrow.call_args.args[0]
     assert "ON CONFLICT (run_id, action_id)" in sql
 
@@ -503,8 +513,10 @@ async def test_postgres_change_ticket_repository_read_and_update_paths():
         "run_id": "run-change-003",
         "action_id": "act-change-003",
         "ticket_id": "CHG-003",
-        "window": "maintenance-window",
+        "change_window": "maintenance-window",
         "rollback_plan": "rollback",
+        "impact_analysis": "tenant-local impact",
+        "verifier_plan": "verify health",
         "status": "submitted",
         "created_at": _now(),
         "updated_at": _now(),
@@ -524,6 +536,8 @@ async def test_postgres_change_ticket_repository_read_and_update_paths():
 
     assert fetched is not None
     assert fetched.ticket_id == "CHG-003"
+    assert fetched.impact_analysis == "tenant-local impact"
+    assert fetched.verifier_plan == "verify health"
     assert [ticket.action_id for ticket in listed] == ["act-change-003"]
     assert updated is not None
     assert updated.status == STATUS_CHANGE_WINDOW_REQUIRED

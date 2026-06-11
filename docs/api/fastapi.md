@@ -218,7 +218,7 @@ Spring Boot 내부 운영 API와 governance/mutation 계약은 [Spring Boot API 
 
 | Method | Path | 구현 상태 | 설명 |
 | --- | --- | --- | --- |
-| `POST` | `/api/v1/agent/runs/{run_id}/change-tickets` | 구현됨 | body의 `action_id`, `ticket_id`, `window`, `rollback_plan` 저장/검증 |
+| `POST` | `/api/v1/agent/runs/{run_id}/change-tickets` | 구현됨 | body의 `action_id`, `ticket_id`, `window`, `rollback_plan`, `impact_analysis`, `verifier_plan` 저장/검증 |
 | `GET` | `/api/v1/agent/runs/{run_id}/change-tickets` | 구현됨 | run에 연결된 change ticket 목록 |
 | `GET` | `/api/v1/change-tickets/{change_ticket_id}` | 미구현 | route 없음 |
 | `POST` | `/api/v1/agent/runs/{run_id}/actions/{action_id}/change-ticket` | 미구현 | route 없음 |
