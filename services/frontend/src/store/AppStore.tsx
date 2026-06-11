@@ -115,6 +115,11 @@ interface Store {
   reloadMonitoring: () => Promise<void>
 }
 
+interface LoadMonitoringOptions {
+  showLoading?: boolean
+  clearOnError?: boolean
+}
+
 const Ctx = createContext<Store | null>(null)
 
 const emptyAgentRunState = (): AgentRunSseState => ({
@@ -179,6 +184,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [resourceEvents, setResourceEvents] = useState<ResourceEventResponse[]>([])
   const [monitoringLoading, setMonitoringLoading] = useState(false)
   const [monitoringError, setMonitoringError] = useState<string | null>(null)
+  const viewRef = useRef<View>('pipelines')
+  const incidentLoadIdRef = useRef(0)
 
   const selectProject = (project: Project | null) => {
     currentProjectIdRef.current = project?.id ?? null
@@ -187,6 +194,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const clearMonitoringData = () => {
     monitoringLoadIdRef.current += 1
+    incidentLoadIdRef.current += 1
     setIncidents([])
     setEvents([])
     setResourceEvents([])
@@ -197,6 +205,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     currentProjectIdRef.current = currentProject?.id ?? null
   }, [currentProject?.id])
+
+  useEffect(() => {
+    viewRef.current = view
+  }, [view])
 
   /** A snapshot of the current navigable position, with optional overrides. */
   const snapshot = (o: Partial<NavSnapshot> = {}): NavSnapshot => ({
@@ -245,12 +257,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const wsId = currentProject?.id
     if (!wsId) return
     const es = new EventSource(api.eventStreamUrl(wsId))
+    const refreshMonitoring = () => {
+      if (viewRef.current !== 'alerts') return
+      void loadMonitoringData(wsId, { showLoading: false, clearOnError: false })
+    }
     es.addEventListener('pipeline_status_changed', (e) => {
       try {
         const data = JSON.parse((e as MessageEvent).data) as { pipelineId: string; status: Edge['status'] }
         setEdges((prev) =>
           prev.map((edge) => (edge.id === data.pipelineId ? { ...edge, status: data.status } : edge)),
         )
+        refreshMonitoring()
       } catch {
         /* malformed payload — ignore */
       }
@@ -265,10 +282,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
             : [data, ...prev]
           return next.sort((a, b) => b.openedAt.localeCompare(a.openedAt))
         })
+        refreshMonitoring()
       } catch {
         /* malformed payload — ignore */
       }
     }
+    es.addEventListener('connector_state_changed', refreshMonitoring)
     es.addEventListener('incident_opened', onIncident)
     es.addEventListener('incident_updated', onIncident)
     // onerror 시 EventSource가 자동 재연결한다(워크스페이스 변경/언마운트 시 close).
@@ -286,14 +305,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function loadMonitoringData(wsId: string) {
+  async function loadMonitoringData(wsId: string, options: LoadMonitoringOptions = {}) {
     const targetWsId = wsId
     if (currentProjectIdRef.current !== targetWsId) return
+    const { showLoading = true, clearOnError = true } = options
     const loadId = ++monitoringLoadIdRef.current
     const isActiveLoad = () =>
       monitoringLoadIdRef.current === loadId && currentProjectIdRef.current === targetWsId
 
-    setMonitoringLoading(true)
+    if (showLoading) setMonitoringLoading(true)
     setMonitoringError(null)
     try {
       const [incidentRows, eventRows, resourceRows] = await Promise.all([
@@ -307,14 +327,42 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setResourceEvents(resourceRows)
     } catch (e) {
       if (!isActiveLoad()) return
-      setIncidents([])
-      setEvents([])
-      setResourceEvents([])
+      if (clearOnError) {
+        setIncidents([])
+        setEvents([])
+        setResourceEvents([])
+      }
       setMonitoringError(e instanceof Error ? e.message : '모니터링 데이터를 불러오지 못했습니다')
     } finally {
       if (isActiveLoad()) setMonitoringLoading(false)
     }
   }
+
+  async function loadIncidentData(wsId: string) {
+    const targetWsId = wsId
+    if (currentProjectIdRef.current !== targetWsId) return
+    const loadId = ++incidentLoadIdRef.current
+    const isActiveLoad = () =>
+      incidentLoadIdRef.current === loadId && currentProjectIdRef.current === targetWsId
+
+    setMonitoringError(null)
+    try {
+      const incidentRows = await api.listIncidents(targetWsId)
+      if (isActiveLoad()) setIncidents(incidentRows)
+    } catch (e) {
+      if (isActiveLoad()) setMonitoringError(e instanceof Error ? e.message : '인시던트 데이터를 불러오지 못했습니다')
+    }
+  }
+
+  useEffect(() => {
+    const wsId = currentProject?.id
+    if (!wsId || view !== 'alerts') return
+    void loadMonitoringData(wsId, { showLoading: false, clearOnError: false })
+    const timer = window.setInterval(() => {
+      void loadMonitoringData(wsId, { showLoading: false, clearOnError: false })
+    }, 10000)
+    return () => window.clearInterval(timer)
+  }, [currentProject?.id, view])
 
   /* 새로고침 시 세션 복원: 토큰이 있으면 me()로 사용자/워크스페이스를 되살린다(없으면 토큰 폐기). */
   useEffect(() => {
@@ -369,6 +417,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setEdges([])
     }
     if (isActiveLoad()) await loadMonitoringData(wsId)
+    if (isActiveLoad()) await loadIncidentData(wsId)
   }
 
   async function applyAuth(tokens: AuthTokens) {
@@ -674,12 +723,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     runIncidentAction() {
       if (currentProject) {
-        void loadMonitoringData(currentProject.id)
+        void loadMonitoringData(currentProject.id, { clearOnError: false })
       }
     },
 
     async reloadMonitoring() {
-      if (currentProject) await loadMonitoringData(currentProject.id)
+      if (currentProject) await loadMonitoringData(currentProject.id, { clearOnError: false })
     },
   }
 

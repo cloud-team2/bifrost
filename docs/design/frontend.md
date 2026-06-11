@@ -54,7 +54,7 @@ FastAPI admin/feedback API는 현재 mount되지 않는다. `/api/v1/change-tick
 | `cluster` | Kafka/Connect cluster |
 | `settings` | workspace/member/Kafka principal 설정 |
 
-따라서 `/monitoring`과 `/clusters`는 frontend route prefix가 아니라 backend API group이다. `ActivityLog` 컴포넌트는 `services/frontend/src/pages/dev/ActivityLog.tsx`에 있지만 `View`, `App.tsx`, `Sidebar`에 연결되어 있지 않아 현재 표준 UI 동선에서는 접근되지 않는다.
+따라서 `/monitoring`과 `/clusters`는 frontend route prefix가 아니라 backend API group이다. 이벤트 로그는 별도 route가 아니라 `alerts` view의 통합 이벤트 로그로 제공한다.
 
 ## 2. 공통 호출 규칙
 
@@ -161,18 +161,20 @@ Table Mapping 응답은 `pipelineId`, `sourceConnector`, `sinkConnector`, `mappi
 ## 7. 모니터링·이벤트 (FR-019, FR-023, FR-024)
 
 ```text
-ActivityLogView (FR-019)     GET /api/v1/workspaces/{wsId}/events?level=&pipelineId=
-                              Sidebar '이벤트 로그'에서 진입
+AlertsView event log (FR-019)
+                              GET /api/v1/workspaces/{wsId}/events?level=&pipelineId=
+                              GET /api/v1/workspaces/{wsId}/monitoring/resource-events
+                              Sidebar '인시던트'에서 진입, 이벤트 row 클릭 시 상세 패널
 OperatorClusterView (FR-023)  GET /api/v1/clusters/kafka
                               GET /api/v1/clusters/kafka/throughput?minutes=30
                               GET /api/v1/clusters/connect   (Broker·Connect worker, workspace scope 없음)
 ResourceEvents (FR-024)       GET /api/v1/workspaces/{wsId}/monitoring/resource-events
-                              (별도 OperatorResourceEventsView는 AlertsView 통합 이벤트 로그로 흡수 — #324)
+                              (별도 화면 없이 AlertsView 통합 이벤트 로그로 흡수 — #324)
 ```
 
-`MonitoringController`의 `/monitoring/**` 4개 handler는 모두 workspace access를 요구한다. Spring에는 `monitoring/overview`와 incident detail route도 구현되어 있지만 현재 frontend `api.ts` wrapper와 `loadMonitoringData()`는 incidents list, workspace events, resource-events만 호출한다. Alerts detail은 이미 로드된 incident list에서 선택하며 `api.getIncident(...)` wrapper는 현재 미사용이다. `/api/v1/clusters/**`는 인증 사용자 대상이지만 workspace path scope는 없다.
+`MonitoringController`의 `/monitoring/**` 4개 handler는 모두 workspace access를 요구한다. Spring에는 `monitoring/overview`와 incident detail route도 구현되어 있다. Frontend는 프로젝트 전환 시 sidebar 배지를 위해 incidents list만 선로딩하고, Alerts 화면 진입/갱신 때 workspace events와 resource-events를 함께 호출한다. Alerts incident detail은 `api.getIncidentDetail(...)`로 관련 events/reports를 다시 읽고, 이벤트 상세는 이미 로드된 event/resource-event row의 실 API 필드를 표시한다. `/api/v1/clusters/**`는 인증 사용자 대상이지만 workspace path scope는 없다.
 
-`ActivityLog`는 개발용 컴포넌트로 남아 있으며 현재 앱 내 route/sidebar에 연결되어 있지 않다. 표준 운영 화면에서 event log는 Alerts 데이터와 store-level platform SSE 갱신으로 소비된다.
+표준 운영 화면에서 event log는 Alerts 데이터로 소비된다. store-level platform SSE는 파이프라인/인시던트 전이를 즉시 반영하고, Alerts 화면에서는 이벤트/리소스 이벤트 목록을 동일 REST API로 주기 재조회해 자동 갱신한다. Broker 화면은 `/clusters/kafka` 응답을 사용하지만 FR-023 정책에 따라 broker별 CPU/디스크/네트워크/heap 같은 인프라 지표는 렌더링하지 않는다.
 
 ## 8. 인시던트 + AI Agent (FR-021, FR-022, FR-025, FR-026)
 
