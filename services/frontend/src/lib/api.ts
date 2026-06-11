@@ -121,6 +121,8 @@ export interface DatabaseResponse {
   username: string
   password: string
   cdcReadinessStatus: 'OK' | 'WARNING' | 'BLOCKED' | null
+  /** sink(JDBC 쓰기) 준비도(#547). 소스용 cdcReadinessStatus와 별개. null=미점검. */
+  sinkReadinessStatus: 'OK' | 'WARNING' | 'BLOCKED' | null
   /** 연결 헬스 주기 프로브(#179). null=아직 미프로브. */
   connectionStatus: 'HEALTHY' | 'UNREACHABLE' | null
   connectionError: string | null
