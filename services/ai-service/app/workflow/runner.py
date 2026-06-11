@@ -37,11 +37,13 @@ from app.schemas.outputs import (
 from app.schemas.state import (
     ActionCandidate,
     ActionStatus,
+    ActionType,
     AgentMode,
     EvidenceItem,
     EvidenceType,
     PolicyDecisionType,
     RedactionStatus,
+    RiskLevel,
     VerificationStatus,
 )
 from app.schemas.tools import ToolContext
@@ -57,6 +59,10 @@ from app.workflow.stages.policy_guard import run_policy_guard
 
 logger = logging.getLogger(__name__)
 _PUBLIC_FAILURE_MESSAGE = "요청 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
+_ACTION_EXECUTION_TOOLS = {
+    "pause_connector",
+    "resume_connector",
+}
 
 
 def _evt(run_id: str, type_: StreamingEventType, agent: str | None, message: str, payload: dict | None = None) -> StreamingEvent:
@@ -89,6 +95,75 @@ async def _publish_failure(bus: EventBus, event_repo: AnyEventRepo, run_id: str)
     except Exception:
         logger.warning("final failure event persist failed: run_id=%s", run_id, exc_info=True)
     await bus.publish(run_id, event)
+
+
+def _coerce_requested_action_candidate(
+    raw: dict[str, Any] | ActionCandidateOutput | None,
+    registry: ToolClientRegistry,
+) -> ActionCandidateOutput | None:
+    """Create an executable candidate from the selected report action.
+
+    Reported remediation risk stays in the report. Execution uses the registered
+    tool risk, with medium mutation tools promoted to human approval so the Run
+    path does not stall on change-management UI that this flow does not own.
+    """
+    if raw is None:
+        return None
+    candidate = raw if isinstance(raw, ActionCandidateOutput) else ActionCandidateOutput.model_validate(raw)
+    if candidate.action_type != ActionType.RUNTIME_TOOL:
+        return candidate.model_copy(update={"risk": RiskLevel.FORBIDDEN})
+    if not candidate.tool_name:
+        return candidate.model_copy(update={"risk": RiskLevel.FORBIDDEN})
+
+    definition = registry.get_definition(candidate.tool_name)
+    if definition is None:
+        return candidate.model_copy(update={"risk": RiskLevel.FORBIDDEN})
+    if definition.name not in _ACTION_EXECUTION_TOOLS:
+        return candidate.model_copy(update={"risk": RiskLevel.FORBIDDEN})
+    try:
+        definition.validate_params(candidate.tool_params or {})
+    except Exception:
+        return candidate.model_copy(update={"risk": RiskLevel.FORBIDDEN})
+    execution_risk = RiskLevel.HIGH if definition.risk == RiskLevel.MEDIUM else definition.risk
+    return candidate.model_copy(update={"risk": execution_risk})
+
+
+def _precondition_message(candidate: ActionCandidateOutput) -> str:
+    bits = [f"사전 조건 검증: risk={candidate.risk.value}"]
+    if candidate.estimated_duration:
+        bits.append(f"예상 소요={candidate.estimated_duration}")
+    if candidate.risk.value not in {"read_only", "low"}:
+        bits.append("운영 트래픽에 일시적 영향이 있을 수 있어 승인/정책 게이트를 확인합니다")
+    return " · ".join(bits)
+
+
+def _execution_event_message(executor_out) -> str:
+    if executor_out is None or not executor_out.execution_results:
+        return "실행된 backend mutation이 없습니다"
+    completed = sum(1 for result in executor_out.execution_results if result.status == ActionStatus.COMPLETED)
+    failed = sum(1 for result in executor_out.execution_results if result.status == ActionStatus.FAILED)
+    blocked = sum(1 for result in executor_out.execution_results if result.status == ActionStatus.BLOCKED)
+    return f"backend mutation 결과: completed={completed}, failed={failed}, blocked={blocked}"
+
+
+def _action_execution_answer(executor_out, verifier_out) -> str:
+    lines = ["조치 실행 결과"]
+    if executor_out is None or not executor_out.execution_results:
+        lines.append("- 승인되었거나 실행 가능한 조치가 없어 backend mutation을 호출하지 않았습니다.")
+    else:
+        for result in executor_out.execution_results:
+            lines.append(
+                f"- {result.action_id}: {result.status.value} ({result.tool_name}) — {result.summary}"
+            )
+
+    first_verification = (
+        verifier_out.verification_results[0]
+        if verifier_out is not None and verifier_out.verification_results
+        else None
+    )
+    if first_verification is not None:
+        lines.append(f"사후 검증: {first_verification.status.value} — {first_verification.reason}")
+    return "\n".join(lines)
 
 
 async def _append_state_patch(
@@ -201,11 +276,13 @@ async def run_workflow(
     requested_mode: str | None = None,
     requested_incident_id: str | None = None,
     requested_remediation_requested: bool | None = None,
+    requested_action_candidate: dict[str, Any] | ActionCandidateOutput | None = None,
 ) -> None:
     event_repo = get_event_repo()
     state_repo = get_state_repo()
     supervisor = get_supervisor()
     answer: str | None = None  # report 단계 전 budget 초과 대비
+    keep_stream_open = False
     run_record = await run_repo.get(run_id)
     persisted_incident_id = _string_or_none(getattr(run_record, "incident_id", None)) if run_record else None
     stored_remediation_requested = (
@@ -271,26 +348,51 @@ async def run_workflow(
         # remediation/policy State를 복원하고, FE가 메시지마다 새 run을 생성해 후속
         # turn이 다른 run_id로 들어오면 같은 incident_id의 직전 run에서 복원한다(#479).
         if mode in (AgentMode.ACTION_EXECUTION, AgentMode.APPROVAL_DECISION):
-            restored_rem, restored_policy = await _restore_action_state(
-                state_repo,
-                run_id,
-                incident_id=persisted_incident_id,
-                run_repo=run_repo,
-            )
-            if restored_rem is not None:
-                remediation_out = restored_rem
-            if restored_policy is not None:
-                policy_out = restored_policy
-            restored_count = (
-                len(restored_rem.action_candidates) if restored_rem else
-                len(restored_policy.policy_decisions) if restored_policy else 0
-            )
-            if restored_count:
+            selected_candidate = _coerce_requested_action_candidate(requested_action_candidate, registry)
+            if selected_candidate is not None:
+                remediation_out = RemediationOutput(action_candidates=[selected_candidate])
+                await _append_state_patch(
+                    state_repo,
+                    run_id,
+                    namespace="actions",
+                    author="RunRequest",
+                    op="append",
+                    path="/actions/candidates",
+                    patch={"candidates": _jsonable(remediation_out.action_candidates)},
+                )
                 await _publish(bus, event_repo, run_id, _evt(
                     run_id, StreamingEventType.PARTIAL_RESULT, "router",
-                    f"이전 분석의 조치 후보 {restored_count}건을 재사용합니다",
-                    {"stage": "state_reuse", "restored_candidates": restored_count},
+                    "인시던트 컨텍스트와 선택 조치를 수집했습니다",
+                    {
+                        "stage": "action_context",
+                        "incident_id": persisted_incident_id,
+                        "action_id": selected_candidate.action_id,
+                        "tool_name": selected_candidate.tool_name,
+                        "risk": selected_candidate.risk.value,
+                        "estimated_duration": selected_candidate.estimated_duration,
+                    },
                 ))
+            else:
+                restored_rem, restored_policy = await _restore_action_state(
+                    state_repo,
+                    run_id,
+                    incident_id=persisted_incident_id,
+                    run_repo=run_repo,
+                )
+                if restored_rem is not None:
+                    remediation_out = restored_rem
+                if restored_policy is not None:
+                    policy_out = restored_policy
+                restored_count = (
+                    len(restored_rem.action_candidates) if restored_rem else
+                    len(restored_policy.policy_decisions) if restored_policy else 0
+                )
+                if restored_count:
+                    await _publish(bus, event_repo, run_id, _evt(
+                        run_id, StreamingEventType.PARTIAL_RESULT, "router",
+                        f"이전 분석의 조치 후보 {restored_count}건을 재사용합니다",
+                        {"stage": "state_reuse", "restored_candidates": restored_count},
+                    ))
 
         while True:
             try:
@@ -562,6 +664,18 @@ async def run_workflow(
                     await _publish(bus, event_repo, run_id,
                                    _evt(run_id, StreamingEventType.AGENT_STARTED, "policy_guard", "정책을 확인합니다"))
                     candidates = remediation_out.action_candidates if remediation_out else []
+                    for candidate in candidates:
+                        await _publish(bus, event_repo, run_id, _evt(
+                            run_id, StreamingEventType.PARTIAL_RESULT, "policy_guard",
+                            _precondition_message(candidate),
+                            {
+                                "stage": "precondition",
+                                "action_id": candidate.action_id,
+                                "risk": candidate.risk.value,
+                                "estimated_duration": candidate.estimated_duration,
+                                "tool_name": candidate.tool_name,
+                            },
+                        ))
                     policy_out = await run_policy_guard(candidates, bus=bus, event_repo=event_repo, run_id=run_id)
                     await _publish(bus, event_repo, run_id, _evt(
                         run_id, StreamingEventType.AGENT_COMPLETED, "policy_guard",
@@ -627,6 +741,9 @@ async def run_workflow(
                         path="/actions/approved_actions",
                         patch={"approved_actions": _jsonable(approval_out.approved_actions)},
                     )
+                    if approval_out.run_status == "waiting_for_approval":
+                        keep_stream_open = True
+                        return
 
                 case "change_gate":
                     await _publish(bus, event_repo, run_id,
@@ -649,6 +766,7 @@ async def run_workflow(
                         patch={"change_management_records": _jsonable(change_out.change_management_records)},
                     )
                     if change_out.run_status == "waiting_for_approval":
+                        keep_stream_open = True
                         return
 
                 case "executor":
@@ -690,6 +808,14 @@ async def run_workflow(
                         )
                         if (candidate := _ready_action_candidate(action_id, remediation_out, decisions)) is not None
                     ]
+                    await _publish(bus, event_repo, run_id, _evt(
+                        run_id, StreamingEventType.EXECUTION_STARTED, "executor",
+                        f"실행 가능한 조치 {len(ready_candidates)}건을 호출합니다",
+                        {
+                            "stage": "execution",
+                            "actions": [_jsonable(candidate) for candidate in ready_candidates],
+                        },
+                    ))
                     executor_out = await run_executor(
                         ready_candidates,
                         run_id=run_id,
@@ -701,6 +827,14 @@ async def run_workflow(
                     await _publish(bus, event_repo, run_id, _evt(
                         run_id, StreamingEventType.AGENT_COMPLETED, "executor",
                         f"실행 {len(executor_out.execution_results)}건",
+                    ))
+                    await _publish(bus, event_repo, run_id, _evt(
+                        run_id, StreamingEventType.EXECUTION_COMPLETED, "executor",
+                        _execution_event_message(executor_out),
+                        {
+                            "stage": "execution",
+                            "execution_results": _jsonable(executor_out.execution_results),
+                        },
                     ))
                     await _append_state_patch(
                         state_repo,
@@ -748,16 +882,19 @@ async def run_workflow(
                 case "report":
                     await _publish(bus, event_repo, run_id,
                                    _evt(run_id, StreamingEventType.AGENT_STARTED, "report", "답변을 생성합니다"))
-                    llm = get_llm_provider()
-                    answer = await report_agent.run_report(
-                        user_message, retrieval_out, mode, llm,
-                        rca_out=rca_out, classifier_out=classifier_out,
-                    )
-                    # #481: Report LLM 호출을 token/call 예산에 계측한다. 예산 초과 시
-                    # 다음 advance(loopback 포함)의 check_all_global이 run을 안전 종료한다.
-                    record_usage = getattr(supervisor, "record_llm_usage", None)
-                    if record_usage is not None:
-                        record_usage(run_id, calls=1, tokens=_estimate_tokens(user_message, answer))
+                    if mode in (AgentMode.ACTION_EXECUTION, AgentMode.APPROVAL_DECISION):
+                        answer = _action_execution_answer(executor_out, verifier_out)
+                    else:
+                        llm = get_llm_provider()
+                        answer = await report_agent.run_report(
+                            user_message, retrieval_out, mode, llm,
+                            rca_out=rca_out, classifier_out=classifier_out,
+                        )
+                        # #481: Report LLM 호출을 token/call 예산에 계측한다. 예산 초과 시
+                        # 다음 advance(loopback 포함)의 check_all_global이 run을 안전 종료한다.
+                        record_usage = getattr(supervisor, "record_llm_usage", None)
+                        if record_usage is not None:
+                            record_usage(run_id, calls=1, tokens=_estimate_tokens(user_message, answer))
                     verifier_out = await verifier_agent.run_verifier(
                         mode,
                         rca_out=rca_out,
@@ -800,6 +937,10 @@ async def run_workflow(
                         rca_out=rca_out,
                         verifier_out=verifier_out,
                         incident_id=persisted_incident_id,
+                        remediation_out=remediation_out,
+                        policy_out=policy_out,
+                        approval_out=approval_out,
+                        executor_out=executor_out,
                     )
                     await _append_state_patch(
                         state_repo,
@@ -832,7 +973,8 @@ async def run_workflow(
         await _publish_failure(bus, event_repo, run_id)
 
     finally:
-        await bus.close_run(run_id)
+        if not keep_stream_open:
+            await bus.close_run(run_id)
 
 
 async def _restore_action_state_from_run(
@@ -966,6 +1108,9 @@ def _ready_action_candidate(action_id: str, remediation_out, policy_decisions) -
     if remediation_out is not None:
         for candidate in remediation_out.action_candidates:
             if candidate.action_id == action_id:
+                if candidate.action_type == ActionType.RUNTIME_TOOL:
+                    if not candidate.tool_params or candidate.tool_name not in _ACTION_EXECUTION_TOOLS:
+                        return None
                 return ActionCandidate(
                     action_id=candidate.action_id,
                     action_type=candidate.action_type,
@@ -977,11 +1122,16 @@ def _ready_action_candidate(action_id: str, remediation_out, policy_decisions) -
                     rollback_plan=candidate.rollback_plan,
                     estimated_duration=candidate.estimated_duration,
                     tool_name=candidate.tool_name,
+                    tool_params=candidate.tool_params,
                     status=ActionStatus.READY,
                 )
 
     for decision in policy_decisions:
         if decision.action_id == action_id:
+            tool_params = getattr(decision, "tool_params", None)
+            if decision.action_type == ActionType.RUNTIME_TOOL:
+                if not tool_params or decision.tool_name not in _ACTION_EXECUTION_TOOLS:
+                    return None
             return ActionCandidate(
                 action_id=decision.action_id,
                 action_type=decision.action_type,
@@ -989,6 +1139,7 @@ def _ready_action_candidate(action_id: str, remediation_out, policy_decisions) -
                 risk=decision.risk,
                 reason=decision.reason,
                 tool_name=decision.tool_name,
+                tool_params=tool_params,
                 status=ActionStatus.READY,
             )
 
@@ -1004,6 +1155,10 @@ async def _persist_report_snapshot(
     rca_out,
     verifier_out,
     incident_id: str | None = None,
+    remediation_out=None,
+    policy_out=None,
+    approval_out=None,
+    executor_out=None,
 ) -> None:
     root_cause_id = None
     confidence = None
@@ -1024,6 +1179,26 @@ async def _persist_report_snapshot(
             for item in (retrieval_out.evidence_items if retrieval_out else [])
         ],
     }
+    if remediation_out is not None:
+        body["action_candidates"] = [
+            candidate.model_dump(mode="json")
+            for candidate in remediation_out.action_candidates
+        ]
+    if policy_out is not None:
+        body["policy_decisions"] = [
+            decision.model_dump(mode="json")
+            for decision in policy_out.policy_decisions
+        ]
+    if approval_out is not None:
+        body["approved_actions"] = [
+            action.model_dump(mode="json")
+            for action in approval_out.approved_actions
+        ]
+    if executor_out is not None:
+        body["execution_results"] = [
+            result.model_dump(mode="json")
+            for result in executor_out.execution_results
+        ]
 
     try:
         await get_report_repo().create(

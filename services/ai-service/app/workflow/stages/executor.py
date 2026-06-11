@@ -38,7 +38,10 @@ async def _after_check(
     if not read_tool:
         return ActionStatus.FAILED
 
-    connector_name = action.action_name
+    params = _build_tool_params(tool_name, action.action_name, action.tool_params)
+    connector_name = params.get("connector_name")
+    if not isinstance(connector_name, str) or not connector_name:
+        return ActionStatus.FAILED
     result = await registry.call_tool(
         read_tool,
         {"connector_name": connector_name},
@@ -49,8 +52,10 @@ async def _after_check(
     return ActionStatus.FAILED
 
 
-def _build_tool_params(tool_name: str, action_name: str) -> dict:
+def _build_tool_params(tool_name: str, action_name: str, tool_params: dict | None = None) -> dict:
     """tool_name 패턴으로 필요한 path param을 action_name에서 추출."""
+    if tool_params:
+        return dict(tool_params)
     if "connector" in tool_name:
         return {"connector_name": action_name}
     if "consumer_group" in tool_name:
@@ -94,7 +99,7 @@ async def run_executor(
 
         tool_result = await registry.call_tool(
             action.tool_name,
-            _build_tool_params(action.tool_name, action.action_name),
+            _build_tool_params(action.tool_name, action.action_name, action.tool_params),
             exec_context,
         )
 

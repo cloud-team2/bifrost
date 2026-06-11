@@ -1,12 +1,21 @@
 """Approval Gate API — 승인·거절 엔드포인트."""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from datetime import datetime, timezone
+from uuid import uuid4
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from pydantic import BaseModel
 
 from app.persistence.approval_link_repository import ApprovalLink, get_approval_repo
+from app.persistence.event_repository import append_event, get_event_repo
+from app.persistence.run_repository import get_run_repo
 from app.schemas import ApiResponse, ErrorCode
 from app.schemas.api import ApprovalSummary, ApprovalsListResponse
+from app.schemas.events import StreamingEvent, StreamingEventType
+from app.streaming.event_bus import get_event_bus
+from app.tools.registry import get_tool_registry
+from app.workflow.runner import run_workflow
 
 router = APIRouter()
 decision_router = APIRouter()
@@ -35,7 +44,11 @@ class ApprovalDecisionRequest(BaseModel):
 
 
 @decision_router.post("/approvals/{approval_id}/decision")
-def decide_approval(approval_id: str, req: ApprovalDecisionRequest) -> ApiResponse:
+def decide_approval(
+    approval_id: str,
+    req: ApprovalDecisionRequest,
+    background_tasks: BackgroundTasks,
+) -> ApiResponse:
     repo = get_approval_repo()
     if req.decision == "approved":
         link = repo.approve(approval_id)
@@ -46,7 +59,57 @@ def decide_approval(approval_id: str, req: ApprovalDecisionRequest) -> ApiRespon
 
     if link is None:
         raise HTTPException(status_code=404, detail=f"approval not found: {approval_id}")
+    if link.status == "approved":
+        background_tasks.add_task(
+            _resume_run_after_approval_decision,
+            link.run_id,
+            req.comment or req.decision,
+        )
+    else:
+        background_tasks.add_task(_complete_run_after_rejection, link.run_id, link.action_id)
     return ApiResponse.success("", {"approval_id": approval_id, "status": link.status})
+
+
+async def _resume_run_after_approval_decision(run_id: str, user_message: str) -> None:
+    run_repo = get_run_repo()
+    run = await run_repo.get(run_id)
+    if run is None:
+        return
+
+    await run_repo.update_status(run_id, "running", "approval_gate")
+    await run_workflow(
+        run_id=run_id,
+        user_message=user_message,
+        project_id=getattr(run, "project_id", None),
+        bus=get_event_bus(),
+        run_repo=run_repo,
+        registry=get_tool_registry(),
+        requested_mode="approval_decision",
+        requested_incident_id=getattr(run, "incident_id", None),
+        requested_remediation_requested=getattr(run, "remediation_requested", False),
+    )
+
+
+async def _complete_run_after_rejection(run_id: str, action_id: str) -> None:
+    run_repo = get_run_repo()
+    run = await run_repo.get(run_id)
+    if run is None:
+        return
+    await run_repo.update_status(run_id, "failed", "approval_gate")
+    event = StreamingEvent(
+        event_id=str(uuid4()),
+        run_id=run_id,
+        timestamp=datetime.now(timezone.utc),
+        type=StreamingEventType.RUN_COMPLETED,
+        agent="approval_gate",
+        message=f"조치 승인이 거절되어 실행을 중단했습니다: {action_id}",
+        payload={"error": "approval_rejected", "action_id": action_id},
+    )
+    event_repo = get_event_repo()
+    bus = get_event_bus()
+    await append_event(event_repo, run_id, event)
+    await bus.publish(run_id, event)
+    await bus.close_run(run_id)
 
 
 @router.post("/approvals/{approval_id}/approve")

@@ -102,6 +102,7 @@ class ActionCandidateOutput(StrictModel):
     rollback_plan: str | None = None
     estimated_duration: str | None = None
     tool_name: str | None = None
+    tool_params: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def runtime_tool_requires_tool_name(self) -> "ActionCandidateOutput":
@@ -122,6 +123,7 @@ class PolicyDecisionOutput(StrictModel):
     status: ActionStatus
     reason: str
     tool_name: str | None = None
+    tool_params: dict[str, Any] | None = None
     required_approver: str | None = None
 
     @model_validator(mode="after")
