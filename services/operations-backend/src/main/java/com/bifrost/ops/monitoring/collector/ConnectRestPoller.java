@@ -10,6 +10,7 @@ import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
 import io.micrometer.observation.annotation.Observed;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -41,6 +42,7 @@ public class ConnectRestPoller {
     // "connectorName:taskId" → 직전 실패 여부
     private final ConcurrentHashMap<String, Boolean> failedTaskState = new ConcurrentHashMap<>();
 
+    @Autowired
     public ConnectRestPoller(
             @Value("${kafka-connect.rest-url:http://platform-connect-connect-api.platform-kafka.svc:8083}")
             String connectRestUrl,
