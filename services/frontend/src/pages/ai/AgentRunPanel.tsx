@@ -134,7 +134,17 @@ interface ApprovalMsg {
   state: 'pending' | 'submitting' | 'approved' | 'rejected' | 'error'
   error: string | null
 }
-type AgentMsg = TextMsg | StatusMsg | ProgressMsg | ApprovalMsg
+interface EvidenceMsg {
+  id: number
+  kind: 'evidence'
+  evidenceId: string | null
+  evidenceType: string | null
+  summary: string | null
+  redactionStatus: string | null
+  traceId?: string | null
+  pipelineId?: string | null
+}
+type AgentMsg = TextMsg | StatusMsg | ProgressMsg | ApprovalMsg | EvidenceMsg
 
 type ThemeName = keyof typeof THEMES
 
@@ -417,6 +427,19 @@ export function AgentRunPanel({
       return
     }
     if (event.type === 'evidence_collected') {
+      updateMsgs((m) => [
+        ...m,
+        {
+          id: ++seq.current,
+          kind: 'evidence',
+          evidenceId: payloadString(event, 'evidence_id'),
+          evidenceType: payloadString(event, 'evidence_type'),
+          summary: payloadString(event, 'summary'),
+          redactionStatus: payloadString(event, 'redaction_status'),
+          traceId: payloadString(event, 'trace_id'),
+          pipelineId: payloadString(event, 'pipeline_id'),
+        },
+      ])
       return
     }
     if (event.type === 'report_preview' || event.type === 'report_preview_available') {
@@ -753,6 +776,9 @@ export function AgentRunPanel({
           if (m.kind === 'progress') {
             return <ProgressCard key={m.id} msg={m} theme={theme} onToggle={() => toggleProgress(m.id)} />
           }
+          if (m.kind === 'evidence') {
+            return <EvidenceCard key={m.id} msg={m} onOpenTrace={app.openPipelineTrace} />
+          }
           if (m.kind === 'approval') {
             return (
               <ApprovalCard
@@ -842,6 +868,37 @@ function StatusCard({ msg, theme }: { msg: StatusMsg; theme: (typeof THEMES)[The
         <span className={msg.state === 'running' ? theme.statusText : undefined}>{label}</span>
       </div>
       <div className="break-words leading-relaxed text-gray-600">{msg.text}</div>
+    </div>
+  )
+}
+
+function EvidenceCard({
+  msg,
+  onOpenTrace,
+}: {
+  msg: EvidenceMsg
+  onOpenTrace: (pipelineId: string, traceId: string) => void
+}) {
+  const hasTraceLink =
+    (msg.evidenceType === 'trace' || (msg.evidenceType ?? '').includes('trace')) &&
+    msg.traceId &&
+    msg.pipelineId
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-[12px] text-gray-700">
+      <div className="mb-1 flex items-center gap-1.5 font-semibold text-gray-800">
+        <Icon name="check" size={13} strokeWidth={3} className="text-emerald-500" />
+        <span>Evidence · {msg.evidenceType ?? '증거 수집'}</span>
+      </div>
+      {msg.summary && <div className="break-words leading-relaxed text-gray-600">{msg.summary}</div>}
+      {hasTraceLink && (
+        <button
+          type="button"
+          className="mt-1.5 rounded-md border border-gray-200 px-3 py-1 text-[11.5px] font-medium text-gray-600 hover:bg-gray-50"
+          onClick={() => onOpenTrace(msg.pipelineId!, msg.traceId!)}
+        >
+          Tracing 탭에서 상세 보기
+        </button>
+      )}
     </div>
   )
 }
