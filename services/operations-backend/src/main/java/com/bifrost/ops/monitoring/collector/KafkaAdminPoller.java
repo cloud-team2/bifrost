@@ -37,6 +37,7 @@ public class KafkaAdminPoller {
     private final PipelineRepository pipelineRepository;
     private final WorkspaceSettingsRepository settingsRepository;
     private final EventService eventService;
+    private final com.bifrost.ops.pipeline.PipelineStatusService pipelineStatusService;
 
     // consumer group → 직전 알람 레벨 ("NONE" | "WARN" | "ERROR")
     private final ConcurrentHashMap<String, String> lagAlarmState = new ConcurrentHashMap<>();
@@ -44,11 +45,13 @@ public class KafkaAdminPoller {
     public KafkaAdminPoller(AdminClient adminClient,
                              PipelineRepository pipelineRepository,
                              WorkspaceSettingsRepository settingsRepository,
-                             EventService eventService) {
+                             EventService eventService,
+                             com.bifrost.ops.pipeline.PipelineStatusService pipelineStatusService) {
         this.adminClient = adminClient;
         this.pipelineRepository = pipelineRepository;
         this.settingsRepository = settingsRepository;
         this.eventService = eventService;
+        this.pipelineStatusService = pipelineStatusService;
     }
 
     @Scheduled(fixedRate = 30_000, initialDelay = 15_000)
@@ -59,7 +62,8 @@ public class KafkaAdminPoller {
             String group = "connect-" + p.getSinkConnectorName();
             try {
                 long lag = calculateLag(group);
-                evaluateLag(group, lag, p);
+                evaluateLag(group, lag, p);                          // 이벤트(WARNING/CRITICAL/회복)
+                pipelineStatusService.applyConsumerLag(p.getId(), lag); // (#559) pipeline status 전이
             } catch (Exception e) {
                 log.debug("consumer lag 수집 실패(무시): group={} cause={}", group, e.getMessage());
             }

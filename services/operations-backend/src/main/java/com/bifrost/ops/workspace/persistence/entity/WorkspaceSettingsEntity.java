@@ -18,7 +18,7 @@ public class WorkspaceSettingsEntity {
     public static final boolean DEFAULT_SLACK_ENABLED = false;
     public static final String DEFAULT_SEVERITY = "warning";
     public static final long DEFAULT_LAG_WARNING = 5_000L;
-    public static final long DEFAULT_LAG_CRITICAL = 20_000L;
+    public static final long DEFAULT_LAG_CRITICAL = 50_000L;   // 스펙 부록 B.1/B.4 (#559)
     public static final boolean DEFAULT_AI_AUTONOMOUS = false;
     public static final int DEFAULT_AI_APPROVAL_WAIT_MINUTES = 10;
     public static final boolean DEFAULT_AI_PROD_LOCK = true;

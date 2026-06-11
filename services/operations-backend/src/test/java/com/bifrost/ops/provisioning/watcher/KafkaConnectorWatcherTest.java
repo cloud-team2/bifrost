@@ -45,6 +45,7 @@ class KafkaConnectorWatcherTest {
             @Override public void applyConnectorStatus(ConnectorStatusUpdate u) { onApply.accept(u); }
             @Override public int failTimedOutCreating(java.time.Duration t) { return 0; }
             @Override public void reevaluateForDatasource(java.util.UUID id) { }
+            @Override public void applyConsumerLag(java.util.UUID pipelineId, long lag) { }
         };
     }
 

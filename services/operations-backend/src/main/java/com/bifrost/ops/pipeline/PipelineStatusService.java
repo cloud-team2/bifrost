@@ -31,4 +31,11 @@ public interface PipelineStatusService {
      * source DB가 죽어도 커넥터가 retry로 RUNNING을 유지(이벤트 미발생)하는 경우까지 반영한다.
      */
     void reevaluateForDatasource(java.util.UUID datasourceId);
+
+    /**
+     * consumer lag을 pipeline 상태에 반영한다(#559, 스펙 B.1). KafkaAdminPoller가 주기적으로 호출한다.
+     * 커넥터 RUNNING + lag ≥ 경고 임계(기본 5,000)면 {@code lag}, 회복되면 {@code active}로 전이한다.
+     * error/paused/creating는 우선순위가 높아 lag로 덮어쓰지 않는다.
+     */
+    void applyConsumerLag(java.util.UUID pipelineId, long lag);
 }
