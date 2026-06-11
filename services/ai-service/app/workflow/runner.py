@@ -33,7 +33,13 @@ from app.schemas.outputs import (
     PolicyGuardOutput,
     RemediationOutput,
 )
-from app.schemas.state import ActionCandidate, ActionStatus, AgentMode, PolicyDecisionType
+from app.schemas.state import (
+    ActionCandidate,
+    ActionStatus,
+    AgentMode,
+    PolicyDecisionType,
+    VerificationStatus,
+)
 from app.schemas.tools import ToolContext
 from app.streaming.event_bus import EventBus
 from app.supervisor.graph import get_supervisor
@@ -634,6 +640,7 @@ async def run_workflow(
                         rca_out=rca_out,
                         retrieval_out=retrieval_out,
                         classifier_out=classifier_out,
+                        executor_out=executor_out,
                     )
                     first_result = (
                         verifier_out.verification_results[0]
@@ -666,6 +673,40 @@ async def run_workflow(
                         user_message, retrieval_out, mode, llm,
                         rca_out=rca_out, classifier_out=classifier_out,
                     )
+                    verifier_out = await verifier_agent.run_verifier(
+                        mode,
+                        rca_out=rca_out,
+                        retrieval_out=retrieval_out,
+                        classifier_out=classifier_out,
+                        executor_out=executor_out,
+                        report_body=answer,
+                    )
+                    first_result = (
+                        verifier_out.verification_results[0]
+                        if verifier_out.verification_results
+                        else None
+                    )
+                    v_status = first_result.status.value if first_result else "pass"
+                    await _publish(bus, event_repo, run_id, _evt(
+                        run_id,
+                        StreamingEventType.VERIFICATION_COMPLETED,
+                        "verifier",
+                        f"report 검증: {v_status}",
+                    ))
+                    await _append_state_patch(
+                        state_repo,
+                        run_id,
+                        namespace="verification",
+                        author="Verifier",
+                        op="append",
+                        path="/verification/verification_results",
+                        patch={"verification_results": _jsonable(verifier_out.verification_results)},
+                    )
+                    record_verifier = getattr(supervisor, "record_verifier_result", None)
+                    if record_verifier is not None and first_result is not None:
+                        record_verifier(run_id, first_result.status, first_result.next_agent)
+                    if first_result is not None and first_result.status != VerificationStatus.PASS:
+                        continue
                     await _persist_report_snapshot(
                         run_id=run_id,
                         answer=answer,
