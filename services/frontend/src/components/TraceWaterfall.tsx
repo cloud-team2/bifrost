@@ -11,6 +11,13 @@ export function TraceWaterfall({ trace }: { trace: TraceSummaryResponse }) {
     )
   }
   const bars = waterfallBars(trace.spans)
+  if (bars.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white py-16">
+        <p className="text-[13px] text-gray-400">{trace.note ?? '이 trace에 표시할 span이 없습니다'}</p>
+      </div>
+    )
+  }
   const isError = trace.status === 'error'
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4">
@@ -30,7 +37,7 @@ export function TraceWaterfall({ trace }: { trace: TraceSummaryResponse }) {
           </div>
         ))}
       </div>
-      {bars.filter((b) => b.isError).map((b, i) => (
+      {bars.filter((b) => b.isError && b.span.error).map((b, i) => (
         <p key={i} className="mt-2 text-[12px] text-rose-500">{b.span.name}: {b.span.error}</p>
       ))}
     </div>
