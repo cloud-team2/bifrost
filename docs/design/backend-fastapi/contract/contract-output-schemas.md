@@ -30,7 +30,7 @@
 - `action_execution`
 - `approval_decision`
 
-Router는 매 사용자 메시지마다 mode를 재판정한다. 현재 router 구현은 mode와 관계없이 `required_flow=["planner","retrieval","verifier","report"]`, `remediation_requested=false`, `reuse_existing_analysis=false`를 반환한다.
+Router는 매 사용자 메시지마다 mode를 재판정한다. 현재 router 구현은 keyword에 따라 `simple_query`/`incident_analysis`/`action_execution`/`approval_decision`을 선택하고, `required_flow`는 transition table에서 계산한다. 조치 후보 제시 요청은 `remediation_requested=true`, `action_execution`/`approval_decision`은 `reuse_existing_analysis=true`를 반환한다.
 
 현재 transition table 기준 `incident_analysis` + `remediation_requested=true`는 `remediation`과 `policy_guard`까지만 추가한 뒤 Verifier와 Report로 진행한다. `approval_or_change_gate`/`executor` 실행 경로는 이 mode의 current flow에 들어 있지 않다.
 
@@ -287,6 +287,6 @@ Status enum:
 | catalog에 없는 `runtime_tool` | Policy Guard가 아니라 `ToolClientRegistry.call_tool(...)`에서 blocked result |
 | `workflow_action`/`composite_action`/`notification`/`escalation`인데 action catalog에 없음 | Remediation output reject |
 | raw evidence inline 포함 | Retrieval output reject |
-| verifier approval 없는 report | 현재 runner는 reject하지 않고 report를 생성하며 `report_snapshot.verified=false`로 저장한다 |
+| verifier approval 없는 report | Verifier `fail`/`needs_revision`은 Supervisor loopback으로 책임 Agent에 되돌린다. 예산 초과 시 Report 없이 `failed` 종료하며, 생성된 snapshot은 승인 여부를 `report_snapshot.verified`에 저장한다 |
 | Planner step에 `params`, `depends_on`, `plan_hash` 누락 | Planner output reject |
 | 허용되지 않은 action status | Output reject |

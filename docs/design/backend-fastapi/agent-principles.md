@@ -90,7 +90,7 @@ State에는 원문을 inline으로 넣지 않는다. 현재 Retrieval은 synthet
 
 #### 3.4 검증 실패는 정상 경로
 
-검증 실패는 예외가 아니라 workflow의 일부라는 설계 원칙은 유지한다. 다만 현재 구현은 static transition으로 `verifier` 뒤 항상 `report`로 진행하고, Verifier status에 따른 Retrieval/Classifier/Remediation 되돌림은 아직 없다. 자세한 현재 분기 상태는 [§15 Workflow Control](contract/contract-workflow-control.md#15-contract-workflow-control)에 둔다.
+검증 실패는 예외가 아니라 workflow의 일부라는 설계 원칙은 유지한다. 현재 구현은 Verifier `fail`/`needs_revision`을 Supervisor에 기록해 책임 Agent로 loopback하고, 예산 초과 시 검증 안 된 결과를 Report로 보내지 않고 `failed`로 종료한다. 자세한 현재 분기 상태는 [§15 Workflow Control](contract/contract-workflow-control.md#15-contract-workflow-control)에 둔다.
 
 ### 4. Alert와 Incident 상관관계
 
@@ -155,7 +155,7 @@ Router
 
 Classifier는 Retrieval이 수집한 evidence summary를 사용하므로 Retrieval 뒤에 둔다.
 
-현재 구현은 Router가 매 사용자 메시지마다 mode를 재판정하고, 기존 run State를 복원해 재사용하지 않는다. `incident_analysis`는 기본적으로 원인까지만 보고하고(`diagnose_only`), 조치 후보 생성과 실행은 transition table에 따라 별도 mode에서 처리한다. 실제 단계 순서는 [§15 Workflow Control](contract/contract-workflow-control.md#15-contract-workflow-control)의 현재 구현 메모를 따른다.
+현재 구현은 Router가 매 사용자 메시지마다 mode를 재판정하고, `action_execution`/`approval_decision`에서는 같은 run의 이전 action 후보와 policy 결정을 State patch에서 복원한다. `incident_analysis`는 기본적으로 원인까지만 보고하고(`diagnose_only`), 조치 후보 생성과 실행은 transition table과 Supervisor loopback에 따라 별도 mode에서 처리한다. 실제 단계 순서는 [§15 Workflow Control](contract/contract-workflow-control.md#15-contract-workflow-control)의 현재 구현 메모를 따른다.
 
 메인 workflow와 실패 시 되돌림 규칙은 [§15 Workflow Control](contract/contract-workflow-control.md#15-contract-workflow-control)를 기준으로 한다.
 
