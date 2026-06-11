@@ -1,5 +1,8 @@
-"""Planner agent — keyword-based tool selection (no LLM).
+"""Planner agent — LLM 으로 read-only tool 선택, keyword fallback.
 
+설계상 Planner 는 LLM agent 다. 사용자 의도와 catalog(§8 Read-only Runtime Tool
+Catalog)를 보고 적합한 조회 tool 을 allowlist 안에서만 고른다(자유 생성 금지).
+LLM 미가용·파싱 실패 시 keyword 매칭으로 fallback 해 회귀를 막는다(#483).
 Tool names follow tool-catalog.md §8 Read-only Runtime Tool Catalog.
 """
 from __future__ import annotations
@@ -10,6 +13,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from app.prompts import planner as planner_prompt
 from app.schemas.outputs import PlannerOutput, RetrievalPlanStep
 from app.schemas.tools import ToolContext, ToolStatus
 from app.tools.registry import ToolClientRegistry
@@ -43,6 +47,37 @@ _KEYWORD_TOOL_MAP: list[tuple[set[str], str, dict]] = [
     ({"alert", "알람", "알럿", "경보"}, "get_alerts", {}),
 ]
 _DEFAULT_TOOL = ("search_logs", _LOG_PARAMS)
+
+# LLM 이 고를 수 있는 read-only tool catalog (§8). allowlist 밖 tool 선택 금지.
+# 각 tool 의 기본 params 는 keyword 경로와 동일하게 맞춰 식별자 해석(#489)으로 위임한다.
+_READ_TOOL_DEFAULT_PARAMS: dict[str, dict] = {
+    "list_project_pipelines": _PIPELINE_LIST_PARAMS,
+    "search_logs": _LOG_PARAMS,
+    "get_metrics": {"metric": "pipeline_lag_seconds", "time_range": "last_30m"},
+    "get_deployments": {},
+    "get_connector_status": {},
+    "get_consumer_lag": {},
+    "get_traces": {},
+    "get_connector_task_trace": {},
+    "get_alerts": {},
+}
+_READ_TOOL_DESCRIPTIONS: dict[str, str] = {
+    "list_project_pipelines": "프로젝트 파이프라인 목록·현황 조회",
+    "search_logs": "파이프라인/에러 로그 검색",
+    "get_metrics": "메트릭·지표·성능 수치 조회",
+    "get_deployments": "최근 배포·변경 이력 조회",
+    "get_connector_status": "Kafka Connect 커넥터 상태 조회",
+    "get_consumer_lag": "Kafka consumer group lag(지연) 조회",
+    "get_traces": "분산 trace(지연/실패 구간) 조회",
+    "get_connector_task_trace": "커넥터 task 예외 stack trace 조회",
+    "get_alerts": "발생한 alert·알람 조회",
+}
+_READ_TOOL_ALLOWLIST = frozenset(_READ_TOOL_DEFAULT_PARAMS)
+_TOOL_CATALOG = [
+    {"tool_name": name, "description": _READ_TOOL_DESCRIPTIONS[name]}
+    for name in _READ_TOOL_DEFAULT_PARAMS
+]
+
 _CONNECTOR_PARAM_TOOLS = frozenset({"get_connector_status", "get_traces", "get_connector_task_trace"})
 _CONSUMER_GROUP_PARAM_TOOLS = frozenset({"get_consumer_lag", "get_kafka_lag"})
 _IDENTIFIER_STOPWORDS = {
@@ -84,20 +119,9 @@ async def run_planner(
     registry: ToolClientRegistry | None = None,
     tool_context: ToolContext | None = None,
 ) -> PlannerOutput:
-    msg = user_message.lower()
-    selected: list[tuple[str, dict]] = []
-
-    seen_tools: set[str] = set()
-    for keywords, tool, params in _KEYWORD_TOOL_MAP:
-        if tool in seen_tools:
-            # 한 tool 은 한 번만 호출 — 같은 도구에 대한 중복 step 방지 (#468).
-            continue
-        if any(kw in msg for kw in keywords):
-            selected.append((tool, params))
-            seen_tools.add(tool)
-
-    if not selected:
-        selected.append(_DEFAULT_TOOL)
+    selected = await _llm_select_tools(user_message)
+    if selected is None:
+        selected = _keyword_select_tools(user_message)
 
     selected_tools = {tool for tool, _ in selected}
     if selected_tools & (_CONNECTOR_PARAM_TOOLS | _CONSUMER_GROUP_PARAM_TOOLS):
@@ -130,6 +154,64 @@ async def run_planner(
     ]
 
     return PlannerOutput(retrieval_plan=steps)
+
+
+def _keyword_select_tools(user_message: str) -> list[tuple[str, dict]]:
+    """LLM 미가용 시 fallback — 기존 keyword→tool 매칭(회귀 보존)."""
+    msg = user_message.lower()
+    selected: list[tuple[str, dict]] = []
+
+    seen_tools: set[str] = set()
+    for keywords, tool, params in _KEYWORD_TOOL_MAP:
+        if tool in seen_tools:
+            # 한 tool 은 한 번만 호출 — 같은 도구에 대한 중복 step 방지 (#468).
+            continue
+        if any(kw in msg for kw in keywords):
+            selected.append((tool, params))
+            seen_tools.add(tool)
+
+    if not selected:
+        selected.append(_DEFAULT_TOOL)
+    return selected
+
+
+async def _llm_select_tools(user_message: str) -> list[tuple[str, dict]] | None:
+    """LLM 으로 catalog allowlist 안의 read tool 을 고른다. 실패 시 None(→ keyword)."""
+    from app.llm.structured import complete_structured
+
+    messages = [
+        {"role": "system", "content": planner_prompt.SYSTEM_PROMPT},
+        {"role": "user", "content": planner_prompt.build_user_prompt(user_message, _TOOL_CATALOG)},
+    ]
+    tools = await complete_structured(
+        "planner",
+        messages,
+        _validate_tool_selection,
+        repair_hint=planner_prompt.REPAIR_HINT,
+    )
+    if not tools:
+        return None
+    # catalog 기본 params 로 step 구성 — 식별자 해석은 downstream(#489) 에 위임.
+    return [(tool, dict(_READ_TOOL_DEFAULT_PARAMS[tool])) for tool in tools]
+
+
+def _validate_tool_selection(parsed: dict[str, Any]) -> list[str] | None:
+    raw_tools = parsed.get("tools")
+    if not isinstance(raw_tools, list):
+        return None
+
+    selected: list[str] = []
+    seen: set[str] = set()
+    for item in raw_tools:
+        if not isinstance(item, str):
+            continue
+        name = item.strip()
+        # allowlist 밖 tool(자유 생성·조치 tool)은 버린다 — 한 tool 은 한 번만.
+        if name in _READ_TOOL_ALLOWLIST and name not in seen:
+            selected.append(name)
+            seen.add(name)
+
+    return selected or None
 
 
 def _params_with_identifier(tool: str, params: dict, identifier: _Identifier) -> dict:
