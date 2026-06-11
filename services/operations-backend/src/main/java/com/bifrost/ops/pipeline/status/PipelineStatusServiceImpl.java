@@ -202,13 +202,6 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
                 .orElse(WorkspaceSettingsEntity.DEFAULT_LAG_WARNING);
     }
 
-    /** 워크스페이스의 consumer lag 경고 임계(미설정 시 기본 5,000). */
-    private long lagWarningThreshold(UUID tenantId) {
-        return settingsRepository.findById(tenantId)
-                .map(com.bifrost.ops.workspace.persistence.entity.WorkspaceSettingsEntity::getLagWarningThreshold)
-                .orElse(com.bifrost.ops.workspace.persistence.entity.WorkspaceSettingsEntity.DEFAULT_LAG_WARNING);
-    }
-
     /** 상태 전이 1건: row 갱신 + event/audit/SSE 발행(단일 경로). recompute·timeout이 공통 사용. */
     private void transition(PipelineEntity p, PipelineLifecycle current, StatusDecision decision) {
         PipelineLifecycle next = decision.next();
