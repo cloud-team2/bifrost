@@ -37,10 +37,14 @@ export function routeAgentInput(
     return {
       kind: 'slash_missing_args',
       message: missingSlashArgsMessage(missing, parsed.command.usage),
-      input: `${parsed.command.label} `,
+      input: slashInputWithProvidedArgs(parsed),
     }
   }
   return { kind: 'slash_execute', parsed }
+}
+
+function slashInputWithProvidedArgs(parsed: ParsedSlashCommand) {
+  return `${parsed.command.label}${parsed.args.length > 0 ? ` ${parsed.args.join(' ')}` : ''} `
 }
 
 function missingSlashArgsMessage(missing: string[], usage: string) {

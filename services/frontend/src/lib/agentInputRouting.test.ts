@@ -89,6 +89,21 @@ describe('routeAgentInput', () => {
     })
   })
 
+  it('preserves already provided slash args while asking for the remaining args', () => {
+    const routed = routeAgentInput('/topics-partitions-lag orders', {
+      slashCommands: true,
+      slashLoading: false,
+      slashError: null,
+      commands,
+    })
+
+    expect(routed).toEqual({
+      kind: 'slash_missing_args',
+      message: 'partition_id을 입력해주세요 (사용법: /topics-partitions-lag <topic_name> <partition_id>)',
+      input: '/topics-partitions-lag orders ',
+    })
+  })
+
   it('executes required-argument commands once args are present', () => {
     const routed = routeAgentInput('/connectors-status orders-sink', {
       slashCommands: true,
