@@ -493,11 +493,27 @@ async def run_workflow(
                         request_id=str(uuid4()),
                     )
                     approved = approval_out.approved_actions if approval_out else []
+                    change_records = change_out.change_management_records if change_out else []
                     change_ready_ids = [
                         record.action_id
-                        for record in (change_out.change_management_records if change_out else [])
+                        for record in change_records
                         if record.status == STATUS_VERIFIED
                     ]
+                    # per-action governance 식별자 매핑 — 승인된 mutation 실행 시 Spring
+                    # governance gate 로 X-Approval-Id / X-Change-Ticket-Id 전달. (#475)
+                    # auto_/PENDING_ 센티넬은 실제 승인/티켓이 아니므로 제외(헤더 미전송).
+                    approval_by_action = {
+                        a.action_id: a.approval_id
+                        for a in approved
+                        if a.approval_id and not a.approval_id.startswith("auto_")
+                    }
+                    change_ticket_by_action = {
+                        record.action_id: record.change_ticket_id
+                        for record in change_records
+                        if record.status == STATUS_VERIFIED
+                        and record.change_ticket_id
+                        and not record.change_ticket_id.startswith("PENDING_")
+                    }
                     ready_candidates = [
                         candidate
                         for action_id in _dedupe_action_ids(
@@ -510,6 +526,8 @@ async def run_workflow(
                         run_id=run_id,
                         context=exec_context,
                         registry=registry,
+                        approval_by_action=approval_by_action,
+                        change_ticket_by_action=change_ticket_by_action,
                     )
                     await _publish(bus, event_repo, run_id, _evt(
                         run_id, StreamingEventType.AGENT_COMPLETED, "executor",

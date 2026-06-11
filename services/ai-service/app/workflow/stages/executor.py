@@ -64,9 +64,19 @@ async def run_executor(
     run_id: str,
     context: ToolContext,
     registry: ToolClientRegistry,
+    approval_by_action: dict[str, str] | None = None,
+    change_ticket_by_action: dict[str, str] | None = None,
 ) -> ExecutorOutput:
-    """ready action만 멱등키로 실행. ready 아닌 action은 건너뜀(중복 실행 차단)."""
+    """ready action만 멱등키로 실행. ready 아닌 action은 건너뜀(중복 실행 차단).
+
+    approval_by_action / change_ticket_by_action 은 action_id → governance 식별자
+    매핑이다. 승인이 필요한 mutation 실행 시 해당 action 의 approval_id(+change_ticket_id)
+    를 ToolContext 에 실어 Spring governance gate(X-Approval-Id / X-Change-Ticket-Id)
+    와 연결한다. read tool 은 매핑이 없으므로 자연히 미전송. (#475)
+    """
     results: list[ExecutionResultOutput] = []
+    approval_by_action = approval_by_action or {}
+    change_ticket_by_action = change_ticket_by_action or {}
 
     for action in candidates:
         if action.status != ActionStatus.READY:
@@ -77,7 +87,10 @@ async def run_executor(
 
         before_ref = await _snapshot_evidence(action.action_id, "before")
         idempotency_key = f"{run_id}:{action.action_id}"
-        exec_context = context.with_idempotency_key(idempotency_key)
+        exec_context = context.with_idempotency_key(idempotency_key).with_approval(
+            approval_id=approval_by_action.get(action.action_id),
+            change_ticket_id=change_ticket_by_action.get(action.action_id),
+        )
 
         tool_result = await registry.call_tool(
             action.tool_name,
