@@ -33,7 +33,7 @@ from app.schemas.outputs import (
     PolicyGuardOutput,
     RemediationOutput,
 )
-from app.schemas.state import ActionCandidate, ActionStatus, AgentMode
+from app.schemas.state import ActionCandidate, ActionStatus, AgentMode, PolicyDecisionType
 from app.schemas.tools import ToolContext
 from app.streaming.event_bus import EventBus
 from app.supervisor.graph import get_supervisor
@@ -111,6 +111,35 @@ def _jsonable(value: Any) -> Any:
     if hasattr(value, "value"):
         return value.value
     return value
+
+
+def _classifier_scope_unclear(classifier_out) -> bool:
+    """Classifier의 scope_unclear 신호 매핑(#476, §3 'scope 불명확').
+
+    기존 ClassifierOutput에는 명시적 scope_unclear 값이 없다. 가장 자연스러운
+    매핑은 "알려진 incident type을 하나도 확정하지 못해 UNKNOWN_NEEDS_MORE_EVIDENCE
+    후보만 남은 경우"다 — 이는 분류기가 scope/유형을 가르지 못했다는 뜻이며,
+    설계의 'scope 불명확 → Planner 재수집'과 의미가 일치한다.
+    """
+    if classifier_out is None:
+        return False
+    incident_types = classifier_out.classification.incident_types
+    if not incident_types:
+        return True
+    return all(t.type == classifier_agent.UNKNOWN_INCIDENT_TYPE for t in incident_types)
+
+
+def _policy_revise_action(policy_out) -> bool:
+    """Policy Guard의 revise_action 신호 매핑(#476, §3 revise_action).
+
+    PolicyDecisionType에는 revise_action 값이 없다. 가장 자연스러운 매핑은
+    decision==DENY(status BLOCKED)다 — 제안된 조치가 정책상 불가하므로 Remediation이
+    더 안전한 대안을 재생성해야 한다는 의미이고, 설계의 'revise_action → Remediation'과
+    부합한다.
+    """
+    if policy_out is None:
+        return False
+    return any(d.decision == PolicyDecisionType.DENY for d in policy_out.policy_decisions)
 
 
 def _evidence_patch(evidence) -> dict[str, Any]:
@@ -350,6 +379,13 @@ async def run_workflow(
                         path="/incident/scope",
                         patch={"scope": clf.incident_scope.value},
                     )
+                    # #476: scope_unclear면 Planner로 loopback 등록(scope_loops 예산).
+                    # 예산 초과 시 다음 advance에서 RunBudgetExceeded("scope_loops").
+                    record_classifier = getattr(supervisor, "record_classifier_result", None)
+                    if record_classifier is not None:
+                        record_classifier(
+                            run_id, scope_unclear=_classifier_scope_unclear(classifier_out)
+                        )
 
                 case "rca":
                     await _publish(bus, event_repo, run_id,
@@ -437,6 +473,16 @@ async def run_workflow(
                             ]
                         },
                     )
+                    # #476: revise_action(DENY)이면 Remediation으로 loopback 등록
+                    # (revise_action_loops 예산). Remediation↔Policy Guard 순환은
+                    # incident_analysis remediation 흐름에만 존재하므로 그 mode로 한정한다
+                    # (action_execution엔 remediation stage가 없어 무한·오류 방지).
+                    # 예산 초과 시 다음 advance에서 RunBudgetExceeded("revise_action_loops").
+                    record_policy = getattr(supervisor, "record_policy_guard_result", None)
+                    if record_policy is not None and mode == AgentMode.INCIDENT_ANALYSIS:
+                        record_policy(
+                            run_id, revise_action=_policy_revise_action(policy_out)
+                        )
 
                 case "approval_gate":
                     await _publish(bus, event_repo, run_id,
