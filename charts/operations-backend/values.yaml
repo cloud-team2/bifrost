@@ -41,6 +41,9 @@ env:
   # 올린다 → Collector의 tail_sampling이 에러/지연 trace만 Tempo에 저장. (데이터플레인 워커는 범위 밖)
   OTLP_TRACING_ENDPOINT: http://otel-collector.monitoring:4318/v1/traces
   TRACING_SAMPLE_RATE: "1.0"
+  # Tempo 조회(query_traces / 파이프라인 Tracing 탭, #373/#498). 켜야 TraceQuery가 stub 대신 실제 trace를 반환.
+  TEMPO_ENABLED: "true"
+  TEMPO_URL: http://tempo.monitoring:3200
 
 # kubectl create secret generic operations-backend-secrets 으로 사전 생성 필요
 secrets:
