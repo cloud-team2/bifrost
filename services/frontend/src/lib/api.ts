@@ -339,6 +339,22 @@ export interface EventResponse {
   createdAt: string
 }
 
+export interface TraceSpanResponse {
+  name: string
+  service: string
+  durationMs: number
+  status: string          // 'ok' | 'error'
+  error: string | null
+}
+export interface TraceSummaryResponse {
+  traceId: string | null
+  pipelineId: string | null
+  status: string          // 'ok' | 'error' | 'unknown'
+  durationMs: number
+  spans: TraceSpanResponse[]
+  note: string | null
+}
+
 /** incident 목록/상세(S5). operations-backend IncidentResponse record와 동일 필드. */
 export interface IncidentResponse {
   id: string
@@ -606,6 +622,11 @@ export const api = {
     request<MetricPoint[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/metrics/unsynced?minutes=${minutes}`),
   pipelineEventDist: (wsId: string, id: string, minutes = 60) =>
     request<EventDistPoint[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/metrics/event-distribution?minutes=${minutes}`),
+  pipelineTrace: (wsId: string, id: string, traceId?: string) =>
+    request<TraceSummaryResponse>(
+      'GET',
+      `/api/v1/workspaces/${wsId}/pipelines/${id}/trace${traceId ? `?traceId=${encodeURIComponent(traceId)}` : ''}`,
+    ),
   // cluster (#213) — 워크스페이스 공유 인프라, 스코프 없음
   clusterKafka: () => request<KafkaClusterResponse>('GET', `/api/v1/clusters/kafka`),
   clusterThroughput: (minutes = 30) =>
