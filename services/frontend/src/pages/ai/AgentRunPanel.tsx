@@ -171,6 +171,7 @@ const STRUCTURED_TOOL_INTRO: Record<string, string> = {
   list_connectors: 'Kafka Connector 상태 및 Task 정보를 조회합니다.',
   analyze_event_log: '최근 2시간 이벤트 로그와 인시던트 현황을 분석합니다.',
 }
+const SLASH_CATALOG_ERROR_MESSAGE = '도구 목록을 불러오지 못했습니다. 잠시 후 다시 시도하세요.'
 
 type ThemeName = keyof typeof THEMES
 
@@ -333,7 +334,7 @@ export function AgentRunPanel({
         setSlashState({
           loading: false,
           commands: [],
-          error: e instanceof ApiError ? e.message : 'tool catalog를 불러오지 못했습니다',
+          error: SLASH_CATALOG_ERROR_MESSAGE,
         })
       })
     return () => {
