@@ -8,7 +8,9 @@ from app.persistence.change_ticket_repository import (
     ChangeTicket,
     STATUS_CHANGE_TICKET_REQUIRED,
     STATUS_CHANGE_WINDOW_REQUIRED,
+    STATUS_IMPACT_ANALYSIS_REQUIRED,
     STATUS_ROLLBACK_PLAN_REQUIRED,
+    STATUS_VERIFIER_PLAN_REQUIRED,
     STATUS_VERIFIED,
     get_change_ticket_repo,
 )
@@ -41,11 +43,11 @@ async def run_change_gate(
     run_id: str,
     change_tickets: dict[str, str] | None = None,
 ) -> ChangeManagementOutput:
-    """REQUIRE_CHANGE_MANAGEMENT action에 대해 ticket/window/rollback_plan을 검증한다.
+    """REQUIRE_CHANGE_MANAGEMENT action에 대해 change-management 필수 조건을 검증한다.
 
     change_tickets는 과거 테스트/호환용 명시 입력이다. 이 dict shape에는 window와
-    rollback_plan이 없으므로 production 경로(route/runner)는 항상 repository에
-    영속된 ChangeTicket을 사용한다.
+    rollback_plan, impact_analysis, verifier_plan이 없으므로 production 경로(route/runner)는
+    항상 repository에 영속된 ChangeTicket을 사용한다.
     """
     require_metadata = change_tickets is None
     tickets = await _load_tickets(run_id, change_tickets)
@@ -112,6 +114,10 @@ def _validation_status(ticket: ChangeTicket | None, *, require_metadata: bool) -
         return STATUS_CHANGE_WINDOW_REQUIRED
     if require_metadata and not (ticket.rollback_plan or "").strip():
         return STATUS_ROLLBACK_PLAN_REQUIRED
+    if require_metadata and not (ticket.impact_analysis or "").strip():
+        return STATUS_IMPACT_ANALYSIS_REQUIRED
+    if require_metadata and not (ticket.verifier_plan or "").strip():
+        return STATUS_VERIFIER_PLAN_REQUIRED
     return STATUS_VERIFIED
 
 
