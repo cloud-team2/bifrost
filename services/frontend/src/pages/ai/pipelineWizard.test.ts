@@ -30,6 +30,7 @@ const sourceDb = {
   username: 'app',
   password: '',
   cdcReadinessStatus: 'OK',
+  sinkReadinessStatus: 'OK',
   connectionStatus: 'HEALTHY',
   connectionError: null,
   connectionCheckedAt: null,
