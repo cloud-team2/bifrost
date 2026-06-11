@@ -136,6 +136,8 @@ class PostgresRunRepository:
 class InMemoryRunRecord(BaseModel):
     run_id: str
     project_id: str | None = None
+    incident_id: str | None = None
+    remediation_requested: bool = False
     mode: str = "simple_query"
     status: str = "running"
     current_agent: str | None = None
@@ -153,11 +155,16 @@ class InMemoryRunRepository:
         mode: str,
         *,
         project_id: str | None = None,
+        incident_id: str | None = None,
+        remediation_requested: bool = False,
         user_message: str | None = None,
+        **_: object,
     ) -> InMemoryRunRecord:
         rec = InMemoryRunRecord(
             run_id=run_id,
             project_id=project_id,
+            incident_id=incident_id,
+            remediation_requested=remediation_requested,
             mode=mode,
             user_message=user_message,
         )

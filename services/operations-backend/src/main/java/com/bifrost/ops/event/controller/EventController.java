@@ -18,7 +18,7 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * 이벤트 로그 API(#70, FR-019). {@code GET /api/v1/workspaces/{wsId}/events?level=&pipelineId=}.
+ * 이벤트 로그 API(#70, FR-019). {@code GET /api/v1/workspaces/{wsId}/events?level=&pipelineId=&incidentId=}.
  */
 @RestController
 @RequestMapping("/api/v1/workspaces/{wsId}/events")
@@ -36,9 +36,10 @@ public class EventController {
     public List<EventResponse> list(@PathVariable UUID wsId,
                                     @AuthenticationPrincipal AuthenticatedUser principal,
                                     @RequestParam(required = false) String level,
-                                    @RequestParam(required = false) UUID pipelineId) {
+                                    @RequestParam(required = false) UUID pipelineId,
+                                    @RequestParam(required = false) UUID incidentId) {
         accessGuard.requireAccess(wsId, principal);
-        return eventService.list(wsId, parseLevel(level), pipelineId);
+        return eventService.list(wsId, parseLevel(level), pipelineId, incidentId);
     }
 
     private static EventLevel parseLevel(String level) {

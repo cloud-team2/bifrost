@@ -1,9 +1,14 @@
 package com.bifrost.ops.monitoring.controller;
 
 import com.bifrost.ops.auth.jwt.AuthenticatedUser;
+import com.bifrost.ops.event.EventLevel;
+import com.bifrost.ops.event.EventService;
+import com.bifrost.ops.event.dto.EventResponse;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
+import com.bifrost.ops.incident.IncidentReportService;
 import com.bifrost.ops.incident.IncidentService;
+import com.bifrost.ops.incident.dto.IncidentReportResponse;
 import com.bifrost.ops.incident.dto.IncidentResponse;
 import com.bifrost.ops.monitoring.dto.OverviewResponse;
 import com.bifrost.ops.monitoring.dto.ResourceEventResponse;
@@ -41,9 +46,11 @@ class MonitoringControllerTest {
 
     private final MonitoringReadService monitoringReadService = mock(MonitoringReadService.class);
     private final IncidentService incidentService = mock(IncidentService.class);
+    private final EventService eventService = mock(EventService.class);
+    private final IncidentReportService incidentReportService = mock(IncidentReportService.class);
     private final WorkspaceAccessGuard accessGuard = mock(WorkspaceAccessGuard.class);
     private final MonitoringController controller =
-            new MonitoringController(monitoringReadService, incidentService, accessGuard);
+            new MonitoringController(monitoringReadService, incidentService, eventService, incidentReportService, accessGuard);
 
     private final UUID wsId = UUID.randomUUID();
     private final AuthenticatedUser principal = new AuthenticatedUser(UUID.randomUUID(), wsId, "u@bifrost.io");
@@ -142,6 +149,60 @@ class MonitoringControllerTest {
     }
 
     @Test
+    void incidentDetailReturnsIncidentEventsImpactPipelinesAndReports() {
+        UUID incidentId = UUID.randomUUID();
+        UUID pipelineId = UUID.randomUUID();
+        IncidentResponse incident = new IncidentResponse(
+                incidentId,
+                wsId,
+                "pipeline:" + pipelineId,
+                "ERROR",
+                "OPEN",
+                "Pipeline lag",
+                "lag exceeded threshold",
+                "PIPELINE",
+                pipelineId,
+                Instant.parse("2026-06-09T00:00:00Z"),
+                null);
+        EventResponse event = new EventResponse(
+                UUID.randomUUID(),
+                pipelineId,
+                incidentId,
+                EventLevel.ERROR,
+                "LAG_THRESHOLD",
+                "lag too high",
+                Instant.parse("2026-06-09T00:01:00Z"));
+        IncidentReportResponse report = sampleReport(incidentId.toString());
+        when(incidentService.get(wsId, incidentId)).thenReturn(incident);
+        when(eventService.list(wsId, null, null, incidentId)).thenReturn(List.of(event));
+        when(incidentReportService.list(incidentId)).thenReturn(List.of(report));
+
+        var body = controller.incidentDetail(wsId, incidentId, principal).getBody();
+
+        assertThat(body.incident()).isEqualTo(incident);
+        assertThat(body.events()).containsExactly(event);
+        assertThat(body.impactPipelineIds()).containsExactly(pipelineId);
+        assertThat(body.reports()).containsExactly(report);
+        verify(accessGuard).requireAccess(wsId, principal);
+    }
+
+    @Test
+    void incidentReportsValidateWorkspaceIncidentBeforeDelegating() {
+        UUID incidentId = UUID.randomUUID();
+        IncidentResponse incident = sample(incidentId, wsId, "OPEN");
+        IncidentReportResponse report = sampleReport(incidentId.toString());
+        when(incidentService.get(wsId, incidentId)).thenReturn(incident);
+        when(incidentReportService.list(incidentId)).thenReturn(List.of(report));
+
+        List<IncidentReportResponse> body = controller.incidentReports(wsId, incidentId, principal).getBody();
+
+        assertThat(body).containsExactly(report);
+        verify(accessGuard).requireAccess(wsId, principal);
+        verify(incidentService).get(wsId, incidentId);
+        verify(incidentReportService).list(incidentId);
+    }
+
+    @Test
     void overviewPropagatesForbiddenBeforeServiceCall() {
         doThrow(new ApiException(ErrorCode.WORKSPACE_FORBIDDEN, "워크스페이스 접근 권한이 없습니다"))
                 .when(accessGuard).requireAccess(wsId, principal);
@@ -207,5 +268,17 @@ class MonitoringControllerTest {
                 UUID.randomUUID(),
                 Instant.parse("2026-06-09T00:00:00Z"),
                 null);
+    }
+
+    private static IncidentReportResponse sampleReport(String incidentId) {
+        return new IncidentReportResponse(
+                UUID.randomUUID().toString(),
+                "run_001",
+                incidentId,
+                "CONNECTOR_TASK_FAILED",
+                0.82,
+                true,
+                JsonMapper.builder().build().createObjectNode().put("answer", "restart connector"),
+                Instant.parse("2026-06-09T00:02:00Z"));
     }
 }

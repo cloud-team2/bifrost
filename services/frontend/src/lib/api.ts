@@ -332,6 +332,7 @@ export interface SyncStatusResponse {
 export interface EventResponse {
   id: string
   pipelineId: string | null
+  incidentId: string | null
   level: 'INFO' | 'WARN' | 'ERROR'
   type: string
   message: string
@@ -351,6 +352,22 @@ export interface IncidentResponse {
   sourceId: string | null
   openedAt: string
   resolvedAt: string | null
+}
+export interface IncidentReportResponse {
+  id: string
+  runId: string
+  incidentId: string | null
+  rootCauseId: string | null
+  confidence: number | null
+  verified: boolean
+  body: unknown
+  createdAt: string | null
+}
+export interface IncidentDetailResponse {
+  incident: IncidentResponse
+  events: EventResponse[]
+  impactPipelineIds: string[]
+  reports: IncidentReportResponse[]
 }
 /** KRaft/리소스 이벤트(S5). operations-backend ResourceEventResponse record와 동일 필드. */
 export interface ResourceEventResponse {
@@ -406,17 +423,6 @@ export interface KafkaPrincipalResponse {
 export interface KafkaPrincipalCreateRequest {
   username: string
   secretRef?: string | null
-}
-export interface KafkaPrincipalSecretResponse {
-  principalId: string
-  username: string
-  status: KafkaPrincipalStatus
-  namespace: string
-  secretName: string
-  availableKeys: string[]
-  passwordMasked: string
-  retrievedAt: string
-  exposurePolicy: string
 }
 
 
@@ -613,6 +619,12 @@ export const api = {
   },
   getIncident: (wsId: string, incidentId: string) =>
     request<IncidentResponse>('GET', `/api/v1/workspaces/${wsId}/monitoring/incidents/${incidentId}`),
+  getIncidentDetail: (wsId: string, incidentId: string) =>
+    request<IncidentDetailResponse>('GET', `/api/v1/workspaces/${wsId}/monitoring/incidents/${incidentId}/detail`),
+  listIncidentReports: (wsId: string, incidentId: string) =>
+    request<IncidentReportResponse[]>('GET', `/api/v1/workspaces/${wsId}/monitoring/incidents/${incidentId}/reports`),
+  getIncidentReport: (wsId: string, incidentId: string, reportId: string) =>
+    request<IncidentReportResponse>('GET', `/api/v1/workspaces/${wsId}/monitoring/incidents/${incidentId}/reports/${reportId}`),
   listResourceEvents: (wsId: string) =>
     request<ResourceEventResponse[]>('GET', `/api/v1/workspaces/${wsId}/monitoring/resource-events`),
 
@@ -637,10 +649,11 @@ export const api = {
     agentRequest<ApprovalDecisionResponse>('POST', `/api/v1/approvals/${approvalId}/decision`, body),
 
   // events (FR-019)
-  listEvents: (wsId: string, level?: string, pipelineId?: string) => {
+  listEvents: (wsId: string, level?: string, pipelineId?: string, incidentId?: string) => {
     const q = new URLSearchParams()
     if (level) q.set('level', level)
     if (pipelineId) q.set('pipelineId', pipelineId)
+    if (incidentId) q.set('incidentId', incidentId)
     const qs = q.toString()
     return request<EventResponse[]>('GET', `/api/v1/workspaces/${wsId}/events${qs ? `?${qs}` : ''}`)
   },
@@ -674,8 +687,6 @@ export const api = {
     request<KafkaPrincipalResponse>('POST', `/api/v1/workspaces/${wsId}/kafka/principals/${id}/revoke`),
   rotateKafkaPrincipal: (wsId: string, id: string) =>
     request<KafkaPrincipalResponse>('POST', `/api/v1/workspaces/${wsId}/kafka/principals/${id}/rotate`),
-  getKafkaPrincipalSecret: (wsId: string, id: string) =>
-    request<KafkaPrincipalSecretResponse>('GET', `/api/v1/workspaces/${wsId}/kafka/principals/${id}/secret`),
 }
 
 export interface ConnectionTestInput {

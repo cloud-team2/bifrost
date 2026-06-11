@@ -123,6 +123,25 @@ def _evidence_patch(evidence) -> dict[str, Any]:
     }
 
 
+def _string_or_none(value: object) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _bool_or_false(value: object) -> bool:
+    return value if isinstance(value, bool) else False
+
+
+def _agent_mode_or_none(value: object) -> AgentMode | None:
+    if isinstance(value, AgentMode):
+        return value
+    if isinstance(value, str):
+        try:
+            return AgentMode(value)
+        except ValueError:
+            return None
+    return None
+
+
 async def run_workflow(
     *,
     run_id: str,
@@ -131,11 +150,19 @@ async def run_workflow(
     bus: EventBus,
     run_repo: AnyRunRepo,
     registry: ToolClientRegistry,
+    requested_mode: str | None = None,
+    requested_incident_id: str | None = None,
+    requested_remediation_requested: bool | None = None,
 ) -> None:
     event_repo = get_event_repo()
     state_repo = get_state_repo()
     supervisor = get_supervisor()
     answer: str | None = None  # report 단계 전 budget 초과 대비
+    run_record = await run_repo.get(run_id)
+    persisted_incident_id = _string_or_none(getattr(run_record, "incident_id", None)) if run_record else None
+    stored_remediation_requested = (
+        _bool_or_false(getattr(run_record, "remediation_requested", False)) if run_record else False
+    )
 
     try:
         await _publish(bus, event_repo, run_id,
@@ -146,11 +173,20 @@ async def run_workflow(
         await _publish(bus, event_repo, run_id,
                        _evt(run_id, StreamingEventType.AGENT_STARTED, "router", "질문 유형을 파악합니다"))
         router_out = await router_agent.run_router(user_message)
-        mode = router_out.route_decision.mode
+        mode = _agent_mode_or_none(requested_mode) or router_out.route_decision.mode
+        requested_incident = _string_or_none(requested_incident_id)
+        router_incident = _string_or_none(getattr(router_out.route_decision, "incident_id", None))
+        persisted_incident_id = requested_incident or persisted_incident_id or router_incident
+        if persisted_incident_id and mode == AgentMode.SIMPLE_QUERY:
+            mode = AgentMode.INCIDENT_ANALYSIS
+        remediation_requested = (
+            _bool_or_false(requested_remediation_requested)
+            or stored_remediation_requested
+            or _bool_or_false(router_out.route_decision.remediation_requested)
+        )
         await _publish(bus, event_repo, run_id,
                        _evt(run_id, StreamingEventType.AGENT_COMPLETED, "router", f"mode: {mode.value}"))
-        incident_id = getattr(router_out.route_decision, "incident_id", None)
-        if incident_id:
+        if persisted_incident_id:
             await _append_state_patch(
                 state_repo,
                 run_id,
@@ -158,13 +194,14 @@ async def run_workflow(
                 author="Router",
                 op="append",
                 path="/incident/incident_id",
-                patch={"incident_id": incident_id, "mode": mode.value},
+                patch={"incident_id": persisted_incident_id, "mode": mode.value},
             )
 
         # ── Supervisor 초기화 ──────────────────────────────────────────────────
         supervisor.start_run(
             run_id, mode,
-            remediation_requested=router_out.route_decision.remediation_requested,
+            incident_id=persisted_incident_id,
+            remediation_requested=remediation_requested,
         )
 
         # ── Stage 루프 ─────────────────────────────────────────────────────────
@@ -572,6 +609,7 @@ async def run_workflow(
                         retrieval_out=retrieval_out,
                         rca_out=rca_out,
                         verifier_out=verifier_out,
+                        incident_id=persisted_incident_id,
                     )
                     await _append_state_patch(
                         state_repo,
@@ -718,6 +756,7 @@ async def _persist_report_snapshot(
     retrieval_out,
     rca_out,
     verifier_out,
+    incident_id: str | None = None,
 ) -> None:
     root_cause_id = None
     confidence = None
@@ -743,6 +782,7 @@ async def _persist_report_snapshot(
         await get_report_repo().create(
             run_id,
             body,
+            incident_id=incident_id,
             root_cause_id=root_cause_id,
             confidence=confidence,
             verified=verified,

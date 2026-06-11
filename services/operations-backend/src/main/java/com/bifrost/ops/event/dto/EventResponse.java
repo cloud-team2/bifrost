@@ -10,13 +10,14 @@ import java.util.UUID;
 public record EventResponse(
     UUID id,
     UUID pipelineId,
+    UUID incidentId,
     EventLevel level,
     String type,
     String message,
     Instant createdAt
 ) {
     public static EventResponse from(EventEntity e) {
-        return new EventResponse(e.getId(), e.getPipelineId(), e.getLevel(),
+        return new EventResponse(e.getId(), e.getPipelineId(), e.getIncidentId(), e.getLevel(),
                 e.getType(), e.getMessage(), e.getCreatedAt());
     }
 }

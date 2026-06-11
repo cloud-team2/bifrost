@@ -1,9 +1,16 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../components/Icon'
 import { PageHead, StatusBadge } from '../components/blocks'
 import { useApp } from '../store/AppStore'
 import { pipelineLabel } from '../data/helpers'
-import type { IncidentResponse, ResourceEventResponse, EventResponse } from '../lib/api'
+import {
+  api,
+  ApiError,
+  type EventResponse,
+  type IncidentReportResponse,
+  type IncidentResponse,
+  type ResourceEventResponse,
+} from '../lib/api'
 import type { Edge } from '../data/types'
 import type { LogLevel } from '../data/types'
 import { cn } from '../lib/format'
@@ -46,6 +53,7 @@ interface UnifiedEvent {
   source: 'pipeline' | 'resource'
   label: string
   pipelineId?: string | null
+  incidentId?: string | null
   resourceKey?: string | null
 }
 
@@ -99,6 +107,7 @@ function buildEvents(events: EventResponse[], resourceEvents: ResourceEventRespo
     source: 'pipeline',
     label: e.type,
     pipelineId: e.pipelineId,
+    incidentId: e.incidentId,
   }))
   const resources: UnifiedEvent[] = resourceEvents.map((e, index) => ({
     id: `${e.eventType}:${e.resource}:${e.occurredAt}:${index}`,
@@ -144,6 +153,7 @@ function relatedEventsForIncident(incident: IncidentResponse, allEvents: Unified
 
   return allEvents
     .filter((event) => {
+      if (event.incidentId === incident.id) return true
       if (event.pipelineId && event.pipelineId === sourceId) return true
       if (pipeline && event.pipelineId === pipeline.id) return true
       if (event.source !== 'resource') return false
@@ -152,6 +162,97 @@ function relatedEventsForIncident(incident: IncidentResponse, allEvents: Unified
         isPipelineTopicResource(event.resourceKey, pipeline)
     })
     .sort(eventSortAsc)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function pickString(value: unknown, keys: string[]): string | null {
+  if (!isRecord(value)) return null
+  for (const key of keys) {
+    const candidate = value[key]
+    if (typeof candidate === 'string' && candidate.trim()) return candidate
+  }
+  return null
+}
+
+function nestedRecord(value: unknown, keys: string[]): Record<string, unknown> | null {
+  if (!isRecord(value)) return null
+  for (const key of keys) {
+    const candidate = value[key]
+    if (isRecord(candidate)) return candidate
+  }
+  return null
+}
+
+function reportBodyText(body: unknown): string {
+  if (typeof body === 'string') return body
+  const direct = pickString(body, ['answer', 'markdown', 'content', 'summary'])
+  if (direct) return direct
+  const final = nestedRecord(body, ['final_response', 'finalResponse'])
+  const finalText = pickString(final, ['summary', 'answer', 'content'])
+  if (finalText) return finalText
+  return ''
+}
+
+function reportTitle(report: IncidentReportResponse): string {
+  if (report.rootCauseId) return report.rootCauseId
+  const text = reportBodyText(report.body).split('\n').find((line) => line.trim())
+  return text ? text.slice(0, 72) : `Report ${report.id.slice(0, 8)}`
+}
+
+function reportSummary(report: IncidentReportResponse): string {
+  const text = reportBodyText(report.body).replace(/\s+/g, ' ').trim()
+  return text ? text.slice(0, 140) : '본문이 비어 있습니다'
+}
+
+interface ReportAction {
+  key: string
+  label: string
+  status: string | null
+  risk: string | null
+  estimated: string | null
+  reportId: string
+}
+
+function actionArrays(body: unknown): unknown[] {
+  if (!isRecord(body)) return []
+  const out: unknown[] = []
+  for (const key of ['actions', 'action_candidates', 'actionCandidates', 'approved_actions', 'approvedActions']) {
+    const value = body[key]
+    if (Array.isArray(value)) out.push(...value)
+  }
+  const final = nestedRecord(body, ['final_response', 'finalResponse'])
+  if (final) out.push(...actionArrays(final))
+  const remediation = nestedRecord(body, ['remediation'])
+  if (remediation) out.push(...actionArrays(remediation))
+  return out
+}
+
+function reportActions(reports: IncidentReportResponse[]): ReportAction[] {
+  const seen = new Set<string>()
+  const actions: ReportAction[] = []
+  for (const report of reports) {
+    for (const raw of actionArrays(report.body)) {
+      if (!isRecord(raw)) continue
+      const id = pickString(raw, ['action_id', 'actionId', 'id'])
+      const label = pickString(raw, ['action_name', 'actionName', 'name', 'label']) ?? id
+      if (!label) continue
+      const key = `${report.id}:${id ?? label}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      actions.push({
+        key,
+        label,
+        status: pickString(raw, ['status', 'state']),
+        risk: pickString(raw, ['risk']),
+        estimated: pickString(raw, ['estimated_duration', 'estimatedDuration', 'estimated_time', 'estimatedTime']),
+        reportId: report.id,
+      })
+    }
+  }
+  return actions
 }
 
 /* ================================================================ main view */
@@ -225,7 +326,7 @@ export function Alerts() {
           모니터링 데이터를 불러오는 중…
         </div>
       ) : (
-        <div className="mt-4 flex min-h-0 gap-4">
+        <div className="mt-4 flex min-h-0 flex-col gap-4 xl:flex-row">
           <div className="min-w-0 flex-1 space-y-3">
             {activeIncidents.length > 0 ? (
               <div className="space-y-2">
@@ -322,7 +423,7 @@ export function Alerts() {
           </div>
 
           {selectedIncident && (
-            <div className="w-[380px] shrink-0 self-start overflow-hidden rounded-xl border border-gray-200 bg-white">
+            <div className="w-full shrink-0 self-start overflow-hidden rounded-xl border border-gray-200 bg-white xl:w-[380px]">
               <IncidentPanel
                 incident={selectedIncident}
                 relatedEvents={selectedRelatedEvents}
@@ -431,56 +532,193 @@ function IncidentPanel({
   onClose: () => void
 }) {
   const app = useApp()
-  const pipeline = incidentPipeline(incident, app.edges)
+  const wsId = app.currentProject?.id
+  const [detailIncident, setDetailIncident] = useState<IncidentResponse | null>(null)
+  const [detailLoaded, setDetailLoaded] = useState(false)
+  const [detailImpactPipelineIds, setDetailImpactPipelineIds] = useState<string[]>([])
+  const [eventRows, setEventRows] = useState<EventResponse[]>([])
+  const [eventsLoading, setEventsLoading] = useState(false)
+  const [eventsError, setEventsError] = useState<string | null>(null)
+  const [reports, setReports] = useState<IncidentReportResponse[]>([])
+  const [reportsLoading, setReportsLoading] = useState(false)
+  const [reportsError, setReportsError] = useState<string | null>(null)
+  const [rawOpen, setRawOpen] = useState(false)
+  const [selectedReport, setSelectedReport] = useState<IncidentReportResponse | null>(null)
+  const [reportLoadingId, setReportLoadingId] = useState<string | null>(null)
+  const [reportError, setReportError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setEventRows([])
+    setReports([])
+    setDetailIncident(null)
+    setDetailLoaded(false)
+    setDetailImpactPipelineIds([])
+    setEventsError(null)
+    setReportsError(null)
+    setReportError(null)
+    setSelectedReport(null)
+    setRawOpen(false)
+    if (!wsId) return
+
+    let alive = true
+    setEventsLoading(true)
+    setReportsLoading(true)
+    api
+      .getIncidentDetail(wsId, incident.id)
+      .then((detail) => {
+        if (!alive) return
+        setDetailIncident(detail.incident)
+        setEventRows(detail.events)
+        setDetailImpactPipelineIds(detail.impactPipelineIds)
+        setReports(detail.reports)
+        setDetailLoaded(true)
+      })
+      .catch((e) => {
+        if (!alive) return
+        const message = e instanceof ApiError ? e.message : '인시던트 상세를 불러오지 못했습니다'
+        setEventsError(message)
+        setReportsError(message)
+      })
+      .finally(() => {
+        if (!alive) return
+        setEventsLoading(false)
+        setReportsLoading(false)
+      })
+
+    return () => {
+      alive = false
+    }
+  }, [wsId, incident.id])
+
+  const panelIncident = detailIncident ?? incident
+  const timelineEvents = useMemo(
+    () => (detailLoaded ? buildEvents(eventRows, []).sort(eventSortAsc) : relatedEvents),
+    [detailLoaded, eventRows, relatedEvents],
+  )
+
+  const impactPipelineIds = useMemo(() => {
+    const ids = new Set<string>()
+    detailImpactPipelineIds.forEach((id) => ids.add(id))
+    if (isPipelineSource(panelIncident) && panelIncident.sourceId) ids.add(panelIncident.sourceId)
+    eventRows.forEach((event) => {
+      if (event.pipelineId) ids.add(event.pipelineId)
+    })
+    return Array.from(ids)
+  }, [detailImpactPipelineIds, eventRows, panelIncident])
+
+  const impactPipelines = impactPipelineIds
+    .map((id) => app.edges.find((edge) => edge.id === id) ?? null)
+    .filter((edge): edge is Edge => edge !== null)
+  const missingImpactIds = impactPipelineIds.filter((id) => !app.edges.some((edge) => edge.id === id))
+  const actions = useMemo(() => reportActions(reports), [reports])
+
+  async function openReport(report: IncidentReportResponse) {
+    if (!wsId) return
+    setReportLoadingId(report.id)
+    setReportError(null)
+    try {
+      setSelectedReport(await api.getIncidentReport(wsId, panelIncident.id, report.id))
+    } catch (e) {
+      setSelectedReport(report)
+      setReportError(e instanceof ApiError ? e.message : '리포트 본문을 불러오지 못했습니다')
+    } finally {
+      setReportLoadingId(null)
+    }
+  }
 
   return (
+    <>
     <div className="flex max-h-[calc(100vh-140px)] flex-col overflow-hidden">
       <div className="flex shrink-0 items-start gap-2.5 border-b border-gray-100 px-4 py-3">
-        <span className={cn('mt-1 h-2 w-2 shrink-0 rounded-full', severityDot(incident.severity))} />
-        <span className="flex-1 text-[13px] font-semibold leading-snug text-gray-900">{incident.title}</span>
+        <span className={cn('mt-1 h-2 w-2 shrink-0 rounded-full', severityDot(panelIncident.severity))} />
+        <span className="flex-1 text-[13px] font-semibold leading-snug text-gray-900">{panelIncident.title}</span>
         <button onClick={onClose} className="shrink-0 text-gray-400 hover:text-gray-600">
           <Icon name="x" size={15} />
         </button>
       </div>
 
       <div className="flex-1 overflow-auto divide-y divide-gray-100">
-        <div className="space-y-1.5 px-4 py-3">
-          <div className="flex items-center gap-2">
-            <StatusBadge status={incident.status} />
-            <span className="font-mono text-[11px] text-gray-400">{fmtDateTime(incident.openedAt)}</span>
+        <div className="space-y-3 px-4 py-3">
+          <div className="grid grid-cols-2 gap-2">
+            <DetailMetric label="상태">
+              <StatusBadge status={panelIncident.status} />
+            </DetailMetric>
+            <DetailMetric label="심각도">
+              <StatusBadge status={panelIncident.severity} />
+            </DetailMetric>
+            <DetailMetric label="Opened">
+              <span className="break-all font-mono">{fmtDateTime(panelIncident.openedAt)}</span>
+            </DetailMetric>
+            <DetailMetric label="Resolved">
+              <span className="break-all font-mono">{fmtDateTime(panelIncident.resolvedAt)}</span>
+            </DetailMetric>
           </div>
-          {isPipelineSource(incident) && (
-            <div className="text-[12px] text-gray-500">
-              영향 Pipeline:{' '}
-              {pipeline ? (
-                <button
-                  onClick={() => app.openPipeline(pipeline.id)}
-                  className="inline-flex items-center gap-1 font-medium text-brand-600 hover:underline"
-                >
-                  {pipelineLabel(pipeline)}
-                  <Icon name="arrow-right" size={11} />
-                </button>
-              ) : (
-                <span className="text-gray-400">현재 프로젝트에서 찾을 수 없습니다</span>
-              )}
-            </div>
-          )}
+
+          <div>
+            <div className="mb-1 text-[10.5px] font-bold uppercase tracking-wide text-gray-400">영향 Pipeline</div>
+            {impactPipelines.length > 0 || missingImpactIds.length > 0 ? (
+              <div className="space-y-1">
+                {impactPipelines.map((pipeline) => (
+                  <div key={pipeline.id} className="text-[12px] text-gray-500">
+                    <button
+                      onClick={() => app.openPipeline(pipeline.id)}
+                      className="inline-flex items-center gap-1 font-medium text-brand-600 hover:underline"
+                    >
+                      {pipelineLabel(pipeline)}
+                      <Icon name="arrow-right" size={11} />
+                    </button>
+                  </div>
+                ))}
+                {missingImpactIds.map((id) => (
+                  <div key={id} className="font-mono text-[11px] text-gray-400">{id}</div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-[12px] text-gray-400">저장된 영향 pipeline 정보가 없습니다</div>
+            )}
+          </div>
+
+          <div>
+            <button
+              onClick={() => setRawOpen((v) => !v)}
+              className="inline-flex items-center gap-1 text-[11.5px] font-medium text-gray-500 hover:text-gray-700"
+            >
+              <Icon name={rawOpen ? 'chevron-up' : 'chevron-down'} size={12} />
+              기술 필드
+            </button>
+            {rawOpen && (
+              <dl className="mt-2 space-y-1 rounded-lg bg-gray-50 px-3 py-2 text-[11px]">
+                <RawField label="tenantId" value={panelIncident.tenantId} />
+                <RawField label="groupingKey" value={panelIncident.groupingKey} />
+                <RawField label="sourceId" value={panelIncident.sourceId ?? '—'} />
+              </dl>
+            )}
+          </div>
         </div>
 
         <div className="px-4 py-3">
-          <div className="mb-1.5 text-[10.5px] font-bold uppercase tracking-wide text-gray-400">원인 분석</div>
-          <p className="text-[12.5px] leading-relaxed text-gray-600">
-            {incident.rca?.trim() || '아직 RCA가 기록되지 않았습니다.'}
+          <div className="mb-1.5 text-[10.5px] font-bold uppercase tracking-wide text-gray-400">RCA</div>
+          <p className="whitespace-pre-wrap text-[12.5px] leading-relaxed text-gray-600">
+            {panelIncident.rca?.trim() || '아직 RCA가 기록되지 않았습니다.'}
           </p>
         </div>
 
         <div className="px-4 py-3">
           <div className="mb-2 text-[10.5px] font-bold uppercase tracking-wide text-gray-400">
-            관련 이벤트 {relatedEvents.length}건
+            관련 이벤트 {timelineEvents.length}건
           </div>
-          {relatedEvents.length > 0 ? (
+          {eventsLoading ? (
+            <div className="rounded-lg border border-dashed border-gray-200 py-6 text-center text-[12px] text-gray-400">
+              관련 이벤트를 불러오는 중…
+            </div>
+          ) : timelineEvents.length > 0 ? (
             <div>
-              {relatedEvents.map((event, i) => (
+              {eventsError && (
+                <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-700">
+                  {eventsError} · 기존 로드 데이터로 표시합니다
+                </div>
+              )}
+              {timelineEvents.map((event, i) => (
                 <div key={event.id} className="flex gap-2.5 pb-2.5 last:pb-0">
                   <div className="flex flex-col items-center pt-1">
                     <span
@@ -495,12 +733,13 @@ function IncidentPanel({
                               : 'bg-gray-300',
                       )}
                     />
-                    {i < relatedEvents.length - 1 && <span className="my-0.5 w-px flex-1 bg-gray-100" />}
+                    {i < timelineEvents.length - 1 && <span className="my-0.5 w-px flex-1 bg-gray-100" />}
                   </div>
                   <div className="-mt-0.5 min-w-0 flex-1">
-                    <div className="text-[12px] text-gray-700">{event.message}</div>
-                    <div className="mt-0.5 font-mono text-[10.5px] text-gray-400">
-                      {fmtDateTime(event.occurredAt)}
+                    <div className="break-words text-[12px] text-gray-700">{event.message}</div>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-2 font-mono text-[10.5px] text-gray-400">
+                      <span>{fmtDateTime(event.occurredAt)}</span>
+                      <span>{event.label}</span>
                     </div>
                   </div>
                 </div>
@@ -508,11 +747,195 @@ function IncidentPanel({
             </div>
           ) : (
             <div className="rounded-lg border border-dashed border-gray-200 py-6 text-center text-[12px] text-gray-400">
-              상관된 이벤트가 없습니다
+              {eventsError ?? '상관된 이벤트가 없습니다'}
+            </div>
+          )}
+        </div>
+
+        <div className="px-4 py-3">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="text-[10.5px] font-bold uppercase tracking-wide text-gray-400">리포트</div>
+            {reports.length > 0 && <span className="text-[10.5px] text-gray-400">{reports.length}건</span>}
+          </div>
+          {reportsLoading ? (
+            <div className="rounded-lg border border-dashed border-gray-200 py-6 text-center text-[12px] text-gray-400">
+              리포트를 불러오는 중…
+            </div>
+          ) : reportsError ? (
+            <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-700">
+              {reportsError}
+            </div>
+          ) : reports.length > 0 ? (
+            <div className="space-y-2">
+              {reports.map((report) => (
+                <button
+                  key={report.id}
+                  onClick={() => openReport(report)}
+                  disabled={reportLoadingId === report.id}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-left hover:border-gray-300 disabled:opacity-60"
+                >
+                  <div className="flex items-center gap-2">
+                    <Icon name="log" size={13} className="text-gray-400" />
+                    <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-gray-800">
+                      {reportTitle(report)}
+                    </span>
+                    {report.verified && <StatusBadge status="STABLE" label="verified" />}
+                  </div>
+                  <div className="mt-1 line-clamp-2 text-[11.5px] leading-relaxed text-gray-500">
+                    {reportSummary(report)}
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 break-all font-mono text-[10.5px] text-gray-400">
+                    <span>{fmtDateTime(report.createdAt)}</span>
+                    {report.confidence !== null && <span>{Math.round(report.confidence * 100)}%</span>}
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed border-gray-200 py-6 text-center text-[12px] text-gray-400">
+              저장된 리포트가 없습니다
+            </div>
+          )}
+        </div>
+
+        <div className="px-4 py-3">
+          <div className="mb-2 text-[10.5px] font-bold uppercase tracking-wide text-gray-400">조치 이력/권장 조치</div>
+          {reportsLoading ? (
+            <div className="rounded-lg border border-dashed border-gray-200 py-6 text-center text-[12px] text-gray-400">
+              리포트 기반 조치를 불러오는 중…
+            </div>
+          ) : reportsError ? (
+            <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-700">
+              {reportsError}
+            </div>
+          ) : actions.length > 0 ? (
+            <div className="space-y-2">
+              {actions.map((action) => (
+                <div key={action.key} className="rounded-lg border border-gray-200 px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-gray-800">
+                      {action.label}
+                    </span>
+                    {action.status && <StatusBadge status={action.status} />}
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-gray-500">
+                    {action.risk && <span>risk {action.risk}</span>}
+                    {action.estimated && <span>{action.estimated}</span>}
+                    <button
+                      onClick={() => {
+                        const report = reports.find((r) => r.id === action.reportId)
+                        if (report) openReport(report)
+                      }}
+                      className="font-medium text-brand-600 hover:underline"
+                    >
+                      근거 리포트
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed border-gray-200 py-6 text-center text-[12px] text-gray-400">
+              report body에 기록된 조치가 없습니다
             </div>
           )}
         </div>
       </div>
+    </div>
+    {selectedReport && (
+      <ReportDrawer
+        report={selectedReport}
+        error={reportError}
+        onClose={() => {
+          setSelectedReport(null)
+          setReportError(null)
+        }}
+      />
+    )}
+    </>
+  )
+}
+
+function DetailMetric({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-lg bg-gray-50 px-3 py-2">
+      <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-gray-400">{label}</div>
+      <div className="text-[11.5px] text-gray-700">{children}</div>
+    </div>
+  )
+}
+
+function RawField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid grid-cols-[80px_1fr] gap-2">
+      <dt className="font-semibold text-gray-500">{label}</dt>
+      <dd className="break-all font-mono text-gray-600">{value}</dd>
+    </div>
+  )
+}
+
+function ReportDrawer({
+  report,
+  error,
+  onClose,
+}: {
+  report: IncidentReportResponse
+  error: string | null
+  onClose: () => void
+}) {
+  const body = reportBodyText(report.body)
+  const drawerRef = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    drawerRef.current?.focus()
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [onClose])
+
+  return (
+    <div
+      className="fixed inset-0 z-[80] flex justify-end bg-gray-900/30"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="incident-report-title"
+    >
+      <button className="flex-1 cursor-default" aria-label="close report drawer" onClick={onClose} />
+      <aside ref={drawerRef} tabIndex={-1} className="flex h-full w-full max-w-[560px] flex-col bg-white shadow-xl">
+        <div className="flex items-start gap-3 border-b border-gray-100 px-5 py-4">
+          <Icon name="log" size={16} className="mt-0.5 text-gray-400" />
+          <div className="min-w-0 flex-1">
+            <div id="incident-report-title" className="truncate text-[14px] font-semibold text-gray-900">
+              {reportTitle(report)}
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[10.5px] text-gray-400">
+              <span className="break-all">{report.id}</span>
+              <span>{fmtDateTime(report.createdAt)}</span>
+              {report.confidence !== null && <span>{Math.round(report.confidence * 100)}%</span>}
+            </div>
+          </div>
+          <button onClick={onClose} className="shrink-0 text-gray-400 hover:text-gray-600">
+            <Icon name="x" size={16} />
+          </button>
+        </div>
+        {error && (
+          <div className="border-b border-rose-100 bg-rose-50 px-5 py-2 text-[12px] text-rose-700">
+            {error}
+          </div>
+        )}
+        <div className="flex-1 overflow-auto px-5 py-4">
+          {body ? (
+            <pre className="whitespace-pre-wrap break-words rounded-lg bg-gray-50 p-3 font-sans text-[12.5px] leading-relaxed text-gray-700">
+              {body}
+            </pre>
+          ) : (
+            <div className="rounded-lg border border-dashed border-gray-200 py-10 text-center text-[13px] text-gray-400">
+              표시 가능한 리포트 본문 필드가 없습니다
+            </div>
+          )}
+        </div>
+      </aside>
     </div>
   )
 }
