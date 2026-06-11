@@ -127,6 +127,7 @@ async def run_retrieval(
                     "evidence_type": evidence.type.value,
                     "summary": summary[:80],
                     "redaction_status": evidence.redaction_status.value,
+                    **_trace_identifiers(result),
                 },
             ))
         else:
@@ -176,6 +177,24 @@ def _raw_payload_for_store(result: Any) -> dict[str, Any] | list[Any]:
     if raw_payload is not None:
         return raw_payload
     return result.model_dump(mode="json", exclude_none=True, exclude={"raw_payload"})
+
+
+def _trace_identifiers(result: Any) -> dict[str, str]:
+    """get_traces 결과의 raw_payload에서 trace_id/pipeline_id를 추출(딥링크용). 비-trace/누락 시 빈 dict."""
+    raw = getattr(result, "raw_payload", None)
+    if not isinstance(raw, dict):
+        return {}
+    inner = raw.get("result")
+    if not isinstance(inner, dict):
+        return {}
+    out: dict[str, str] = {}
+    trace_id = inner.get("traceId") or inner.get("trace_id")
+    pipeline_id = inner.get("pipelineId") or inner.get("pipeline_id")
+    if isinstance(trace_id, str) and trace_id:
+        out["trace_id"] = trace_id
+    if isinstance(pipeline_id, str) and pipeline_id:
+        out["pipeline_id"] = pipeline_id
+    return out
 
 
 async def _collect_knowledge_evidence(
