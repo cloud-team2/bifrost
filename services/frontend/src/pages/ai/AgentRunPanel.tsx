@@ -15,6 +15,7 @@ import {
 } from '../../lib/api'
 import { cn } from '../../lib/format'
 import { routeAgentInput } from '../../lib/agentInputRouting'
+import { hasTraceEvidenceLink, shouldAppendEvidenceCard, type ChatEvidence } from '../../lib/agentEvidence'
 import {
   buildSlashCommands,
   slashCommandParams,
@@ -153,15 +154,11 @@ interface ApprovalMsg {
   state: 'pending' | 'submitting' | 'approved' | 'rejected' | 'error'
   error: string | null
 }
-interface EvidenceMsg {
+interface EvidenceMsg extends ChatEvidence {
   id: number
   kind: 'evidence'
-  evidenceId: string | null
-  evidenceType: string | null
   summary: string | null
   redactionStatus: string | null
-  traceId?: string | null
-  pipelineId?: string | null
 }
 type AgentMsg = TextMsg | StatusMsg | ProgressMsg | ToolPanelMsg | ApprovalMsg | EvidenceMsg
 
@@ -626,19 +623,26 @@ export function AgentRunPanel({
       return
     }
     if (event.type === 'evidence_collected') {
-      updateMsgs((m) => [
-        ...m,
-        {
-          id: ++seq.current,
-          kind: 'evidence',
-          evidenceId: payloadString(event, 'evidence_id'),
-          evidenceType: payloadString(event, 'evidence_type'),
-          summary: payloadString(event, 'summary'),
-          redactionStatus: payloadString(event, 'redaction_status'),
-          traceId: payloadString(event, 'trace_id'),
-          pipelineId: payloadString(event, 'pipeline_id'),
-        },
-      ])
+      const evidence: Omit<EvidenceMsg, 'id' | 'kind'> = {
+        evidenceId: payloadString(event, 'evidence_id'),
+        evidenceType: payloadString(event, 'evidence_type'),
+        summary: payloadString(event, 'summary'),
+        redactionStatus: payloadString(event, 'redaction_status'),
+        traceId: payloadString(event, 'trace_id'),
+        pipelineId: payloadString(event, 'pipeline_id'),
+      }
+      updateMsgs((m) => {
+        const existingEvidence = m.filter((msg): msg is EvidenceMsg => msg.kind === 'evidence')
+        if (!shouldAppendEvidenceCard(existingEvidence, evidence)) return m
+        return [
+          ...m,
+          {
+            id: ++seq.current,
+            kind: 'evidence',
+            ...evidence,
+          },
+        ]
+      })
       return
     }
     if (event.type === 'report_preview' || event.type === 'report_preview_available') {
@@ -1241,10 +1245,7 @@ function EvidenceCard({
   msg: EvidenceMsg
   onOpenTrace: (pipelineId: string, traceId: string) => void
 }) {
-  const hasTraceLink =
-    msg.evidenceType === 'trace' &&
-    msg.traceId &&
-    msg.pipelineId
+  const hasTraceLink = hasTraceEvidenceLink(msg)
   return (
     <div className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-[12px] text-gray-700">
       <div className="mb-1 flex items-center gap-1.5 font-semibold text-gray-800">
@@ -1256,7 +1257,7 @@ function EvidenceCard({
         <button
           type="button"
           className="mt-1.5 rounded-md border border-gray-200 px-3 py-1.5 text-[12px] font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-          onClick={() => onOpenTrace(msg.pipelineId!, msg.traceId!)}
+          onClick={() => onOpenTrace(msg.pipelineId, msg.traceId)}
         >
           Tracing 탭에서 상세 보기
         </button>
