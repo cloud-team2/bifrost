@@ -20,6 +20,7 @@ import {
 import { cn } from '../../lib/format'
 import { routeAgentInput } from '../../lib/agentInputRouting'
 import { hasTraceEvidenceLink, shouldAppendEvidenceCard, type ChatEvidence } from '../../lib/agentEvidence'
+import { agentToolErrorFeedback } from '../../lib/agentToolErrors'
 import {
   buildSlashCommands,
   slashCommandParams,
@@ -157,6 +158,7 @@ interface ToolPanelMsg {
   state: ProgressState
   summary: string | null
   result: unknown
+  notice: string | null
   error: string | null
 }
 interface ApprovalMsg {
@@ -873,6 +875,7 @@ export function AgentRunPanel({
         state: 'running',
         summary: 'slash command 직접 호출',
         result: null,
+        notice: null,
         error: null,
       },
     ])
@@ -888,9 +891,23 @@ export function AgentRunPanel({
       finishSlashCommand(panelKey, runId, 'done', response.result ?? null, null)
       toast('조회 완료', 'success')
     } catch (e) {
-      const message = e instanceof ApiError ? e.message : 'tool 조회에 실패했습니다'
-      finishSlashCommand(panelKey, runId, 'failed', null, message)
-      toast(message, 'error')
+      const feedback = agentToolErrorFeedback(e)
+      const message = feedback?.message ?? (e instanceof ApiError ? e.message : 'tool 조회에 실패했습니다')
+      finishSlashCommand(
+        panelKey,
+        runId,
+        feedback?.kind === 'guidance' ? 'done' : 'failed',
+        null,
+        message,
+        feedback?.kind,
+      )
+      if (feedback) {
+        upsertFinalAssistantAnswer(runId, feedback.message)
+        if (feedback.kind === 'guidance') setInput(`${[command.label, ...args].join(' ')} `)
+        toast(feedback.message, feedback.kind === 'blocked' ? 'error' : 'info')
+      } else {
+        toast(message, 'error')
+      }
     }
   }
 
@@ -900,6 +917,7 @@ export function AgentRunPanel({
     state: Extract<ProgressState, 'done' | 'failed'>,
     result: unknown,
     error: string | null,
+    outcome?: 'guidance' | 'blocked',
   ) {
     updateMsgs((prev) =>
       prev.map((msg) =>
@@ -907,9 +925,10 @@ export function AgentRunPanel({
           ? {
               ...msg,
               state,
-              summary: state === 'done' ? 'slash command 직접 호출 완료' : msg.summary,
+              summary: state === 'done' && outcome !== 'guidance' ? 'slash command 직접 호출 완료' : msg.summary,
               result,
-              error,
+              notice: outcome === 'guidance' ? error : null,
+              error: outcome === 'guidance' ? null : error,
             }
           : msg,
       ),
@@ -918,9 +937,15 @@ export function AgentRunPanel({
     runningRef.current = false
     app.setAgentRunState({
       runId,
-      status: state === 'done' ? 'completed' : 'failed',
-      lastEventType: state === 'done' ? 'slash_command_completed' : 'slash_command_failed',
-      lastMessage: state === 'done' ? 'slash command 조회 완료' : error,
+      status: state === 'done' && outcome !== 'guidance' ? 'completed' : outcome === 'guidance' ? 'idle' : 'failed',
+      lastEventType: state === 'done' && outcome !== 'guidance'
+        ? 'slash_command_completed'
+        : outcome === 'guidance'
+          ? 'slash_command_guidance'
+          : outcome === 'blocked'
+            ? 'slash_command_blocked'
+            : 'slash_command_failed',
+      lastMessage: state === 'done' && outcome !== 'guidance' ? 'slash command 조회 완료' : error,
     })
   }
 
@@ -1176,6 +1201,7 @@ export function AgentRunPanel({
             state,
             summary,
             result,
+            notice: null,
             error,
           },
         ]
@@ -1189,6 +1215,7 @@ export function AgentRunPanel({
               state: mergeProgressState(msg.state, state),
               summary: summary ?? msg.summary,
               result: result ?? msg.result,
+              notice: null,
               error: error ?? msg.error,
             }
           : msg,
@@ -2296,6 +2323,7 @@ function ToolPanelCard({ msg }: { msg: ToolPanelMsg }) {
   const result = asRecord(msg.result)
   const resultError = result ? recordString(result, 'error') : null
   const error = msg.error ?? resultError
+  const notice = msg.notice
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white text-[12px] text-gray-700">
@@ -2325,11 +2353,16 @@ function ToolPanelCard({ msg }: { msg: ToolPanelMsg }) {
             {error}
           </div>
         )}
+        {notice && (
+          <div className="break-words rounded border border-amber-100 bg-amber-50 px-2 py-1.5 text-[11.5px] text-amber-700">
+            {notice}
+          </div>
+        )}
       </div>
       <div className="px-3 py-2.5">
         {msg.state === 'running' ? (
           <PanelEmpty text="조회 중" />
-        ) : msg.toolName === 'get_consumer_groups' ? (
+        ) : (error || notice) && msg.result == null ? null : msg.toolName === 'get_consumer_groups' ? (
           <ConsumerGroupsPanel result={result} />
         ) : msg.toolName === 'list_pipelines' ? (
           <PipelineStatusPanel result={result} />
