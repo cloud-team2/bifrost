@@ -220,7 +220,7 @@ def _correlation_out() -> CorrelationOutput:
     )
 
 
-def _planner_out() -> PlannerOutput:
+def _planner_out(plan_hash: str = "h1") -> PlannerOutput:
     return PlannerOutput(
         retrieval_plan=[
             RetrievalPlanStep(
@@ -229,7 +229,7 @@ def _planner_out() -> PlannerOutput:
                 params={},
                 purpose="test",
                 depends_on=[],
-                plan_hash="h1",
+                plan_hash=plan_hash,
             )
         ]
     )
@@ -320,7 +320,10 @@ async def test_runner_scope_unclear_loops_then_fails() -> None:
         mock_get_state_repo.return_value = InMemoryStateRepository()
         mock_router.return_value = _router_out()
         mock_corr.return_value = _correlation_out()
-        mock_planner.return_value = _planner_out()
+        # 매 loopback마다 새 plan(다른 plan_hash) → #532 no-progress 조기 종료가
+        # 아니라 실제 재수집이 일어나지만, scope가 끝내 불명확해 scope_loops 예산으로
+        # failed 종료되는 경로를 검증한다.
+        mock_planner.side_effect = [_planner_out("h1"), _planner_out("h2"), _planner_out("h3")]
         mock_retrieval.return_value = _retrieval_out()
         # 항상 scope_unclear(UNKNOWN만) → Planner loopback 유발.
         mock_classifier.return_value = _clf([UNKNOWN])
