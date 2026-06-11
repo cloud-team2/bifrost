@@ -69,6 +69,30 @@ public class TraceQuery {
         }
     }
 
+    /**
+     * 특정 traceId의 trace 요약. 비활성/미발견/실패 시 stub.
+     *
+     * @param connectorName source/sink 커넥터 이름(파이프라인 식별)
+     * @param traceId       조회할 trace ID
+     */
+    public TraceSummaryResult queryById(String connectorName, String traceId) {
+        String pipelineId = pipelineIdOf(connectorName);
+        if (!enabled) {
+            return TraceSummaryResult.stub(pipelineId, "Tempo 비활성화 — stub 응답");
+        }
+        try {
+            Optional<TempoTrace> trace = client.traceById(traceId);
+            if (trace.isEmpty()) {
+                return TraceSummaryResult.stub(pipelineId, "trace 없음: " + traceId);
+            }
+            TempoTrace t = trace.get();
+            return TraceSummaryResult.of(t.traceId(), pipelineId, t.error() ? "error" : "ok", t.durationMs(), t.spans());
+        } catch (RestClientException e) {
+            log.debug("Tempo queryById 실패(stub): traceId={} cause={}", traceId, e.getMessage());
+            return TraceSummaryResult.stub(pipelineId, "Tempo 조회 실패 — stub 응답");
+        }
+    }
+
     /** topic이 있으면 데이터플레인 span을 topic으로 좁히고, 없으면 service.name으로만 범위를 잡는다. */
     private static String traceqlFor(String topic) {
         if (topic != null && !topic.isBlank()) {

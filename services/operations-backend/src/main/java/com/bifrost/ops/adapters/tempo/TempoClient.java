@@ -63,17 +63,33 @@ public class TempoClient {
         if (traceId == null || traceId.isBlank()) {
             return Optional.empty();
         }
+        // Tempo /api/search 응답의 durationMs는 millisecond 단위 → 아래 span 계산값과 같은 단위라 Math.max 안전.
         long durationMs = head.path("durationMs").asLong(0L);
 
+        return traceById(traceId)
+                .map(t -> new TempoTrace(t.traceId(), Math.max(durationMs, t.durationMs()), t.error(), t.spans()));
+    }
+
+    /**
+     * traceId로 trace 상세를 직접 조회·요약한다. 없거나 spans 비면 empty.
+     *
+     * @throws RestClientException 접속 실패
+     */
+    public Optional<TempoTrace> traceById(String traceId) {
+        if (traceId == null || traceId.isBlank()) {
+            return Optional.empty();
+        }
         JsonNode detail = restClient.get()
                 .uri("/api/traces/{id}", traceId)
                 .retrieve()
                 .body(JsonNode.class);
-
         List<TraceSpan> spans = parseTrace(detail);
-        long span = spans.isEmpty() ? durationMs : spans.stream().mapToLong(TraceSpan::durationMs).max().orElse(durationMs);
+        if (spans.isEmpty()) {
+            return Optional.empty();
+        }
+        long durationMs = spans.stream().mapToLong(TraceSpan::durationMs).max().orElse(0L);
         boolean error = spans.stream().anyMatch(s -> "error".equals(s.status()));
-        return Optional.of(new TempoTrace(traceId, Math.max(durationMs, span), error, spans));
+        return Optional.of(new TempoTrace(traceId, durationMs, error, spans));
     }
 
     /** Tempo {@code /api/traces/{id}} OTLP JSON(batches → resource/scopeSpans → spans)을 span 요약 목록으로 파싱. */

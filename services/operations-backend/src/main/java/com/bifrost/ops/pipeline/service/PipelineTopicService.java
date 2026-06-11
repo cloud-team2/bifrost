@@ -3,6 +3,9 @@ package com.bifrost.ops.pipeline.service;
 import com.bifrost.ops.auth.jwt.AuthenticatedUser;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
+import com.bifrost.ops.internalops.dto.TraceSummaryResult;
+import com.bifrost.ops.monitoring.query.KafkaMetricsQuery;
+import com.bifrost.ops.monitoring.query.TraceQuery;
 import com.bifrost.ops.pipeline.dto.ConsumerGroupInfo;
 import com.bifrost.ops.pipeline.dto.EventDistPoint;
 import com.bifrost.ops.pipeline.dto.MetricPoint;
@@ -10,13 +13,13 @@ import com.bifrost.ops.pipeline.dto.PipelineMetricsResponse;
 import com.bifrost.ops.pipeline.dto.PipelineStageStatusResponse;
 import com.bifrost.ops.pipeline.dto.TopicInfoResponse;
 import com.bifrost.ops.pipeline.dto.ThroughputPoint;
-import com.bifrost.ops.monitoring.query.KafkaMetricsQuery;
 import com.bifrost.ops.pipeline.kafka.OffsetSnapshotStore;
 import com.bifrost.ops.pipeline.kafka.RateResult;
 import com.bifrost.ops.pipeline.persistence.entity.PipelineEntity;
 import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
 import com.bifrost.ops.provisioning.dto.ConnectorKind;
 import com.bifrost.ops.provisioning.dto.PipelinePattern;
+import com.bifrost.ops.provisioning.naming.ConnectorNaming;
 import com.bifrost.ops.provisioning.persistence.entity.ConnectorEntity;
 import com.bifrost.ops.provisioning.persistence.repository.ConnectorRepository;
 import com.bifrost.ops.workspace.WorkspaceAccessGuard;
@@ -62,19 +65,22 @@ public class PipelineTopicService {
     private final AdminClient adminClient;
     private final OffsetSnapshotStore snapshotStore;
     private final KafkaMetricsQuery kafkaMetricsQuery;
+    private final TraceQuery traceQuery;
 
     public PipelineTopicService(PipelineRepository pipelineRepository,
                                 ConnectorRepository connectorRepository,
                                 WorkspaceAccessGuard accessGuard,
                                 AdminClient adminClient,
                                 OffsetSnapshotStore snapshotStore,
-                                KafkaMetricsQuery kafkaMetricsQuery) {
+                                KafkaMetricsQuery kafkaMetricsQuery,
+                                TraceQuery traceQuery) {
         this.pipelineRepository = pipelineRepository;
         this.connectorRepository = connectorRepository;
         this.accessGuard = accessGuard;
         this.adminClient = adminClient;
         this.snapshotStore = snapshotStore;
         this.kafkaMetricsQuery = kafkaMetricsQuery;
+        this.traceQuery = traceQuery;
     }
 
     public TopicInfoResponse topicInfo(UUID wsId, AuthenticatedUser principal, UUID id) {
@@ -135,6 +141,16 @@ public class PipelineTopicService {
         }
 
         return new PipelineMetricsResponse(0.0, 0.0, 0L, errorPct);
+    }
+
+    /** 파이프라인 분산 trace 요약(#498, Tracing 탭). traceId 지정 시 그 trace, 없으면 최근. */
+    public TraceSummaryResult trace(UUID wsId, AuthenticatedUser principal, UUID id, String traceId) {
+        PipelineEntity p = loadPipeline(wsId, principal, id);
+        UUID pipelineId = p.getId();
+        String connector = ConnectorNaming.sourceConnectorName(pipelineId);
+        return (traceId == null || traceId.isBlank())
+                ? traceQuery.query(connector, null)
+                : traceQuery.queryById(connector, traceId);
     }
 
     /**

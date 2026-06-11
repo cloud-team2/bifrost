@@ -2,6 +2,7 @@ package com.bifrost.ops.pipeline.service;
 
 import com.bifrost.ops.auth.jwt.AuthenticatedUser;
 import com.bifrost.ops.monitoring.query.KafkaMetricsQuery;
+import com.bifrost.ops.monitoring.query.TraceQuery;
 import com.bifrost.ops.pipeline.PipelineLifecycle;
 import com.bifrost.ops.pipeline.dto.PipelineStageStatusResponse;
 import com.bifrost.ops.pipeline.kafka.OffsetSnapshotStore;
@@ -39,7 +40,7 @@ class PipelineTopicServiceTest {
 
     private PipelineTopicService service() {
         return new PipelineTopicService(pipelineRepository, connectorRepository, accessGuard,
-                mock(AdminClient.class), snapshotStore, kafkaMetricsQuery);
+                mock(AdminClient.class), snapshotStore, kafkaMetricsQuery, mock(TraceQuery.class));
     }
 
     @Test

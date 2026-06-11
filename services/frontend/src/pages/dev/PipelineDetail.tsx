@@ -22,7 +22,9 @@ import {
   type TableMappingResponse,
   type ThroughputPoint,
   type TopicInfoResponse,
+  type TraceSummaryResponse,
 } from '../../lib/api'
+import { TraceWaterfall } from '../../components/TraceWaterfall'
 import { cn, formatNum } from '../../lib/format'
 
 const tooltipStyle = {
@@ -41,8 +43,8 @@ export function PipelineDetail() {
   // Connector 탭은 EDA/CDC 모두 표시(실제 커넥터는 ConnectorTab이 백엔드에서 조회, #107)
   // (#266) Sync 내용을 Overview로 이동, Topic & Partition은 별도 'Topic' 탭으로 분리.
   const tabs = isEda
-    ? ['Overview', 'Consumers', 'Connector', 'Messages', 'Connection Guide']
-    : ['Overview', 'Topic', 'Connector', 'Messages', 'Table Mapping']
+    ? ['Overview', 'Consumers', 'Connector', 'Messages', 'Connection Guide', 'Tracing']
+    : ['Overview', 'Topic', 'Connector', 'Messages', 'Table Mapping', 'Tracing']
 
   const [tab, setTab] = useState(tabs[0])
 
@@ -128,6 +130,7 @@ export function PipelineDetail() {
         {tab === 'Messages'          && <MessagesTab edge={edge} />}
         {tab === 'Connection Guide'  && <GuideTab edge={edge} />}
         {tab === 'Table Mapping'     && <MappingTab edge={edge} />}
+        {tab === 'Tracing'           && <TraceTab edge={edge} />}
       </div>
     </div>
   )
@@ -631,6 +634,52 @@ function ConnectorTab({ edge }: { edge: Edge }) {
       {connectors.map((c) => (
         <ConnectorCard key={c.name} c={c} topic={edge.topic} />
       ))}
+    </div>
+  )
+}
+
+/* ---------------------------------------------------------------- Trace tab (#498) */
+
+function TraceTab({ edge }: { edge: Edge }) {
+  const app = useApp()
+  const wsId = app.currentProject?.id
+  const [trace, setTrace] = useState<TraceSummaryResponse | null>(null)
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    if (!wsId) return
+    let cancelled = false
+    setTrace(null)
+    setError(false)
+    api.pipelineTrace(wsId, edge.id)
+      .then((t) => { if (!cancelled) setTrace(t) })
+      .catch(() => { if (!cancelled) setError(true) })
+    return () => { cancelled = true }
+  }, [wsId, edge.id])
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white py-16">
+        <Icon name="alert" size={24} className="mb-2 text-rose-300" />
+        <p className="text-[13px] text-gray-400">추적 정보를 불러오지 못했습니다</p>
+      </div>
+    )
+  }
+  if (trace === null) {
+    return (
+      <div className="flex items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white py-16 text-[13px] text-gray-400">
+        불러오는 중…
+      </div>
+    )
+  }
+  return (
+    <div className="space-y-4">
+      {edge.pattern === 'fan-out' && (
+        <p className="text-[12px] text-gray-400">
+          EDA는 source→topic 구간까지 표시됩니다. consumer(고객 앱)는 같은 traceId로 고객 관측도구에서 이어볼 수 있습니다.
+        </p>
+      )}
+      <TraceWaterfall trace={trace} />
     </div>
   )
 }

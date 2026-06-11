@@ -1,6 +1,7 @@
 package com.bifrost.ops.pipeline.controller;
 
 import com.bifrost.ops.auth.jwt.AuthenticatedUser;
+import com.bifrost.ops.internalops.dto.TraceSummaryResult;
 import com.bifrost.ops.pipeline.dto.ConnectorResponse;
 import com.bifrost.ops.pipeline.dto.ConsumerGroupInfo;
 import com.bifrost.ops.pipeline.dto.KafkaMessageRecord;
@@ -158,6 +159,15 @@ public class PipelineController {
                                            @PathVariable UUID id,
                                            @AuthenticationPrincipal AuthenticatedUser principal) {
         return pipelineTopicService.metrics(wsId, principal, id);
+    }
+
+    /** 분산 trace 요약(#498, Tracing 탭). traceId 지정 시 그 trace, 없으면 최근. */
+    @GetMapping("/{id}/trace")
+    public TraceSummaryResult trace(@PathVariable UUID wsId,
+                                    @PathVariable UUID id,
+                                    @RequestParam(required = false) String traceId,
+                                    @AuthenticationPrincipal AuthenticatedUser principal) {
+        return pipelineTopicService.trace(wsId, principal, id, traceId);
     }
 
     /** 처리량 추이(#126, Overview 처리량 차트). Prometheus range query 기반 produce/consume rate 시계열. */
