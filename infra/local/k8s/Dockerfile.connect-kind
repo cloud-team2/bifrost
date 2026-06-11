@@ -1,7 +1,22 @@
-# kind(로컬) 전용 Kafka Connect 이미지(#99).
-# EKS는 KafkaConnect spec.build(Kaniko→Harbor)로 만들지만, kind는 이 이미지를 로컬 빌드 후
-# `kind load docker-image`로 노드에 적재한다. infra/k8s/kafka/kafka-connect.yaml의 build 플러그인과
-# 동일 구성: Debezium PostgreSQL/MariaDB source + Confluent JDBC sink + JDBC 드라이버 + debezium-core(unwrap SMT).
+# kind/docker-desktop(로컬) 전용 Kafka Connect 이미지(#99).
+# EKS는 spec.image(infra/docker/kafka-connect/Dockerfile)로 만들지만, 로컬은 이 이미지를 빌드해
+# `kind load docker-image`(kind) 하거나 docker-desktop 공유 데몬에서 그대로 쓴다.
+# 구성: Debezium PostgreSQL/MariaDB source + Confluent JDBC sink + JDBC 드라이버 + debezium-core(unwrap SMT)
+#       + timestamptz 커스텀 컨버터(#425, EKS 이미지와 정합).
+#
+# 빌드 컨텍스트 = 레포 루트(멀티모듈 Gradle로 컨버터 JAR을 함께 빌드):
+#   docker build -f infra/local/k8s/Dockerfile.connect-kind -t bifrost/kafka-connect-kind:v1 .
+
+# ── Stage 1: timestamptz 컨버터 JAR 빌드 (#425) ──────────────────────────────
+FROM eclipse-temurin:21-jdk-alpine AS builder
+WORKDIR /app
+# 멀티모듈이라 settings.gradle이 참조하는 모듈 디렉토리가 모두 필요.
+COPY gradlew settings.gradle build.gradle ./
+COPY gradle gradle
+COPY connect-plugins connect-plugins
+RUN ./gradlew :connect-plugins:timestamptz-converter:jar --no-daemon
+
+# ── Stage 2: Connect 런타임 ──────────────────────────────────────────────────
 FROM quay.io/strimzi/kafka:1.0.0-kafka-4.2.0
 
 USER root:root
@@ -23,5 +38,11 @@ RUN cd /opt/kafka/plugins && \
     curl -sL -o "${JDBCLIB}/postgresql-42.7.4.jar" "https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.4/postgresql-42.7.4.jar" && \
     curl -sL -o "${JDBCLIB}/mariadb-java-client-3.4.1.jar" "https://repo1.maven.org/maven2/org/mariadb/jdbc/mariadb-java-client/3.4.1/mariadb-java-client-3.4.1.jar" && \
     curl -sL -o "${JDBCLIB}/debezium-core-${DEBEZIUM_VERSION}.jar" "https://repo1.maven.org/maven2/io/debezium/debezium-core/${DEBEZIUM_VERSION}/debezium-core-${DEBEZIUM_VERSION}.jar"
+
+# --- timestamptz 커스텀 컨버터(#425) ---
+# Debezium Postgres 커넥터와 같은 plugin 클래스로더에서 보여야 하므로 debezium-postgres에 동봉.
+# 누락 시 CDC postgres 소스가 "Unable to create service CustomConverterRegistry"로 실패한다(#530).
+COPY --from=builder /app/connect-plugins/timestamptz-converter/build/libs/bifrost-timestamptz-converter-*.jar \
+     /opt/kafka/plugins/debezium-postgres/
 
 USER 1001
