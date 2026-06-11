@@ -231,6 +231,20 @@ def _no_incident_answer(retrieval_out) -> str:
     return "조회한 데이터에서 인시던트나 이상 징후가 발견되지 않았습니다. (정상)"
 
 
+def _no_action_answer(mode) -> str:
+    """실행할 조치가 하나도 없을 때의 결정적 종결 답변(#553).
+
+    action_execution/approval_decision에서 ready_candidates(승인/검증된 조치)가
+    비어 있으면 Executor가 빈 결과만 내고, Verifier가 needs_revision으로 Executor에
+    loopback시켜 gap_loops 예산 초과("실행 예산 초과")로 run이 실패한다. 결정적
+    Executor를 같은 빈 후보로 재실행해봐야 진전이 없으므로, 추가 LLM 호출 없이
+    곧장 정상 종결할 사용자 답변을 돌려준다.
+    """
+    if mode == AgentMode.APPROVAL_DECISION:
+        return "승인 대기 중인 조치가 없습니다."
+    return "요청하신 작업에 대해 실행할 승인된 조치가 없습니다."
+
+
 def _policy_revise_action(policy_out) -> bool:
     """Policy Guard의 revise_action 신호 매핑(#476, §3 revise_action).
 
@@ -948,6 +962,48 @@ async def _run_workflow_impl(
                         path="/actions/execution_results",
                         patch={"execution_results": _jsonable(executor_out.execution_results)},
                     )
+                    # #553: 실행할 조치가 없으면(ready_candidates 비어 있음) Verifier로
+                    # 진행하지 않고 정상 종결한다. 결정적 Executor는 같은 빈 후보로
+                    # 재실행해도 빈 결과만 내므로, Verifier needs_revision → Executor
+                    # loopback이 gap_loops 예산을 소진해 "실행 예산 초과"로 실패하는
+                    # 구조적 무진전 루프가 된다. #532 클린 결과 종결과 같은 패턴으로,
+                    # executor↔verifier 루프에 진입하기 전에 곧장 completed로 끝낸다.
+                    if not ready_candidates:
+                        answer = _no_action_answer(mode)
+                        await _append_state_patch(
+                            state_repo,
+                            run_id,
+                            namespace="report",
+                            author="Executor",
+                            op="append",
+                            path="/report/draft",
+                            patch={"draft": {"answer": answer, "reason": "no_action_to_execute"}},
+                        )
+                        await _persist_report_snapshot(
+                            run_id=run_id,
+                            answer=answer,
+                            mode=mode,
+                            retrieval_out=retrieval_out or RetrievalOutput(evidence_items=[]),
+                            rca_out=None,
+                            verifier_out=None,
+                            incident_id=persisted_incident_id,
+                        )
+                        await run_repo.update_status(run_id, "completed", None)
+                        await _publish(bus, event_repo, run_id, _evt(
+                            run_id,
+                            StreamingEventType.PARTIAL_RESULT,
+                            "executor",
+                            answer,
+                            {"answer": answer, "stage": "executor", "reason": "no_action_to_execute"},
+                        ))
+                        await _publish(bus, event_repo, run_id, _evt(
+                            run_id,
+                            StreamingEventType.RUN_COMPLETED,
+                            "executor",
+                            "분석이 완료되었습니다",
+                            {"answer": answer},
+                        ))
+                        return
 
                 case "verifier":
                     await _publish(bus, event_repo, run_id,
