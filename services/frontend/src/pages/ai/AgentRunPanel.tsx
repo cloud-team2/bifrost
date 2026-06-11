@@ -1530,15 +1530,7 @@ export function AgentRunPanel({
                     index === slashActiveIndex ? 'bg-gray-50' : 'hover:bg-gray-50',
                   )}
                 >
-                  <span className="shrink-0 rounded bg-gray-900 px-1.5 py-0.5 font-mono text-[10.5px] text-white">
-                    {command.label}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block break-words font-medium text-gray-700">{command.description}</span>
-                    <span className="block break-all font-mono text-[10.5px] text-gray-400">
-                      {command.usage} · {command.toolName}
-                    </span>
-                  </span>
+                  <SlashCommandOptionContent command={command} />
                 </div>
               ))
             )}
@@ -1612,6 +1604,19 @@ export function AgentRunPanel({
         </button>
       </div>
     </div>
+  )
+}
+
+export function SlashCommandOptionContent({ command }: { command: SlashToolCommand }) {
+  return (
+    <>
+      <span className="max-w-[52%] shrink-0 break-all rounded bg-gray-900 px-1.5 py-0.5 font-mono text-[10.5px] text-white">
+        {command.usage}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block break-words font-medium text-gray-700">{command.description}</span>
+      </span>
+    </>
   )
 }
 
