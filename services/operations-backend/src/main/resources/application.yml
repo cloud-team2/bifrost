@@ -23,7 +23,9 @@ management:
     health:
       show-details: when-authorized
   # 분산 추적 → Tempo (OTLP HTTP). 엔드포인트/샘플링은 환경변수로 오버라이드. (#366)
-  # 샘플링 기본 0.1(10%): 100%는 Tempo를 폭주시킴(OOM). 필요 시 env로 일시 상향.
+  # 로컬 기본값은 Tempo 직송 + head-sampling 0.1(10%): 100% 직송은 Tempo를 폭주시킴(OOM).
+  # dev/prod(gitops)에서는 env로 OTLP_TRACING_ENDPOINT=otel-collector:4318 + TRACING_SAMPLE_RATE=1.0 으로
+  # 오버라이드 → 전량을 OTel Collector로 보내고 tail-sampling(에러/지연만 보존)이 저장량을 줄임. (#370)
   tracing:
     sampling:
       probability: ${TRACING_SAMPLE_RATE:0.1}
