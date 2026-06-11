@@ -6,6 +6,8 @@ import { useApp, type AgentTask } from '../../store/AppStore'
 import {
   ApiError,
   api,
+  type ActionRunCandidateInput,
+  type AgentRunMode,
   type AgentRunEvent,
   type AgentStreamingEventType,
   type ApprovalDecisionValue,
@@ -54,8 +56,6 @@ const ROLE_LABEL: Record<WorkspaceMemberRole, string> = {
   ADMIN: '관리자',
   MEMBER: '멤버',
 }
-
-const RISK_LABEL: Record<AgentTask['risk'], string> = { low: '낮음', medium: '중간', high: '높음' }
 
 const DONE_PROGRESS_EVENTS: AgentStreamingEventType[] = [
   'agent_completed',
@@ -278,8 +278,10 @@ export function AgentRunPanel({
     rawMessage: string,
     options: {
       visibleUserText?: string
+      mode?: AgentRunMode
       incidentId?: string | null
       remediationRequested?: boolean
+      actionCandidate?: ActionRunCandidateInput | null
       onCompleted?: (success: boolean) => void
     } = {},
   ) {
@@ -301,9 +303,11 @@ export function AgentRunPanel({
     try {
       const run = await api.createAgentRun({
         project_id: wsId,
+        mode: options.mode ?? null,
         message,
         incident_id: options.incidentId ?? null,
         remediation_requested: options.remediationRequested ?? false,
+        action_candidate: options.actionCandidate ?? null,
         stream: true,
       })
       app.setAgentRunState({
@@ -354,12 +358,14 @@ export function AgentRunPanel({
     ].join('\n')
     appendText(
       'assistant',
-      `인시던트 '${task.incidentTitle}'의 권장 조치를 Agent Run으로 생성합니다. 조치: ${task.label} · 리스크 ${RISK_LABEL[task.risk]} · 예상 ${task.estimatedTime}`,
+      `인시던트 '${task.incidentTitle}'의 권장 조치를 실행합니다. ${task.detail}`,
     )
     void startRun(message, {
       visibleUserText: `인시던트 조치 요청: ${task.label}`,
+      mode: 'action_execution',
       incidentId: task.incidentId,
-      remediationRequested: true,
+      remediationRequested: false,
+      actionCandidate: task.actionCandidate,
       onCompleted: (success) => {
         if (success) app.runIncidentAction(task.incidentId, task.actionId)
       },

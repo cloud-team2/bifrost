@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -15,7 +15,11 @@ from app.persistence.event_repository import InMemoryEventRepository
 from app.persistence.run_repository import InMemoryRunRepository
 from app.persistence.state_repository import InMemoryStateRepository
 from app.schemas.outputs import (
+    ActionCandidateOutput,
     ExecutorOutput,
+    PolicyDecisionOutput,
+    PolicyGuardOutput,
+    RemediationOutput,
     RouteDecision,
     RouterOutput,
     VerificationResultOutput,
@@ -33,7 +37,25 @@ from app.streaming.event_bus import EventBus
 from app.supervisor.graph import Supervisor
 from app.supervisor.retry_policy import RetryPolicy
 from app.supervisor.state_store import InMemoryStateStore
-from app.workflow.runner import run_workflow
+from app.workflow.runner import _coerce_requested_action_candidate, _ready_action_candidate, run_workflow
+
+
+class _FakeToolDefinition:
+    def __init__(
+        self,
+        *,
+        name: str = "restart_connector",
+        risk: RiskLevel = RiskLevel.HIGH,
+        required_param: str = "connector_name",
+    ) -> None:
+        self.name = name
+        self.risk = risk
+        self.required_param = required_param
+
+    def validate_params(self, params: dict) -> dict:
+        if self.required_param not in params:
+            raise ValueError(f"missing {self.required_param}")
+        return params
 
 
 # ── Router 모드 선택 ───────────────────────────────────────────────────────────
@@ -82,6 +104,150 @@ async def test_router_simple_query_default():
     assert out.route_decision.mode == AgentMode.SIMPLE_QUERY
 
 
+def test_requested_action_candidate_rejects_non_runtime_tool():
+    registry = MagicMock()
+    registry.get_definition.return_value = _FakeToolDefinition()
+
+    candidate = _coerce_requested_action_candidate(
+        {
+            "action_id": "act_notify",
+            "action_type": "notification",
+            "action_name": "notify_with_tool_name",
+            "risk": "low",
+            "reason": "malformed direct request",
+            "tool_name": "restart_connector",
+            "tool_params": {"connector_name": "orders-source-connector"},
+        },
+        registry,
+    )
+
+    assert candidate is not None
+    assert candidate.risk == RiskLevel.FORBIDDEN
+
+
+def test_requested_action_candidate_rejects_missing_tool_params():
+    registry = MagicMock()
+    registry.get_definition.return_value = _FakeToolDefinition(
+        name="pause_connector",
+        risk=RiskLevel.MEDIUM,
+    )
+
+    candidate = _coerce_requested_action_candidate(
+        {
+            "action_id": "act_missing_params",
+            "action_type": "runtime_tool",
+            "action_name": "pause_connector",
+            "risk": "medium",
+            "reason": "missing explicit target",
+            "tool_name": "pause_connector",
+        },
+        registry,
+    )
+
+    assert candidate is not None
+    assert candidate.risk == RiskLevel.FORBIDDEN
+
+
+def test_requested_action_candidate_rejects_unknown_tool():
+    registry = MagicMock()
+    registry.get_definition.return_value = None
+
+    candidate = _coerce_requested_action_candidate(
+        {
+            "action_id": "act_unknown",
+            "action_type": "runtime_tool",
+            "action_name": "unknown",
+            "risk": "low",
+            "reason": "unknown tool",
+            "tool_name": "delete_everything",
+            "tool_params": {"connector_name": "orders-source-connector"},
+        },
+        registry,
+    )
+
+    assert candidate is not None
+    assert candidate.risk == RiskLevel.FORBIDDEN
+
+
+def test_requested_action_candidate_rejects_registered_tool_without_spring_bridge():
+    registry = MagicMock()
+    registry.get_definition.return_value = _FakeToolDefinition(
+        name="restart_connector",
+        risk=RiskLevel.HIGH,
+    )
+
+    candidate = _coerce_requested_action_candidate(
+        {
+            "action_id": "act_restart",
+            "action_type": "runtime_tool",
+            "action_name": "restart_connector_task",
+            "risk": "high",
+            "reason": "spring approval bridge unavailable",
+            "tool_name": "restart_connector",
+            "tool_params": {"connector_name": "orders-source-connector"},
+        },
+        registry,
+    )
+
+    assert candidate is not None
+    assert candidate.risk == RiskLevel.FORBIDDEN
+
+
+def test_requested_action_candidate_escalates_medium_tool_to_human_approval():
+    registry = MagicMock()
+    registry.get_definition.return_value = _FakeToolDefinition(
+        name="resume_connector",
+        risk=RiskLevel.MEDIUM,
+    )
+
+    candidate = _coerce_requested_action_candidate(
+        {
+            "action_id": "act_resume",
+            "action_type": "runtime_tool",
+            "action_name": "resume_connector",
+            "risk": "low",
+            "reason": "selected report action",
+            "tool_name": "resume_connector",
+            "tool_params": {"connector_name": "orders-source-connector"},
+        },
+        registry,
+    )
+
+    assert candidate is not None
+    assert candidate.risk == RiskLevel.HIGH
+
+
+def test_ready_action_candidate_rejects_runtime_candidate_without_tool_params():
+    remediation = RemediationOutput(action_candidates=[
+        ActionCandidateOutput(
+            action_id="act_no_params",
+            action_type=ActionType.RUNTIME_TOOL,
+            action_name="orders-source-connector",
+            risk=RiskLevel.HIGH,
+            reason="missing target params",
+            tool_name="pause_connector",
+        )
+    ])
+
+    assert _ready_action_candidate("act_no_params", remediation, []) is None
+
+
+def test_ready_action_candidate_rejects_approval_backed_tool_without_spring_bridge():
+    remediation = RemediationOutput(action_candidates=[
+        ActionCandidateOutput(
+            action_id="act_restart",
+            action_type=ActionType.RUNTIME_TOOL,
+            action_name="restart_connector_task",
+            risk=RiskLevel.HIGH,
+            reason="spring approval bridge unavailable",
+            tool_name="restart_connector",
+            tool_params={"connector_name": "orders-source-connector"},
+        )
+    ])
+
+    assert _ready_action_candidate("act_restart", remediation, []) is None
+
+
 # ── State 재사용 end-to-end ────────────────────────────────────────────────────
 
 def _approval_router_out() -> RouterOutput:
@@ -119,31 +285,40 @@ async def test_approval_decision_reuses_prior_candidates_and_executes():
     await state_repo.append(
         run_id, "actions", "Remediation", "append", "/actions/candidates",
         {"candidates": [{
-            "action_id": "act_restart",
+            "action_id": "act_pause",
             "action_type": "runtime_tool",
-            "action_name": "orders-source-connector",
+            "action_name": "pause_connector",
             "root_cause_id": "rc_1",
             "risk": "high",
             "reason": "connector failed",
-            "tool_name": "restart_connector",
+            "tool_name": "pause_connector",
+            "tool_params": {"connector_name": "orders-source-connector"},
         }]},
     )
     await state_repo.append(
         run_id, "actions", "PolicyGuard", "append", "/actions/policy_decisions",
         {"policy_decisions": [{
-            "action_id": "act_restart",
+            "action_id": "act_pause",
             "action_type": "runtime_tool",
             "risk": "high",
             "decision": "require_approval",
             "status": "pending_approval",
             "reason": "high risk",
-            "tool_name": "restart_connector",
+            "tool_name": "pause_connector",
+            "tool_params": {"connector_name": "orders-source-connector"},
         }]},
     )
 
     # 사용자가 승인 링크를 승인한 상태.
     approval_repo = get_approval_repo()
-    link = approval_repo.create(run_id, "act_restart", {})
+    link = approval_repo.create(
+        run_id,
+        "act_pause",
+        {
+            "tool_name": "pause_connector",
+            "tool_params": {"connector_name": "orders-source-connector"},
+        },
+    )
     approval_repo.approve(link.approval_id)
 
     bus = EventBus()
@@ -184,8 +359,8 @@ async def test_approval_decision_reuses_prior_candidates_and_executes():
     # approval_gate가 승인된 후보를 통과시키고 executor가 복원된 후보로 실행됨.
     assert len(captured) == 1
     candidate = captured[0]
-    assert candidate.action_id == "act_restart"
-    assert candidate.tool_name == "restart_connector"
+    assert candidate.action_id == "act_pause"
+    assert candidate.tool_name == "pause_connector"
     assert candidate.status == ActionStatus.READY
 
 
@@ -277,31 +452,40 @@ async def test_cross_turn_new_run_reuses_prior_incident_candidates():
     await state_repo.append(
         run_a, "actions", "Remediation", "append", "/actions/candidates",
         {"candidates": [{
-            "action_id": "act_restart",
+            "action_id": "act_pause",
             "action_type": "runtime_tool",
-            "action_name": "orders-source-connector",
+            "action_name": "pause_connector",
             "root_cause_id": "rc_1",
             "risk": "high",
             "reason": "connector failed",
-            "tool_name": "restart_connector",
+            "tool_name": "pause_connector",
+            "tool_params": {"connector_name": "orders-source-connector"},
         }]},
     )
     await state_repo.append(
         run_a, "actions", "PolicyGuard", "append", "/actions/policy_decisions",
         {"policy_decisions": [{
-            "action_id": "act_restart",
+            "action_id": "act_pause",
             "action_type": "runtime_tool",
             "risk": "high",
             "decision": "require_approval",
             "status": "pending_approval",
             "reason": "high risk",
-            "tool_name": "restart_connector",
+            "tool_name": "pause_connector",
+            "tool_params": {"connector_name": "orders-source-connector"},
         }]},
     )
 
     # 사용자가 run B의 action에 대해 승인 링크를 승인한 상태.
     approval_repo = get_approval_repo()
-    link = approval_repo.create(run_b, "act_restart", {})
+    link = approval_repo.create(
+        run_b,
+        "act_pause",
+        {
+            "tool_name": "pause_connector",
+            "tool_params": {"connector_name": "orders-source-connector"},
+        },
+    )
     approval_repo.approve(link.approval_id)
 
     bus = EventBus()
@@ -343,8 +527,9 @@ async def test_cross_turn_new_run_reuses_prior_incident_candidates():
     # cross-turn 복원된 후보로 executor가 실행됨.
     assert len(captured) == 1
     candidate = captured[0]
-    assert candidate.action_id == "act_restart"
-    assert candidate.tool_name == "restart_connector"
+    assert candidate.action_id == "act_pause"
+    assert candidate.tool_name == "pause_connector"
+    assert candidate.tool_params == {"connector_name": "orders-source-connector"}
     assert candidate.status == ActionStatus.READY
 
 
@@ -372,11 +557,11 @@ async def test_cross_turn_restore_skipped_without_incident_id():
     bus = EventBus()
     bus.publish = AsyncMock()  # type: ignore[method-assign]
     registry = AsyncMock()
+
     seen: list = []
 
     async def _capture_policy(candidates, **kwargs):
         seen.extend(candidates)
-        from app.schemas.outputs import PolicyGuardOutput
         return PolicyGuardOutput(policy_decisions=[])
 
     def _router_out() -> RouterOutput:
@@ -414,3 +599,134 @@ async def test_cross_turn_restore_skipped_without_incident_id():
 
     # incident_id가 없으므로 다른 run의 후보를 끌어오지 않는다(빈 list).
     assert seen == []
+
+
+@pytest.mark.asyncio
+async def test_action_execution_uses_requested_candidate_for_new_run():
+    """Incident Run handoff can execute a selected report candidate in a fresh run."""
+    bus = EventBus()
+    bus.publish = AsyncMock()  # type: ignore[method-assign]
+    run_repo = AsyncMock()
+    run_repo.get.return_value = None
+    registry = MagicMock()
+    registry.get_definition.return_value = _FakeToolDefinition(
+        name="pause_connector",
+        risk=RiskLevel.MEDIUM,
+    )
+    seen: list = []
+
+    async def _capture_policy(candidates, **kwargs):
+        seen.extend(candidates)
+        return PolicyGuardOutput(policy_decisions=[])
+
+    with (
+        patch("app.workflow.runner.router_agent.run_router", new_callable=AsyncMock) as mock_router,
+        patch("app.workflow.runner.run_policy_guard", new=AsyncMock(side_effect=_capture_policy)),
+        patch("app.workflow.runner.run_executor", new_callable=AsyncMock) as mock_exec,
+        patch("app.workflow.runner.verifier_agent.run_verifier", new_callable=AsyncMock) as mock_verifier,
+        patch("app.workflow.runner.report_agent.run_report", new_callable=AsyncMock) as mock_report,
+        patch("app.workflow.runner.get_supervisor") as mock_get_sup,
+        patch("app.workflow.runner.get_event_repo") as mock_get_repo,
+        patch("app.workflow.runner.get_state_repo", return_value=InMemoryStateRepository()),
+        patch("app.workflow.runner.get_llm_provider"),
+    ):
+        mock_get_sup.return_value = Supervisor(store=InMemoryStateStore(), policy=RetryPolicy())
+        mock_get_repo.return_value = InMemoryEventRepository()
+        mock_router.return_value = RouterOutput(route_decision=RouteDecision(
+            mode=AgentMode.SIMPLE_QUERY, remediation_requested=False, reason="default", required_flow=[],
+        ))
+        mock_exec.return_value = ExecutorOutput(execution_results=[])
+        mock_verifier.return_value = _verifier_out()
+        mock_report.return_value = "완료"
+
+        await run_workflow(
+            run_id="run_fresh_action",
+            user_message="run selected action",
+            project_id="proj_001",
+            bus=bus,
+            run_repo=run_repo,
+            registry=registry,
+            requested_mode="action_execution",
+            requested_incident_id="incident_001",
+            requested_action_candidate={
+                "action_id": "act_selected",
+                "action_type": "runtime_tool",
+                "action_name": "pause_connector",
+                "risk": "medium",
+                "reason": "selected from report",
+                "tool_name": "pause_connector",
+                "tool_params": {"connector_name": "orders-source-connector"},
+            },
+        )
+
+    assert len(seen) == 1
+    candidate = seen[0]
+    assert candidate.action_id == "act_selected"
+    assert candidate.tool_name == "pause_connector"
+    assert candidate.risk == RiskLevel.HIGH
+    assert candidate.tool_params == {"connector_name": "orders-source-connector"}
+
+
+@pytest.mark.asyncio
+async def test_action_execution_waits_for_human_approval_before_executor():
+    """High-risk selected actions stop at HITL approval before backend mutation."""
+    bus = EventBus()
+    bus.publish = AsyncMock()  # type: ignore[method-assign]
+    run_repo = AsyncMock()
+    run_repo.get.return_value = None
+    registry = MagicMock()
+    registry.get_definition.return_value = None
+
+    with (
+        patch("app.workflow.runner.router_agent.run_router", new_callable=AsyncMock) as mock_router,
+        patch("app.workflow.runner.run_policy_guard", new_callable=AsyncMock) as mock_policy,
+        patch("app.workflow.runner.run_executor", new_callable=AsyncMock) as mock_exec,
+        patch("app.workflow.runner.verifier_agent.run_verifier", new_callable=AsyncMock) as mock_verifier,
+        patch("app.workflow.runner.report_agent.run_report", new_callable=AsyncMock) as mock_report,
+        patch("app.workflow.runner.get_supervisor") as mock_get_sup,
+        patch("app.workflow.runner.get_event_repo") as mock_get_repo,
+        patch("app.workflow.runner.get_state_repo", return_value=InMemoryStateRepository()),
+        patch("app.workflow.runner.get_llm_provider"),
+    ):
+        mock_get_sup.return_value = Supervisor(store=InMemoryStateStore(), policy=RetryPolicy())
+        mock_get_repo.return_value = InMemoryEventRepository()
+        mock_router.return_value = RouterOutput(route_decision=RouteDecision(
+            mode=AgentMode.ACTION_EXECUTION, remediation_requested=False, reason="exec", required_flow=[],
+        ))
+        mock_policy.return_value = PolicyGuardOutput(policy_decisions=[
+            PolicyDecisionOutput(
+                action_id="act_needs_approval",
+                action_type=ActionType.RUNTIME_TOOL,
+                risk=RiskLevel.HIGH,
+                decision=PolicyDecisionType.REQUIRE_APPROVAL,
+                status=ActionStatus.PENDING_APPROVAL,
+                reason="high risk",
+                tool_name="pause_connector",
+            )
+        ])
+        mock_verifier.return_value = _verifier_out()
+        mock_report.return_value = "완료"
+
+        await run_workflow(
+            run_id="run_wait_for_approval",
+            user_message="run selected action",
+            project_id="proj_001",
+            bus=bus,
+            run_repo=run_repo,
+            registry=registry,
+            requested_mode="action_execution",
+            requested_action_candidate={
+                "action_id": "act_needs_approval",
+                "action_type": "runtime_tool",
+                "action_name": "pause_connector",
+                "risk": "high",
+                "reason": "selected from report",
+                "tool_name": "pause_connector",
+                "tool_params": {"connector_name": "orders-source-connector"},
+            },
+        )
+
+    run_repo.update_status.assert_any_await("run_wait_for_approval", "waiting_for_approval", "approval_gate")
+    mock_exec.assert_not_awaited()
+    mock_verifier.assert_not_awaited()
+    mock_report.assert_not_awaited()

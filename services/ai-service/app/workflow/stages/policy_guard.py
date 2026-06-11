@@ -44,6 +44,7 @@ async def run_policy_guard(
             status=status,
             reason=rule.reason,
             tool_name=c.tool_name,
+            tool_params=c.tool_params,
         )
         decisions.append(decision)
 

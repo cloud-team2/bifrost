@@ -449,6 +449,8 @@ export interface KafkaPrincipalCreateRequest {
 /* ── Agent Run API(#252) ───────────────────────────────────────────── */
 export type AgentRunMode = 'simple_query' | 'incident_analysis' | 'action_execution' | 'approval_decision'
 export type AgentRunStatus = 'running' | 'waiting_for_approval' | 'completed' | 'failed' | 'cancelled'
+export type ActionRunRisk = 'read_only' | 'low' | 'medium' | 'high' | 'forbidden'
+export type ActionRunType = 'runtime_tool' | 'workflow_action' | 'composite_action' | 'notification' | 'escalation'
 export type AgentStreamingEventType =
   | 'run_started'
   | 'agent_started'
@@ -475,6 +477,20 @@ export interface AgentRunCreateInput {
   incident_id?: string | null
   remediation_requested?: boolean
   stream?: boolean
+  action_candidate?: ActionRunCandidateInput | null
+}
+export interface ActionRunCandidateInput {
+  action_id: string
+  action_type: ActionRunType
+  action_name: string
+  root_cause_id?: string | null
+  risk: ActionRunRisk
+  reason: string
+  expected_effect?: string | null
+  rollback_plan?: string | null
+  estimated_duration?: string | null
+  tool_name?: string | null
+  tool_params?: Record<string, unknown> | null
 }
 export interface AgentRunCreateResponse {
   run_id: string

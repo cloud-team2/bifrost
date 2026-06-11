@@ -6,6 +6,13 @@ from app.schemas.outputs import ApprovedActionOutput, ApprovalGateOutput
 from app.schemas.state import ActionStatus, PolicyDecision, PolicyDecisionType, RunStatus
 
 
+def _approval_params(decision: PolicyDecision) -> dict:
+    return {
+        "tool_name": decision.tool_name,
+        "tool_params": decision.tool_params or {},
+    }
+
+
 async def run_approval_gate(
     policy_decisions: list[PolicyDecision],
     run_id: str,
@@ -35,7 +42,7 @@ async def run_approval_gate(
             elif existing and existing.status == "rejected":
                 pass  # blocked — Executor가 READY 아닌 action 건너뜀
             else:
-                repo.create(run_id=run_id, action_id=decision.action_id, params={})
+                repo.create(run_id=run_id, action_id=decision.action_id, params=_approval_params(decision))
                 has_pending = True
 
         elif decision.status == ActionStatus.READY:

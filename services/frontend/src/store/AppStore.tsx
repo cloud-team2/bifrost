@@ -9,6 +9,7 @@ import {
   api,
   getToken,
   setToken,
+  type ActionRunCandidateInput,
   type AuthTokens,
   type EventResponse,
   type IncidentResponse,
@@ -46,8 +47,9 @@ export interface AgentTask {
   incidentTitle: string
   label: string
   detail: string
-  risk: 'low' | 'medium' | 'high'
+  risk: ActionRunCandidateInput['risk']
   estimatedTime: string
+  actionCandidate: ActionRunCandidateInput
 }
 
 /** A navigable position, captured so browser back/forward can restore it. */
@@ -620,8 +622,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
 
     runIncidentAction() {
-      // IncidentResponse에는 실행 이력/상태 변경 API가 없다. 실제 백엔드 업데이트 전까지
-      // 클라이언트가 mock-only 필드를 합성하지 않는다.
+      if (currentProject) {
+        void loadMonitoringData(currentProject.id)
+      }
     },
 
     async reloadMonitoring() {

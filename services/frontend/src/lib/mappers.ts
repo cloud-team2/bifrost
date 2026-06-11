@@ -101,6 +101,8 @@ export function pipelineToEdge(p: PipelineResponse): Edge {
     sink: p.sinkDbId,
     table: { schema: p.schema, name: p.table },
     topic: p.topic ?? '',
+    sourceConnector: p.sourceConnector,
+    sinkConnector: p.sinkConnector,
     status: p.status,
     partitions: 3,
     metrics: { produce_rate: 0, consume_rate: 0, lag: 0, error_pct: 0 },

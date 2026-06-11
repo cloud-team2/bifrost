@@ -235,10 +235,11 @@ async def test_runner_maps_real_approval_id_and_excludes_auto_sentinel():
             {
                 "action_id": "act_approved",
                 "action_type": "runtime_tool",
-                "action_name": "orders-source-connector",
+                "action_name": "pause_connector",
                 "risk": "high",
                 "reason": "connector failed",
-                "tool_name": "restart_connector",
+                "tool_name": "pause_connector",
+                "tool_params": {"connector_name": "orders-source-connector"},
             },
             {
                 "action_id": "act_auto",
@@ -260,7 +261,8 @@ async def test_runner_maps_real_approval_id_and_excludes_auto_sentinel():
                 "decision": "require_approval",
                 "status": "pending_approval",
                 "reason": "high risk",
-                "tool_name": "restart_connector",
+                "tool_name": "pause_connector",
+                "tool_params": {"connector_name": "orders-source-connector"},
             },
             {
                 "action_id": "act_auto",
@@ -275,7 +277,14 @@ async def test_runner_maps_real_approval_id_and_excludes_auto_sentinel():
     )
 
     approval_repo = get_approval_repo()
-    link = approval_repo.create(run_id, "act_approved", {})
+    link = approval_repo.create(
+        run_id,
+        "act_approved",
+        {
+            "tool_name": "pause_connector",
+            "tool_params": {"connector_name": "orders-source-connector"},
+        },
+    )
     approval_repo.approve(link.approval_id)
 
     bus = EventBus()
