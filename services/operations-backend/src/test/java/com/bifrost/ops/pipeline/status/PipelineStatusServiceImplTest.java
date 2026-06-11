@@ -38,10 +38,11 @@ class PipelineStatusServiceImplTest {
     @Mock private EventService eventService;
     @Mock private AuditService auditService;
     @Mock private SsePublisher ssePublisher;
+    @Mock private com.bifrost.ops.workspace.persistence.repository.WorkspaceSettingsRepository settingsRepository;
 
     private PipelineStatusServiceImpl service() {
         return new PipelineStatusServiceImpl(pipelineRepository, connectorRepository,
-                datasourceRepository, eventService, auditService, ssePublisher);
+                datasourceRepository, eventService, auditService, ssePublisher, settingsRepository);
     }
 
     // ---------- computeStatus 규칙 ----------
@@ -74,9 +75,10 @@ class PipelineStatusServiceImplTest {
     }
 
     @Test
-    void partiallyFailedMapsToLag() {
+    void partiallyFailedMapsToError() {
+        // 스펙 B.4: Connector Task FAILED → error. lag는 consumer lag로만 산정(#559).
         assertThat(PipelineStatusServiceImpl.computeStatus(PipelinePattern.FAN_OUT,
-                List.of(connector(ConnectorKind.SOURCE, "PARTIALLY_FAILED")))).isEqualTo(PipelineLifecycle.LAG);
+                List.of(connector(ConnectorKind.SOURCE, "PARTIALLY_FAILED")))).isEqualTo(PipelineLifecycle.ERROR);
     }
 
     @Test
@@ -142,6 +144,63 @@ class PipelineStatusServiceImplTest {
 
         verify(pipelineRepository, never()).save(any());
         verify(eventService, never()).record(any(), any(), any(), any(), any());
+    }
+
+    // ---------- consumer lag → status (#559, 스펙 B.1) ----------
+
+    private PipelineEntity cdcPipeline(UUID pid, UUID tenant, PipelineLifecycle status) {
+        PipelineEntity p = new PipelineEntity();
+        p.setId(pid);
+        p.setTenantId(tenant);
+        p.setName("orders-sync");
+        p.setPattern(PipelinePattern.DIRECT);
+        p.setStatus(status);
+        return p; // source/sink datasourceId = null → dbUnreachableReason 무시
+    }
+
+    private List<ConnectorEntity> twoRunning() {
+        return List.of(connector(ConnectorKind.SOURCE, "RUNNING"), connector(ConnectorKind.SINK, "RUNNING"));
+    }
+
+    @Test
+    void consumerLagAboveWarningTransitionsActiveToLag() {
+        UUID pid = UUID.randomUUID(); UUID tenant = UUID.randomUUID();
+        PipelineEntity p = cdcPipeline(pid, tenant, PipelineLifecycle.ACTIVE);
+        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(pid)).thenReturn(twoRunning());
+        // settingsRepository.findById → 미스텁(empty) → 기본 warning 5,000
+
+        service().applyConsumerLag(pid, 6_000L);
+
+        assertThat(p.getStatus()).isEqualTo(PipelineLifecycle.LAG);
+        verify(ssePublisher).pipelineStatusChanged(tenant, pid, "lag");
+        verify(eventService).record(eq(tenant), eq(pid), eq(EventLevel.WARN), eq("PIPELINE_STATUS_CHANGED"), any());
+    }
+
+    @Test
+    void consumerLagRecoveryTransitionsLagToActive() {
+        UUID pid = UUID.randomUUID(); UUID tenant = UUID.randomUUID();
+        PipelineEntity p = cdcPipeline(pid, tenant, PipelineLifecycle.LAG);
+        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(pid)).thenReturn(twoRunning());
+
+        service().applyConsumerLag(pid, 100L); // < 5,000
+
+        assertThat(p.getStatus()).isEqualTo(PipelineLifecycle.ACTIVE);
+        verify(ssePublisher).pipelineStatusChanged(tenant, pid, "active");
+    }
+
+    @Test
+    void consumerLagDoesNotOverrideError() {
+        UUID pid = UUID.randomUUID(); UUID tenant = UUID.randomUUID();
+        PipelineEntity p = cdcPipeline(pid, tenant, PipelineLifecycle.ACTIVE);
+        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(pid)).thenReturn(
+                List.of(connector(ConnectorKind.SOURCE, "RUNNING"), connector(ConnectorKind.SINK, "FAILED")));
+
+        service().applyConsumerLag(pid, 9_999_999L); // 큰 lag지만 커넥터 FAILED가 우선
+
+        assertThat(p.getStatus()).isEqualTo(PipelineLifecycle.ERROR);
     }
 
     private static ConnectorEntity connector(ConnectorKind kind, String state) {

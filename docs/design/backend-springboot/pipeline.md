@@ -46,8 +46,8 @@ validate
 | (없음) → `creating` | 생성 요청 | pipeline.service |
 | `creating` → `active` | 기대 connector 수만큼 모두 RUNNING | ConnectorWatcher |
 | `creating` → `error` | 생성 부분 실패 / connector FAILED | provisioning result · Watcher |
-| `active` ↔ `lag` | 일부 task FAILED(`PARTIALLY_FAILED`) ↔ 정상 RUNNING | Watcher |
-| `active`/`lag` → `error` | connector FAILED 또는 source/sink DB `UNREACHABLE` | Watcher · DatabaseHealthProbeJob |
+| `active` ↔ `lag` | RUNNING 상태에서 consumer group lag ≥ 5,000 ↔ < 5,000 (스펙 B.1) | KafkaAdminPoller → PipelineStatusService |
+| `active`/`lag` → `error` | connector FAILED 또는 일부 task FAILED(`PARTIALLY_FAILED`, 스펙 B.4) 또는 source/sink DB `UNREACHABLE` | Watcher · DatabaseHealthProbeJob |
 | `*` → `paused` | 사용자 pause | pipeline.service |
 | `paused` → `active` | 사용자 resume | pipeline.service |
 | `*` → (삭제) | 사용자 delete | pipeline.service |
