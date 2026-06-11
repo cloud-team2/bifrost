@@ -25,13 +25,21 @@
 
 | 결정 | 선택 | 근거 |
 | --- | --- | --- |
-| 배치 | **둘 다**: 파이프라인 상세 "추적" 탭 + AgentRunPanel | 셀프 조회 + RCA 근거, 공유 컴포넌트 재사용 |
+| 배치 | **둘 다**: 파이프라인 상세 **"Tracing" 탭** + AgentRunPanel | 셀프 조회 + RCA 근거, 공유 컴포넌트 재사용 |
 | 에이전트 깊이 | **컴팩트 카드 + 링크** | evidence는 redacted 요약만 옴(설계 원칙). 풀 waterfall은 탭으로 |
 | 링크 동작 | **traceId 딥링크** | 에이전트가 본 그 trace를 정확히 표시(일관성). "trace by id" 경로 1개 추가 |
 | CDC | **풀 waterfall** | source+sink 모두 플랫폼 관리 → 전 구간 한 trace |
 | EDA | **source→topic + traceId + 계측 스니펫** | sink 없음(consumer=고객 앱). 우리 UI는 source→topic까지 + 공유 traceId. 고객은 스니펫(OTel) 계측 시 자기 관측도구에서 이어봄 |
 
 **EDA 현실**: `ActivateTracingSpan`이 traceparent를 Kafka 헤더에 주입하지만, 외부 고객 consumer span은 고객 자기 Tempo로 가지 in-cluster Tempo로 오지 않는다(멀티테넌트 보안). 그래서 플랫폼 UI는 source→topic + traceId만 그리고, 고객이 traceId로 자기 쪽에서 나머지를 본다.
+
+### 3.1 디자인 충실도 (필수)
+
+구현은 **기존 프론트의 UI/UX·디자인 톤을 그대로 따른다 — AI가 만든 티가 안 나게.**
+- 새 컴포넌트(`TraceWaterfall`, `TraceTab`)는 기존 탭 컴포넌트(`SyncTab`/`TopicTab`/`ConnectorTab`/`ConsumersTab`/`MessagesTab` 등)의 **구조·Tailwind 클래스·색/간격/타이포·로딩/에러/빈 상태 패턴**을 차용한다.
+- 탭 라벨은 기존 영문 탭(`Overview`/`Topic`/`Connector`/`Messages`/…)과 일관되게 **`Tracing`**.
+- 생성형 AI 특유의 룩(과한 그라데이션·이모지·생소한 위젯·튀는 색)을 피하고 기존 제품과 구분이 안 가게 한다.
+- 구현 전 기존 탭 1~2개를 정독해 패턴을 맞춘 뒤 작성한다(같은 디자인 토큰·헬퍼·차트 라이브러리 재사용).
 
 ## 4. 아키텍처
 
@@ -49,11 +57,11 @@
 
 ### 4.3 프론트엔드
 - **`TraceWaterfall`**(공유 컴포넌트): `TraceSummary`(= Spring `TraceSummaryResult` 타입) 입력. `mode: 'full' | 'compact'`. 에러 span 강조, stub/빈 상태("추적 비활성/데이터 없음")
-- **"추적" 탭**(`TraceTab`):
-  - CDC 탭 목록에 "추적" 추가 → 풀 waterfall
-  - EDA 탭 목록에 "추적" 추가 → source→topic + traceId + "consumer는 고객 앱(스니펫 계측 시 같은 traceId로 이어봄)" 안내
+- **`Tracing` 탭**(`TraceTab`) — 라벨은 기존 영문 탭과 일관되게 `Tracing`:
+  - CDC 탭 목록에 `Tracing` 추가 → 풀 waterfall
+  - EDA 탭 목록에 `Tracing` 추가 → source→topic + traceId + "consumer는 고객 앱(스니펫 계측 시 같은 traceId로 이어봄)" 안내
   - `/trace`(최근) 또는 앱 상태의 `traceId`로 조회. 새로고침(최근) 버튼
-- **AgentRunPanel**: `evidenceType==='trace'` → `TraceWaterfall compact` + "추적 탭에서 상세 보기" → 앱 상태 전환(`view='pipeline-detail'` + pipeline + `tab='추적'` + `traceId`). 네비는 URL이 아니라 상태(view) 기반
+- **AgentRunPanel**: `evidenceType==='trace'` → `TraceWaterfall compact` + "Tracing 탭에서 상세 보기" → 앱 상태 전환(`view='pipeline-detail'` + pipeline + `tab='Tracing'` + `traceId`). 네비는 URL이 아니라 상태(view) 기반
 
 ### 4.4 EDA Connection Guide 스니펫
 - 언어별 consumer 스니펫(Java/JS/Python)에 **Kafka 헤더 traceparent 읽기 + OTel 계측 예시** 추가
