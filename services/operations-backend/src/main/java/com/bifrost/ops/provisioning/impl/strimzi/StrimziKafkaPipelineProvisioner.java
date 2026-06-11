@@ -156,6 +156,17 @@ public class StrimziKafkaPipelineProvisioner implements KafkaPipelineProvisioner
     }
 
     @Override
+    public boolean isSourceTracingEnabled(String connectorName) {
+        // source 커넥터 CR을 로드해 transforms에 tracing SMT가 있는지 확인(#438 토글 상태). CR 미존재 시 false.
+        GenericKubernetesResource generic = k8s.resource(buildConnectorTemplate(connectorName)).inNamespace(namespace).get();
+        if (generic == null) {
+            return false;
+        }
+        KafkaConnector cr = Serialization.unmarshal(Serialization.asJson(generic), KafkaConnector.class);
+        return SourceDebeziumConnectorMapper.isTracingSmt(cr.getSpec().getConfig());
+    }
+
+    @Override
     public void deletePipelineResources(PipelineResourceRef resourceRef) {
         String ns = resourceRef.namespace() != null ? resourceRef.namespace() : namespace;
         java.util.UUID pid = resourceRef.pipelineId();

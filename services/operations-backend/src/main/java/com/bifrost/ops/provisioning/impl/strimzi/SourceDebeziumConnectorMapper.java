@@ -67,6 +67,17 @@ public class SourceDebeziumConnectorMapper {
         }
     }
 
+    /** config의 transforms에 tracing SMT가 켜져 있는지(#438 토글 상태 조회용). */
+    public static boolean isTracingSmt(Map<String, Object> config) {
+        if (config == null) return false;
+        Object transforms = config.get("transforms");
+        if (transforms == null) return false;
+        for (String p : String.valueOf(transforms).split(",")) {
+            if (p.trim().equals("tracing")) return true;
+        }
+        return false;
+    }
+
     /** MariaDB schema history를 저장할 Kafka bootstrap. Connect 내부 접근이므로 plain 9092 사용. */
     private final String kafkaBootstrapServers;
     /** 자동 생성 토픽의 partition/replication factor. 운영 기본 6/3, 로컬(단일 브로커)은 env로 1 주입. */
