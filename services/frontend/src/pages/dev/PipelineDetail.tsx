@@ -671,14 +671,19 @@ function SyncTab({ edge }: { edge: Edge }) {
   const rangeLabel = rangeMin >= 60 ? `최근 ${rangeMin / 60}시간` : `최근 ${rangeMin}분`
 
   const tableName  = edge.table ? `${edge.table.schema}.${edge.table.name}` : '—'
-  const sinkReady  = !!sync && sync.sourceRows >= 0 && sync.sinkRows >= 0
-  // 동기화율은 0~100%로 제한(#175). 삭제 전파 지연 등으로 sink>source인 순간에도 100% 초과 표시 방지.
-  const syncPct    = sinkReady
-    ? Math.min(100, sync!.sourceRows > 0 ? (sync!.sinkRows / sync!.sourceRows) * 100 : 100)
-    : 0
-  const isHealthy  = sinkReady && syncPct >= 99.9
-  const pctColor   = isHealthy ? 'text-emerald-600' : syncPct >= 99.0 ? 'text-amber-600' : 'text-rose-600'
-  const barColor   = isHealthy ? 'bg-emerald-400' : syncPct >= 99.0 ? 'bg-amber-400' : 'bg-rose-400'
+  // (#501) 완료 판정을 행수 → 컨슈머 lag + sink 커넥터 health 기준으로(UI 요소는 그대로).
+  // lag<0 = sink 미소비(준비중), lag=0 = 따라잡음(완료), lag>0 = 처리중. sinkFailed = 오류.
+  const lag        = sync?.lag ?? -1
+  const endOffset  = sync?.endOffset ?? -1
+  const sinkFailed = sync?.sinkFailed ?? false
+  const sinkReady  = lag >= 0
+  const isHealthy  = sinkReady && lag === 0 && !sinkFailed
+  // % = caught-up 비율((end−lag)/end). 미소비면 0, 토픽 비어있으면 100.
+  const syncPct    = !sinkReady ? 0
+    : endOffset > 0 ? Math.max(0, Math.min(100, ((endOffset - lag) / endOffset) * 100))
+    : 100
+  const pctColor   = sinkFailed ? 'text-rose-600' : isHealthy ? 'text-emerald-600' : 'text-amber-600'
+  const barColor   = sinkFailed ? 'bg-rose-400'   : isHealthy ? 'bg-emerald-400'  : 'bg-amber-400'
 
   // 실데이터(Prometheus)만 사용. 비어있으면 빈 차트(더미 위장 금지, #175).
   // 소스지연은 Debezium이 전달할 데이터가 없을 때(idle) -1을 준다. 이때는 "지연 0"이 아니라
@@ -739,14 +744,17 @@ function SyncTab({ edge }: { edge: Edge }) {
               </div>
 
               <span className={cn('text-[11.5px] font-medium',
-                sync === null ? 'text-gray-400' : isHealthy ? 'text-emerald-600' : 'text-amber-600')}>
+                sync === null ? 'text-gray-400'
+                  : sinkFailed ? 'text-rose-600' : isHealthy ? 'text-emerald-600' : 'text-amber-600')}>
                 {sync === null
                   ? '불러오는 중…'
-                  : !sinkReady
-                    ? 'sink 준비중'
-                    : isHealthy
-                      ? '동기화 완료'
-                      : `Δ +${formatNum(Math.max(0, sync?.delta ?? 0))} rows`}
+                  : sinkFailed
+                    ? '동기화 오류'
+                    : !sinkReady
+                      ? 'sink 준비중'
+                      : isHealthy
+                        ? '동기화 완료'
+                        : `${formatNum(lag)}건 처리중`}
               </span>
             </div>
 

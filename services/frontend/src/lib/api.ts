@@ -328,6 +328,10 @@ export interface SyncStatusResponse {
   sinkRows: number
   delta: number
   checkedAt: string
+  // #501: 완료 판정용 — sink consumer lag(-1=미소비), 토픽 end offset, sink 커넥터 FAILED 여부
+  lag: number
+  endOffset: number
+  sinkFailed: boolean
 }
 export interface EventResponse {
   id: string
