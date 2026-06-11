@@ -25,6 +25,7 @@ from app.api import (
 from app.api import routes_runs
 from app.core.config import settings
 from app.core.db import close_pool, init_pool
+from app.core.tracing import setup_tracing
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,9 @@ def create_app() -> FastAPI:
         description="AI 장애대응 (FastAPI). 운영 조회/조치는 Spring /internal/ops로 위임.",
         lifespan=lifespan,
     )
+
+    # 분산 추적(#372): OTLP 엔드포인트(AI_OTLP_TRACING_ENDPOINT)가 설정된 경우에만 계측.
+    setup_tracing(app)
 
     # 설계 API 표면: /api/v1
     app.include_router(routes_health.router, prefix="/api/v1", tags=["health"])

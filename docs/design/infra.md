@@ -652,8 +652,8 @@ FastAPI Agent는 Kubernetes/Kafka credential을 갖지 않는다. Spring Boot Op
 > **✅ 배포 완료 (#124, gitops ArgoCD)**: `monitoring` namespace에 **kube-prometheus-stack**(Prometheus·Grafana·Alertmanager·node-exporter·kube-state-metrics·operator) + **Loki+Promtail**(loki-stack) + **Tempo**(OTLP 4317/4318). Strimzi **kafkaExporter** + Connect **JMX** 활성 → `kafka_*`·`debezium_metrics_*` 수집. ops-backend `PROMETHEUS_URL=http://kps-prometheus.monitoring:9090`로 연결되어 **#126 파이프라인 차트가 실데이터**. Grafana datasource = Prometheus·Loki·Tempo.
 > ArgoCD 앱: **`monitoring` 단일 multi-source 앱**(kps + loki-stack + tempo). gitops `argocd/apps/monitoring.yaml`. Grafana 기본 datasource = Prometheus(Loki는 loki-stack 비기본), loki StatefulSet은 `ignoreDifferences`(SSA 빈 컬렉션) 적용. Prometheus는 전 namespace ServiceMonitor/PodMonitor 수집.
 > **Grafana 접근**: `kps-grafana`(ClusterIP)는 **의도적으로 내부 전용**(외부 서브도메인 미부여). adminPassword가 약하고(`admin`) 외부 노출 실익이 낮아, `kubectl port-forward` 또는 ArgoCD 경유로만 접근한다. 외부 노출이 필요하면 비밀번호 강화 후 ingress-nginx+LE로 `grafana.skala-ai.com` 추가.
-> **잔여**: ops-backend `search_logs`(Loki) 실연동. ai-service(FastAPI) 자체 계측은 다음 라운드(#372).
-> **Trace 파이프라인(#366/#370)**: ops-backend가 파이프라인 작업(생성·상태전이·프로비저닝·폴링) span을 OTLP HTTP로 송신한다. dev/prod에서는 **`otel-collector`(contrib, `monitoring` ns) 경유 tail-sampling** — 전량 수신 후 **에러·지연(>1s) trace만 Tempo에 보존**하고 정상 trace는 드롭해 저장량을 줄인다(`argocd/apps/5-otel-collector.yaml`, gitops `monitoring/otel-collector/`). 데이터플레인 span(#371)도 같은 Collector로 모인다.
+> **잔여**: ops-backend `search_logs`(Loki) 실연동.
+> **Trace 파이프라인(#366/#370/#372)**: ops-backend가 파이프라인 작업(생성·상태전이·프로비저닝·폴링) span을, ai-service(FastAPI)가 에이전트 run span(`agent.run`)을 OTLP HTTP로 송신한다. dev/prod에서는 **`otel-collector`(contrib, `monitoring` ns) 경유 tail-sampling** — 전량 수신 후 **에러·지연(>1s) trace만 Tempo에 보존**하고 정상 trace는 드롭해 저장량을 줄인다(`argocd/apps/5-otel-collector.yaml`, gitops `monitoring/otel-collector/`). 데이터플레인 span(#371)도 같은 Collector로 모인다. **ai-service↔ops-backend 는 `traceparent` 전파로 한 trace 로 이어진다**(#372): FastAPI `httpx` 호출이 헤더를 주입하고 Spring(Micrometer)이 추출. ai-service run 은 `BackgroundTasks` 로 실행되므로 runner 가 루트 span 을 직접 연다.
 >
 > 배치: 전부 `monitoring` namespace, **`app` 노드풀**(taint 없음)에 스케줄. DaemonSet(node-exporter·Promtail)은 data 풀 taint를 toleration 처리해 전 노드에 배치.
 > **모니터링은 Spring Boot만이 아니라 클러스터 전체를 관측한다** — 노드·k8s 오브젝트·컨테이너·Kafka·DB·Spring·FastAPI·frontend가 모두 수집 대상이다.
@@ -756,7 +756,7 @@ KafkaNodePool brokers
 1. Kafka Connect replicas 2 증설 + connector plugin image(Harbor) 재정의
 2. KafkaUser / KafkaConnector / 추가 KafkaTopic **IaC 정식화**
 3. Evidence Store / Audit Store 스키마 구성
-4. Loki 로그 소비처(ops-backend `search_logs` 실연동) · Tempo OTLP 앱 계측은 ops-backend 적용(#366), ai-service 다음 라운드(#372)
+4. Loki 로그 소비처(ops-backend `search_logs` 실연동) · Tempo OTLP 앱 계측은 ops-backend(#366)·ai-service(#372) 모두 적용, traceparent 전파로 한 trace 연결
 5. Cruise Control / KafkaRebalance 활성화(선택)
 6. NetworkPolicy 강제(VPC CNI policy agent 선행) / RBAC 정리
 7. **수동 시크릿 GitOps화**(SealedSecrets/External Secrets) — 네임스페이스 삭제 내성

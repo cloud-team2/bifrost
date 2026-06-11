@@ -20,6 +20,7 @@ from app.agents import report as report_agent
 from app.agents import retrieval as retrieval_agent
 from app.agents import router as router_agent
 from app.agents import verifier as verifier_agent
+from app.core.tracing import run_span, set_current_run_mode
 from app.llm.provider import get_llm_provider
 from app.persistence.change_ticket_repository import STATUS_VERIFIED
 from app.persistence.event_repository import AnyEventRepo, append_event, get_event_repo
@@ -294,6 +295,43 @@ async def run_workflow(
     requested_remediation_requested: bool | None = None,
     requested_action_candidate: dict[str, Any] | ActionCandidateOutput | None = None,
 ) -> None:
+    """에이전트 run 진입점. 루트 trace span(#372)으로 감싸 run 전체(+Spring 호출)를 한 trace 로 묶는다.
+
+    BackgroundTask 로 실행되어 요청 핸들러 span 밖이므로, 여기서 루트 span 을 직접 연다.
+    """
+    with run_span(
+        run_id=run_id,
+        project_id=project_id,
+        mode=requested_mode,
+        incident_id=requested_incident_id,
+    ):
+        await _run_workflow_impl(
+            run_id=run_id,
+            user_message=user_message,
+            project_id=project_id,
+            bus=bus,
+            run_repo=run_repo,
+            registry=registry,
+            requested_mode=requested_mode,
+            requested_incident_id=requested_incident_id,
+            requested_remediation_requested=requested_remediation_requested,
+            requested_action_candidate=requested_action_candidate,
+        )
+
+
+async def _run_workflow_impl(
+    *,
+    run_id: str,
+    user_message: str,
+    project_id: str,
+    bus: EventBus,
+    run_repo: AnyRunRepo,
+    registry: ToolClientRegistry,
+    requested_mode: str | None = None,
+    requested_incident_id: str | None = None,
+    requested_remediation_requested: bool | None = None,
+    requested_action_candidate: dict[str, Any] | ActionCandidateOutput | None = None,
+) -> None:
     event_repo = get_event_repo()
     state_repo = get_state_repo()
     supervisor = get_supervisor()
@@ -325,6 +363,7 @@ async def run_workflow(
             or stored_remediation_requested
             or _bool_or_false(router_out.route_decision.remediation_requested)
         )
+        set_current_run_mode(mode.value)  # router 결정 mode 를 run span 에 기록(#372)
         await _publish(bus, event_repo, run_id,
                        _evt(run_id, StreamingEventType.AGENT_COMPLETED, "router", f"mode: {mode.value}"))
         if persisted_incident_id:
