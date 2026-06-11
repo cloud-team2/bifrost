@@ -36,10 +36,10 @@ Spring Boot 내부 운영 API와 governance/mutation 계약은 [Spring Boot API 
 | `routes_approvals.decision_router` | `/api/v1` | 구현됨 |
 | `routes_change` | `/api/v1/agent` | 구현됨 |
 | `routes_reports` | `/api/v1` | 구현됨 |
+| `routes_feedback` | `/api/v1/agent` | 구현됨 |
+| `routes_admin` | `/api/v1/admin` | 구현됨 |
 | `routes_evidence` | `/api/v1/agent` | 구현됨 |
 | `routes_catalogs` | `/api/v1` | 구현됨 |
-
-`routes_admin.py`와 `routes_feedback.py`는 현재 `main.py`에 mount되지 않는다. 따라서 admin/feedback 외부 API는 미구현 표면이다.
 
 ## 3. 공통 Response
 
@@ -115,7 +115,7 @@ Spring Boot 내부 운영 API와 governance/mutation 계약은 [Spring Boot API 
 
 ### `POST /api/v1/agent/runs`
 
-요청 DTO는 `project_id`, `mode`, `message`, `incident_id`, `remediation_requested`, `stream`만 받는다. 현재 `CreateRunRequest`에는 `alert_ids` 필드가 없다.
+요청 DTO는 `project_id`, `mode`, `message`, `incident_id`, `remediation_requested`, `stream`, `action_candidate`를 받는다. 현재 `CreateRunRequest`에는 `alert_ids` 필드가 없다.
 
 ```json
 {
@@ -124,12 +124,13 @@ Spring Boot 내부 운영 API와 governance/mutation 계약은 [Spring Boot API 
   "message": "daily_user_sync 장애 원인을 분석해줘",
   "incident_id": "inc_001",
   "remediation_requested": false,
-  "stream": true
+  "stream": true,
+  "action_candidate": null
 }
 ```
 
 `mode`를 생략하면 코드가 `"simple_query"`로 저장한다. 메시지 기반 mode 추론은 현재 route layer의 동작이 아니다.
-`incident_id`와 `remediation_requested`는 request DTO에는 있으나 현재 `create_run` route가 repository `create()` 호출에 넘기지 않는다. 따라서 생성된 `agent_run` row에는 `incident_id=null`, `remediation_requested=false` 기본값으로 저장된다.
+`incident_id`와 `remediation_requested`는 repository `create()` 호출에 전달되어 `agent_run` row에 저장되고, `run_workflow()`에는 `requested_incident_id`, `requested_remediation_requested`, `requested_action_candidate`로 전달된다.
 
 응답:
 
@@ -150,7 +151,7 @@ Spring Boot 내부 운영 API와 governance/mutation 계약은 [Spring Boot API 
 | Method | Path | 구현 상태 | 설명 |
 | --- | --- | --- | --- |
 | `GET` | `/api/v1/agent/runs/{run_id}/events` | 구현됨 | run 진행 상태 SSE 구독 |
-| `GET` | `/api/v1/agent/runs/{run_id}/events/history` | 미구현 | route 없음 |
+| `GET` | `/api/v1/agent/runs/{run_id}/events/history` | 구현됨 | `last_event_id` 이후 missed event catchup용 JSON endpoint |
 
 브라우저 `EventSource`는 header를 붙일 수 없으므로 Frontend는 `/api/v1/agent/runs/{run_id}/events?access_token=<jwt>` 형태로 구독한다. 현재 FastAPI route는 이 query token을 검증하지 않고 `Last-Event-ID` header만 읽어 `StreamingResponse`를 반환한다.
 
@@ -249,12 +250,11 @@ Spring Boot change-ticket facade의 현재 구현 필드는 [Spring Boot API §6
 | `GET` | `/api/v1/agent/runs/{run_id}/report/preview` | 미구현 | route 없음. preview는 SSE event로만 노출될 수 있음 |
 | `POST` | `/api/v1/agent/runs/{run_id}/report/regenerate` | 미구현 | route 없음 |
 
-`report_snapshot`은 FastAPI agentdb 테이블이다. 마이그레이션 기준 필드는 `id`, `run_id`, `incident_id`, `root_cause_id`, `confidence`, `verified`, `body`, `created_at`이며 run/incident별 created index가 있다. Repository는 기본적으로 `verified=true` snapshot만 최신/목록 조회에 사용한다. Workflow runner는 Verifier가 `approved_for_final_response`를 하나 이상 승인한 경우에만 `verified=true`로 저장한다.
-현재 workflow runner는 report snapshot 생성 시 `incident_id`를 전달하지 않는다. 따라서 repository와 route는 incident별 조회를 지원하지만, runner가 만든 snapshot만으로는 `/api/v1/incidents/{incident_id}/reports` 결과가 채워지지 않는다.
+`report_snapshot`은 FastAPI agentdb 테이블이다. 마이그레이션 기준 필드는 `id`, `run_id`, `incident_id`, `root_cause_id`, `confidence`, `verified`, `body`, `created_at`이며 run/incident별 created index가 있다. Repository는 기본적으로 `verified=true` snapshot만 최신/목록 조회에 사용한다. Workflow runner는 Verifier가 `approved_for_final_response`를 하나 이상 승인한 경우에만 `verified=true`로 저장하고, snapshot 생성 시 현재 workflow의 `incident_id`도 전달한다.
 
 ## 14. Incident / Alert 소유권
 
-Incident, event, monitoring 목록/상세 조회는 Spring Boot 플랫폼 API가 담당한다. FastAPI `CreateRunRequest`에는 `incident_id`가 있지만 현재 `create_run()`은 이를 persistence나 `run_workflow()`에 전달하지 않는다. 별도 `/alerts/correlate`나 `/api/v1/agent/incidents/{incident_id}/analyze` route는 현재 없다.
+Incident, event, monitoring 목록/상세 조회는 Spring Boot 플랫폼 API가 담당한다. FastAPI `CreateRunRequest`의 `incident_id`와 `remediation_requested`는 run persistence와 `run_workflow()`에 전달된다. 별도 `/alerts/correlate`나 `/api/v1/agent/incidents/{incident_id}/analyze` route는 현재 없다.
 
 ## 15. Catalog / Tool Metadata API
 
@@ -270,30 +270,30 @@ Incident, event, monitoring 목록/상세 조회는 Spring Boot 플랫폼 API가
 | `GET` | `/api/v1/tools` | 구현됨 | `tools[{name, operation, risk, method, path_template}]` |
 | `GET` | `/api/v1/tools/{tool_name}` | 구현됨 | summary + `params_schema`, `result_schema`. 없으면 HTTP 404 `TOOL_NOT_FOUND` |
 
-FastAPI tool registry는 Agent의 논리 tool 목록이다. Spring Boot `GET /internal/ops/admin/tool-catalog`는 실제 Spring read endpoint allowlist이며 현재 8개 read operation만 반환한다. 두 catalog의 목적과 범위는 다르다.
+FastAPI tool registry는 Agent의 논리 tool 목록이다. Spring Boot `GET /internal/ops/admin/tool-catalog`는 실제 Spring runtime endpoint catalog이며 현재 read operation과 approval-gated mutation operation을 함께 반환한다. 두 catalog의 목적과 범위는 다르다.
 
 ## 16. Feedback / Audit UI API
 
-`routes_feedback.py`는 현재 `main.py`에 mount되지 않는다.
+`routes_feedback.py`는 `main.py`에서 `/api/v1/agent` prefix로 mount된다.
 
 | Method | Path | 구현 상태 | 설명 |
 | --- | --- | --- | --- |
-| `POST` | `/api/v1/agent/runs/{run_id}/feedback` | 미구현 | route 없음 |
-| `GET` | `/api/v1/agent/runs/{run_id}/audit-events` | 미구현 | route 없음 |
-| `GET` | `/api/v1/audit-events/{audit_event_id}` | 미구현 | route 없음 |
+| `POST` | `/api/v1/agent/runs/{run_id}/feedback` | 구현됨 | run feedback 저장. run 없으면 404 `RUN_NOT_FOUND` |
+| `GET` | `/api/v1/agent/runs/{run_id}/audit-events` | 구현됨 | run event stream에서 audit event type만 projection |
+| `GET` | `/api/v1/agent/audit-events/{audit_event_id}` | route 있음 | v1은 Spring SoT라 `NOT_IMPLEMENTED` failure 응답 |
 
 Audit raw record의 source of truth는 Spring Boot다.
 
 ## 17. Admin API
 
-`routes_admin.py`는 현재 `main.py`에 mount되지 않는다.
+`routes_admin.py`는 `main.py`에서 `/api/v1/admin` prefix로 mount된다.
 
 | Method | Path | 구현 상태 | 설명 |
 | --- | --- | --- | --- |
-| `GET` | `/api/v1/admin/models` | 미구현 | route 없음 |
-| `GET` | `/api/v1/admin/dependencies` | 미구현 | route 없음 |
-| `POST` | `/api/v1/admin/runs/{run_id}/replay` | 미구현 | route 없음 |
-| `POST` | `/api/v1/admin/catalogs/reload` | 미구현 | route 없음 |
+| `GET` | `/api/v1/admin/models` | 구현됨 | default model, agent tier mapping, provider status |
+| `GET` | `/api/v1/admin/dependencies` | 구현됨 | Spring operations, agent run store 상태 |
+| `POST` | `/api/v1/admin/runs/{run_id}/replay` | route 있음 | v1은 `NOT_IMPLEMENTED` failure 응답 |
+| `POST` | `/api/v1/admin/catalogs/reload` | 구현됨 | in-process catalog reload metadata 응답 |
 
 ## 18. Spring 연계 항목
 

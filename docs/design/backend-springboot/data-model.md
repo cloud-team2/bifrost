@@ -60,7 +60,7 @@ erDiagram
     pipeline {
         uuid id PK
         uuid workspace_id FK
-        text pattern "fan_out / direct"
+        text pattern "fan-out / direct"
         uuid source_db_id FK
         uuid sink_db_id FK "CDC만"
         text status "creating/active/lag/error/paused"
@@ -215,7 +215,7 @@ Workspace settings 화면의 notifications/thresholds/ai-policy 값을 저장한
 | `id` | uuid PK | |
 | `workspace_id` | uuid FK | |
 | `name` | text | |
-| `pattern` | text | `fan_out`(EDA) / `direct`(CDC) |
+| `pattern` | text | `fan-out`(EDA) / `direct`(CDC) |
 | `source_db_id` | uuid FK | |
 | `sink_db_id` | uuid FK null | CDC만 |
 | `schema_name` `table_name` | text | 단일 테이블 |

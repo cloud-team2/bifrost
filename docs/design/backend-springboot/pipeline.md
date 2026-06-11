@@ -18,7 +18,7 @@
 
 | 검증 | 규칙 |
 | --- | --- |
-| pattern | `fan_out`(EDA)→`sinkDbId` 없음 / `direct`(CDC)→`sinkDbId` 필수 |
+| pattern | `fan-out`(EDA)→`sinkDbId` 없음 / `direct`(CDC)→`sinkDbId` 필수 |
 | ownership | `sourceDbId`·`sinkDbId`가 해당 workspace 소유 |
 | CDC 준비도 | source DB `cdc_readiness_status` ≠ `BLOCKED` ([database-registry.md](./database-registry.md#3-database-registry)) |
 | 단일 테이블 | `schema`·`table` 단일 지정 |
@@ -52,7 +52,7 @@ validate
 | `paused` → `active` | 사용자 resume | pipeline.service |
 | `*` → (삭제) | 사용자 delete | pipeline.service |
 
-- **EDA(fan_out)**: expected connector 수가 1개이므로 Source connector state로 산정한다.
+- **EDA(fan-out)**: expected connector 수가 1개이므로 Source connector state로 산정한다.
 - `creating`이 timeout을 넘기면 `PipelineStatusServiceImpl.failTimedOutCreating(...)`이 `error`로 전이한다.
 
 ### 4. 생명주기 (FR-005)

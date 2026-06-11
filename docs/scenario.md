@@ -54,7 +54,7 @@ Frontend → operations-backend: POST /api/v1/workspaces {name}
 ### 2.3 파이프라인 생성 — EDA / CDC (FR-004, FR-005)
 
 ```text
-1. CreatePipelineModal: 연결방식(EDA fan_out / CDC direct) → Source DB → 테이블 → (CDC)Sink DB → 이름
+1. CreatePipelineModal: 연결방식(EDA fan-out / CDC direct) → Source DB → 테이블 → (CDC)Sink DB → 이름
 2. POST /api/v1/workspaces/{wsId}/pipelines {name, pattern, sourceDbId, sinkDbId?, schema, table}
      → metadb pipeline 저장(status: creating), 응답 {pipeline_id, status:"creating"}
 3. provisioning(Fabric8): KafkaConnector CR apply (생성 시점에만 secretStore.resolve로 자격증명 주입)
