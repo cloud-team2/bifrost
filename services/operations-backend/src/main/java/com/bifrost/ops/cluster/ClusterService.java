@@ -17,7 +17,9 @@ import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.DescribeClusterResult;
 import org.apache.kafka.clients.admin.LogDirDescription;
+import org.apache.kafka.clients.admin.QuorumInfo;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartitionInfo;
@@ -89,16 +91,11 @@ public class ClusterService {
 
             var dc = admin.describeCluster();
             Collection<Node> nodes = dc.nodes().get(ADMIN_TIMEOUT_SEC, TimeUnit.SECONDS);
-            Node controller = null;
-            try {
-                controller = dc.controller().get(ADMIN_TIMEOUT_SEC, TimeUnit.SECONDS);
-            } catch (Exception e) {
-                restoreInterrupt(e);
+            int controllerId = activeControllerId(dc);
+            if (controllerId < 0) {
                 status = "warning";
                 message = appendMessage(message, "controller unavailable");
-                log.warn("Kafka 컨트롤러 조회 실패, controllerId=-1로 폴백: {}", e.getMessage());
             }
-            int controllerId = controller != null ? controller.id() : -1;
 
             // 토픽 → 파티션 건강 + 브로커별 leader 수
             long total = 0, underRep = 0, offline = 0;
@@ -191,6 +188,30 @@ public class ClusterService {
     private static void restoreInterrupt(Exception e) {
         if (e instanceof InterruptedException) {
             Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * 실제 active controller id. KRaft(Kafka 3.3+)에선 {@code describeCluster().controller()}가
+     * active controller가 아니라 요청을 처리한 브로커를 반환해 폴링마다 흔들린다(#540). 따라서
+     * metadata quorum 리더(KIP-836)를 우선 사용하고, 실패(비KRaft 등) 시 describeCluster로 폴백한다.
+     */
+    private int activeControllerId(DescribeClusterResult dc) {
+        try {
+            QuorumInfo q = admin.describeMetadataQuorum().quorumInfo()
+                    .get(ADMIN_TIMEOUT_SEC, TimeUnit.SECONDS);
+            if (q != null && q.leaderId() >= 0) return q.leaderId();
+        } catch (Exception e) {
+            restoreInterrupt(e);
+            log.debug("describeMetadataQuorum 실패, describeCluster로 폴백: {}", e.getMessage());
+        }
+        try {
+            Node c = dc.controller().get(ADMIN_TIMEOUT_SEC, TimeUnit.SECONDS);
+            return c != null ? c.id() : -1;
+        } catch (Exception e) {
+            restoreInterrupt(e);
+            log.warn("컨트롤러 조회 실패, controllerId=-1: {}", e.getMessage());
+            return -1;
         }
     }
 
