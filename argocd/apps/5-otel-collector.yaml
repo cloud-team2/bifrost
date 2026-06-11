@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: 5-otel-collector
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # 앱 trace tail-sampling용 OTel Collector (#370). monitoring 네임스페이스에 raw 매니페스트로 배포.
+  project: observability
+  source:
+    repoURL: https://github.com/cloud-team2/bifrost.git
+    targetRevision: gitops
+    path: monitoring/otel-collector
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
