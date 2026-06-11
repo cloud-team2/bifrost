@@ -106,6 +106,9 @@ def get_daily_summary():
     return summary_data
 
 def format_slack_message(summary_data):
+    if not summary_data:
+        return []
+
     blocks = [
         {
             "type": "header",
@@ -125,16 +128,6 @@ def format_slack_message(summary_data):
         {"type": "divider"}
     ]
     
-    if not summary_data:
-        blocks.append({
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": "✅ 지난 24시간 동안 새로운 작업 내역이 없습니다."
-            }
-        })
-        return blocks
-
     for repo in summary_data:
         # Header for the repository
         blocks.append({
@@ -145,13 +138,13 @@ def format_slack_message(summary_data):
             }
         })
 
-        # 1. New Code (Commits)
+        # 1. Merged Changes (Commits)
         if repo["commits"]:
-            commit_text = "📝 *주요 변경 사항 (Commits)*\n"
+            commit_text = "✅ *반영된 작업 (Merges)*\n"
             for c in repo["commits"][:10]:
                 commit_text += f"• {c['msg']} (@{c['author']})\n"
             if len(repo["commits"]) > 10:
-                commit_text += f"• _외 {len(repo['commits'])-10}개의 커밋 더보기..._\n"
+                commit_text += f"• _외 {len(repo['commits'])-10}개의 작업 더보기..._\n"
             
             blocks.append({
                 "type": "section",
@@ -161,12 +154,12 @@ def format_slack_message(summary_data):
                 }
             })
 
-        # 2. Pull Requests
-        if repo["prs"]:
-            pr_text = "📂 *진행 중인 작업 (Pull Requests)*\n"
-            for pr in repo["prs"]:
-                status = "✅ [Merged/Closed]" if pr["state"] == "closed" else "🏗️ [Open]"
-                pr_text += f"• {status} <{pr['url']}|#{pr['number']} {pr['title']}>\n"
+        # 2. Work in Progress (Open Pull Requests)
+        open_prs = [pr for pr in repo["prs"] if pr["state"] == "open"]
+        if open_prs:
+            pr_text = "📂 *진행 중인 작업 (Open PRs)*\n"
+            for pr in open_prs:
+                pr_text += f"• 🏗️ <{pr['url']}|#{pr['number']} {pr['title']}>\n"
             
             blocks.append({
                 "type": "section",
@@ -212,5 +205,8 @@ if __name__ == "__main__":
     data = get_daily_summary()
     print("Formatting message...")
     slack_blocks = format_slack_message(data)
-    print("Sending to Slack...")
-    send_to_slack(slack_blocks)
+    if slack_blocks:
+        print("Sending to Slack...")
+        send_to_slack(slack_blocks)
+    else:
+        print("No activity found. Skipping Slack notification.")
