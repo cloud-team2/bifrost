@@ -32,12 +32,14 @@ def result_from_spring_response(
             summary=_success_summary(response),
             evidence_ids=evidence_ids,
             audit_event_id=response.audit_event_id,
+            raw_payload=response.model_dump(mode="json"),
         )
 
     error = response.error or ToolError(
         code=SpringErrorCode.INTERNAL_ERROR,
         message="Spring operation failed without an error body",
     )
+    error = _friendly_tool_error(error)
     status = ToolStatus.BLOCKED if _is_blocking_error(error) else ToolStatus.FAILED
     return ToolResult(
         tool_name=tool_name,
@@ -48,6 +50,7 @@ def result_from_spring_response(
         evidence_ids=evidence_ids,
         audit_event_id=response.audit_event_id,
         error=error,
+        raw_payload=response.model_dump(mode="json"),
     )
 
 
@@ -73,6 +76,16 @@ def failed_tool_result(
             retryable=retryable,
             required_action=required_action,
         ),
+        raw_payload={
+            "ok": False,
+            "tool_name": tool_name,
+            "error": {
+                "code": getattr(code, "value", code),
+                "message": message,
+                "retryable": retryable,
+                "required_action": required_action,
+            },
+        },
     )
 
 
@@ -147,3 +160,32 @@ def _is_blocking_error(error: ToolError) -> bool:
         return SpringErrorCode(error.code) in BLOCKING_ERROR_CODES
     except ValueError:
         return False
+
+
+def _friendly_tool_error(error: ToolError) -> ToolError:
+    raw_message = error.message or ""
+    lowered = raw_message.lower()
+    try:
+        code = SpringErrorCode(error.code)
+    except ValueError:
+        code = None
+
+    if (
+        code == SpringErrorCode.CONSUMER_GROUP_NOT_FOUND
+        or "consumer group is not a kafka connect-managed group" in lowered
+    ):
+        message = (
+            "Kafka Connect가 관리하는 consumer group만 lag 조회할 수 있습니다. "
+            "커넥터 이름을 알려주시면 connect-<connectorName> 형식으로 조회하겠습니다."
+        )
+    elif code == SpringErrorCode.CONNECTOR_NOT_FOUND or "connector not found" in lowered:
+        message = (
+            "해당 커넥터를 찾을 수 없습니다. "
+            "프로젝트의 파이프라인 커넥터 이름을 확인해 주세요."
+        )
+    elif code == SpringErrorCode.RESOURCE_NOT_OWNED_BY_PROJECT:
+        message = "해당 리소스는 현재 프로젝트에 속한 파이프라인 리소스가 아닙니다."
+    else:
+        return error
+
+    return error.model_copy(update={"message": message})

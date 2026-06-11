@@ -93,6 +93,7 @@ interface TextMsg {
   kind: 'text'
   role: 'user' | 'assistant'
   text: string
+  dedupeKey?: string
 }
 type ProgressState = 'running' | 'done' | 'failed' | 'waiting'
 interface StatusMsg {
@@ -122,23 +123,6 @@ interface ProgressMsg {
   terminalText: string | null
   items: ProgressItem[]
 }
-interface EvidenceMsg {
-  id: number
-  kind: 'evidence'
-  evidenceId: string
-  evidenceType: string
-  summary: string
-  redactionStatus: string | null
-}
-interface ReportMsg {
-  id: number
-  kind: 'report'
-  key: string | null
-  title: string
-  text: string
-  verified: boolean | null
-  confidence: number | null
-}
 interface ApprovalMsg {
   id: number
   kind: 'approval'
@@ -150,14 +134,7 @@ interface ApprovalMsg {
   state: 'pending' | 'submitting' | 'approved' | 'rejected' | 'error'
   error: string | null
 }
-interface DoneMsg {
-  id: number
-  kind: 'done'
-  text: string
-  success: boolean
-}
-
-type AgentMsg = TextMsg | StatusMsg | ProgressMsg | EvidenceMsg | ReportMsg | ApprovalMsg | DoneMsg
+type AgentMsg = TextMsg | StatusMsg | ProgressMsg | ApprovalMsg
 
 type ThemeName = keyof typeof THEMES
 
@@ -203,6 +180,7 @@ export function AgentRunPanel({
   const esRef = useRef<EventSource | null>(null)
   const runningRef = useRef(false)
   const seenEvents = useRef<Set<string>>(new Set())
+  const finalAnswerRunIds = useRef<Set<string>>(new Set())
   const scroll = useRef<HTMLDivElement>(null)
   const taskHandled = useRef(false)
   const runCompleteHandler = useRef<((success: boolean) => void) | null>(null)
@@ -295,6 +273,7 @@ export function AgentRunPanel({
 
     esRef.current?.close()
     seenEvents.current.clear()
+    finalAnswerRunIds.current.clear()
     runCompleteHandler.current = options.onCompleted ?? null
     setRunning(true)
     runningRef.current = true
@@ -410,9 +389,10 @@ export function AgentRunPanel({
       return
     }
     const normalized: AgentRunEvent = { ...parsed, type: parsed.type ?? eventType, payload: parsed.payload ?? {} }
-    if (normalized.event_id && seenEvents.current.has(normalized.event_id)) return
-    if (normalized.event_id) seenEvents.current.add(normalized.event_id)
+    const duplicate = normalized.event_id && seenEvents.current.has(normalized.event_id)
     resolveStreamReconnect(normalized.run_id)
+    if (duplicate) return
+    if (normalized.event_id) seenEvents.current.add(normalized.event_id)
     app.setAgentRunState({
       runId: normalized.run_id,
       status: agentRunStatusFromEvent(normalized),
@@ -437,27 +417,10 @@ export function AgentRunPanel({
       return
     }
     if (event.type === 'evidence_collected') {
-      updateMsgs((m) => [
-        ...m,
-        {
-          id: ++seq.current,
-          kind: 'evidence',
-          evidenceId: payloadString(event, 'evidence_id') ?? event.event_id,
-          evidenceType: payloadString(event, 'evidence_type') ?? 'evidence',
-          summary: payloadString(event, 'summary') ?? event.message,
-          redactionStatus: payloadString(event, 'redaction_status'),
-        },
-      ])
       return
     }
     if (event.type === 'report_preview' || event.type === 'report_preview_available') {
-      upsertReport({
-        key: event.agent === 'rca' ? `${event.run_id}:rca` : null,
-        title: event.agent === 'rca' ? 'RCA preview' : 'Report preview',
-        text: event.message,
-        verified: payloadBoolean(event, 'verified'),
-        confidence: payloadNumber(event, 'confidence'),
-      })
+      upsertAssistantText(runAnswerKey(event.run_id), event.message)
       return
     }
     if (event.type === 'partial_result') {
@@ -465,44 +428,23 @@ export function AgentRunPanel({
       const stage = payloadString(event, 'stage')
       if (answer) {
         appendProgressStatus(event, 'done')
-        upsertReport({
-          key: `${event.run_id}:final-report`,
-          title: 'Report',
-          text: answer,
-          verified: null,
-          confidence: payloadNumber(event, 'confidence'),
-        })
+        upsertFinalAssistantAnswer(event.run_id, answer)
       } else if (stage === 'rca') {
-        upsertReport({
-          key: `${event.run_id}:rca`,
-          title: 'RCA',
-          text: event.message,
-          verified: null,
-          confidence: payloadNumber(event, 'confidence'),
-        })
         appendProgressStatus(event, 'done')
       } else appendProgressStatus(event, 'done')
       return
     }
     if (event.type === 'approval_required') {
-      const id = ++seq.current
       const actionId = payloadString(event, 'action_id') ?? 'unknown_action'
       const approvalId = payloadString(event, 'approval_id')
-      updateMsgs((m) => [
-        ...m,
-        {
-          id,
-          kind: 'approval',
-          runId: event.run_id,
-          actionId,
-          approvalId,
-          reason: payloadString(event, 'reason') ?? event.message,
-          message: event.message,
-          state: 'pending',
-          error: null,
-        },
-      ])
-      if (!approvalId) queueApprovalHydration(id, event.run_id, actionId)
+      const approval = upsertApproval({
+        runId: event.run_id,
+        actionId,
+        approvalId,
+        reason: payloadString(event, 'reason') ?? event.message,
+        message: event.message,
+      })
+      if (approval.needsHydration) queueApprovalHydration(approval.id, event.run_id, actionId)
       return
     }
     if (event.type === 'change_management_required') {
@@ -512,10 +454,16 @@ export function AgentRunPanel({
     if (event.type === 'run_completed') {
       const failed = typeof event.payload.error === 'string' || event.message.startsWith('오류')
       settleProgress(event.run_id, failed ? 'failed' : 'done', event.message)
-      updateMsgs((m) => [
-        ...m,
-        { id: ++seq.current, kind: 'done', text: event.message || 'Agent Run이 완료되었습니다.', success: !failed },
-      ])
+      if (failed) {
+        upsertFinalAssistantAnswer(event.run_id, failureSummary(event))
+      } else {
+        const answer = payloadString(event, 'answer')
+        if (answer) {
+          upsertFinalAssistantAnswer(event.run_id, answer)
+        } else if (!finalAnswerRunIds.current.has(event.run_id) && !hasAssistantText(runAnswerKey(event.run_id))) {
+          upsertFinalAssistantAnswer(event.run_id, event.message || 'Agent Run이 완료되었습니다.')
+        }
+      }
       setRunning(false)
       runningRef.current = false
       esRef.current?.close()
@@ -641,22 +589,94 @@ export function AgentRunPanel({
     })
   }
 
-  function upsertReport(report: Omit<ReportMsg, 'id' | 'kind'>) {
+  function upsertFinalAssistantAnswer(runId: string, text: string) {
+    const nextText = text.trim()
+    if (!nextText) return
+    const finalKey = runAnswerKey(runId)
     updateMsgs((prev) => {
-      if (!report.key) return [...prev, { id: ++seq.current, kind: 'report', ...report }]
+      let foundFinal = false
+      const next = prev.map((msg) => {
+        if (msg.kind !== 'text' || msg.role !== 'assistant') return msg
+        if (msg.dedupeKey === finalKey) {
+          foundFinal = true
+          return { ...msg, text: nextText }
+        }
+        return msg
+      })
+      if (foundFinal) return next
+      return [...next, { id: ++seq.current, kind: 'text', role: 'assistant', text: nextText, dedupeKey: finalKey }]
+    })
+    finalAnswerRunIds.current.add(runId)
+  }
+
+  function upsertAssistantText(dedupeKey: string, text: string) {
+    const nextText = text.trim()
+    if (!nextText) return false
+    updateMsgs((prev) => {
       let found = false
       const next = prev.map((msg) => {
-        if (msg.kind !== 'report' || msg.key !== report.key) return msg
+        if (msg.kind !== 'text' || msg.role !== 'assistant' || msg.dedupeKey !== dedupeKey) return msg
         found = true
-        return { ...msg, ...report }
+        return { ...msg, text: nextText }
       })
-      return found ? next : [...next, { id: ++seq.current, kind: 'report', ...report }]
+      return found ? next : [...next, { id: ++seq.current, kind: 'text', role: 'assistant', text: nextText, dedupeKey }]
     })
+    return true
+  }
+
+  function hasAssistantText(dedupeKey: string) {
+    return msgsRef.current.some((msg) => msg.kind === 'text' && msg.role === 'assistant' && msg.dedupeKey === dedupeKey)
+  }
+
+  function upsertApproval({
+    runId,
+    actionId,
+    approvalId,
+    reason,
+    message,
+  }: {
+    runId: string
+    actionId: string
+    approvalId: string | null
+    reason: string
+    message: string
+  }) {
+    const existing = msgsRef.current.find((msg): msg is ApprovalMsg => isSameApproval(msg, runId, actionId, approvalId))
+    const id = existing?.id ?? ++seq.current
+    const shouldRetryHydration =
+      !approvalId && !!existing && !existing.approvalId && existing.state !== 'approved' && existing.state !== 'rejected' && !!existing.error
+    updateMsgs((prev) => {
+      const existingIndex = prev.findIndex((msg) => isSameApproval(msg, runId, actionId, approvalId))
+      if (existingIndex < 0) {
+        return [
+          ...prev,
+          { id, kind: 'approval', runId, actionId, approvalId, reason, message, state: 'pending', error: null },
+        ]
+      }
+      return prev.map((msg, index) =>
+        index === existingIndex && msg.kind === 'approval'
+          ? {
+              ...msg,
+              runId,
+              actionId,
+              approvalId: approvalId ?? msg.approvalId,
+              reason,
+              message,
+              error: approvalId || shouldRetryHydration ? null : msg.error,
+            }
+          : msg,
+      )
+    })
+    return { id, needsHydration: !approvalId && (!existing || shouldRetryHydration) }
   }
 
   function queueApprovalHydration(messageId: number, runId: string, actionId: string, attempt = 0) {
     window.setTimeout(async () => {
+      const current = msgsRef.current.find((msg): msg is ApprovalMsg => msg.kind === 'approval' && msg.id === messageId)
+      if (!current || current.approvalId) return
       const approvalId = await fetchApprovalId(runId, actionId)
+      const latest = msgsRef.current.find((msg): msg is ApprovalMsg => msg.kind === 'approval' && msg.id === messageId)
+      if (!latest || latest.approvalId) return
       if (approvalId) {
         updateApproval(messageId, { approvalId, error: null })
         return
@@ -733,8 +753,6 @@ export function AgentRunPanel({
           if (m.kind === 'progress') {
             return <ProgressCard key={m.id} msg={m} theme={theme} onToggle={() => toggleProgress(m.id)} />
           }
-          if (m.kind === 'evidence') return <EvidenceCard key={m.id} msg={m} />
-          if (m.kind === 'report') return <ReportCard key={m.id} msg={m} />
           if (m.kind === 'approval') {
             return (
               <ApprovalCard
@@ -750,7 +768,7 @@ export function AgentRunPanel({
               />
             )
           }
-          return <DoneCard key={m.id} msg={m} />
+          return null
         })}
       </div>
 
@@ -795,7 +813,7 @@ function TextBubble({ msg, theme }: { msg: TextMsg; theme: (typeof THEMES)[Theme
     <div className={cn('flex', msg.role === 'user' ? 'justify-end' : 'justify-start')}>
       <div
         className={cn(
-          'max-w-[88%] rounded-xl px-3 py-2 text-[12.5px] leading-relaxed',
+          'max-w-[88%] whitespace-pre-wrap break-words rounded-xl px-3 py-2 text-[12.5px] leading-relaxed',
           msg.role === 'user'
             ? theme.userBubble
             : 'rounded-bl-sm border border-gray-200 bg-white text-gray-700',
@@ -823,7 +841,7 @@ function StatusCard({ msg, theme }: { msg: StatusMsg; theme: (typeof THEMES)[The
         )}
         <span className={msg.state === 'running' ? theme.statusText : undefined}>{label}</span>
       </div>
-      <div className="leading-relaxed text-gray-600">{msg.text}</div>
+      <div className="break-words leading-relaxed text-gray-600">{msg.text}</div>
     </div>
   )
 }
@@ -911,35 +929,6 @@ function ProgressDot({ state }: { state: ProgressState }) {
   return <Icon name="check" size={12} strokeWidth={3} className="mt-0.5 text-emerald-500" />
 }
 
-function EvidenceCard({ msg }: { msg: EvidenceMsg }) {
-  return (
-    <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2.5 text-[12px] text-sky-900">
-      <div className="mb-1 flex items-center gap-1.5 font-semibold">
-        <Icon name="book" size={13} />
-        Evidence · {msg.evidenceType}
-      </div>
-      <div className="leading-relaxed">{msg.summary}</div>
-      <div className="mt-1 font-mono text-[10.5px] text-sky-600">
-        {msg.evidenceId}{msg.redactionStatus ? ` · ${msg.redactionStatus}` : ''}
-      </div>
-    </div>
-  )
-}
-
-function ReportCard({ msg }: { msg: ReportMsg }) {
-  return (
-    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[12px] text-amber-900">
-      <div className="mb-1 flex items-center gap-1.5 font-semibold">
-        <Icon name="log" size={13} />
-        {msg.title}
-        {msg.verified === false && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px]">검증 전</span>}
-        {msg.confidence !== null && <span className="text-[10.5px] text-amber-700">{Math.round(msg.confidence * 100)}%</span>}
-      </div>
-      <div className="break-words leading-relaxed">{msg.text}</div>
-    </div>
-  )
-}
-
 function ApprovalCard({
   msg,
   theme,
@@ -972,16 +961,16 @@ function ApprovalCard({
           : `현재 권한: ${roleLabel}`
 
   return (
-    <div className="rounded-xl border border-amber-200 bg-white">
-      <div className="flex items-center gap-1.5 border-b border-amber-100 bg-amber-50 px-3 py-2 text-[12px] font-semibold text-amber-900">
-        <Icon name="shield" size={13} />
-        승인 필요 · {msg.actionId}
+    <div className="min-w-0 rounded-xl border border-amber-200 bg-white">
+      <div className="flex min-w-0 items-center gap-1.5 border-b border-amber-100 bg-amber-50 px-3 py-2 text-[12px] font-semibold text-amber-900">
+        <Icon name="shield" size={13} className="shrink-0" />
+        <span className="min-w-0 break-words">승인 필요 · {msg.actionId}</span>
       </div>
       <div className="space-y-1.5 px-3 py-2.5 text-[12px] text-gray-700">
-        <div className="leading-relaxed">{msg.message}</div>
-        <div className="text-[11.5px] text-gray-500">{msg.reason}</div>
-        <div className="font-mono text-[10.5px] text-gray-400">{msg.approvalId ?? 'approval id pending'}</div>
-        {(msg.error || help) && <div className={cn('text-[11.5px]', msg.error || roleError ? 'text-rose-600' : 'text-gray-400')}>{msg.error ?? help}</div>}
+        <div className="break-words leading-relaxed">{msg.message}</div>
+        <div className="break-words text-[11.5px] text-gray-500">{msg.reason}</div>
+        <div className="break-all font-mono text-[10.5px] text-gray-400">{msg.approvalId ?? 'approval id pending'}</div>
+        {(msg.error || help) && <div className={cn('break-words text-[11.5px]', msg.error || roleError ? 'text-rose-600' : 'text-gray-400')}>{msg.error ?? help}</div>}
       </div>
       {resolved ? (
         <div className={cn('border-t border-gray-100 px-3 py-2 text-[11.5px] font-medium', msg.state === 'approved' ? 'text-emerald-600' : 'text-rose-600')}>
@@ -1009,24 +998,6 @@ function ApprovalCard({
     </div>
   )
 }
-
-function DoneCard({ msg }: { msg: DoneMsg }) {
-  return (
-    <div
-      className={cn(
-        'rounded-xl border px-3 py-2.5 text-[12.5px] leading-relaxed',
-        msg.success ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-rose-200 bg-rose-50 text-rose-800',
-      )}
-    >
-      <div className="mb-1 flex items-center gap-1.5 font-semibold">
-        <Icon name={msg.success ? 'check' : 'alert'} size={13} strokeWidth={msg.success ? 3 : 2} />
-        {msg.success ? '완료' : '실패'}
-      </div>
-      {msg.text}
-    </div>
-  )
-}
-
 
 function agentRunStatusFromEvent(event: AgentRunEvent) {
   if (event.type === 'run_completed') {
@@ -1127,17 +1098,22 @@ function mergeProgressState(current: ProgressState, next: ProgressState): Progre
   return next
 }
 
+function runAnswerKey(runId: string) {
+  return `${runId}:answer`
+}
+
+function failureSummary(event: AgentRunEvent) {
+  const error = payloadString(event, 'error')
+  return event.message || error || 'Agent Run 처리 중 오류가 발생했습니다.'
+}
+
+function isSameApproval(msg: AgentMsg, runId: string, actionId: string, approvalId: string | null) {
+  if (msg.kind !== 'approval') return false
+  if (approvalId && msg.approvalId === approvalId) return true
+  return msg.runId === runId && msg.actionId === actionId
+}
+
 function payloadString(event: AgentRunEvent, key: string): string | null {
   const value = event.payload[key]
   return typeof value === 'string' ? value : null
-}
-
-function payloadNumber(event: AgentRunEvent, key: string): number | null {
-  const value = event.payload[key]
-  return typeof value === 'number' ? value : null
-}
-
-function payloadBoolean(event: AgentRunEvent, key: string): boolean | null {
-  const value = event.payload[key]
-  return typeof value === 'boolean' ? value : null
 }

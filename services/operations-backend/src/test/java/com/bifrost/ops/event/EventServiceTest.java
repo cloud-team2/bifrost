@@ -42,13 +42,50 @@ class EventServiceTest {
     void listUsesCombinedFilterWhenBothPresent() {
         when(repository.findByTenantIdAndLevelAndPipelineIdOrderByCreatedAtDesc(tenant, EventLevel.WARN, pipelineId))
                 .thenReturn(List.of(event(EventLevel.WARN)));
-        assertThat(service().list(tenant, EventLevel.WARN, pipelineId)).hasSize(1);
+        assertThat(service().list(tenant, EventLevel.WARN, pipelineId, null)).hasSize(1);
     }
 
     @Test
     void listUsesPlainTenantQueryWhenNoFilter() {
         when(repository.findByTenantIdOrderByCreatedAtDesc(tenant)).thenReturn(List.of(event(EventLevel.INFO)));
-        assertThat(service().list(tenant, null, null)).hasSize(1);
+        assertThat(service().list(tenant, null, null, null)).hasSize(1);
+    }
+
+    @Test
+    void listUsesIncidentFilterWhenPresent() {
+        UUID incidentId = UUID.randomUUID();
+        when(repository.findByTenantIdAndIncidentIdOrderByCreatedAtDesc(tenant, incidentId))
+                .thenReturn(List.of(event(EventLevel.ERROR)));
+
+        assertThat(service().list(tenant, null, null, incidentId)).hasSize(1);
+    }
+
+    @Test
+    void listUsesLevelIncidentFilterWhenPresent() {
+        UUID incidentId = UUID.randomUUID();
+        when(repository.findByTenantIdAndLevelAndIncidentIdOrderByCreatedAtDesc(tenant, EventLevel.ERROR, incidentId))
+                .thenReturn(List.of(event(EventLevel.ERROR)));
+
+        assertThat(service().list(tenant, EventLevel.ERROR, null, incidentId)).hasSize(1);
+    }
+
+    @Test
+    void listUsesPipelineIncidentFilterWhenPresent() {
+        UUID incidentId = UUID.randomUUID();
+        when(repository.findByTenantIdAndPipelineIdAndIncidentIdOrderByCreatedAtDesc(tenant, pipelineId, incidentId))
+                .thenReturn(List.of(event(EventLevel.WARN)));
+
+        assertThat(service().list(tenant, null, pipelineId, incidentId)).hasSize(1);
+    }
+
+    @Test
+    void listUsesAllFiltersWhenPresent() {
+        UUID incidentId = UUID.randomUUID();
+        when(repository.findByTenantIdAndLevelAndPipelineIdAndIncidentIdOrderByCreatedAtDesc(
+                tenant, EventLevel.WARN, pipelineId, incidentId))
+                .thenReturn(List.of(event(EventLevel.WARN)));
+
+        assertThat(service().list(tenant, EventLevel.WARN, pipelineId, incidentId)).hasSize(1);
     }
 
     private static EventEntity event(EventLevel level) {

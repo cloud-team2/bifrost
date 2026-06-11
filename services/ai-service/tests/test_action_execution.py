@@ -12,7 +12,9 @@ from app.persistence.approval_link_repository import get_approval_repo
 from app.persistence.change_ticket_repository import (
     STATUS_CHANGE_TICKET_REQUIRED,
     STATUS_CHANGE_WINDOW_REQUIRED,
+    STATUS_IMPACT_ANALYSIS_REQUIRED,
     STATUS_ROLLBACK_PLAN_REQUIRED,
+    STATUS_VERIFIER_PLAN_REQUIRED,
     STATUS_VERIFIED,
     get_change_ticket_repo,
 )
@@ -518,6 +520,8 @@ async def test_change_gate_loads_persisted_ticket_and_marks_verified():
         "CHG-PERSISTED",
         window="2026-06-09T10:00Z/2026-06-09T11:00Z",
         rollback_plan="restore previous connector config",
+        impact_analysis="connector task restart affects only tenant test workloads",
+        verifier_plan="verify connector task health and absence of retry errors",
     )
     decisions = [
         PolicyDecision(
@@ -550,6 +554,8 @@ async def test_change_gate_requires_rollback_plan_and_persists_status():
         "CHG-MISSING-ROLLBACK",
         window="2026-06-09T10:00Z/2026-06-09T11:00Z",
         rollback_plan=" ",
+        impact_analysis="connector task restart affects only tenant test workloads",
+        verifier_plan="verify connector task health and absence of retry errors",
     )
     decisions = [
         PolicyDecision(
@@ -569,6 +575,77 @@ async def test_change_gate_requires_rollback_plan_and_persists_status():
     assert out.change_management_records[0].status == STATUS_ROLLBACK_PLAN_REQUIRED
     assert stored is not None
     assert stored.status == STATUS_ROLLBACK_PLAN_REQUIRED
+
+
+@pytest.mark.asyncio
+async def test_change_gate_requires_impact_analysis_and_persists_status():
+    from app.schemas.state import PolicyDecision
+
+    repo = get_change_ticket_repo()
+    await repo.upsert(
+        "run_change_missing_impact",
+        "act_change_missing_impact",
+        "CHG-MISSING-IMPACT",
+        window="2026-06-09T10:00Z/2026-06-09T11:00Z",
+        rollback_plan="restore previous connector config",
+        impact_analysis=" ",
+        verifier_plan="verify connector task health and absence of retry errors",
+    )
+    decisions = [
+        PolicyDecision(
+            action_id="act_change_missing_impact",
+            action_type=ActionType.RUNTIME_TOOL,
+            risk=RiskLevel.MEDIUM,
+            decision=PolicyDecisionType.REQUIRE_CHANGE_MANAGEMENT,
+            status=ActionStatus.PENDING_APPROVAL,
+            reason="test",
+        )
+    ]
+
+    out = await run_change_gate(decisions, "run_change_missing_impact")
+    stored = await repo.get_by_action("run_change_missing_impact", "act_change_missing_impact")
+
+    assert out.run_status == "waiting_for_approval"
+    assert out.change_management_records[0].status == STATUS_IMPACT_ANALYSIS_REQUIRED
+    assert stored is not None
+    assert stored.status == STATUS_IMPACT_ANALYSIS_REQUIRED
+
+
+@pytest.mark.asyncio
+async def test_change_gate_requires_verifier_plan_and_persists_status():
+    from app.schemas.state import PolicyDecision
+
+    repo = get_change_ticket_repo()
+    await repo.upsert(
+        "run_change_missing_verifier_plan",
+        "act_change_missing_verifier_plan",
+        "CHG-MISSING-VERIFIER-PLAN",
+        window="2026-06-09T10:00Z/2026-06-09T11:00Z",
+        rollback_plan="restore previous connector config",
+        impact_analysis="connector task restart affects only tenant test workloads",
+        verifier_plan=" ",
+    )
+    decisions = [
+        PolicyDecision(
+            action_id="act_change_missing_verifier_plan",
+            action_type=ActionType.RUNTIME_TOOL,
+            risk=RiskLevel.MEDIUM,
+            decision=PolicyDecisionType.REQUIRE_CHANGE_MANAGEMENT,
+            status=ActionStatus.PENDING_APPROVAL,
+            reason="test",
+        )
+    ]
+
+    out = await run_change_gate(decisions, "run_change_missing_verifier_plan")
+    stored = await repo.get_by_action(
+        "run_change_missing_verifier_plan",
+        "act_change_missing_verifier_plan",
+    )
+
+    assert out.run_status == "waiting_for_approval"
+    assert out.change_management_records[0].status == STATUS_VERIFIER_PLAN_REQUIRED
+    assert stored is not None
+    assert stored.status == STATUS_VERIFIER_PLAN_REQUIRED
 
 
 @pytest.mark.asyncio
@@ -599,6 +676,8 @@ def test_change_ticket_api_persists_and_requeries_verified_status():
         "ticket_id": "CHG-API-001",
         "window": "2026-06-09T10:00Z/2026-06-09T11:00Z",
         "rollback_plan": "restore previous connector config",
+        "impact_analysis": "connector task restart affects only tenant test workloads",
+        "verifier_plan": "verify connector task health and absence of retry errors",
     }
 
     submit = client.post(f"/api/v1/agent/runs/{run_id}/change-tickets", json=payload)

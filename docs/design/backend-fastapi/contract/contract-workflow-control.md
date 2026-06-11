@@ -14,11 +14,11 @@ Supervisor는 자유 추론 Agent가 아니라 정책 기반 workflow controller
 단, canonical 흐름은 "모든 단계를 항상 실행한다"는 뜻이 아니다. 모든 단계가 매 요청에 필요한 것은 아니므로 실행 범위는 다음 원칙을 따른다.
 
 - Router는 run당 1회가 아니라 **사용자 메시지마다** mode를 재판정한다.
-- 현재 구현은 기존 run State(`evidence`, `analysis`, action 후보)를 복원해 재사용하지 않는다.
+- 현재 구현은 `action_execution`/`approval_decision`에서 같은 run의 이전 action 후보와 policy 결정을 State patch에서 복원해 재사용한다. evidence/raw hydrate와 분석 전체 재사용은 아직 별도 보강 대상이다(#480).
 - `incident_analysis`는 기본적으로 원인까지만 분석하고(`diagnose_only`), 조치 후보 생성·실행은 사용자가 요청할 때만 진행한다.
 - Retrieval은 단계 안에서 **독립 read tool을 병렬 실행**해 retrieval wall-clock을 줄인다(§13.5, [§4](../tool-catalog.md#4-tool-catalog) Tool Catalog [§13.1](../tool-catalog.md#131-read-only-tool-병렬-실행)).
 - 단계가 끝나는 대로 **부분 결과를 스트리밍**한다([§4.2](contract-workflow-control.md#42-지연-최소화latency-원칙), [§16](contract-streaming-events.md#16-contract-streaming-events)). 사용자는 전체 chain 완료를 기다리지 않고 진행 상황과 중간 RCA preview를 본다.
-- 현재 구현은 transition table의 고정 stage 순서를 따른다. 후속 turn 2~5단계 재사용 경로는 아직 구현되어 있지 않다.
+- 현재 구현은 transition table의 stage 순서를 기본으로 따르되, Verifier `fail`/`needs_revision`, Classifier `scope_unclear`, Policy Guard `revise_action`은 Supervisor loopback으로 정적 순서를 덮어쓴다.
 
 ### 2. Canonical 흐름
 
@@ -50,7 +50,7 @@ flowchart TD
     R -->|simple_query| P[Planner]
     R -->|incident_analysis| Corr[Correlation Engine]
     R -->|action_execution| Guard[Policy Guard]
-    R -.approval_decision branch 없음.-> P
+    R -->|approval_decision| Approval
 
     Corr --> P
     P --> Ret[Retrieval]
@@ -75,7 +75,9 @@ flowchart TD
     Change -->|invalid| V
     Exec --> V
 
-    V --> Report[Report]
+    V -->|pass| Report[Report]
+    V -->|fail| P
+    V -->|needs_revision| P
     Report --> Out[Final Response]
 ```
 
@@ -86,7 +88,7 @@ flowchart TD
 | `simple_query` | Planner -> Retrieval -> Verifier -> Report |
 | `incident_analysis` (기본 diagnose_only) | Correlation -> Planner -> Retrieval -> Classifier -> RCA -> Verifier -> Report |
 | `incident_analysis` + 조치 요청 | 위 흐름의 RCA 뒤에 Remediation -> Policy Guard로 조치 후보 제시(실행 전 정지) |
-| `action_execution` | transition table은 Policy Guard부터 시작한다. 현재 runner는 `remediation_out`이 없으면 빈 action list로 Policy Guard를 호출하므로 기존 analysis/action State 재사용은 구현되어 있지 않다 |
+| `action_execution` | transition table은 Policy Guard부터 시작한다. runner는 같은 run의 이전 `/actions/candidates`와 `/actions/policy_decisions` State patch를 복원해 Policy Guard/Executor에 공급한다 |
 | `approval_decision` | Approval Gate -> Executor -> Verifier -> Report |
 | evidence gap | Planner가 추가 evidence 계획 후 Retrieval |
 | incident scope 불명확 | Planner가 scope 확인 evidence 계획 |
@@ -99,8 +101,8 @@ flowchart TD
 | change management required | Change Management Gate |
 | execution completed | Verifier |
 | verifier pass | Report |
-| verifier fail | 현재 static transition에서는 Report |
-| verifier needs_revision | 현재 static transition에서는 Report |
+| verifier fail | `fail_loops` 예산 안에서 `next_agent`로 loopback. 초과 시 `RunBudgetExceeded("fail_loops")`로 failed 종료 |
+| verifier needs_revision | `gap_loops` 예산 안에서 `next_agent`로 loopback. 초과 시 `RunBudgetExceeded("gap_loops")`로 failed 종료 |
 
 Action 실행 상태는 FE의 단일 Run 버튼과 Executor 진입 조건을 맞추기 위해 최소 enum만 사용한다.
 
@@ -131,24 +133,24 @@ Executor
 
 #### 4.1 의도별 최소 실행 단계
 
-현재 구현은 의도별로 transition table의 고정 stage 순서를 실행한다. 후속 turn의 기존 run State 재사용은 아직 구현되어 있지 않다.
+현재 구현은 의도별 transition table을 기본 순서로 실행하고, loopback 등록이 있으면 Supervisor가 다음 stage를 책임 Agent로 되돌린다. 후속 turn에서는 action 후보와 policy 결정 State를 복원해 실행/승인 흐름에 재사용한다.
 
 | 사용자 의도(예) | mode | 재사용 | 실행 단계 |
 | --- | --- | --- | --- |
 | "왜 lag가 늘었어?" (원인만) | `incident_analysis` (diagnose_only) | — | Correlation·Planner·Retrieval·Classifier·RCA·Verifier·Report |
 | "조치 후보 보여줘" | `incident_analysis` + 조치 요청 | analysis | Remediation·Policy Guard·Verifier·Report (실행 전 정지) |
-| "그럼 컨슈머 재시작해줘" | `action_execution` | 현재 재사용 없음 | Policy Guard·Approval/Change·Executor·Verifier·Report. `remediation_out`이 없으면 빈 action list로 시작한다 |
-| "승인할게" / "거절" | 현재 router branch 없음 | — | `approval_decision` enum/route는 남아 있지만 keyword router가 이 mode를 선택하지 않는다 |
+| "그럼 컨슈머 재시작해줘" | `action_execution` | action 후보·policy 결정 | Policy Guard·Approval/Change·Executor·Verifier·Report. 이전 후보가 있으면 `_restore_action_state(...)`로 복원해 빈 action list 시작을 피한다 |
+| "승인할게" / "거절" | `approval_decision` | action 후보·policy 결정 | Approval Gate·Executor·Verifier·Report. router가 승인/거절 keyword를 `approval_decision`으로 라우팅한다 |
 | "DLQ가 뭐야?" (지식) | `simple_query` | — | Planner·Retrieval·Verifier·Report |
 | "지금 상태 보여줘" (상태 조회) | `simple_query` | — | Planner·Retrieval·Verifier·Report |
 
 State 재사용 규칙:
 
-- 같은 run/incident 안에서 evidence와 root cause를 재사용하는 것은 목표 규칙이다. 현재 router는 `reuse_existing_analysis=false`를 항상 반환하고, runner는 기존 analysis/action 후보를 복원하지 않는다.
+- 같은 run/incident 안에서 evidence와 root cause를 재사용하는 것은 목표 규칙이다. 현재 router는 `action_execution`/`approval_decision`에서 `reuse_existing_analysis=true`를 반환하고, runner는 기존 action 후보와 policy 결정을 복원한다. raw evidence hydrate 기반 재사용은 아직 #480 범위다.
 - 단, 새 evidence가 필요하거나 원인이 바뀔 수 있는 신호(새 alert, 시간 경과)가 있으면 재분석해야 한다는 규칙은 현재 keyword router에 구현되어 있지 않다.
 - `simple_query`의 canonical 경로는 Planner·Retrieval·Verifier·Report이며, 위 표의 지식/상태 질의는 Planner·Verifier를 lightweight하게 단축한 형태다. 단축하더라도 답변은 RAG 또는 read tool 근거에 기반한다.
 
-- `action_execution`/`approval_decision` 콜드 스타트 fallback은 현재 구현되어 있지 않다. runner는 route 입력 mode도 그대로 쓰지 않고 user message를 router로 다시 판정한 mode로 supervisor를 시작한다.
+- `action_execution`/`approval_decision` 콜드 스타트 fallback은 현재 제한적이다. 복원할 action 후보나 policy 결정이 없으면 해당 stage는 빈 입력으로 진행할 수 있다.
 
 #### 4.2 지연 최소화(latency) 원칙
 
@@ -161,7 +163,7 @@ State 재사용 규칙:
 | **stage별 timeout** | 목표 항목. 현재 `check_all_global(...)`은 stage별 timeout을 검사하지 않음 | 구현 시 한 단계 지연이 run 전체를 잡지 않게 함 |
 | **저복잡도 stage 축약** | evidence가 적고 incident type이 단일·명확하면 Classifier+RCA를 한 LLM 호출로 합치고, read-only `simple_query`는 Verifier를 경량(룰 체크)으로 단축 | LLM 호출 수 ↓ |
 | **모델 tier 분리** | Router/Planner/Classifier/Report=lightweight, RCA/Verifier=reasoning([§1](../agent-principles.md#1-agent-principles) [§10](../agent-principles.md#10-모델-선택-원칙)) | critical path에서 무거운 모델 호출 최소화 |
-| **State 재사용** | 목표 항목. 현재 router는 `reuse_existing_analysis=false`를 항상 반환하고 runner는 이전 State를 복원하지 않음 | 미구현 |
+| **State 재사용** | 현재 `action_execution`/`approval_decision`은 이전 action 후보와 policy 결정을 복원한다. raw evidence hydrate 기반 분석 재사용은 #480 범위 | 후속 turn 실행 연속성 확보 |
 
 축약·병렬화는 **근거(evidence) 기반 판단과 Verifier 차단기 원칙을 우회하지 않는다.** Classifier+RCA를 합치더라도 [§9](../catalog/catalog-evidence-matrix.md#9-catalog-evidence-matrix) Evidence Matrix의 required evidence 검증과 confidence cap은 그대로 적용하고, 부분 결과 preview에는 "검증 전(preview)" 표시를 붙여 최종 Report([§13](contract-agent-roles.md#13-contract-agent-roles) Report, Verifier 통과분)와 구분한다.
 
@@ -194,7 +196,7 @@ workflow에는 순환 경로가 있다(`Verifier → 책임 Agent → … → Ve
 
 > **`MAX_STEPS`는 안전망이자 경보다.** step budget에 도달한 run은 LLM이 수십 번 호출된 비정상적으로 느린 run이므로, budget 소진을 정상 종료로만 보지 않는다. 예산의 일정 비율(예: 50%)을 넘으면 운영자 alert(`debug_trace`가 아닌 timeline 경고)를 남기고, 도달 빈도는 latency/loop 회귀 지표로 추적한다. 기본값을 과거 40에서 **24**로 낮춰, 정상 분석이 이 한도 근처에 가지 않도록 한다.
 >
-> 현재 `check_all_global(...)`은 `run.step_count`, `gap_loops`, `fail_loops`, `scope_loops`, `revise_action_loops`를 검사한다. 실제 increment는 `graph.py`의 `step_count` 중심이며, 다른 guard counter의 지속적 증가/복원은 현재 구현되어 있지 않다.
+> 현재 `check_all_global(...)`은 stage 진입 시 `run.step_count`를 검사한다. `fail_loops`/`gap_loops`는 Verifier loopback 전이(#453), `scope_loops`/`revise_action_loops`는 Classifier/Policy Guard loopback 전이(#476)에서 증가·상한 처리된다. no-new-evidence 비교, retrieval plan dedup, repeated `needs_revision` reason 비교는 아직 구현되어 있지 않다.
 
 **진행성(monotonic progress) 규칙** — 카운터만으로 부족한 경우를 막는다.
 
@@ -247,10 +249,10 @@ Verifier status는 세 가지다.
 | Status | 처리 |
 | --- | --- |
 | `pass` | Report로 진행 |
-| `fail` | 현재 static transition에서는 Planner로 되돌리지 않고 `verifier` 뒤 `report`로 진행한다 |
-| `needs_revision` | 현재 static transition에서는 책임 Agent로 되돌리지 않고 `verifier` 뒤 `report`로 진행한다 |
+| `fail` | `fail_loops` 예산 안에서 `next_agent`로 loopback. 예산 초과 시 failed 종료 |
+| `needs_revision` | `gap_loops` 예산 안에서 `next_agent`로 loopback. 예산 초과 시 failed 종료 |
 
-현재 static transition은 revision/fail loopback을 수행하지 않는다. `RunBudgetExceeded` 등 guard 실패는 runner가 run status를 `failed`로 갱신하고 `RUN_COMPLETED`를 publish한 뒤 return하며, Report stage로 진입하지 않는다.
+현재 Supervisor는 Verifier 결과를 기록해 정적 transition의 다음 단계(`report`)를 책임 Agent loopback으로 덮어쓴다. `RunBudgetExceeded` 등 guard 실패는 runner가 run status를 `failed`로 갱신하고 `RUN_COMPLETED`를 publish한 뒤 return하며, Report stage로 진입하지 않는다.
 
 `needs_revision` 예시:
 
@@ -286,11 +288,11 @@ if route.mode == "incident_analysis":
     run(remediation, policy_guard)          # 조치 요청 시에만 후보 생성
 
 if route.mode == "action_execution":
-    # 현재 구현은 기존 분석/후보를 복원하지 않음
+    restore_action_state(run_id)              # candidates/policy_decisions
     run(policy_guard)                       # 빈 action list일 수 있음
 
 if route.mode == "approval_decision":
-    # 현재 keyword router에는 approval_decision branch 없음
+    restore_action_state(run_id)
     run(approval_gate)
 
 if classifier.status == "scope_unclear":
@@ -318,9 +320,12 @@ if policy.decision == "require_change_management":
 if action.is_executable:
     run(executor, verifier)
 
-if verifier.status in ["pass", "fail", "needs_revision"]:
-    # 현재 구현은 status와 무관하게 verifier output을 state에 기록한 뒤 report로 진행
+if verifier.status == "pass":
     run(report)
+
+if verifier.status in ["fail", "needs_revision"]:
+    record_verifier_result(status, next_agent)
+    run(next_agent, ..., verifier)            # 예산 초과 시 failed 종료
 ```
 
 > 위 분기는 대표 의사코드다. 현재 코드의 전역 가드는 `run.step_count`, `gap_loops`, `fail_loops`, `scope_loops`, `revise_action_loops`를 검사한다. LLM/token 예산, wall-clock timeout, stage별 timeout은 `RetryPolicy`/문서상 목표 항목이지만 `check_all_global(...)`에서 집행하지 않는다.

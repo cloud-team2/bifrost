@@ -45,15 +45,24 @@ public class EventService {
         repository.save(e);
     }
 
-    /** 워크스페이스 이벤트 목록. level/pipelineId 선택 필터. */
-    public List<EventResponse> list(UUID tenantId, EventLevel level, UUID pipelineId) {
+    /** 워크스페이스 이벤트 목록. level/pipelineId/incidentId 선택 필터. */
+    public List<EventResponse> list(UUID tenantId, EventLevel level, UUID pipelineId, UUID incidentId) {
         List<EventEntity> rows;
-        if (level != null && pipelineId != null) {
+        if (level != null && pipelineId != null && incidentId != null) {
+            rows = repository.findByTenantIdAndLevelAndPipelineIdAndIncidentIdOrderByCreatedAtDesc(
+                    tenantId, level, pipelineId, incidentId);
+        } else if (level != null && pipelineId != null) {
             rows = repository.findByTenantIdAndLevelAndPipelineIdOrderByCreatedAtDesc(tenantId, level, pipelineId);
+        } else if (level != null && incidentId != null) {
+            rows = repository.findByTenantIdAndLevelAndIncidentIdOrderByCreatedAtDesc(tenantId, level, incidentId);
+        } else if (pipelineId != null && incidentId != null) {
+            rows = repository.findByTenantIdAndPipelineIdAndIncidentIdOrderByCreatedAtDesc(tenantId, pipelineId, incidentId);
         } else if (level != null) {
             rows = repository.findByTenantIdAndLevelOrderByCreatedAtDesc(tenantId, level);
         } else if (pipelineId != null) {
             rows = repository.findByTenantIdAndPipelineIdOrderByCreatedAtDesc(tenantId, pipelineId);
+        } else if (incidentId != null) {
+            rows = repository.findByTenantIdAndIncidentIdOrderByCreatedAtDesc(tenantId, incidentId);
         } else {
             rows = repository.findByTenantIdOrderByCreatedAtDesc(tenantId);
         }

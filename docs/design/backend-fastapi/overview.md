@@ -50,10 +50,11 @@ flowchart LR
     R[Router] --> Co[Correlation*] --> P[Planner] --> Re[Retrieval] --> C[Classifier] --> RCA
     RCA --> Rem[Remediation] --> PG[Policy Guard*] --> AG[Approval/Change*] --> Ex[Executor*] --> V[Verifier] --> Rep[Report]
     RCA -.diagnose_only.-> V
-    V --> Rep
+    V -->|pass| Rep
+    V -->|fail/needs_revision| P
 ```
 
-현재 구현은 기존 State를 복원해 재사용하지 않고, router가 다시 판정한 mode의 transition table을 고정 순서로 실행한다. `verifier` 결과가 `fail`/`needs_revision`이어도 loopback 없이 `report`로 진행한다.
+현재 구현은 router가 사용자 메시지마다 mode를 다시 판정하고, mode별 transition table을 실행한다. `action_execution`/`approval_decision`은 같은 run의 이전 action 후보와 policy 결정을 State patch에서 복원해 재사용한다. `verifier` 결과가 `fail`/`needs_revision`이면 Supervisor가 책임 Agent로 loopback을 등록하고, `fail_loops`/`gap_loops` 예산 초과 시 Report로 보내지 않고 run을 `failed`로 종료한다.
 
 ## 데이터 — agentdb ERD
 
@@ -77,7 +78,7 @@ erDiagram
 | mode | `simple_query` / `incident_analysis`(기본 `diagnose_only`) / `action_execution` / `approval_decision` — 매 메시지 재판정 |
 | evidence-first | State엔 원문 inline 금지(`evidence_id`/`store_ref`/`summary`만), 수집 단계 redaction |
 | catalog 제한 | 장애유형·root cause·evidence·runbook·policy 밖 생성 금지, 불충분 시 `UNKNOWN_WITH_EVIDENCE_GAP` |
-| Verifier 차단기 | 현재 static transition은 verifier 결과와 무관하게 Report로 진행한다. `fail`/`needs_revision` 되돌림은 아직 미구현 |
+| Verifier 차단기 | `pass`만 Report로 진행한다. `fail`은 `fail_loops`, `needs_revision`은 `gap_loops` 예산 안에서 책임 Agent로 loopback하며, 예산 초과 시 Report stage 없이 `failed` 종료한다 |
 | 종료 보장 | 현재 구현은 step/gap/fail/scope/revise_action counter guard를 중앙 집행한다. token/time budget은 policy field만 있고 guard check에는 없다 |
 | SoT / MCP | Approval 원본·실행 allowlist = **Spring**. FastAPI approval link는 현재 in-memory facade 상태이며 executor는 Spring mutation에 `X-Approval-Id`를 전달하지 않는다 · MCP v1 미사용 |
 

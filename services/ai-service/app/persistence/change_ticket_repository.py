@@ -19,12 +19,16 @@ STATUS_VERIFIED = "verified"
 STATUS_CHANGE_TICKET_REQUIRED = "CHANGE_TICKET_REQUIRED"
 STATUS_CHANGE_WINDOW_REQUIRED = "CHANGE_WINDOW_REQUIRED"
 STATUS_ROLLBACK_PLAN_REQUIRED = "ROLLBACK_PLAN_REQUIRED"
+STATUS_IMPACT_ANALYSIS_REQUIRED = "IMPACT_ANALYSIS_REQUIRED"
+STATUS_VERIFIER_PLAN_REQUIRED = "VERIFIER_PLAN_REQUIRED"
 VALID_STATUSES = frozenset({
     STATUS_SUBMITTED,
     STATUS_VERIFIED,
     STATUS_CHANGE_TICKET_REQUIRED,
     STATUS_CHANGE_WINDOW_REQUIRED,
     STATUS_ROLLBACK_PLAN_REQUIRED,
+    STATUS_IMPACT_ANALYSIS_REQUIRED,
+    STATUS_VERIFIER_PLAN_REQUIRED,
 })
 
 
@@ -37,6 +41,8 @@ class ChangeTicket(BaseModel):
     ticket_id: str
     change_window: str | None = None
     rollback_plan: str | None = None
+    impact_analysis: str | None = None
+    verifier_plan: str | None = None
     status: str = STATUS_SUBMITTED
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -59,6 +65,8 @@ class InMemoryChangeTicketRepository:
         *,
         change_window: str | None = None,
         rollback_plan: str | None = None,
+        impact_analysis: str | None = None,
+        verifier_plan: str | None = None,
         **legacy_kwargs: str | None,
     ) -> ChangeTicket:
         change_window = _resolve_change_window(change_window, legacy_kwargs)
@@ -72,6 +80,8 @@ class InMemoryChangeTicketRepository:
             ticket_id=ticket_id,
             change_window=change_window,
             rollback_plan=rollback_plan,
+            impact_analysis=impact_analysis,
+            verifier_plan=verifier_plan,
             status=STATUS_SUBMITTED,
             created_at=existing.created_at if existing else now,
             updated_at=now,
@@ -116,6 +126,8 @@ class PostgresChangeTicketRepository:
         *,
         change_window: str | None = None,
         rollback_plan: str | None = None,
+        impact_analysis: str | None = None,
+        verifier_plan: str | None = None,
         **legacy_kwargs: str | None,
     ) -> ChangeTicket:
         change_window = _resolve_change_window(change_window, legacy_kwargs)
@@ -124,12 +136,17 @@ class PostgresChangeTicketRepository:
             row = await conn.fetchrow(
                 """
                 INSERT INTO change_ticket
-                    (id, run_id, action_id, ticket_id, change_window, rollback_plan, status)
-                VALUES ($1::uuid, $2, $3, $4, $5, $6, $7)
+                    (
+                        id, run_id, action_id, ticket_id, change_window,
+                        rollback_plan, impact_analysis, verifier_plan, status
+                    )
+                VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9)
                 ON CONFLICT (run_id, action_id) DO UPDATE
                 SET ticket_id = EXCLUDED.ticket_id,
                     change_window = EXCLUDED.change_window,
                     rollback_plan = EXCLUDED.rollback_plan,
+                    impact_analysis = EXCLUDED.impact_analysis,
+                    verifier_plan = EXCLUDED.verifier_plan,
                     status = EXCLUDED.status,
                     updated_at = now()
                 RETURNING *
@@ -140,6 +157,8 @@ class PostgresChangeTicketRepository:
                 ticket_id,
                 change_window,
                 rollback_plan,
+                impact_analysis,
+                verifier_plan,
                 STATUS_SUBMITTED,
             )
         return _row_to_ticket(row)
@@ -227,6 +246,8 @@ def _row_to_ticket(row: asyncpg.Record | dict[str, Any]) -> ChangeTicket:
         ticket_id=data["ticket_id"],
         change_window=data.get("change_window"),
         rollback_plan=data.get("rollback_plan"),
+        impact_analysis=data.get("impact_analysis"),
+        verifier_plan=data.get("verifier_plan"),
         status=data.get("status", STATUS_SUBMITTED),
         created_at=data.get("created_at"),
         updated_at=data.get("updated_at"),

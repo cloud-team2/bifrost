@@ -18,6 +18,7 @@ from app.persistence.change_ticket_repository import (
     STATUS_CHANGE_WINDOW_REQUIRED,
     STATUS_VERIFIED,
 )
+from app.persistence.evidence_repository import InMemoryEvidenceRepository, PostgresEvidenceRepository
 from app.persistence.event_repository import PostgresEventRepository
 from app.persistence.report_repository import InMemoryReportRepository, PostgresReportRepository, ReportSnapshot
 from app.persistence.run_repository import PostgresRunRepository, RunRecord
@@ -279,6 +280,59 @@ async def test_state_repository_get_patches_accepts_asyncpg_jsonb_and_uuid_value
     assert patches[1].patch == {}
 
 
+@pytest.mark.asyncio
+async def test_evidence_repository_in_memory_put_get():
+    repo = InMemoryEvidenceRepository()
+
+    store_ref = await repo.put(
+        run_id="run-480",
+        evidence_id="ev-001",
+        tool_name="search_logs",
+        step_id="s1",
+        status="success",
+        payload={"logs": ["redacted evidence"]},
+    )
+
+    record = await repo.get(store_ref)
+    assert record is not None
+    assert record.store_ref == "evidence://run-480/ev-001"
+    assert record.payload == {"logs": ["redacted evidence"]}
+    assert record.redaction_status == "redacted"
+
+
+@pytest.mark.asyncio
+async def test_postgres_evidence_repository_put_get():
+    row = {
+        "store_ref": "evidence://run-480/ev-001",
+        "run_id": "run-480",
+        "evidence_id": "ev-001",
+        "tool_name": "search_logs",
+        "step_id": "s1",
+        "status": "success",
+        "payload": json.dumps({"logs": ["redacted evidence"]}),
+        "redaction_status": "redacted",
+        "created_at": _now(),
+    }
+    pool, conn = _make_pool(fetchrow_return=row)
+    repo = PostgresEvidenceRepository(pool=pool)
+
+    store_ref = await repo.put(
+        run_id="run-480",
+        evidence_id="ev-001",
+        tool_name="search_logs",
+        step_id="s1",
+        status="success",
+        payload={"logs": ["redacted evidence"]},
+    )
+    record = await repo.get(store_ref)
+
+    assert store_ref == "evidence://run-480/ev-001"
+    assert record is not None
+    assert record.payload == {"logs": ["redacted evidence"]}
+    assert conn.execute.await_count == 1
+    assert conn.fetchrow.await_count == 1
+
+
 # ---------------------------------------------------------------------------
 # test 4: EventRepository get_after filters correctly
 # ---------------------------------------------------------------------------
@@ -447,12 +501,16 @@ async def test_change_ticket_repository_upsert_list_and_status_update():
         "CHG-001",
         window="2026-06-09T10:00Z/2026-06-09T11:00Z",
         rollback_plan="rollback connector config",
+        impact_analysis="tenant-local connector restart impact",
+        verifier_plan="check connector task health after restart",
     )
     updated = await repo.update_status("run-change-001", "act-change-001", STATUS_VERIFIED)
     listed = await repo.list_by_run("run-change-001")
 
     assert updated is not None
     assert created.id == updated.id
+    assert created.impact_analysis == "tenant-local connector restart impact"
+    assert created.verifier_plan == "check connector task health after restart"
     assert updated.status == STATUS_VERIFIED
     assert [ticket.action_id for ticket in listed] == ["act-change-001"]
 
@@ -473,8 +531,10 @@ async def test_postgres_change_ticket_repository_upsert_uses_conflict_key():
         "run_id": "run-change-002",
         "action_id": "act-change-002",
         "ticket_id": "CHG-002",
-        "window": "maintenance-window",
+        "change_window": "maintenance-window",
         "rollback_plan": "rollback",
+        "impact_analysis": "tenant-local impact",
+        "verifier_plan": "verify health",
         "status": "submitted",
         "created_at": _now(),
         "updated_at": _now(),
@@ -488,10 +548,14 @@ async def test_postgres_change_ticket_repository_upsert_uses_conflict_key():
         "CHG-002",
         window="maintenance-window",
         rollback_plan="rollback",
+        impact_analysis="tenant-local impact",
+        verifier_plan="verify health",
     )
 
     assert ticket.ticket_id == "CHG-002"
     assert ticket.action_id == "act-change-002"
+    assert ticket.impact_analysis == "tenant-local impact"
+    assert ticket.verifier_plan == "verify health"
     sql = conn.fetchrow.call_args.args[0]
     assert "ON CONFLICT (run_id, action_id)" in sql
 
@@ -503,8 +567,10 @@ async def test_postgres_change_ticket_repository_read_and_update_paths():
         "run_id": "run-change-003",
         "action_id": "act-change-003",
         "ticket_id": "CHG-003",
-        "window": "maintenance-window",
+        "change_window": "maintenance-window",
         "rollback_plan": "rollback",
+        "impact_analysis": "tenant-local impact",
+        "verifier_plan": "verify health",
         "status": "submitted",
         "created_at": _now(),
         "updated_at": _now(),
@@ -524,6 +590,8 @@ async def test_postgres_change_ticket_repository_read_and_update_paths():
 
     assert fetched is not None
     assert fetched.ticket_id == "CHG-003"
+    assert fetched.impact_analysis == "tenant-local impact"
+    assert fetched.verifier_plan == "verify health"
     assert [ticket.action_id for ticket in listed] == ["act-change-003"]
     assert updated is not None
     assert updated.status == STATUS_CHANGE_WINDOW_REQUIRED

@@ -128,7 +128,7 @@ Report는 tool을 직접 호출하지 않는다. 검증된 State만 사용한다
 
 ### 8. Runtime Tool Catalog
 
-현재 FastAPI `ToolClientRegistry`에는 15개 논리 tool definition이 있다. 이 표는 FastAPI registry의 실제 목록이고, Spring `GET /internal/ops/admin/tool-catalog`와 동일하지 않다.
+현재 FastAPI `ToolClientRegistry`에는 16개 논리 tool definition이 있다(#373: `get_connector_task_trace` 추가). 이 표는 FastAPI registry의 실제 목록이고, Spring `GET /internal/ops/admin/tool-catalog`와 동일하지 않다.
 
 | Tool | Operation | Method | Path template | Risk | Approval |
 | --- | --- | --- | --- | --- | --- |
@@ -146,6 +146,7 @@ Report는 tool을 직접 호출하지 않는다. 검증된 State만 사용한다
 | `resume_connector` | `resume_connector` | `POST` | `/internal/ops/projects/{project_id}/connectors/{connector_name}/resume` | `medium` | yes |
 | `restart_consumer_group` | `restart_consumer_group` | `POST` | `/internal/ops/projects/{project_id}/kafka/consumer-groups/{consumer_group}/restart` | `high` | yes |
 | `get_traces` | `query_traces` | `GET` | `/internal/ops/projects/{project_id}/connectors/{connector_name}/traces` | `read_only` | no |
+| `get_connector_task_trace` | `get_connector_task_trace` | `GET` | `/internal/ops/projects/{project_id}/connectors/{connector_name}/task-trace` | `read_only` | no |
 | `get_alerts` | `list_alerts` | `GET` | `/internal/ops/projects/{project_id}/observability/alerts` | `read_only` | no |
 
 Spring runtime read catalog는 이 중 구현된 read endpoint 8개만 반환한다.
@@ -193,7 +194,7 @@ Spring runtime read catalog는 이 중 구현된 read endpoint 8개만 반환한
 | Action | action_type | 처리 |
 | --- | --- | --- |
 | `collect_source_timeout_evidence` | `workflow_action` | 설계상 `search_logs`, `get_connector_status`, `get_pipeline_topology`, `list_project_pipelines` 조합이지만 현재 `get_pipeline_topology`/`list_project_pipelines`는 Spring result shape과 FastAPI schema가 맞지 않아 adapter 없이는 직접 실행 후보로 보면 안 된다 |
-| `collect_connector_trace` | `workflow_action` | `get_traces`, `search_logs`, `get_connector_status` 실행 계획으로 변환 |
+| `collect_connector_trace` | `workflow_action` | `get_traces`(Tempo 분산 trace), `get_connector_task_trace`(task 예외 stack trace, #373), `search_logs`, `get_connector_status` 실행 계획으로 변환 |
 | `collect_lag_evidence` | `workflow_action` | `get_consumer_lag`, `get_connector_status`, `search_logs`, `get_alerts` 실행 계획으로 변환 |
 | `collect_additional_evidence` | `workflow_action` | Planner가 현재 registry에 있는 read-only tool만 사용해 추가 retrieval plan 생성 |
 | `reduce_pipeline_pressure` | `composite_action` | 현재 mutation 가능 후보는 `pause_connector`, `resume_connector`, `restart_consumer_group`로 제한 |

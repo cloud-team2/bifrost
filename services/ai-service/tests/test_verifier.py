@@ -6,8 +6,10 @@ from datetime import datetime, timezone
 import pytest
 
 from app.agents.verifier import run_verifier
-from app.schemas.outputs import RcaOutput, RetrievalOutput
+from app.persistence.evidence_repository import InMemoryEvidenceRepository
+from app.schemas.outputs import ExecutionResultOutput, ExecutorOutput, RcaOutput, RetrievalOutput
 from app.schemas.state import (
+    ActionStatus,
     AgentMode,
     EvidenceItem,
     EvidenceType,
@@ -50,6 +52,26 @@ def _status(output):
     return output.verification_results[0].status
 
 
+def _execution_result(
+    *,
+    action_id: str = "act_001",
+    status: ActionStatus = ActionStatus.COMPLETED,
+    after_evidence_id: str | None = "evidence://after/act_001/ok",
+    reason_code: str | None = None,
+    summary: str = "completed",
+) -> ExecutionResultOutput:
+    return ExecutionResultOutput(
+        action_id=action_id,
+        tool_name="restart_connector",
+        status=status,
+        audit_event_id="audit_001",
+        before_evidence_id="evidence://before/act_001/ok",
+        after_evidence_id=after_evidence_id,
+        reason_code=reason_code,
+        summary=summary,
+    )
+
+
 @pytest.mark.asyncio
 async def test_simple_query_still_pass() -> None:
     output = await run_verifier(AgentMode.SIMPLE_QUERY)
@@ -69,6 +91,34 @@ async def test_incident_full_evidence_pass() -> None:
                 _evidence("ev-auth", "auth/permission error log AccessDenied token expired")
             ]
         ),
+    )
+
+    result = output.verification_results[0]
+    assert result.status == VerificationStatus.PASS
+    assert result.approved_for_final_response is True
+
+
+@pytest.mark.asyncio
+async def test_incident_evidence_matrix_uses_hydrated_raw_payload() -> None:
+    evidence_repo = InMemoryEvidenceRepository()
+    await evidence_repo.put(
+        run_id="test",
+        evidence_id="ev-auth",
+        tool_name="search_logs",
+        step_id="s1",
+        status="success",
+        payload={"logs": ["auth/permission error log AccessDenied token expired"]},
+    )
+
+    output = await run_verifier(
+        AgentMode.INCIDENT_ANALYSIS,
+        rca_out=RcaOutput(root_cause_candidates=[_candidate("SOURCE_AUTH_EXPIRED")]),
+        retrieval_out=RetrievalOutput(
+            evidence_items=[
+                _evidence("ev-auth", "redacted log evidence available")
+            ]
+        ),
+        evidence_repo=evidence_repo,
     )
 
     result = output.verification_results[0]
@@ -165,3 +215,76 @@ async def test_approved_for_final_response_only_when_pass() -> None:
         result = output.verification_results[0]
         assert result.status != VerificationStatus.PASS
         assert result.approved_for_final_response is False
+
+
+@pytest.mark.asyncio
+async def test_action_execution_missing_after_evidence_needs_revision() -> None:
+    output = await run_verifier(
+        AgentMode.ACTION_EXECUTION,
+        executor_out=ExecutorOutput(
+            execution_results=[
+                _execution_result(after_evidence_id=None),
+            ]
+        ),
+    )
+
+    result = output.verification_results[0]
+    assert result.status == VerificationStatus.NEEDS_REVISION
+    assert result.next_agent == "executor"
+    assert "after evidence" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_action_execution_validates_failed_result_reason_consistency() -> None:
+    output = await run_verifier(
+        AgentMode.ACTION_EXECUTION,
+        executor_out=ExecutorOutput(
+            execution_results=[
+                _execution_result(
+                    status=ActionStatus.FAILED,
+                    reason_code=None,
+                    summary="completed successfully",
+                ),
+            ]
+        ),
+    )
+
+    result = output.verification_results[0]
+    assert result.status == VerificationStatus.NEEDS_REVISION
+    assert result.next_agent == "executor"
+    assert "불일치" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_action_execution_with_after_evidence_passes() -> None:
+    output = await run_verifier(
+        AgentMode.ACTION_EXECUTION,
+        executor_out=ExecutorOutput(
+            execution_results=[
+                _execution_result(summary="connector restarted"),
+            ]
+        ),
+    )
+
+    result = output.verification_results[0]
+    assert result.status == VerificationStatus.PASS
+    assert result.approved_for_final_response is True
+
+
+@pytest.mark.asyncio
+async def test_report_unverified_root_cause_needs_revision() -> None:
+    output = await run_verifier(
+        AgentMode.INCIDENT_ANALYSIS,
+        rca_out=RcaOutput(root_cause_candidates=[_candidate("SOURCE_AUTH_EXPIRED")]),
+        retrieval_out=RetrievalOutput(
+            evidence_items=[
+                _evidence("ev-auth", "auth/permission error log AccessDenied token expired")
+            ]
+        ),
+        report_body="진단 결론: root_cause_id=SCHEMA_MISMATCH 입니다.",
+    )
+
+    result = output.verification_results[0]
+    assert result.status == VerificationStatus.NEEDS_REVISION
+    assert result.next_agent == "report"
+    assert "검증되지 않은" in result.reason

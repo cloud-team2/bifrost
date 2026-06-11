@@ -6,15 +6,23 @@ import re
 from uuid import uuid4
 
 from app.catalogs import evidence_matrix
-from app.catalogs.root_causes import is_known_root_cause
+from app.catalogs.root_causes import is_known_root_cause, root_cause_ids
+from app.persistence.evidence_repository import AnyEvidenceRepo, get_evidence_repo
 from app.schemas.outputs import (
     ClassifierOutput,
+    ExecutorOutput,
     RcaOutput,
     RetrievalOutput,
     VerificationResultOutput,
     VerifierOutput,
 )
-from app.schemas.state import AgentMode, EvidenceItem, RootCauseCandidate, VerificationStatus
+from app.schemas.state import (
+    ActionStatus,
+    AgentMode,
+    EvidenceItem,
+    RootCauseCandidate,
+    VerificationStatus,
+)
 
 
 UNKNOWN_ROOT_CAUSES = {
@@ -22,6 +30,11 @@ UNKNOWN_ROOT_CAUSES = {
     "MULTIPLE_POSSIBLE_CAUSES",
     "CUSTOMER_OWNED_ROOT_CAUSE_LIKELY",
 }
+_ROOT_CAUSE_REF_RE = re.compile(
+    r"\broot[_ -]?cause(?:[_ -]?id)?\s*(?:[:=]|is|는|은)?\s*([A-Z0-9_]+)\b",
+    re.IGNORECASE,
+)
+_SUCCESS_WORDS = ("success", "succeeded", "completed", "ok", "성공", "완료")
 
 
 async def run_verifier(
@@ -30,8 +43,21 @@ async def run_verifier(
     rca_out: RcaOutput | None = None,
     retrieval_out: RetrievalOutput | None = None,
     classifier_out: ClassifierOutput | None = None,
+    executor_out: ExecutorOutput | None = None,
+    report_body: str | None = None,
+    evidence_repo: AnyEvidenceRepo | None = None,
 ) -> VerifierOutput:
+    if (
+        report_body is not None
+        and rca_out is None
+        and retrieval_out is None
+        and executor_out is None
+    ):
+        return _verify_report_body(report_body=report_body, rca_out=rca_out)
+
     if mode == AgentMode.SIMPLE_QUERY:
+        if report_body is not None:
+            return _verify_report_body(report_body=report_body, rca_out=rca_out)
         return _result(
             target="retrieval_result",
             status=VerificationStatus.PASS,
@@ -39,24 +65,38 @@ async def run_verifier(
         )
 
     if mode == AgentMode.INCIDENT_ANALYSIS:
-        return _verify_incident_analysis(
+        incident_result = await _verify_incident_analysis(
             rca_out=rca_out,
             retrieval_out=retrieval_out,
             classifier_out=classifier_out,
+            evidence_repo=evidence_repo,
         )
+        first = incident_result.verification_results[0]
+        if first.status != VerificationStatus.PASS or report_body is None:
+            return incident_result
+        return _verify_report_body(report_body=report_body, rca_out=rca_out)
+
+    if mode in (AgentMode.ACTION_EXECUTION, AgentMode.APPROVAL_DECISION):
+        execution_result = _verify_action_execution(executor_out=executor_out)
+        first = execution_result.verification_results[0]
+        if first.status != VerificationStatus.PASS or report_body is None:
+            return execution_result
+        return _verify_report_body(report_body=report_body, rca_out=rca_out)
 
     return _result(
         target="execution_result",
-        status=VerificationStatus.PASS,
-        reason=f"{mode.value} 경로 — v1에서는 실행 결과 검증을 통과 처리",
+        status=VerificationStatus.FAIL,
+        reason=f"지원하지 않는 verifier mode: {mode.value}",
+        next_agent="planner",
     )
 
 
-def _verify_incident_analysis(
+async def _verify_incident_analysis(
     *,
     rca_out: RcaOutput | None,
     retrieval_out: RetrievalOutput | None,
     classifier_out: ClassifierOutput | None,
+    evidence_repo: AnyEvidenceRepo | None,
 ) -> VerifierOutput:
     del classifier_out
 
@@ -93,7 +133,7 @@ def _verify_incident_analysis(
         return _fail("root_cause", "모든 RCA 후보 confidence가 evidence_matrix 기준 미만", "planner")
 
     evidence_items = retrieval_out.evidence_items if retrieval_out else []
-    evidence_texts = _observed_evidence_texts(evidence_items)
+    evidence_texts = await _observed_evidence_texts(evidence_items, evidence_repo=evidence_repo)
     for candidate in actionable_candidates:
         missing = _missing_required_evidence(candidate, evidence_texts)
         if missing:
@@ -117,6 +157,109 @@ def _verify_incident_analysis(
     )
 
 
+def _verify_action_execution(
+    *,
+    executor_out: ExecutorOutput | None,
+) -> VerifierOutput:
+    if executor_out is None or not executor_out.execution_results:
+        return _needs_revision("execution_result", "Executor 실행 결과가 없어 검증할 수 없음", "executor")
+
+    for result in executor_out.execution_results:
+        if not result.after_evidence_id:
+            return _needs_revision(
+                "execution_result",
+                f"Executor 결과에 after evidence가 없음: action_id={result.action_id}",
+                "executor",
+            )
+
+        if result.status in (ActionStatus.FAILED, ActionStatus.BLOCKED):
+            if not result.reason_code and not result.summary.strip():
+                return _needs_revision(
+                    "execution_result",
+                    f"실패/차단 결과의 사유가 비어 있음: action_id={result.action_id}",
+                    "executor",
+                )
+            summary = result.summary.casefold()
+            if not result.reason_code and any(word in summary for word in _SUCCESS_WORDS):
+                return _needs_revision(
+                    "execution_result",
+                    f"실패/차단 status와 summary가 불일치함: action_id={result.action_id}",
+                    "executor",
+                )
+
+    return _result(
+        target="execution_result",
+        status=VerificationStatus.PASS,
+        reason="Executor 결과의 after evidence와 실패/차단 사유가 검증됨",
+    )
+
+
+def _verify_report_body(
+    *,
+    report_body: str,
+    rca_out: RcaOutput | None,
+) -> VerifierOutput:
+    if not report_body.strip():
+        return _needs_revision("report", "Report 본문이 비어 있음", "report")
+
+    mentioned = _mentioned_root_cause_ids(report_body)
+    non_catalog = [
+        root_cause_id
+        for root_cause_id in mentioned
+        if not is_known_root_cause(root_cause_id)
+    ]
+    if non_catalog:
+        return _fail(
+            "report",
+            f"Report가 catalog 밖 root_cause_id를 포함함: {', '.join(non_catalog)}",
+            "report",
+        )
+
+    allowed = {
+        candidate.root_cause_id
+        for candidate in (rca_out.root_cause_candidates if rca_out else [])
+    }
+    if mentioned and not allowed:
+        return _needs_revision(
+            "report",
+            f"RCA 검증 없이 Report가 root cause 결론을 포함함: {', '.join(mentioned)}",
+            "report",
+        )
+
+    unverified = [root_cause_id for root_cause_id in mentioned if root_cause_id not in allowed]
+    if unverified:
+        return _needs_revision(
+            "report",
+            f"Report가 검증되지 않은 root cause 결론을 포함함: {', '.join(unverified)}",
+            "report",
+        )
+
+    return _result(
+        target="report",
+        status=VerificationStatus.PASS,
+        reason="Report 본문이 검증된 catalog/RCA 범위 안에 있음",
+    )
+
+
+def _mentioned_root_cause_ids(report_body: str) -> list[str]:
+    known_ids = set(root_cause_ids())
+    seen: set[str] = set()
+    ordered: list[str] = []
+
+    for match in _ROOT_CAUSE_REF_RE.finditer(report_body):
+        root_cause_id = match.group(1).upper()
+        if root_cause_id not in seen:
+            seen.add(root_cause_id)
+            ordered.append(root_cause_id)
+
+    for root_cause_id in sorted(known_ids):
+        if root_cause_id in report_body and root_cause_id not in seen:
+            seen.add(root_cause_id)
+            ordered.append(root_cause_id)
+
+    return ordered
+
+
 def _missing_required_evidence(
     candidate: RootCauseCandidate,
     evidence_texts: tuple[str, ...],
@@ -133,21 +276,36 @@ def _missing_required_evidence(
     return missing
 
 
-def _observed_evidence_texts(evidence_items: Iterable[EvidenceItem]) -> tuple[str, ...]:
-    return tuple(
-        " ".join(
-            value
-            for value in (
-                item.evidence_id,
-                str(item.type),
-                item.store_ref,
-                item.summary,
-                item.collected_by or "",
-            )
-            if value
-        )
-        for item in evidence_items
-    )
+async def _observed_evidence_texts(
+    evidence_items: Iterable[EvidenceItem],
+    *,
+    evidence_repo: AnyEvidenceRepo | None,
+) -> tuple[str, ...]:
+    repo = evidence_repo or get_evidence_repo()
+    texts: list[str] = []
+    for item in evidence_items:
+        pieces = [
+            item.evidence_id,
+            str(item.type),
+            item.store_ref,
+            item.summary,
+            item.collected_by or "",
+        ]
+        record = await repo.get(item.store_ref)
+        if record is not None:
+            pieces.append(_flatten_payload_text(record.payload))
+        texts.append(" ".join(value for value in pieces if value))
+    return tuple(texts)
+
+
+def _flatten_payload_text(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        return " ".join(f"{key} {_flatten_payload_text(item)}" for key, item in value.items())
+    if isinstance(value, list):
+        return " ".join(_flatten_payload_text(item) for item in value)
+    return str(value)
 
 
 def _rule_satisfied(rule_text: str, example: str | None, evidence_texts: tuple[str, ...]) -> bool:

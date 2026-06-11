@@ -146,7 +146,7 @@ State는 Agent workflow의 단일 공유 컨텍스트다. FastAPI는 State names
 - raw evidence는 State에 넣지 않는다.
 - Agent는 자기 namespace만 수정한다.
 - State 변경은 patch로 append한다.
-- 현재 runner는 verifier 결과와 무관하게 Report를 생성한다. `report_snapshot.verified`만 verifier 승인 여부를 표시한다.
+- 현재 runner는 Verifier `fail`/`needs_revision`을 Supervisor loopback으로 반영한다. 예산 안에서는 책임 Agent로 되돌아가고, 예산 초과 시 Report stage 없이 `failed`로 종료한다. `report_snapshot.verified`는 생성된 snapshot에 승인된 final response가 있었는지를 표시한다.
 
 상세 schema는 [§14 State Schema](contract/contract-state-schema.md#14-contract-state-schema)를 따른다.
 

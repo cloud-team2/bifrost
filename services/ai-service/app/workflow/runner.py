@@ -29,11 +29,21 @@ from app.persistence.state_repository import get_state_repo
 from app.schemas.events import StreamingEvent, StreamingEventType
 from app.schemas.outputs import (
     ActionCandidateOutput,
+    RetrievalOutput,
     PolicyDecisionOutput,
     PolicyGuardOutput,
     RemediationOutput,
 )
-from app.schemas.state import ActionCandidate, ActionStatus, AgentMode
+from app.schemas.state import (
+    ActionCandidate,
+    ActionStatus,
+    AgentMode,
+    EvidenceItem,
+    EvidenceType,
+    PolicyDecisionType,
+    RedactionStatus,
+    VerificationStatus,
+)
 from app.schemas.tools import ToolContext
 from app.streaming.event_bus import EventBus
 from app.supervisor.graph import get_supervisor
@@ -113,6 +123,35 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
+def _classifier_scope_unclear(classifier_out) -> bool:
+    """Classifier의 scope_unclear 신호 매핑(#476, §3 'scope 불명확').
+
+    기존 ClassifierOutput에는 명시적 scope_unclear 값이 없다. 가장 자연스러운
+    매핑은 "알려진 incident type을 하나도 확정하지 못해 UNKNOWN_NEEDS_MORE_EVIDENCE
+    후보만 남은 경우"다 — 이는 분류기가 scope/유형을 가르지 못했다는 뜻이며,
+    설계의 'scope 불명확 → Planner 재수집'과 의미가 일치한다.
+    """
+    if classifier_out is None:
+        return False
+    incident_types = classifier_out.classification.incident_types
+    if not incident_types:
+        return True
+    return all(t.type == classifier_agent.UNKNOWN_INCIDENT_TYPE for t in incident_types)
+
+
+def _policy_revise_action(policy_out) -> bool:
+    """Policy Guard의 revise_action 신호 매핑(#476, §3 revise_action).
+
+    PolicyDecisionType에는 revise_action 값이 없다. 가장 자연스러운 매핑은
+    decision==DENY(status BLOCKED)다 — 제안된 조치가 정책상 불가하므로 Remediation이
+    더 안전한 대안을 재생성해야 한다는 의미이고, 설계의 'revise_action → Remediation'과
+    부합한다.
+    """
+    if policy_out is None:
+        return False
+    return any(d.decision == PolicyDecisionType.DENY for d in policy_out.policy_decisions)
+
+
 def _evidence_patch(evidence) -> dict[str, Any]:
     return {
         "evidence_id": evidence.evidence_id,
@@ -123,6 +162,25 @@ def _evidence_patch(evidence) -> dict[str, Any]:
     }
 
 
+def _string_or_none(value: object) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _bool_or_false(value: object) -> bool:
+    return value if isinstance(value, bool) else False
+
+
+def _agent_mode_or_none(value: object) -> AgentMode | None:
+    if isinstance(value, AgentMode):
+        return value
+    if isinstance(value, str):
+        try:
+            return AgentMode(value)
+        except ValueError:
+            return None
+    return None
+
+
 async def run_workflow(
     *,
     run_id: str,
@@ -131,11 +189,19 @@ async def run_workflow(
     bus: EventBus,
     run_repo: AnyRunRepo,
     registry: ToolClientRegistry,
+    requested_mode: str | None = None,
+    requested_incident_id: str | None = None,
+    requested_remediation_requested: bool | None = None,
 ) -> None:
     event_repo = get_event_repo()
     state_repo = get_state_repo()
     supervisor = get_supervisor()
     answer: str | None = None  # report 단계 전 budget 초과 대비
+    run_record = await run_repo.get(run_id)
+    persisted_incident_id = _string_or_none(getattr(run_record, "incident_id", None)) if run_record else None
+    stored_remediation_requested = (
+        _bool_or_false(getattr(run_record, "remediation_requested", False)) if run_record else False
+    )
 
     try:
         await _publish(bus, event_repo, run_id,
@@ -146,11 +212,20 @@ async def run_workflow(
         await _publish(bus, event_repo, run_id,
                        _evt(run_id, StreamingEventType.AGENT_STARTED, "router", "질문 유형을 파악합니다"))
         router_out = await router_agent.run_router(user_message)
-        mode = router_out.route_decision.mode
+        mode = _agent_mode_or_none(requested_mode) or router_out.route_decision.mode
+        requested_incident = _string_or_none(requested_incident_id)
+        router_incident = _string_or_none(getattr(router_out.route_decision, "incident_id", None))
+        persisted_incident_id = requested_incident or persisted_incident_id or router_incident
+        if persisted_incident_id and mode == AgentMode.SIMPLE_QUERY:
+            mode = AgentMode.INCIDENT_ANALYSIS
+        remediation_requested = (
+            _bool_or_false(requested_remediation_requested)
+            or stored_remediation_requested
+            or _bool_or_false(router_out.route_decision.remediation_requested)
+        )
         await _publish(bus, event_repo, run_id,
                        _evt(run_id, StreamingEventType.AGENT_COMPLETED, "router", f"mode: {mode.value}"))
-        incident_id = getattr(router_out.route_decision, "incident_id", None)
-        if incident_id:
+        if persisted_incident_id:
             await _append_state_patch(
                 state_repo,
                 run_id,
@@ -158,13 +233,14 @@ async def run_workflow(
                 author="Router",
                 op="append",
                 path="/incident/incident_id",
-                patch={"incident_id": incident_id, "mode": mode.value},
+                patch={"incident_id": persisted_incident_id, "mode": mode.value},
             )
 
         # ── Supervisor 초기화 ──────────────────────────────────────────────────
         supervisor.start_run(
             run_id, mode,
-            remediation_requested=router_out.route_decision.remediation_requested,
+            incident_id=persisted_incident_id,
+            remediation_requested=remediation_requested,
         )
 
         # ── Stage 루프 ─────────────────────────────────────────────────────────
@@ -255,7 +331,68 @@ async def run_workflow(
                 case "planner":
                     await _publish(bus, event_repo, run_id,
                                    _evt(run_id, StreamingEventType.AGENT_STARTED, "planner", "데이터 조회 계획을 수립합니다"))
-                    planner_out = await planner_agent.run_planner(user_message, project_id)
+                    planner_context = ToolContext(
+                        run_id=run_id,
+                        step_id=str(uuid4()),
+                        agent_name="planner",
+                        project_id=project_id,
+                        request_id=str(uuid4()),
+                    )
+                    planner_out = await planner_agent.run_planner(
+                        user_message,
+                        project_id,
+                        registry=registry,
+                        tool_context=planner_context,
+                    )
+                    if planner_out.clarification_message:
+                        answer = planner_out.clarification_message
+                        retrieval_out = RetrievalOutput(
+                            evidence_items=[
+                                EvidenceItem(
+                                    evidence_id=str(uuid4()),
+                                    type=EvidenceType.TOOL_RESULT,
+                                    store_ref=f"planner://{run_id}/identifier-required",
+                                    summary=answer,
+                                    redaction_status=RedactionStatus.REDACTED,
+                                    collected_by="planner",
+                                    collected_at=datetime.now(timezone.utc),
+                                )
+                            ]
+                        )
+                        await _append_state_patch(
+                            state_repo,
+                            run_id,
+                            namespace="report",
+                            author="Planner",
+                            op="append",
+                            path="/report/draft",
+                            patch={"draft": {"answer": answer, "reason": "identifier_required"}},
+                        )
+                        await _persist_report_snapshot(
+                            run_id=run_id,
+                            answer=answer,
+                            mode=mode,
+                            retrieval_out=retrieval_out,
+                            rca_out=None,
+                            verifier_out=None,
+                            incident_id=persisted_incident_id,
+                        )
+                        await run_repo.update_status(run_id, "completed", None)
+                        await _publish(bus, event_repo, run_id, _evt(
+                            run_id,
+                            StreamingEventType.PARTIAL_RESULT,
+                            "planner",
+                            answer,
+                            {"answer": answer, "stage": "planner", "reason": "identifier_required"},
+                        ))
+                        await _publish(bus, event_repo, run_id, _evt(
+                            run_id,
+                            StreamingEventType.RUN_COMPLETED,
+                            "planner",
+                            "분석이 완료되었습니다",
+                            {"answer": answer},
+                        ))
+                        return
                     tool_names = ", ".join(s.tool_name for s in planner_out.retrieval_plan)
                     await _publish(bus, event_repo, run_id,
                                    _evt(run_id, StreamingEventType.AGENT_COMPLETED, "planner", f"조회 도구: {tool_names}"))
@@ -350,6 +487,13 @@ async def run_workflow(
                         path="/incident/scope",
                         patch={"scope": clf.incident_scope.value},
                     )
+                    # #476: scope_unclear면 Planner로 loopback 등록(scope_loops 예산).
+                    # 예산 초과 시 다음 advance에서 RunBudgetExceeded("scope_loops").
+                    record_classifier = getattr(supervisor, "record_classifier_result", None)
+                    if record_classifier is not None:
+                        record_classifier(
+                            run_id, scope_unclear=_classifier_scope_unclear(classifier_out)
+                        )
 
                 case "rca":
                     await _publish(bus, event_repo, run_id,
@@ -437,6 +581,16 @@ async def run_workflow(
                             ]
                         },
                     )
+                    # #476: revise_action(DENY)이면 Remediation으로 loopback 등록
+                    # (revise_action_loops 예산). Remediation↔Policy Guard 순환은
+                    # incident_analysis remediation 흐름에만 존재하므로 그 mode로 한정한다
+                    # (action_execution엔 remediation stage가 없어 무한·오류 방지).
+                    # 예산 초과 시 다음 advance에서 RunBudgetExceeded("revise_action_loops").
+                    record_policy = getattr(supervisor, "record_policy_guard_result", None)
+                    if record_policy is not None and mode == AgentMode.INCIDENT_ANALYSIS:
+                        record_policy(
+                            run_id, revise_action=_policy_revise_action(policy_out)
+                        )
 
                 case "approval_gate":
                     await _publish(bus, event_repo, run_id,
@@ -493,11 +647,27 @@ async def run_workflow(
                         request_id=str(uuid4()),
                     )
                     approved = approval_out.approved_actions if approval_out else []
+                    change_records = change_out.change_management_records if change_out else []
                     change_ready_ids = [
                         record.action_id
-                        for record in (change_out.change_management_records if change_out else [])
+                        for record in change_records
                         if record.status == STATUS_VERIFIED
                     ]
+                    # per-action governance 식별자 매핑 — 승인된 mutation 실행 시 Spring
+                    # governance gate 로 X-Approval-Id / X-Change-Ticket-Id 전달. (#475)
+                    # auto_/PENDING_ 센티넬은 실제 승인/티켓이 아니므로 제외(헤더 미전송).
+                    approval_by_action = {
+                        a.action_id: a.approval_id
+                        for a in approved
+                        if a.approval_id and not a.approval_id.startswith("auto_")
+                    }
+                    change_ticket_by_action = {
+                        record.action_id: record.change_ticket_id
+                        for record in change_records
+                        if record.status == STATUS_VERIFIED
+                        and record.change_ticket_id
+                        and not record.change_ticket_id.startswith("PENDING_")
+                    }
                     ready_candidates = [
                         candidate
                         for action_id in _dedupe_action_ids(
@@ -510,6 +680,8 @@ async def run_workflow(
                         run_id=run_id,
                         context=exec_context,
                         registry=registry,
+                        approval_by_action=approval_by_action,
+                        change_ticket_by_action=change_ticket_by_action,
                     )
                     await _publish(bus, event_repo, run_id, _evt(
                         run_id, StreamingEventType.AGENT_COMPLETED, "executor",
@@ -533,6 +705,7 @@ async def run_workflow(
                         rca_out=rca_out,
                         retrieval_out=retrieval_out,
                         classifier_out=classifier_out,
+                        executor_out=executor_out,
                     )
                     first_result = (
                         verifier_out.verification_results[0]
@@ -565,6 +738,40 @@ async def run_workflow(
                         user_message, retrieval_out, mode, llm,
                         rca_out=rca_out, classifier_out=classifier_out,
                     )
+                    verifier_out = await verifier_agent.run_verifier(
+                        mode,
+                        rca_out=rca_out,
+                        retrieval_out=retrieval_out,
+                        classifier_out=classifier_out,
+                        executor_out=executor_out,
+                        report_body=answer,
+                    )
+                    first_result = (
+                        verifier_out.verification_results[0]
+                        if verifier_out.verification_results
+                        else None
+                    )
+                    v_status = first_result.status.value if first_result else "pass"
+                    await _publish(bus, event_repo, run_id, _evt(
+                        run_id,
+                        StreamingEventType.VERIFICATION_COMPLETED,
+                        "verifier",
+                        f"report 검증: {v_status}",
+                    ))
+                    await _append_state_patch(
+                        state_repo,
+                        run_id,
+                        namespace="verification",
+                        author="Verifier",
+                        op="append",
+                        path="/verification/verification_results",
+                        patch={"verification_results": _jsonable(verifier_out.verification_results)},
+                    )
+                    record_verifier = getattr(supervisor, "record_verifier_result", None)
+                    if record_verifier is not None and first_result is not None:
+                        record_verifier(run_id, first_result.status, first_result.next_agent)
+                    if first_result is not None and first_result.status != VerificationStatus.PASS:
+                        continue
                     await _persist_report_snapshot(
                         run_id=run_id,
                         answer=answer,
@@ -572,6 +779,7 @@ async def run_workflow(
                         retrieval_out=retrieval_out,
                         rca_out=rca_out,
                         verifier_out=verifier_out,
+                        incident_id=persisted_incident_id,
                     )
                     await _append_state_patch(
                         state_repo,
@@ -718,6 +926,7 @@ async def _persist_report_snapshot(
     retrieval_out,
     rca_out,
     verifier_out,
+    incident_id: str | None = None,
 ) -> None:
     root_cause_id = None
     confidence = None
@@ -743,6 +952,7 @@ async def _persist_report_snapshot(
         await get_report_repo().create(
             run_id,
             body,
+            incident_id=incident_id,
             root_cause_id=root_cause_id,
             confidence=confidence,
             verified=verified,

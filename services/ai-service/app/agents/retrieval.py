@@ -8,7 +8,9 @@ from typing import Any
 from uuid import uuid4
 
 from app.core.config import settings
+from app.evidence.redaction import redact_payload, redact_text
 from app.knowledge.vector_store import get_vector_store
+from app.persistence.evidence_repository import AnyEvidenceRepo, get_evidence_repo
 from app.persistence.event_repository import AnyEventRepo, InMemoryEventRepository, append_event
 from app.schemas.events import StreamingEvent, StreamingEventType
 from app.schemas.outputs import PlannerOutput, RetrievalOutput
@@ -47,9 +49,12 @@ async def run_retrieval(
     user_message: str | None = None,
     mode: AgentMode | None = None,
     vector_store: Any | None = None,
+    evidence_repo: AnyEvidenceRepo | None = None,
 ) -> RetrievalOutput:
     if event_repo is None:
         event_repo = InMemoryEventRepository()
+    if evidence_repo is None:
+        evidence_repo = get_evidence_repo()
 
     knowledge_items = await _collect_knowledge_evidence(
         run_id=run_id,
@@ -81,11 +86,19 @@ async def run_retrieval(
 
         result = await registry.call_tool(step.tool_name, step.params, context)
 
+        evidence_id = str(uuid4())
         if result.status == ToolStatus.SUCCESS:
-            summary = result.summary
-            store_ref = f"evidence://{run_id}/{step.step_id}"
+            summary = redact_text(result.summary)
+            store_ref = await evidence_repo.put(
+                run_id=run_id,
+                evidence_id=evidence_id,
+                tool_name=step.tool_name,
+                step_id=step.step_id,
+                status=result.status.value,
+                payload=redact_payload(_raw_payload_for_store(result)),
+            )
             evidence = EvidenceItem(
-                evidence_id=str(uuid4()),
+                evidence_id=evidence_id,
                 type=EvidenceType.TOOL_RESULT,
                 store_ref=store_ref,
                 summary=summary,
@@ -117,9 +130,17 @@ async def run_retrieval(
                 },
             ))
         else:
-            error_msg = result.error.message if result.error else "조회 실패"
+            error_msg = redact_text(result.error.message if result.error else "조회 실패")
             summary = f"{step.tool_name}: {error_msg}"
-            store_ref = f"evidence://{run_id}/{step.step_id}/failed"
+            store_ref = await evidence_repo.put(
+                run_id=run_id,
+                evidence_id=evidence_id,
+                tool_name=step.tool_name,
+                step_id=step.step_id,
+                status=result.status.value,
+                payload=redact_payload(_raw_payload_for_store(result)),
+                failed=True,
+            )
             await _pub(bus, event_repo, run_id, StreamingEvent(
                 event_id=str(uuid4()),
                 run_id=run_id,
@@ -130,11 +151,11 @@ async def run_retrieval(
                 payload={
                     "tool": step.tool_name,
                     "step_id": step.step_id,
-                    "error": result.error.model_dump() if result.error else {},
+                    "error": redact_payload(result.error.model_dump(mode="json")) if result.error else {},
                 },
             ))
             evidence = EvidenceItem(
-                evidence_id=str(uuid4()),
+                evidence_id=evidence_id,
                 type=EvidenceType.TOOL_RESULT,
                 store_ref=store_ref,
                 summary=summary,
@@ -148,6 +169,13 @@ async def run_retrieval(
     # 독립 read-only tool은 병렬(fan-out) 실행
     tool_evidence = list(await asyncio.gather(*[call_step(s) for s in plan.retrieval_plan]))
     return RetrievalOutput(evidence_items=[*knowledge_items, *tool_evidence])
+
+
+def _raw_payload_for_store(result: Any) -> dict[str, Any] | list[Any]:
+    raw_payload = getattr(result, "raw_payload", None)
+    if raw_payload is not None:
+        return raw_payload
+    return result.model_dump(mode="json", exclude_none=True, exclude={"raw_payload"})
 
 
 async def _collect_knowledge_evidence(

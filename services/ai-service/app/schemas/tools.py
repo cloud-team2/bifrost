@@ -77,6 +77,10 @@ class ToolContext(StrictModel):
     incident_id: str | None = None
     pipeline_id: str | None = None
     idempotency_key: str | None = None
+    # HITL governance: 승인된 mutation 실행 시 Spring governance gate(approval/change)에
+    # context를 전달하기 위한 식별자. read tool 은 미설정이라 자연히 헤더 미전송. (#475)
+    approval_id: str | None = None
+    change_ticket_id: str | None = None
 
     def spring_headers(self, actor_id: str = "bifrost-agent") -> dict[str, str]:
         headers: dict[str, str] = {
@@ -89,10 +93,29 @@ class ToolContext(StrictModel):
         }
         if self.idempotency_key:
             headers["X-Idempotency-Key"] = self.idempotency_key
+        # 값이 있을 때만 emit — Spring InternalOpsMutationController 가 X-Approval-Id /
+        # X-Change-Ticket-Id 로 approval/change governance gate 를 검증한다. (#475)
+        if self.approval_id:
+            headers["X-Approval-Id"] = self.approval_id
+        if self.change_ticket_id:
+            headers["X-Change-Ticket-Id"] = self.change_ticket_id
         return headers
 
     def with_idempotency_key(self, key: str) -> "ToolContext":
         return self.model_copy(update={"idempotency_key": key})
+
+    def with_approval(
+        self,
+        approval_id: str | None = None,
+        change_ticket_id: str | None = None,
+    ) -> "ToolContext":
+        """승인된 action 실행용 governance 식별자를 실은 사본을 반환. (#475)"""
+        update: dict[str, str] = {}
+        if approval_id:
+            update["approval_id"] = approval_id
+        if change_ticket_id:
+            update["change_ticket_id"] = change_ticket_id
+        return self.model_copy(update=update) if update else self
 
 
 class ToolCallRequest(StrictModel):
@@ -153,6 +176,7 @@ class ToolResult(StrictModel):
     evidence_ids: list[str] = Field(default_factory=list)
     audit_event_id: str | None = None
     error: ToolError | None = None
+    raw_payload: dict[str, Any] | list[Any] | None = None
 
 
 class ProjectPipelineSummary(SpringResponseModel):
@@ -353,14 +377,42 @@ class GetTracesParams(StrictModel):
     limit: int | None = None
 
 
+class GetConnectorTaskTraceParams(StrictModel):
+    connector_name: str
+
+
+class TraceSpan(SpringResponseModel):
+    """Tempo span 요약 (#373). 무엇이(name) 어느 서비스에서(service) 얼마나(duration_ms) 걸렸고 실패(status/error)했나."""
+    name: str | None = None
+    service: str | None = None
+    duration_ms: int | None = None
+    status: str | None = None
+    error: str | None = None
+
+
+class TracesData(SpringResponseModel):
+    """get_traces — Tempo 분산 trace summary (#373). 변경 이벤트가 source→topic→sink로 흐르며 어디서 지연/실패했나.
+
+    Spring TraceSummaryResult 와 정합 (to_camel alias 가 camelCase wire 수용). 비활성/미발견/실패 시
+    Spring 이 stub(trace_id=null, status="unknown", spans=[])을 반환하므로 모든 필드 optional.
+    """
+    trace_id: str | None = None
+    pipeline_id: str | None = None
+    status: str | None = None
+    duration_ms: int | None = None
+    spans: list[TraceSpan] = Field(default_factory=list)
+    note: str | None = None
+
+
 class TraceEntry(SpringResponseModel):
     # 명시 alias "taskId" 보존 (alias_generator(to_camel) 가 동일하게 생성하지만 명시성 유지).
     task_id: int | None = Field(default=None, alias="taskId")
     state: str | None = None
-    trace: str
+    trace: str | None = None
 
 
-class TracesData(SpringResponseModel):
+class ConnectorTaskTraceData(SpringResponseModel):
+    """get_connector_task_trace — Kafka Connect task 예외 trace (#368/#373). 에러 근거를 분산 trace(get_traces)와 분리."""
     # Spring 가 "connector" 필드명으로 반환 — alias_generator(to_camel) 의 "connectorName" 과 다르므로 명시 alias 필수.
     connector_name: str | None = Field(default=None, alias="connector")
     traces: list[TraceEntry] = Field(default_factory=list)

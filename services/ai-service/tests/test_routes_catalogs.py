@@ -58,11 +58,14 @@ def test_runbooks_returns_items_with_actions():
     assert connector_runbook["actions"][0]["action_name"] == "restart_connector_task"
 
 
-def test_tools_returns_15_tools():
+def test_tools_returns_16_tools():
+    # #373: get_connector_task_trace 추가(에러 trace를 Tempo 분산 trace와 분리)로 15→16.
     data = _data("/api/v1/tools")
 
-    assert len(data["tools"]) == 15
-    assert "search_logs" in {tool["name"] for tool in data["tools"]}
+    assert len(data["tools"]) == 16
+    names = {tool["name"] for tool in data["tools"]}
+    assert "search_logs" in names
+    assert "get_connector_task_trace" in names
 
 
 def test_get_tool_by_name():

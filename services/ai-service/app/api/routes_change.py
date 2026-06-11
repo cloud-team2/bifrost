@@ -19,6 +19,14 @@ class ChangeTicketRequest(BaseModel):
         validation_alias=AliasChoices("change_window", "window"),
     )
     rollback_plan: str | None = None
+    impact_analysis: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("impact_analysis", "impact", "impactAnalysis"),
+    )
+    verifier_plan: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("verifier_plan", "verification_plan", "verifierPlan"),
+    )
 
 
 @router.post("/runs/{run_id}/change-tickets")
@@ -30,6 +38,8 @@ async def submit_ticket(run_id: str, req: ChangeTicketRequest) -> ApiResponse:
         ticket_id=req.ticket_id,
         change_window=req.change_window,
         rollback_plan=req.rollback_plan,
+        impact_analysis=req.impact_analysis,
+        verifier_plan=req.verifier_plan,
     )
 
     gate_output = await verify_change_ticket(run_id, req.action_id)
@@ -48,6 +58,8 @@ async def submit_ticket(run_id: str, req: ChangeTicketRequest) -> ApiResponse:
         "ticket_id": ticket.ticket_id if ticket else req.ticket_id,
         "change_window": ticket.change_window if ticket else req.change_window,
         "rollback_plan": ticket.rollback_plan if ticket else req.rollback_plan,
+        "impact_analysis": ticket.impact_analysis if ticket else req.impact_analysis,
+        "verifier_plan": ticket.verifier_plan if ticket else req.verifier_plan,
         "status": record.status if record else (ticket.status if ticket else None),
         "run_status": gate_output.run_status,
         "change_management_records": [
@@ -73,6 +85,8 @@ def _ticket_response(ticket: ChangeTicket) -> dict:
         "ticket_id": ticket.ticket_id,
         "change_window": ticket.change_window,
         "rollback_plan": ticket.rollback_plan,
+        "impact_analysis": ticket.impact_analysis,
+        "verifier_plan": ticket.verifier_plan,
         "status": ticket.status,
         "created_at": ticket.created_at.isoformat() if ticket.created_at else None,
         "updated_at": ticket.updated_at.isoformat() if ticket.updated_at else None,

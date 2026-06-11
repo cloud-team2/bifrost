@@ -54,6 +54,8 @@ class InternalOpsObservabilityControllerTest {
     private final ConnectorRepository connectorRepository = mock(ConnectorRepository.class);
     private final IncidentRepository incidentRepository = mock(IncidentRepository.class);
     private final ObservabilityMetricsQuery metricsQuery = mock(ObservabilityMetricsQuery.class);
+    private final com.bifrost.ops.monitoring.query.TraceQuery traceQuery =
+            mock(com.bifrost.ops.monitoring.query.TraceQuery.class);
     private final InternalOpsObservabilityController controller = new InternalOpsObservabilityController(
             adminClient,
             lokiClient,
@@ -62,6 +64,7 @@ class InternalOpsObservabilityControllerTest {
             connectorRepository,
             incidentRepository,
             metricsQuery,
+            traceQuery,
             "http://connect.invalid");
 
     @Test
@@ -223,7 +226,7 @@ class InternalOpsObservabilityControllerTest {
         when(connectorRepository.findByCrName("orders-sink")).thenReturn(Optional.of(connector(pipelineId, "orders-sink")));
         when(pipelineRepository.findByIdAndTenantId(pipelineId, tenantId)).thenReturn(Optional.empty());
 
-        ResponseEntity<OpsEnvelope<java.util.Map<String, Object>>> response =
+        ResponseEntity<OpsEnvelope<com.bifrost.ops.internalops.dto.TraceSummaryResult>> response =
                 controller.queryTraces("proj-001", "orders-sink", new MockHttpServletRequest());
 
         assertThat(response.getStatusCode().value()).isEqualTo(403);
