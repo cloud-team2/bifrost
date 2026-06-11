@@ -63,6 +63,7 @@ public class TempoClient {
         if (traceId == null || traceId.isBlank()) {
             return Optional.empty();
         }
+        // Tempo /api/search 응답의 durationMs는 millisecond 단위 → 아래 span 계산값과 같은 단위라 Math.max 안전.
         long durationMs = head.path("durationMs").asLong(0L);
 
         return traceById(traceId)

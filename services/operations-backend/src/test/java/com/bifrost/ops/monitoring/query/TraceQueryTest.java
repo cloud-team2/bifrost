@@ -94,6 +94,7 @@ class TraceQueryTest {
         assertThat(r.traceId()).isEqualTo("abc123");
         assertThat(r.pipelineId()).isEqualTo("p1");
         assertThat(r.status()).isEqualTo("error");
+        assertThat(r.durationMs()).isEqualTo(9L);
         assertThat(r.spans()).singleElement().extracting(TraceSpan::name).isEqualTo("sink-put");
     }
 
@@ -110,6 +111,8 @@ class TraceQueryTest {
         TempoClient client = mock(TempoClient.class);
         when(client.traceById("missing")).thenReturn(Optional.empty());
         TraceQuery q = new TraceQuery(true, client);
-        assertThat(q.queryById("p1-source", "missing").traceId()).isNull();
+        TraceSummaryResult r = q.queryById("p1-source", "missing");
+        assertThat(r.traceId()).isNull();
+        assertThat(r.note()).contains("trace 없음");
     }
 }
