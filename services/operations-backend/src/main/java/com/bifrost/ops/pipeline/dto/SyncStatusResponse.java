@@ -17,15 +17,20 @@ public record SyncStatusResponse(
     long sinkRows,
     long delta,
     Instant checkedAt,
-    boolean applicable
+    boolean applicable,
+    // #501: 동기화 완료 판정을 행수가 아니라 lag+health 기준으로. 행수는 보조(DELETE 감지·표시)로 유지.
+    long lag,          // sink consumer lag(미처리 변경이벤트 수). -1이면 sink 미소비(준비중).
+    long endOffset,    // 토픽 end offset(% 계산용). -1이면 토픽/조회 불가.
+    boolean sinkFailed // sink 커넥터/task FAILED 여부.
 ) {
     /** CDC(direct) 응답 생성. */
-    public static SyncStatusResponse of(long sourceRows, long sinkRows, long delta, Instant checkedAt) {
-        return new SyncStatusResponse(sourceRows, sinkRows, delta, checkedAt, true);
+    public static SyncStatusResponse of(long sourceRows, long sinkRows, long delta, Instant checkedAt,
+                                        long lag, long endOffset, boolean sinkFailed) {
+        return new SyncStatusResponse(sourceRows, sinkRows, delta, checkedAt, true, lag, endOffset, sinkFailed);
     }
 
     /** EDA(fan-out) — sync 개념 없음. */
     public static SyncStatusResponse notApplicable() {
-        return new SyncStatusResponse(-1, -1, -1, Instant.now(), false);
+        return new SyncStatusResponse(-1, -1, -1, Instant.now(), false, -1, -1, false);
     }
 }
