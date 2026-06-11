@@ -18,6 +18,7 @@ import {
   type KafkaMessageRecord,
   type MetricPoint,
   type PipelineMetricsResponse,
+  type SchemaColumn,
   type SyncStatusResponse,
   type TableMappingResponse,
   type ThroughputPoint,
@@ -1325,8 +1326,13 @@ function Row({ label, value, onCopy }: { label: string; value: string; onCopy: (
 function MappingTab({ edge }: { edge: Edge }) {
   const app = useApp()
   const wsId = app.currentProject?.id
+  // 커넥터/토픽 헤더(#304 실연결) + 컬럼 단위 매핑(원복, #508). EDA(fan-out)는 sink 컬럼이 없다.
   const [mapping, setMapping] = useState<TableMappingResponse | null>(null)
+  const [cols, setCols] = useState<SchemaColumn[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [colError, setColError] = useState(false)
+
+  const isDirect = edge.pattern === 'direct'
 
   useEffect(() => {
     if (!wsId) return
@@ -1342,7 +1348,28 @@ function MappingTab({ edge }: { edge: Edge }) {
     return () => { cancelled = true }
   }, [wsId, edge.id])
 
+  // 컬럼 정보는 source DB 실 스키마에서(추가 백엔드 없이 databaseSchema 재사용).
+  useEffect(() => {
+    if (!wsId) return
+    let cancelled = false
+    setCols(null)
+    setColError(false)
+    api
+      .databaseSchema(wsId, edge.source)
+      .then((res) => {
+        if (cancelled) return
+        const t = res.tables.find(
+          (tb) => tb.name === edge.table?.name && (!edge.table?.schema || tb.schema === edge.table?.schema),
+        )
+        setCols(t?.columns ?? [])
+      })
+      .catch(() => { if (!cancelled) setColError(true) })
+    return () => { cancelled = true }
+  }, [wsId, edge.source, edge.table?.name, edge.table?.schema])
+
   const titleTable = edge.table ? `${edge.table.schema}.${edge.table.name}` : 'pipeline'
+  const topicName = mapping?.mappings?.[0]?.kafkaTopic || edge.topic || '—'
+  const sinkTable = mapping?.mappings?.[0]?.sinkTable || edge.table?.name || '—'
 
   return (
     <Panel title={`Table mapping · ${titleTable}`}>
@@ -1354,33 +1381,57 @@ function MappingTab({ edge }: { edge: Edge }) {
         <div className="px-4 py-10 text-center text-[13px] text-gray-400">불러오는 중…</div>
       ) : (
         <>
-          <div className="grid gap-2 border-b border-gray-100 px-4 py-3 text-[12px] sm:grid-cols-2">
+          {/* 커넥터/토픽 헤더(실데이터) */}
+          <div className="grid gap-2 border-b border-gray-100 px-4 py-3 text-[12px] sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <span className="text-gray-400">Source connector</span>
               <div className="mt-0.5 font-mono text-gray-700">{mapping.sourceConnector || '—'}</div>
             </div>
             <div>
+              <span className="text-gray-400">Kafka topic</span>
+              <div className="mt-0.5 truncate font-mono text-gray-600" title={topicName}>{topicName}</div>
+            </div>
+            <div>
               <span className="text-gray-400">Sink connector</span>
-              <div className="mt-0.5 font-mono text-gray-700">{mapping.sinkConnector || '—'}</div>
+              <div className="mt-0.5 font-mono text-gray-700">{isDirect ? (mapping.sinkConnector || '—') : '— (fan-out)'}</div>
+            </div>
+            <div>
+              <span className="text-gray-400">Sink table</span>
+              <div className="mt-0.5 font-mono text-gray-500">{isDirect ? sinkTable : '—'}</div>
             </div>
           </div>
-          {mapping.mappings.length === 0 ? (
-            <div className="px-4 py-10 text-center text-[13px] text-gray-400">테이블 매핑이 없습니다.</div>
+
+          {/* 컬럼 단위 매핑(원복) — 어떤 컬럼이 동기화되는지 */}
+          {colError ? (
+            <div className="px-4 py-10 text-center text-[13px] text-gray-400">스키마를 불러오지 못했습니다</div>
+          ) : cols === null ? (
+            <div className="px-4 py-10 text-center text-[13px] text-gray-400">컬럼 정보를 불러오는 중…</div>
+          ) : cols.length === 0 ? (
+            <div className="px-4 py-10 text-center text-[13px] text-gray-400">컬럼 정보를 찾을 수 없습니다</div>
           ) : (
             <table className="w-full text-[12.5px]">
               <thead>
                 <tr className="border-b border-gray-100 text-left text-[11px] uppercase tracking-wide text-gray-400">
-                  <th className="px-4 py-2 font-semibold">Source table</th>
-                  <th className="px-4 py-2 font-semibold">Kafka topic</th>
-                  <th className="px-4 py-2 font-semibold">Sink table</th>
+                  <th className="px-4 py-2 font-semibold">Source column</th>
+                  <th className="px-4 py-2 font-semibold">{isDirect ? 'Sink column' : 'Kafka field'}</th>
+                  <th className="px-4 py-2 font-semibold">Type</th>
+                  <th className="px-4 py-2 font-semibold">Flags</th>
                 </tr>
               </thead>
               <tbody>
-                {mapping.mappings.map((m) => (
-                  <tr key={`${m.sourceTable}-${m.kafkaTopic}-${m.sinkTable}`} className="border-b border-gray-50">
-                    <td className="px-4 py-2.5 font-mono font-medium text-gray-800">{m.sourceTable || '—'}</td>
-                    <td className="px-4 py-2.5 font-mono text-gray-600">{m.kafkaTopic || '—'}</td>
-                    <td className="px-4 py-2.5 font-mono text-gray-500">{m.sinkTable || '—'}</td>
+                {cols.map((c) => (
+                  <tr key={c.name} className="border-b border-gray-50">
+                    <td className="px-4 py-2.5 font-mono font-medium text-gray-800">{c.name}</td>
+                    {/* CDC(direct)는 동일 컬럼명으로 복제 → 대상 컬럼명 동일. EDA는 토픽 필드명. */}
+                    <td className="px-4 py-2.5 font-mono text-gray-600">{c.name}</td>
+                    <td className="px-4 py-2.5 font-mono text-gray-500">{c.type}</td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex gap-1.5">
+                        {c.primaryKey && <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">PK</span>}
+                        {!c.nullable && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">NOT NULL</span>}
+                        {c.indexed && <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">INDEX</span>}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
