@@ -70,15 +70,19 @@ public class InternalOpsController {
         String requestId = AgentHeaders.requestId(request);
         var catalog = java.util.List.of(
                 tool("get_consumer_lag",       "GET",  "/internal/ops/projects/{projectId}/kafka/consumer-groups/{consumerGroup}/lag"),
+                tool("get_consumer_groups",    "GET",  "/internal/ops/projects/{projectId}/kafka/consumer-groups"),
                 tool("search_logs",            "POST", "/internal/ops/projects/{projectId}/observability/logs/search"),
                 tool("query_metrics",          "GET",  "/internal/ops/projects/{projectId}/observability/metrics"),
                 tool("query_traces",           "GET",  "/internal/ops/projects/{projectId}/connectors/{connectorName}/traces"),
                 tool("list_alerts",            "GET",  "/internal/ops/projects/{projectId}/observability/alerts"),
+                tool("analyze_event_log",      "GET",  "/internal/ops/projects/{projectId}/observability/events/summary"),
                 tool("get_incident_summary",   "GET",  "/internal/ops/projects/{projectId}/incidents/{incidentId}/summary"),
                 tool("list_project_pipelines", "GET",  "/internal/ops/projects/{projectId}/pipelines"),
+                tool("list_pipelines",         "GET",  "/internal/ops/projects/{projectId}/pipelines/status"),
                 tool("get_recent_changes",     "GET",  "/internal/ops/projects/{projectId}/pipelines/changes"),
                 tool("get_pipeline_topology",  "GET",  "/internal/ops/projects/{projectId}/pipelines/{pipelineId}/topology"),
                 tool("get_connector_status",   "GET",  "/internal/ops/projects/{projectId}/kafka/connectors/{connectorName}/status"),
+                tool("list_connectors",        "GET",  "/internal/ops/projects/{projectId}/kafka/connectors/status"),
                 // mutation tool (#395) — InternalOpsMutationController(#308) 실구현과 정합.
                 tool("restart_connector",      "POST", "/internal/ops/projects/{projectId}/connectors/{connectorName}/restart"),
                 tool("pause_connector",        "POST", "/internal/ops/projects/{projectId}/connectors/{connectorName}/pause"),

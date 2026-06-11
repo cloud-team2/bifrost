@@ -9,6 +9,7 @@ import {
   api,
   getToken,
   setToken,
+  type ActionRunCandidateInput,
   type AuthTokens,
   type EventResponse,
   type IncidentResponse,
@@ -46,8 +47,9 @@ export interface AgentTask {
   incidentTitle: string
   label: string
   detail: string
-  risk: 'low' | 'medium' | 'high'
+  risk: ActionRunCandidateInput['risk']
   estimatedTime: string
+  actionCandidate: ActionRunCandidateInput
 }
 
 /** A navigable position, captured so browser back/forward can restore it. */
@@ -66,6 +68,8 @@ interface Store {
   currentProject: Project | null
   view: View
   selectedPipelineId: string | null
+  selectedTraceId: string | null
+  pipelineTab: string | null
   selectedDatabaseId: string | null
   opSelectedIncidentId: string | null
   login: (email: string, password: string) => Promise<boolean>
@@ -74,6 +78,7 @@ interface Store {
   setProject: (p: Project | null) => void
   setView: (v: View) => void
   openPipeline: (id: string) => void
+  openPipelineTrace: (pipelineId: string, traceId: string) => void
   openDatabase: (id: string) => void
   openIncident: (id: string) => void
   clearOpSelectedIncident: () => void
@@ -153,6 +158,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const monitoringLoadIdRef = useRef(0)
   const [view, setViewRaw] = useState<View>('pipelines')
   const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(null)
+  const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null)
+  const [pipelineTab, setPipelineTab] = useState<string | null>(null)
   const [selectedDatabaseId, setSelectedDatabaseId] = useState<string | null>(null)
   const [opSelectedIncidentId, setOpSelectedIncidentId] = useState<string | null>(null)
   const [aiPanelOpen, setAiPanelOpen] = useState(false)
@@ -210,6 +217,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSelectedPipelineId(s.selectedPipelineId)
     setSelectedDatabaseId(s.selectedDatabaseId)
     setOpSelectedIncidentId(s.opSelectedIncidentId)
+    setSelectedTraceId(null)
+    setPipelineTab(null)
   }
   const applySnapshotRef = useRef(applySnapshot)
   applySnapshotRef.current = applySnapshot
@@ -376,6 +385,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     currentProject,
     view,
     selectedPipelineId,
+    selectedTraceId,
+    pipelineTab,
     selectedDatabaseId,
     opSelectedIncidentId,
 
@@ -408,6 +419,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       clearMonitoringData()
       setSelectedPipelineId(null)
       setSelectedDatabaseId(null)
+      setSelectedTraceId(null)
+      setPipelineTab(null)
       setAiPanelOpen(false)
       setAgentRunStateRaw(emptyAgentRunState())
     },
@@ -421,6 +434,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setSelectedPipelineId(null)
         setSelectedDatabaseId(null)
         setOpSelectedIncidentId(null)
+        setSelectedTraceId(null)
+        setPipelineTab(null)
         setAgentRunStateRaw(emptyAgentRunState())
         loadProjectData(p.id)
       }
@@ -441,8 +456,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     openPipeline(id) {
       setSelectedPipelineId(id)
+      setSelectedTraceId(null)
+      setPipelineTab(null)
       setViewRaw('pipeline-detail')
       pushNav(snapshot({ view: 'pipeline-detail', selectedPipelineId: id }))
+    },
+    openPipelineTrace(pipelineId, traceId) {
+      setSelectedPipelineId(pipelineId)
+      setSelectedTraceId(traceId)
+      setPipelineTab('Tracing')
+      setViewRaw('pipeline-detail')
+      pushNav(snapshot({ view: 'pipeline-detail', selectedPipelineId: pipelineId }))
     },
     openDatabase(id) {
       setSelectedDatabaseId(id)
@@ -620,8 +644,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
 
     runIncidentAction() {
-      // IncidentResponse에는 실행 이력/상태 변경 API가 없다. 실제 백엔드 업데이트 전까지
-      // 클라이언트가 mock-only 필드를 합성하지 않는다.
+      if (currentProject) {
+        void loadMonitoringData(currentProject.id)
+      }
     },
 
     async reloadMonitoring() {

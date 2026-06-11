@@ -5,6 +5,8 @@ RunBudgetExceeded, which the Supervisor catches and converts to a forced Report.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from app.schemas.state import AgentState
 from app.supervisor.retry_policy import RetryPolicy
 
@@ -17,9 +19,54 @@ class RunBudgetExceeded(Exception):
         self.reason = reason
 
 
+def _now(now: datetime | None) -> datetime:
+    return now or datetime.now(timezone.utc)
+
+
 def check_step_budget(state: AgentState, max_steps: int) -> None:
     if state.run.step_count >= max_steps:
         raise RunBudgetExceeded("step_budget")
+
+
+def check_wall_clock_budget(
+    state: AgentState, max_seconds: float, *, now: datetime | None = None
+) -> None:
+    """누적 실행 시간이 wall-clock 예산을 넘었으면 종료한다(#481).
+
+    ``started_at``이 없으면(아직 run이 시작 시각을 기록하지 않은 상태) 검사하지
+    않는다. ``max_seconds`` <= 0이면 guard 비활성.
+    """
+    started = state.run.started_at
+    if started is None or max_seconds <= 0:
+        return
+    if (_now(now) - started).total_seconds() >= max_seconds:
+        raise RunBudgetExceeded("wall_clock_timeout")
+
+
+def check_stage_timeout(
+    state: AgentState, max_seconds: float, *, now: datetime | None = None
+) -> None:
+    """단일 stage가 stage 예산을 넘겨 머물렀으면 종료한다(#481).
+
+    ``stage_started_at``은 advance가 새 stage로 전이할 때 갱신된다. 다음 advance
+    진입 시점에 직전 stage의 체류 시간을 검사하므로, 멈춘(혹은 지나치게 느린)
+    stage가 run을 무한히 붙잡지 못한다.
+    """
+    started = state.run.stage_started_at
+    if started is None or max_seconds <= 0:
+        return
+    if (_now(now) - started).total_seconds() >= max_seconds:
+        raise RunBudgetExceeded("stage_timeout")
+
+
+def check_llm_call_budget(state: AgentState, max_calls: int) -> None:
+    if max_calls > 0 and state.run.llm_call_count >= max_calls:
+        raise RunBudgetExceeded("llm_call_budget")
+
+
+def check_token_budget(state: AgentState, max_tokens: int) -> None:
+    if max_tokens > 0 and state.run.token_count >= max_tokens:
+        raise RunBudgetExceeded("token_budget")
 
 
 def check_revision_budget(state: AgentState, target: str, max_revisions: int) -> None:
@@ -49,6 +96,12 @@ def check_revise_action_loops(state: AgentState, max_revise_action_loops: int) -
 
 def check_all_global(state: AgentState, policy: RetryPolicy) -> None:
     check_step_budget(state, policy.max_steps)
+    # #481: step/loop 카운터에 더해 시간·자원 예산도 매 stage 진입마다 집행한다.
+    # 어느 하나라도 초과하면 RunBudgetExceeded → Supervisor가 run을 안전 종료한다.
+    check_wall_clock_budget(state, policy.wall_clock_timeout_seconds)
+    check_stage_timeout(state, policy.stage_timeout_seconds)
+    check_llm_call_budget(state, policy.max_llm_calls)
+    check_token_budget(state, policy.max_tokens)
     # NOTE(#453, #476): fail_loops/gap_loops/scope_loops/revise_action_loops는 매
     # stage 진입마다 검사하지 않는다. loopback(§9 Verifier, §3 Classifier
     # scope_unclear·Policy Guard revise_action)은 책임 Agent로 되돌아간 뒤 다시

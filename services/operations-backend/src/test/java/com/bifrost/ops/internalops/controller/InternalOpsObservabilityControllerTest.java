@@ -1,6 +1,9 @@
 package com.bifrost.ops.internalops.controller;
 
 import com.bifrost.ops.adapters.logstore.LokiClient;
+import com.bifrost.ops.event.EventLevel;
+import com.bifrost.ops.event.persistence.entity.EventEntity;
+import com.bifrost.ops.event.persistence.repository.EventRepository;
 import com.bifrost.ops.incident.persistence.entity.IncidentEntity;
 import com.bifrost.ops.incident.persistence.repository.IncidentRepository;
 import com.bifrost.ops.internalops.dto.AlertListResult;
@@ -9,6 +12,7 @@ import com.bifrost.ops.internalops.dto.ConsumerLagResult;
 import com.bifrost.ops.internalops.dto.MetricsResult;
 import com.bifrost.ops.internalops.dto.OpsEnvelope;
 import com.bifrost.ops.monitoring.query.ObservabilityMetricsQuery;
+import com.bifrost.ops.pipeline.persistence.entity.PipelineEntity;
 import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
 import com.bifrost.ops.provisioning.dto.ConnectorKind;
 import com.bifrost.ops.provisioning.persistence.entity.ConnectorEntity;
@@ -24,6 +28,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
@@ -53,6 +58,7 @@ class InternalOpsObservabilityControllerTest {
     private final PipelineRepository pipelineRepository = mock(PipelineRepository.class);
     private final ConnectorRepository connectorRepository = mock(ConnectorRepository.class);
     private final IncidentRepository incidentRepository = mock(IncidentRepository.class);
+    private final EventRepository eventRepository = mock(EventRepository.class);
     private final ObservabilityMetricsQuery metricsQuery = mock(ObservabilityMetricsQuery.class);
     private final com.bifrost.ops.monitoring.query.TraceQuery traceQuery =
             mock(com.bifrost.ops.monitoring.query.TraceQuery.class);
@@ -63,6 +69,7 @@ class InternalOpsObservabilityControllerTest {
             pipelineRepository,
             connectorRepository,
             incidentRepository,
+            eventRepository,
             metricsQuery,
             traceQuery,
             "http://connect.invalid");
@@ -158,6 +165,60 @@ class InternalOpsObservabilityControllerTest {
     }
 
     @Test
+    void consumerGroupsListsProjectConnectorsAndDoesNotFakeLagWhenKafkaUnavailable() throws Exception {
+        UUID tenantId = UUID.randomUUID();
+        UUID pipelineId = UUID.randomUUID();
+        when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId, "proj-001")));
+        when(pipelineRepository.findByTenantIdOrderByCreatedAtDesc(tenantId))
+                .thenReturn(List.of(pipeline(pipelineId, tenantId, "orders-cdc")));
+        when(connectorRepository.findByTenantIdOrderByCrName(tenantId))
+                .thenReturn(List.of(
+                        connector(pipelineId, "orders-source", ConnectorKind.SOURCE),
+                        connector(pipelineId, "orders-sink", ConnectorKind.SINK)));
+
+        mockMvc().perform(get("/internal/ops/projects/{projectId}/kafka/consumer-groups", "proj-001")
+                        .header("X-Request-Id", "req-cg-001"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.operation").value("get_consumer_groups"))
+                .andExpect(jsonPath("$.result.consumerGroups[0].group").value("connect-orders-sink"))
+                .andExpect(jsonPath("$.result.consumerGroups[0].owner").value("orders-cdc"))
+                .andExpect(jsonPath("$.result.consumerGroups[0].state").value("UNKNOWN"))
+                .andExpect(jsonPath("$.result.consumerGroups[0].lag").doesNotExist())
+                .andExpect(jsonPath("$.result.consumerGroups[0].error").isNotEmpty())
+                .andExpect(jsonPath("$.result.consumerGroups[1]").doesNotExist());
+    }
+
+    @Test
+    void eventIncidentSummaryUsesIncidentAndEventRowsWithWindowAndWarnPlus() throws Exception {
+        UUID tenantId = UUID.randomUUID();
+        IncidentEntity critical = incident("sink failed", "ERROR", "OPEN", "CONNECTOR");
+        critical.setTenantId(tenantId);
+        critical.setOpenedAt(Instant.now());
+        EventEntity warning = event(tenantId, EventLevel.WARN, "CONSUMER_LAG_WARNING", "consumer lag 경고");
+
+        when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId, "proj-001")));
+        when(incidentRepository.findByTenantIdAndStatusAndSeverityInAndOpenedAtGreaterThanEqualOrderByOpenedAtDesc(
+                eq(tenantId), eq("OPEN"), eq(List.of("WARN", "ERROR", "CRITICAL")), any(Instant.class)))
+                .thenReturn(List.of(critical));
+        when(eventRepository.findByTenantIdAndLevelInAndCreatedAtGreaterThanEqualOrderByCreatedAtDesc(
+                eq(tenantId), eq(List.of(EventLevel.WARN, EventLevel.ERROR)), any(Instant.class), any(Pageable.class)))
+                .thenReturn(List.of(warning));
+
+        mockMvc().perform(get("/internal/ops/projects/{projectId}/observability/events/summary", "proj-001")
+                        .queryParam("window", "2h")
+                        .queryParam("level", "warn+")
+                        .header("X-Request-Id", "req-events-001"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.operation").value("analyze_event_log"))
+                .andExpect(jsonPath("$.result.window").value("2h"))
+                .andExpect(jsonPath("$.result.level").value("warn+"))
+                .andExpect(jsonPath("$.result.openIncidents").value(1))
+                .andExpect(jsonPath("$.result.criticalIncidents").value(1))
+                .andExpect(jsonPath("$.result.critical[0].title").value("sink failed"))
+                .andExpect(jsonPath("$.result.warnings[0].type").value("CONSUMER_LAG_WARNING"));
+    }
+
+    @Test
     void listAlertsReturnsFastApiCompatibleErrorEnvelopeForUnknownProject() {
         String projectId = "missing-project";
         when(workspaceRepository.findByNamespace(projectId)).thenReturn(Optional.empty());
@@ -216,6 +277,25 @@ class InternalOpsObservabilityControllerTest {
         assertThat(response.getBody().ok()).isFalse();
         assertThat(response.getBody().error().code()).isEqualTo("RESOURCE_NOT_OWNED_BY_PROJECT");
         verifyNoInteractions(adminClient);
+    }
+
+    @Test
+    void consumerLagReturnsErrorEnvelopeWhenKafkaLagReadFails() {
+        UUID tenantId = UUID.randomUUID();
+        UUID pipelineId = UUID.randomUUID();
+        when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId, "proj-001")));
+        when(connectorRepository.findByCrName("orders-sink")).thenReturn(Optional.of(connector(pipelineId, "orders-sink")));
+        when(pipelineRepository.findByIdAndTenantId(pipelineId, tenantId))
+                .thenReturn(Optional.of(pipeline(pipelineId, tenantId, "orders-cdc")));
+
+        ResponseEntity<OpsEnvelope<ConsumerLagResult>> response =
+                controller.consumerLag("proj-001", "connect-orders-sink", new MockHttpServletRequest());
+
+        assertThat(response.getStatusCode().value()).isEqualTo(503);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().ok()).isFalse();
+        assertThat(response.getBody().result()).isNull();
+        assertThat(response.getBody().error().code()).isEqualTo("UPSTREAM_UNAVAILABLE");
     }
 
     @Test
@@ -414,13 +494,36 @@ class InternalOpsObservabilityControllerTest {
     }
 
     private static ConnectorEntity connector(UUID pipelineId, String crName) {
+        return connector(pipelineId, crName, ConnectorKind.SINK);
+    }
+
+    private static ConnectorEntity connector(UUID pipelineId, String crName, ConnectorKind kind) {
         ConnectorEntity connector = new ConnectorEntity();
         connector.setId(UUID.randomUUID());
         connector.setPipelineId(pipelineId);
         connector.setCrName(crName);
-        connector.setKind(ConnectorKind.SINK);
+        connector.setKind(kind);
         connector.setConnectorClass("io.confluent.connect.jdbc.JdbcSinkConnector");
         connector.setTasksMax(1);
         return connector;
+    }
+
+    private static PipelineEntity pipeline(UUID pipelineId, UUID tenantId, String name) {
+        PipelineEntity pipeline = new PipelineEntity();
+        pipeline.setId(pipelineId);
+        pipeline.setTenantId(tenantId);
+        pipeline.setName(name);
+        return pipeline;
+    }
+
+    private static EventEntity event(UUID tenantId, EventLevel level, String type, String message) {
+        EventEntity event = new EventEntity();
+        event.setId(UUID.randomUUID());
+        event.setTenantId(tenantId);
+        event.setLevel(level);
+        event.setType(type);
+        event.setMessage(message);
+        ReflectionTestUtils.setField(event, "createdAt", Instant.now());
+        return event;
     }
 }

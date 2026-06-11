@@ -1,12 +1,14 @@
 """action_execution 트랙 통합 테스트."""
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api import routes_approvals
 from app.main import app
 from app.persistence.approval_link_repository import get_approval_repo
 from app.persistence.change_ticket_repository import (
@@ -93,7 +95,8 @@ def _change_policy_guard_out() -> PolicyGuardOutput:
                 decision=PolicyDecisionType.REQUIRE_CHANGE_MANAGEMENT,
                 status=ActionStatus.PENDING_APPROVAL,
                 reason="중위험 조치 — 변경관리 티켓 필요",
-                tool_name="restart_connector",
+                tool_name="pause_connector",
+                tool_params={"connector_name": "orders-source-connector"},
             )
         ]
     )
@@ -257,7 +260,7 @@ async def test_run_workflow_passes_verified_change_action_to_executor():
     assert candidate.action_id == "act_change_runner"
     assert candidate.action_type == ActionType.RUNTIME_TOOL
     assert candidate.risk == RiskLevel.MEDIUM
-    assert candidate.tool_name == "restart_connector"
+    assert candidate.tool_name == "pause_connector"
     assert candidate.status == ActionStatus.READY
 
 
@@ -283,6 +286,40 @@ def test_approval_decision_api_approves():
     assert repo.get(link.approval_id).status == "approved"
 
 
+def test_approval_decision_api_approved_resumes_workflow(monkeypatch):
+    repo = get_approval_repo()
+    link = repo.create("run_api_resume", "act_api_resume", {})
+    run = SimpleNamespace(
+        project_id="11111111-1111-1111-1111-111111111111",
+        incident_id="22222222-2222-2222-2222-222222222222",
+        remediation_requested=True,
+    )
+    run_repo = SimpleNamespace(
+        get=AsyncMock(return_value=run),
+        update_status=AsyncMock(),
+    )
+    workflow_calls: list[dict] = []
+
+    async def fake_run_workflow(**kwargs):
+        workflow_calls.append(kwargs)
+
+    monkeypatch.setattr(routes_approvals, "get_run_repo", lambda: run_repo)
+    monkeypatch.setattr(routes_approvals, "run_workflow", fake_run_workflow)
+    monkeypatch.setattr(routes_approvals, "get_event_bus", lambda: object())
+    monkeypatch.setattr(routes_approvals, "get_tool_registry", lambda: object())
+
+    resp = client.post(
+        f"/api/v1/approvals/{link.approval_id}/decision",
+        json={"decision": "approved", "comment": "operator approved"},
+    )
+
+    assert resp.status_code == 200
+    run_repo.update_status.assert_awaited_once_with("run_api_resume", "running", "approval_gate")
+    assert workflow_calls[0]["requested_mode"] == "approval_decision"
+    assert workflow_calls[0]["requested_incident_id"] == "22222222-2222-2222-2222-222222222222"
+    assert workflow_calls[0]["requested_remediation_requested"] is True
+
+
 def test_approval_decision_api_rejects():
     repo = get_approval_repo()
     link = repo.create("run_api_rejected", "act_api_rejected", {})
@@ -301,6 +338,45 @@ def test_approval_decision_api_rejects():
         "error": None,
     }
     assert repo.get(link.approval_id).status == "rejected"
+
+
+def test_approval_decision_api_rejected_completes_without_resuming(monkeypatch):
+    repo = get_approval_repo()
+    link = repo.create("run_api_reject_complete", "act_api_reject_complete", {})
+    run_repo = SimpleNamespace(
+        get=AsyncMock(return_value=SimpleNamespace()),
+        update_status=AsyncMock(),
+    )
+    append_event = AsyncMock()
+    workflow = AsyncMock()
+    bus = SimpleNamespace(
+        publish=AsyncMock(),
+        close_run=AsyncMock(),
+    )
+
+    monkeypatch.setattr(routes_approvals, "get_run_repo", lambda: run_repo)
+    monkeypatch.setattr(routes_approvals, "append_event", append_event)
+    monkeypatch.setattr(routes_approvals, "get_event_repo", lambda: object())
+    monkeypatch.setattr(routes_approvals, "get_event_bus", lambda: bus)
+    monkeypatch.setattr(routes_approvals, "run_workflow", workflow)
+
+    resp = client.post(
+        f"/api/v1/approvals/{link.approval_id}/decision",
+        json={"decision": "rejected"},
+    )
+
+    assert resp.status_code == 200
+    workflow.assert_not_awaited()
+    run_repo.update_status.assert_awaited_once_with(
+        "run_api_reject_complete", "failed", "approval_gate"
+    )
+    published_event = bus.publish.await_args.args[1]
+    assert published_event.payload == {
+        "error": "approval_rejected",
+        "action_id": "act_api_reject_complete",
+    }
+    bus.close_run.assert_awaited_once_with("run_api_reject_complete")
+    append_event.assert_awaited_once()
 
 
 def test_approval_decision_api_rejects_unknown_decision():

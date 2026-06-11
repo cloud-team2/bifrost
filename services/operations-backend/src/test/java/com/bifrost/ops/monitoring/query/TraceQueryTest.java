@@ -80,4 +80,39 @@ class TraceQueryTest {
         assertThat(r.traceId()).isNull();
         assertThat(r.note()).contains("실패");
     }
+
+    @Test
+    void queryByIdReturnsTraceSummary() {
+        TempoClient client = mock(TempoClient.class);
+        TraceSpan span = new TraceSpan("sink-put", "platform-connect", 4L, "error", "type mismatch");
+        when(client.traceById("abc123"))
+                .thenReturn(Optional.of(new TempoTrace("abc123", 9L, true, List.of(span))));
+        TraceQuery q = new TraceQuery(true, client);
+
+        TraceSummaryResult r = q.queryById("p1-source", "abc123");
+
+        assertThat(r.traceId()).isEqualTo("abc123");
+        assertThat(r.pipelineId()).isEqualTo("p1");
+        assertThat(r.status()).isEqualTo("error");
+        assertThat(r.durationMs()).isEqualTo(9L);
+        assertThat(r.spans()).singleElement().extracting(TraceSpan::name).isEqualTo("sink-put");
+    }
+
+    @Test
+    void queryByIdDisabledReturnsStub() {
+        TraceQuery q = new TraceQuery(false, mock(TempoClient.class));
+        TraceSummaryResult r = q.queryById("p1-source", "abc123");
+        assertThat(r.traceId()).isNull();
+        assertThat(r.note()).contains("비활성화");
+    }
+
+    @Test
+    void queryByIdMissingReturnsStub() {
+        TempoClient client = mock(TempoClient.class);
+        when(client.traceById("missing")).thenReturn(Optional.empty());
+        TraceQuery q = new TraceQuery(true, client);
+        TraceSummaryResult r = q.queryById("p1-source", "missing");
+        assertThat(r.traceId()).isNull();
+        assertThat(r.note()).contains("trace 없음");
+    }
 }

@@ -234,6 +234,16 @@ export interface KafkaMessageRecord {
   before: Record<string, unknown> | null
   after: Record<string, unknown> | null
 }
+/** 메시지 브라우저 페이지(#509). 단일 파티션 오프셋 윈도우 + 페이징 메타. */
+export interface MessagePageResponse {
+  records: KafkaMessageRecord[]
+  partition: number
+  startOffset: number
+  beginOffset: number
+  endOffset: number
+  hasOlder: boolean
+  hasNewer: boolean
+}
 /** 파이프라인 메트릭(#126). */
 export interface PipelineMetricsResponse {
   produceRate: number
@@ -343,6 +353,22 @@ export interface EventResponse {
   createdAt: string
 }
 
+export interface TraceSpanResponse {
+  name: string
+  service: string
+  durationMs: number
+  status: string          // 'ok' | 'error'
+  error: string | null
+}
+export interface TraceSummaryResponse {
+  traceId: string | null
+  pipelineId: string | null
+  status: string          // 'ok' | 'error' | 'unknown'
+  durationMs: number
+  spans: TraceSpanResponse[]
+  note: string | null
+}
+
 /** incident 목록/상세(S5). operations-backend IncidentResponse record와 동일 필드. */
 export interface IncidentResponse {
   id: string
@@ -433,6 +459,8 @@ export interface KafkaPrincipalCreateRequest {
 /* ── Agent Run API(#252) ───────────────────────────────────────────── */
 export type AgentRunMode = 'simple_query' | 'incident_analysis' | 'action_execution' | 'approval_decision'
 export type AgentRunStatus = 'running' | 'waiting_for_approval' | 'completed' | 'failed' | 'cancelled'
+export type ActionRunRisk = 'read_only' | 'low' | 'medium' | 'high' | 'forbidden'
+export type ActionRunType = 'runtime_tool' | 'workflow_action' | 'composite_action' | 'notification' | 'escalation'
 export type AgentStreamingEventType =
   | 'run_started'
   | 'agent_started'
@@ -459,6 +487,20 @@ export interface AgentRunCreateInput {
   incident_id?: string | null
   remediation_requested?: boolean
   stream?: boolean
+  action_candidate?: ActionRunCandidateInput | null
+}
+export interface ActionRunCandidateInput {
+  action_id: string
+  action_type: ActionRunType
+  action_name: string
+  root_cause_id?: string | null
+  risk: ActionRunRisk
+  reason: string
+  expected_effect?: string | null
+  rollback_plan?: string | null
+  estimated_duration?: string | null
+  tool_name?: string | null
+  tool_params?: Record<string, unknown> | null
 }
 export interface AgentRunCreateResponse {
   run_id: string
@@ -600,6 +642,10 @@ export const api = {
     request<ConsumerGroupInfo[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/consumer-groups`),
   pipelineMessages: (wsId: string, id: string, limit = 20) =>
     request<KafkaMessageRecord[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/messages?limit=${limit}`),
+  // (#509) 단일 파티션 오프셋 페이징. startOffset 미지정 → 해당 파티션 최신 N.
+  pipelineMessagePage: (wsId: string, id: string, partition: number, startOffset: number | null, limit = 50) =>
+    request<MessagePageResponse>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/messages/page?partition=${partition}`
+      + (startOffset != null ? `&startOffset=${startOffset}` : '') + `&limit=${limit}`),
   pipelineMetrics: (wsId: string, id: string) =>
     request<PipelineMetricsResponse>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/metrics`),
   pipelineThroughput: (wsId: string, id: string, minutes = 30) =>
@@ -610,6 +656,11 @@ export const api = {
     request<MetricPoint[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/metrics/unsynced?minutes=${minutes}`),
   pipelineEventDist: (wsId: string, id: string, minutes = 60) =>
     request<EventDistPoint[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/metrics/event-distribution?minutes=${minutes}`),
+  pipelineTrace: (wsId: string, id: string, traceId?: string) =>
+    request<TraceSummaryResponse>(
+      'GET',
+      `/api/v1/workspaces/${wsId}/pipelines/${id}/trace${traceId ? `?traceId=${encodeURIComponent(traceId)}` : ''}`,
+    ),
   // cluster (#213) — 워크스페이스 공유 인프라, 스코프 없음
   clusterKafka: () => request<KafkaClusterResponse>('GET', `/api/v1/clusters/kafka`),
   clusterThroughput: (minutes = 30) =>

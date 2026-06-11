@@ -47,6 +47,8 @@ export interface Edge {
   consumers?: string[]
   table?: { schema: string; name: string }
   topic: string
+  sourceConnector?: string | null
+  sinkConnector?: string | null
   status: EdgeStatus
   partitions: number
   metrics?: { produce_rate: number; consume_rate: number; lag: number; error_pct: number }

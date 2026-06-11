@@ -32,6 +32,10 @@ def test_registry_exposes_read_tool_allowlist_and_risk():
         "get_pipeline_topology",
         "get_connector_status",
         "get_consumer_lag",
+        "get_consumer_groups",
+        "list_pipelines",
+        "list_connectors",
+        "analyze_event_log",
         "search_logs",
         "get_incident_summary",
     }.issubset(tool_names)
@@ -203,3 +207,74 @@ async def test_network_exception_becomes_failed_tool_result():
     assert result.error is not None
     assert result.error.code == SpringErrorCode.TRANSIENT_ERROR
     assert result.error.retryable is True
+
+
+@pytest.mark.asyncio
+async def test_project_scope_consumer_groups_calls_internal_ops_and_keeps_structured_result():
+    captured_request: httpx.Request | None = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal captured_request
+        captured_request = request
+        return httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "request_id": "req_001",
+                "operation": "get_consumer_groups",
+                "result": {
+                    "consumerGroups": [
+                        {"group": "connect-orders-sink", "state": "STABLE", "lag": 7, "owner": "orders"}
+                    ],
+                    "debugSecret": "do-not-emit",
+                },
+            },
+        )
+
+    registry = ToolClientRegistry(transport=httpx.MockTransport(handler))
+
+    result = await registry.call_tool("get_consumer_groups", {}, _context())
+
+    assert captured_request is not None
+    assert captured_request.method == "GET"
+    assert captured_request.url.path == "/internal/ops/projects/proj_001/kafka/consumer-groups"
+    assert result.status == ToolStatus.SUCCESS
+    assert result.result is not None
+    assert result.result["consumerGroups"][0]["group"] == "connect-orders-sink"
+    assert "debugSecret" not in result.result
+
+
+@pytest.mark.asyncio
+async def test_analyze_event_log_sends_window_and_level_query_params():
+    captured_request: httpx.Request | None = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal captured_request
+        captured_request = request
+        return httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "request_id": "req_001",
+                "operation": "analyze_event_log",
+                "result": {
+                    "window": "2h",
+                    "level": "warn+",
+                    "openIncidents": 0,
+                    "criticalIncidents": 0,
+                    "critical": [],
+                    "warnings": [],
+                },
+            },
+        )
+
+    registry = ToolClientRegistry(transport=httpx.MockTransport(handler))
+
+    result = await registry.call_tool("analyze_event_log", {"window": "2h", "level": "warn+"}, _context())
+
+    assert captured_request is not None
+    assert captured_request.url.path == "/internal/ops/projects/proj_001/observability/events/summary"
+    assert captured_request.url.params["window"] == "2h"
+    assert captured_request.url.params["level"] == "warn+"
+    assert result.status == ToolStatus.SUCCESS
+    assert result.result is not None

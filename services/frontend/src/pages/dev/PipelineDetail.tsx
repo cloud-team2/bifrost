@@ -16,13 +16,17 @@ import {
   type ConsumerGroupInfo,
   type EventDistPoint,
   type KafkaMessageRecord,
+  type MessagePageResponse,
   type MetricPoint,
   type PipelineMetricsResponse,
+  type SchemaColumn,
   type SyncStatusResponse,
   type TableMappingResponse,
   type ThroughputPoint,
   type TopicInfoResponse,
+  type TraceSummaryResponse,
 } from '../../lib/api'
+import { TraceWaterfall } from '../../components/TraceWaterfall'
 import { cn, formatNum } from '../../lib/format'
 
 const tooltipStyle = {
@@ -41,10 +45,17 @@ export function PipelineDetail() {
   // Connector 탭은 EDA/CDC 모두 표시(실제 커넥터는 ConnectorTab이 백엔드에서 조회, #107)
   // (#266) Sync 내용을 Overview로 이동, Topic & Partition은 별도 'Topic' 탭으로 분리.
   const tabs = isEda
-    ? ['Overview', 'Consumers', 'Connector', 'Messages', 'Connection Guide']
-    : ['Overview', 'Topic', 'Connector', 'Messages', 'Table Mapping']
+    ? ['Overview', 'Consumers', 'Connector', 'Messages', 'Connection Guide', 'Tracing']
+    : ['Overview', 'Topic', 'Connector', 'Messages', 'Table Mapping', 'Tracing']
 
   const [tab, setTab] = useState(tabs[0])
+
+  useEffect(() => {
+    if (app.pipelineTab && tabs.includes(app.pipelineTab)) {
+      setTab(app.pipelineTab)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [app.pipelineTab, app.selectedPipelineId])
 
   // (#267) 탭별 에러 위치 표시용 — 커넥터 상태를 폴링해 FAILED/lastError를 감지(복구 시 자동 해제).
   const wsId = app.currentProject?.id
@@ -128,6 +139,7 @@ export function PipelineDetail() {
         {tab === 'Messages'          && <MessagesTab edge={edge} />}
         {tab === 'Connection Guide'  && <GuideTab edge={edge} />}
         {tab === 'Table Mapping'     && <MappingTab edge={edge} />}
+        {tab === 'Tracing'           && <TraceTab edge={edge} />}
       </div>
     </div>
   )
@@ -635,6 +647,53 @@ function ConnectorTab({ edge }: { edge: Edge }) {
   )
 }
 
+/* ---------------------------------------------------------------- Trace tab (#498) */
+
+function TraceTab({ edge }: { edge: Edge }) {
+  const app = useApp()
+  const wsId = app.currentProject?.id
+  const traceId = app.selectedTraceId ?? undefined
+  const [trace, setTrace] = useState<TraceSummaryResponse | null>(null)
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    if (!wsId) return
+    let cancelled = false
+    setTrace(null)
+    setError(false)
+    api.pipelineTrace(wsId, edge.id, traceId)
+      .then((t) => { if (!cancelled) setTrace(t) })
+      .catch(() => { if (!cancelled) setError(true) })
+    return () => { cancelled = true }
+  }, [wsId, edge.id, traceId])
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white py-16">
+        <Icon name="alert" size={24} className="mb-2 text-rose-300" />
+        <p className="text-[13px] text-gray-400">추적 정보를 불러오지 못했습니다</p>
+      </div>
+    )
+  }
+  if (trace === null) {
+    return (
+      <div className="flex items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white py-16 text-[13px] text-gray-400">
+        불러오는 중…
+      </div>
+    )
+  }
+  return (
+    <div className="space-y-4">
+      {edge.pattern === 'fan-out' && (
+        <p className="text-[12px] text-gray-400">
+          EDA는 source→topic 구간까지 표시됩니다. consumer(고객 앱)는 같은 traceId로 고객 관측도구에서 이어볼 수 있습니다.
+        </p>
+      )}
+      <TraceWaterfall trace={trace} />
+    </div>
+  )
+}
+
 /* ---------------------------------------------------------------- Sync tab (CDC) */
 
 function SyncTab({ edge }: { edge: Edge }) {
@@ -671,16 +730,27 @@ function SyncTab({ edge }: { edge: Edge }) {
   const rangeLabel = rangeMin >= 60 ? `최근 ${rangeMin / 60}시간` : `최근 ${rangeMin}분`
 
   const tableName  = edge.table ? `${edge.table.schema}.${edge.table.name}` : '—'
-  // (#501) 완료 판정을 행수 → 컨슈머 lag + sink 커넥터 health 기준으로(UI 요소는 그대로).
-  // lag<0 = sink 미소비(준비중), lag=0 = 따라잡음(완료), lag>0 = 처리중. sinkFailed = 오류.
+  // (#501) 완료 판정 = 컨슈머 lag + sink 커넥터 health + 행수 일치.
+  // lag<0 = sink 미소비(준비중), lag>0 = 처리중, sinkFailed = 오류.
+  // (#501 보완) lag=0이라도 sink DB 행수가 source와 다르면 "완료" 아님 — lag=0은 "Kafka를 다
+  // 소비"했다는 뜻이지 "sink에 다 반영됐다"는 보장이 아니다(에러 드롭·sink 대상 불일치 등).
   const lag        = sync?.lag ?? -1
   const endOffset  = sync?.endOffset ?? -1
   const sinkFailed = sync?.sinkFailed ?? false
+  const sourceRows = sync?.sourceRows ?? -1
+  const sinkRows   = sync?.sinkRows ?? -1
+  const delta      = sync?.delta ?? -1
   const sinkReady  = lag >= 0
-  const isHealthy  = sinkReady && lag === 0 && !sinkFailed
-  // % = caught-up 비율((end−lag)/end). 미소비면 0, 토픽 비어있으면 100.
+  const rowsKnown  = sourceRows >= 0 && sinkRows >= 0       // 양쪽 행수 조회 성공 시에만 비교
+  const rowsMatch  = !rowsKnown || delta === 0              // 행수 모르면 lag만으로 판단
+  const isHealthy  = sinkReady && lag === 0 && !sinkFailed && rowsMatch
+  // lag=0(따라잡음)인데 행수가 안 맞는 경우 — "완료" 대신 불일치로 경고.
+  const rowMismatch = sinkReady && lag === 0 && !sinkFailed && rowsKnown && delta !== 0
+  // % : 처리중이면 caught-up((end−lag)/end), lag=0이지만 행수 불일치면 행수 비율(100 미만),
+  //     완전 일치면 100, 미소비면 0.
   const syncPct    = !sinkReady ? 0
-    : endOffset > 0 ? Math.max(0, Math.min(100, ((endOffset - lag) / endOffset) * 100))
+    : rowMismatch ? (sourceRows > 0 ? Math.min(99, (sinkRows / sourceRows) * 100) : 0)
+    : lag > 0 ? (endOffset > 0 ? Math.max(0, Math.min(99, ((endOffset - lag) / endOffset) * 100)) : 0)
     : 100
   const pctColor   = sinkFailed ? 'text-rose-600' : isHealthy ? 'text-emerald-600' : 'text-amber-600'
   const barColor   = sinkFailed ? 'bg-rose-400'   : isHealthy ? 'bg-emerald-400'  : 'bg-amber-400'
@@ -752,9 +822,11 @@ function SyncTab({ edge }: { edge: Edge }) {
                     ? '동기화 오류'
                     : !sinkReady
                       ? 'sink 준비중'
-                      : isHealthy
-                        ? '동기화 완료'
-                        : `${formatNum(lag)}건 처리중`}
+                      : lag > 0
+                        ? `${formatNum(lag)}건 처리중`
+                        : rowMismatch
+                          ? `행수 불일치 (Δ ${formatNum(delta)})`
+                          : '동기화 완료'}
               </span>
             </div>
 
@@ -906,19 +978,42 @@ function MessagesTab({ edge }: { edge: Edge }) {
   const [selected, setSelected] = useState<number | null>(null)
   const [rawView, setRawView] = useState(false)
 
-  // live 모드: 3초마다 새로고침
+  // (#509) 단일 파티션 선택 시 오프셋 페이징 모드. pageStart=null → 해당 파티션 최신 N.
+  const PAGE_SIZE = 50
+  const pageMode = partition !== 'all'
+  const [page, setPage] = useState<MessagePageResponse | null>(null)
+  const [pageStart, setPageStart] = useState<number | null>(null)
+  const [pageLoading, setPageLoading] = useState(false)
+
+  // 파티션을 바꾸면 페이지를 최신으로 리셋
+  useEffect(() => { setPageStart(null); setSelected(null) }, [partition])
+
+  // 페이지 모드: partition/pageStart 변경마다 결정적으로 해당 윈도우 조회
   useEffect(() => {
-    if (!live || !wsId) return
+    if (!wsId || !pageMode) { setPage(null); return }
+    let cancelled = false
+    setPageLoading(true)
+    api.pipelineMessagePage(wsId, edge.id, partition as number, pageStart, PAGE_SIZE)
+      .then((r) => { if (!cancelled) setPage(r) })
+      .catch(() => { if (!cancelled) setPage(null) })
+      .finally(() => { if (!cancelled) setPageLoading(false) })
+    return () => { cancelled = true }
+  }, [wsId, edge.id, pageMode, partition, pageStart])
+
+  // live 모드: 3초마다 새로고침 (전체 뷰에서만 — 페이징 모드는 결정적 윈도우라 자동갱신 안 함)
+  useEffect(() => {
+    if (!live || !wsId || pageMode) return
     const id = setInterval(() => {
       api.pipelineMessages(wsId, edge.id, 50)
         .then((m) => setMsgs(m))
         .catch(() => {})
     }, 3000)
     return () => clearInterval(id)
-  }, [live, wsId, edge.id])
+  }, [live, wsId, edge.id, pageMode])
 
-  const visible = msgs.filter((m) => {
-    if (partition !== 'all' && m.partition !== partition) return false
+  // 표시 소스: 전체 뷰는 최근 N 머지(msgs), 파티션 뷰는 페이지 레코드
+  const sourceMsgs = pageMode ? (page?.records ?? []) : msgs
+  const visible = sourceMsgs.filter((m) => {
     if (search && !m.key?.toLowerCase().includes(search.toLowerCase()) &&
         !JSON.stringify(m.after ?? m.before ?? '').toLowerCase().includes(search.toLowerCase())) return false
     return true
@@ -932,7 +1027,22 @@ function MessagesTab({ edge }: { edge: Edge }) {
     return [...new Set(msgs.map((m) => m.partition))].sort((a, b) => a - b)
   }, [topicInfo, msgs])
 
-  const selectedMsg = selected !== null ? msgs.find((m) => m.offset === selected) ?? null : null
+  const selectedMsg = selected !== null ? sourceMsgs.find((m) => m.offset === selected) ?? null : null
+
+  // 페이징 핸들러(과거/최신 방향). startOffset 기준으로 한 페이지씩 이동.
+  function goOlder() {
+    if (!page) return
+    setSelected(null)
+    setPageStart(Math.max(page.beginOffset, page.startOffset - PAGE_SIZE))
+  }
+  function goNewer() {
+    if (!page) return
+    setSelected(null)
+    const next = page.startOffset + PAGE_SIZE
+    // 마지막 페이지를 넘어서면 최신(null)로
+    setPageStart(next + PAGE_SIZE >= page.endOffset ? null : next)
+  }
+  function goLatest() { setSelected(null); setPageStart(null) }
 
   function buildRawEnvelope(m: KafkaMessageRecord) {
     return {
@@ -993,20 +1103,26 @@ function MessagesTab({ edge }: { edge: Edge }) {
           Raw envelope
         </button>
 
-        {/* live toggle */}
+        {/* live toggle — 페이징(특정 파티션) 모드에선 결정적 윈도우라 비활성 */}
         <button
           onClick={() => setLive((v) => !v)}
+          disabled={pageMode}
+          title={pageMode ? '파티션 페이징 모드에서는 Live가 비활성화됩니다' : undefined}
           className={cn(
             'flex items-center gap-1.5 rounded border px-2.5 py-1 text-[11.5px] font-medium transition-colors',
-            live ? 'border-rose-300 bg-rose-50 text-rose-600' : 'border-gray-200 text-gray-500 hover:bg-gray-50',
+            pageMode ? 'cursor-not-allowed border-gray-200 text-gray-300'
+              : live ? 'border-rose-300 bg-rose-50 text-rose-600' : 'border-gray-200 text-gray-500 hover:bg-gray-50',
           )}
         >
-          <span className={cn('h-1.5 w-1.5 rounded-full', live ? 'animate-pulse bg-rose-500' : 'bg-gray-300')} />
-          {live ? 'Live' : 'Live'}
+          <span className={cn('h-1.5 w-1.5 rounded-full',
+            pageMode ? 'bg-gray-300' : live ? 'animate-pulse bg-rose-500' : 'bg-gray-300')} />
+          Live
         </button>
 
         <span className="ml-auto text-[11px] text-gray-400">
-          {visible.length}개 메시지
+          {pageMode && page
+            ? `P${partition} · offset ${formatNum(page.startOffset)}–${formatNum(Math.max(page.startOffset, page.startOffset + visible.length - 1))} / end ${formatNum(page.endOffset)}`
+            : `${visible.length}개 메시지`}
         </span>
       </div>
 
@@ -1020,7 +1136,7 @@ function MessagesTab({ edge }: { edge: Edge }) {
         </div>
 
         <div className="divide-y divide-gray-50">
-          {msgLoading ? (
+          {(pageMode ? pageLoading : msgLoading) ? (
             <div className="py-12 text-center text-[13px] text-gray-400">불러오는 중…</div>
           ) : visible.length === 0 ? (
             <div className="py-12 text-center text-[13px] text-gray-400">메시지가 없습니다.</div>
@@ -1090,6 +1206,39 @@ function MessagesTab({ edge }: { edge: Edge }) {
             )
           })}
         </div>
+
+        {/* (#509) 페이징 컨트롤 — 특정 파티션 선택 시. 과거~최신 전체를 페이지 단위로 열람 */}
+        {pageMode && page && (
+          <div className="flex items-center gap-2 border-t border-gray-100 bg-gray-50/60 px-4 py-2">
+            <button
+              onClick={goOlder}
+              disabled={!page.hasOlder || pageLoading}
+              className={cn('flex items-center gap-1 rounded border px-2.5 py-1 text-[11.5px] font-medium transition-colors',
+                page.hasOlder && !pageLoading ? 'border-gray-200 text-gray-600 hover:bg-white' : 'cursor-not-allowed border-gray-100 text-gray-300')}
+            >
+              <Icon name="chevron-left" size={12} />과거
+            </button>
+            <button
+              onClick={goNewer}
+              disabled={!page.hasNewer || pageLoading}
+              className={cn('flex items-center gap-1 rounded border px-2.5 py-1 text-[11.5px] font-medium transition-colors',
+                page.hasNewer && !pageLoading ? 'border-gray-200 text-gray-600 hover:bg-white' : 'cursor-not-allowed border-gray-100 text-gray-300')}
+            >
+              최신<Icon name="chevron-right" size={12} />
+            </button>
+            <button
+              onClick={goLatest}
+              disabled={!page.hasNewer || pageLoading}
+              className={cn('rounded border px-2.5 py-1 text-[11.5px] font-medium transition-colors',
+                page.hasNewer && !pageLoading ? 'border-gray-200 text-gray-600 hover:bg-white' : 'cursor-not-allowed border-gray-100 text-gray-300')}
+            >
+              맨 끝(최신)
+            </button>
+            <span className="ml-auto font-mono text-[11px] text-gray-400">
+              begin {formatNum(page.beginOffset)} · end {formatNum(page.endOffset)}
+            </span>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -1276,8 +1425,13 @@ function Row({ label, value, onCopy }: { label: string; value: string; onCopy: (
 function MappingTab({ edge }: { edge: Edge }) {
   const app = useApp()
   const wsId = app.currentProject?.id
+  // 커넥터/토픽 헤더(#304 실연결) + 컬럼 단위 매핑(원복, #508). EDA(fan-out)는 sink 컬럼이 없다.
   const [mapping, setMapping] = useState<TableMappingResponse | null>(null)
+  const [cols, setCols] = useState<SchemaColumn[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [colError, setColError] = useState(false)
+
+  const isDirect = edge.pattern === 'direct'
 
   useEffect(() => {
     if (!wsId) return
@@ -1293,7 +1447,28 @@ function MappingTab({ edge }: { edge: Edge }) {
     return () => { cancelled = true }
   }, [wsId, edge.id])
 
+  // 컬럼 정보는 source DB 실 스키마에서(추가 백엔드 없이 databaseSchema 재사용).
+  useEffect(() => {
+    if (!wsId) return
+    let cancelled = false
+    setCols(null)
+    setColError(false)
+    api
+      .databaseSchema(wsId, edge.source)
+      .then((res) => {
+        if (cancelled) return
+        const t = res.tables.find(
+          (tb) => tb.name === edge.table?.name && (!edge.table?.schema || tb.schema === edge.table?.schema),
+        )
+        setCols(t?.columns ?? [])
+      })
+      .catch(() => { if (!cancelled) setColError(true) })
+    return () => { cancelled = true }
+  }, [wsId, edge.source, edge.table?.name, edge.table?.schema])
+
   const titleTable = edge.table ? `${edge.table.schema}.${edge.table.name}` : 'pipeline'
+  const topicName = mapping?.mappings?.[0]?.kafkaTopic || edge.topic || '—'
+  const sinkTable = mapping?.mappings?.[0]?.sinkTable || edge.table?.name || '—'
 
   return (
     <Panel title={`Table mapping · ${titleTable}`}>
@@ -1305,33 +1480,57 @@ function MappingTab({ edge }: { edge: Edge }) {
         <div className="px-4 py-10 text-center text-[13px] text-gray-400">불러오는 중…</div>
       ) : (
         <>
-          <div className="grid gap-2 border-b border-gray-100 px-4 py-3 text-[12px] sm:grid-cols-2">
+          {/* 커넥터/토픽 헤더(실데이터) */}
+          <div className="grid gap-2 border-b border-gray-100 px-4 py-3 text-[12px] sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <span className="text-gray-400">Source connector</span>
               <div className="mt-0.5 font-mono text-gray-700">{mapping.sourceConnector || '—'}</div>
             </div>
             <div>
+              <span className="text-gray-400">Kafka topic</span>
+              <div className="mt-0.5 truncate font-mono text-gray-600" title={topicName}>{topicName}</div>
+            </div>
+            <div>
               <span className="text-gray-400">Sink connector</span>
-              <div className="mt-0.5 font-mono text-gray-700">{mapping.sinkConnector || '—'}</div>
+              <div className="mt-0.5 font-mono text-gray-700">{isDirect ? (mapping.sinkConnector || '—') : '— (fan-out)'}</div>
+            </div>
+            <div>
+              <span className="text-gray-400">Sink table</span>
+              <div className="mt-0.5 font-mono text-gray-500">{isDirect ? sinkTable : '—'}</div>
             </div>
           </div>
-          {mapping.mappings.length === 0 ? (
-            <div className="px-4 py-10 text-center text-[13px] text-gray-400">테이블 매핑이 없습니다.</div>
+
+          {/* 컬럼 단위 매핑(원복) — 어떤 컬럼이 동기화되는지 */}
+          {colError ? (
+            <div className="px-4 py-10 text-center text-[13px] text-gray-400">스키마를 불러오지 못했습니다</div>
+          ) : cols === null ? (
+            <div className="px-4 py-10 text-center text-[13px] text-gray-400">컬럼 정보를 불러오는 중…</div>
+          ) : cols.length === 0 ? (
+            <div className="px-4 py-10 text-center text-[13px] text-gray-400">컬럼 정보를 찾을 수 없습니다</div>
           ) : (
             <table className="w-full text-[12.5px]">
               <thead>
                 <tr className="border-b border-gray-100 text-left text-[11px] uppercase tracking-wide text-gray-400">
-                  <th className="px-4 py-2 font-semibold">Source table</th>
-                  <th className="px-4 py-2 font-semibold">Kafka topic</th>
-                  <th className="px-4 py-2 font-semibold">Sink table</th>
+                  <th className="px-4 py-2 font-semibold">Source column</th>
+                  <th className="px-4 py-2 font-semibold">{isDirect ? 'Sink column' : 'Kafka field'}</th>
+                  <th className="px-4 py-2 font-semibold">Type</th>
+                  <th className="px-4 py-2 font-semibold">Flags</th>
                 </tr>
               </thead>
               <tbody>
-                {mapping.mappings.map((m) => (
-                  <tr key={`${m.sourceTable}-${m.kafkaTopic}-${m.sinkTable}`} className="border-b border-gray-50">
-                    <td className="px-4 py-2.5 font-mono font-medium text-gray-800">{m.sourceTable || '—'}</td>
-                    <td className="px-4 py-2.5 font-mono text-gray-600">{m.kafkaTopic || '—'}</td>
-                    <td className="px-4 py-2.5 font-mono text-gray-500">{m.sinkTable || '—'}</td>
+                {cols.map((c) => (
+                  <tr key={c.name} className="border-b border-gray-50">
+                    <td className="px-4 py-2.5 font-mono font-medium text-gray-800">{c.name}</td>
+                    {/* CDC(direct)는 동일 컬럼명으로 복제 → 대상 컬럼명 동일. EDA는 토픽 필드명. */}
+                    <td className="px-4 py-2.5 font-mono text-gray-600">{c.name}</td>
+                    <td className="px-4 py-2.5 font-mono text-gray-500">{c.type}</td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex gap-1.5">
+                        {c.primaryKey && <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">PK</span>}
+                        {!c.nullable && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">NOT NULL</span>}
+                        {c.indexed && <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">INDEX</span>}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>

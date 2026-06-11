@@ -104,6 +104,31 @@ class PostgresRunRepository:
             rows = await conn.fetch(query, *values)
         return [RunRecord(**dict(row)) for row in rows]
 
+    async def list_run_ids_by_incident(
+        self,
+        incident_id: str,
+        *,
+        exclude_run_id: str | None = None,
+        limit: int = 20,
+    ) -> list[str]:
+        """같은 incident_id의 run_id를 최신순으로 반환한다(#479 cross-turn 재사용).
+
+        exclude_run_id는 현재 run을 제외한다. created_at DESC 정렬이므로 호출측은
+        가장 최근 직전 turn부터 조치 후보·policy State를 찾을 수 있다.
+        """
+        async with self._get_pool().acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT run_id FROM agent_run
+                WHERE incident_id = $1
+                  AND ($2::text IS NULL OR run_id <> $2)
+                ORDER BY created_at DESC NULLS LAST, run_id DESC
+                LIMIT $3
+                """,
+                incident_id, exclude_run_id, max(1, min(limit, 100)),
+            )
+        return [str(row["run_id"]) for row in rows]
+
     async def update_status(
         self,
         run_id: str,
@@ -187,6 +212,20 @@ class InMemoryRunRepository:
             runs = [run for run in runs if run.status == status]
         runs.sort(key=lambda run: run.created_at, reverse=True)
         return runs[:max(0, min(limit, 100))]
+
+    async def list_run_ids_by_incident(
+        self,
+        incident_id: str,
+        *,
+        exclude_run_id: str | None = None,
+        limit: int = 20,
+    ) -> list[str]:
+        runs = [
+            run for run in self._store.values()
+            if run.incident_id == incident_id and run.run_id != exclude_run_id
+        ]
+        runs.sort(key=lambda run: run.created_at, reverse=True)
+        return [run.run_id for run in runs[:max(1, min(limit, 100))]]
 
     async def update_status(
         self, run_id: str, status: str, current_agent: str | None = None

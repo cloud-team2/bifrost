@@ -22,6 +22,15 @@ public interface ConnectorRepository extends JpaRepository<ConnectorEntity, UUID
     List<ConnectorEntity> findByPipelineId(UUID pipelineId);
 
     @Query(value = """
+            SELECT c.*
+            FROM connectors c
+            JOIN pipelines p ON p.id = c.pipeline_id
+            WHERE p.tenant_id = :tenantId
+            ORDER BY c.cr_name
+            """, nativeQuery = true)
+    List<ConnectorEntity> findByTenantIdOrderByCrName(@Param("tenantId") UUID tenantId);
+
+    @Query(value = """
             SELECT count(*)
             FROM connectors c
             JOIN pipelines p ON p.id = c.pipeline_id

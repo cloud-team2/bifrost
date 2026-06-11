@@ -1,9 +1,11 @@
 package com.bifrost.ops.pipeline.controller;
 
 import com.bifrost.ops.auth.jwt.AuthenticatedUser;
+import com.bifrost.ops.internalops.dto.TraceSummaryResult;
 import com.bifrost.ops.pipeline.dto.ConnectorResponse;
 import com.bifrost.ops.pipeline.dto.ConsumerGroupInfo;
 import com.bifrost.ops.pipeline.dto.KafkaMessageRecord;
+import com.bifrost.ops.pipeline.dto.MessagePageResponse;
 import com.bifrost.ops.pipeline.dto.ConnectionGuideResponse;
 import com.bifrost.ops.pipeline.dto.PipelineCreateRequest;
 import com.bifrost.ops.pipeline.dto.PipelineMetricsResponse;
@@ -127,13 +129,27 @@ public class PipelineController {
         return pipelineTopicService.consumerGroups(wsId, principal, id);
     }
 
-    /** 토픽 최신 메시지(#126, Messages 탭). Kafka 미연결 시 빈 목록 반환. */
+    /** 토픽 최신 메시지(#126, Messages 탭). 전 파티션 최근 N 머지. Kafka 미연결 시 빈 목록 반환. */
     @GetMapping("/{id}/messages")
     public List<KafkaMessageRecord> messages(@PathVariable UUID wsId,
                                              @PathVariable UUID id,
                                              @AuthenticationPrincipal AuthenticatedUser principal,
                                              @RequestParam(defaultValue = "20") int limit) {
         return pipelineMessageService.messages(wsId, principal, id, limit);
+    }
+
+    /**
+     * 단일 파티션 오프셋 페이징(#509, Messages 탭). {@code startOffset} 미지정 시 해당 파티션 최신 N.
+     * begin/end offset과 hasOlder/hasNewer로 과거 메시지까지 페이지 단위로 열람한다.
+     */
+    @GetMapping("/{id}/messages/page")
+    public MessagePageResponse messagePage(@PathVariable UUID wsId,
+                                           @PathVariable UUID id,
+                                           @AuthenticationPrincipal AuthenticatedUser principal,
+                                           @RequestParam int partition,
+                                           @RequestParam(required = false) Long startOffset,
+                                           @RequestParam(defaultValue = "50") int limit) {
+        return pipelineMessageService.messagePage(wsId, principal, id, partition, startOffset, limit);
     }
 
     /** Connection Guide(#303). bootstrap/auth/topic 정보를 비밀값 없이 반환한다. */
@@ -158,6 +174,15 @@ public class PipelineController {
                                            @PathVariable UUID id,
                                            @AuthenticationPrincipal AuthenticatedUser principal) {
         return pipelineTopicService.metrics(wsId, principal, id);
+    }
+
+    /** 분산 trace 요약(#498, Tracing 탭). traceId 지정 시 그 trace, 없으면 최근. */
+    @GetMapping("/{id}/trace")
+    public TraceSummaryResult trace(@PathVariable UUID wsId,
+                                    @PathVariable UUID id,
+                                    @RequestParam(required = false) String traceId,
+                                    @AuthenticationPrincipal AuthenticatedUser principal) {
+        return pipelineTopicService.trace(wsId, principal, id, traceId);
     }
 
     /** 처리량 추이(#126, Overview 처리량 차트). Prometheus range query 기반 produce/consume rate 시계열. */

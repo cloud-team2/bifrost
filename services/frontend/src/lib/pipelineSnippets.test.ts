@@ -94,6 +94,20 @@ describe('buildConsumerSnippets — with auth template', () => {
   })
 })
 
+describe('buildConsumerSnippets — distributed trace correlation (traceparent)', () => {
+  const snippets = buildConsumerSnippets(baseGuide, 'public.orders', null)
+
+  it('Java snippet reads the traceparent header', () => {
+    expect(snippets.Java).toContain('traceparent')
+  })
+  it('Python snippet reads the traceparent header', () => {
+    expect(snippets.Python).toContain('traceparent')
+  })
+  it('Node.js snippet reads the traceparent header', () => {
+    expect(snippets['Node.js']).toContain('traceparent')
+  })
+})
+
 describe('buildConsumerSnippets — special chars in values are escaped in Java', () => {
   const guideWithSpecialChars: ConnectionGuideResponse = {
     ...baseGuide,

@@ -1,5 +1,8 @@
-"""Planner agent — keyword-based tool selection (no LLM).
+"""Planner agent — LLM 으로 read-only tool 선택, keyword fallback.
 
+설계상 Planner 는 LLM agent 다. 사용자 의도와 catalog(§8 Read-only Runtime Tool
+Catalog)를 보고 적합한 조회 tool 을 allowlist 안에서만 고른다(자유 생성 금지).
+LLM 미가용·파싱 실패 시 keyword 매칭으로 fallback 해 회귀를 막는다(#483).
 Tool names follow tool-catalog.md §8 Read-only Runtime Tool Catalog.
 """
 from __future__ import annotations
@@ -10,6 +13,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from app.prompts import planner as planner_prompt
 from app.schemas.outputs import PlannerOutput, RetrievalPlanStep
 from app.schemas.tools import ToolContext, ToolStatus
 from app.tools.registry import ToolClientRegistry
@@ -18,33 +22,57 @@ _LOG_PARAMS = {"query": "pipeline events", "time_range": {"from": "now-30m", "to
 _INCIDENT_LOG_PARAMS = {"query": "error exception failure", "time_range": {"from": "now-1h", "to": "now"}}
 # list_project_pipelines (operation: list_project_pipelines) takes no params — ListProjectPipelinesParams is empty.
 _PIPELINE_LIST_PARAMS: dict = {}
+_PIPELINE_STATUS_PARAMS: dict = {}
+_PROJECT_SCOPE_PARAMS: dict = {}
+_EVENT_SUMMARY_PARAMS = {"window": "2h", "level": "warn+"}
 
-_KEYWORD_TOOL_MAP: list[tuple[set[str], str, dict]] = [
-    # catalog §8.4 Pipeline read — list_project_pipelines (operation: list_project_pipelines)
-    # "파이프라인 리스트/목록/연결/현황/상태" 의도는 로그 검색이 아니라 파이프라인 목록 조회다 (#468).
-    ({"파이프라인", "pipeline", "리스트", "목록", "연결", "현황", "상태"}, "list_project_pipelines", _PIPELINE_LIST_PARAMS),
-    # 로그 검색 의도(로그/log)만 search_logs 로 유지; 파이프라인 키워드는 위 버킷으로 분리.
-    ({"로그", "log"}, "search_logs", _LOG_PARAMS),
-    # catalog §8.1 Observability — get_metrics (operation: query_metrics)
-    ({"메트릭", "metric", "지표", "수치", "성능"}, "get_metrics", {"metric": "pipeline_lag_seconds", "time_range": "last_30m"}),
-    # catalog §8.2 Pipeline / Change — get_deployments (operation: get_recent_changes)
-    ({"배포", "deploy", "변경", "change", "토폴로지", "topology"}, "get_deployments", {}),
-    # catalog §8.3 Kafka Connect — get_connector_status
-    ({"커넥터", "connector"}, "get_connector_status", {}),
-    # catalog §8.3 Kafka Consumer — get_consumer_lag
-    ({"lag", "컨슈머", "consumer", "지연"}, "get_consumer_lag", {}),
-    # incident/장애 → log search for error evidence
-    ({"인시던트", "incident", "장애", "오류", "에러"}, "search_logs", _INCIDENT_LOG_PARAMS),
-    # tool-catalog §8.1 Observability — get_traces (Tempo 분산 trace, #373): source→sink 어디서 지연/실패했나
-    ({"trace", "span", "latency", "분산추적", "지연추적"}, "get_traces", {}),
-    # tool-catalog §8.1 Observability — get_connector_task_trace (#368/#373): 커넥터 task 예외 stack trace
-    ({"스택", "스택트레이스", "stacktrace", "예외", "exception"}, "get_connector_task_trace", {}),
-    # tool-catalog §8.1 Observability — get_alerts
-    ({"alert", "알람", "알럿", "경보"}, "get_alerts", {}),
-]
 _DEFAULT_TOOL = ("search_logs", _LOG_PARAMS)
+
+# LLM 이 고를 수 있는 read-only tool catalog (§8). allowlist 밖 tool 선택 금지.
+# 각 tool 의 기본 params 는 keyword 경로와 동일하게 맞춰 식별자 해석(#489)으로 위임한다.
+_READ_TOOL_DEFAULT_PARAMS: dict[str, dict] = {
+    "list_project_pipelines": _PIPELINE_LIST_PARAMS,
+    "list_pipelines": _PIPELINE_STATUS_PARAMS,
+    "list_connectors": _PROJECT_SCOPE_PARAMS,
+    "get_consumer_groups": _PROJECT_SCOPE_PARAMS,
+    "analyze_event_log": _EVENT_SUMMARY_PARAMS,
+    "search_logs": _LOG_PARAMS,
+    "get_metrics": {"metric": "pipeline_lag_seconds", "time_range": "last_30m"},
+    "get_deployments": {},
+    "get_connector_status": {},
+    "get_consumer_lag": {},
+    "get_traces": {},
+    "get_connector_task_trace": {},
+    "get_alerts": {},
+}
+_READ_TOOL_DESCRIPTIONS: dict[str, str] = {
+    "list_project_pipelines": "프로젝트 파이프라인 목록 조회",
+    "list_pipelines": "프로젝트 파이프라인 상태·lag 요약 조회",
+    "list_connectors": "프로젝트 Kafka Connect 커넥터 목록·상태 조회",
+    "get_consumer_groups": "프로젝트 Kafka consumer group 목록·lag 요약 조회",
+    "analyze_event_log": "프로젝트 이벤트·인시던트 경고 요약 조회",
+    "search_logs": "파이프라인/에러 로그 검색",
+    "get_metrics": "메트릭·지표·성능 수치 조회",
+    "get_deployments": "최근 배포·변경 이력 조회",
+    "get_connector_status": "특정 Kafka Connect 커넥터 상태 조회",
+    "get_consumer_lag": "특정 Kafka consumer group lag(지연) 조회",
+    "get_traces": "특정 커넥터 분산 trace(지연/실패 구간) 조회",
+    "get_connector_task_trace": "특정 커넥터 task 예외 stack trace 조회",
+    "get_alerts": "발생한 alert·알람 조회",
+}
+_READ_TOOL_ALLOWLIST = frozenset(_READ_TOOL_DEFAULT_PARAMS)
+_TOOL_CATALOG = [
+    {"tool_name": name, "description": _READ_TOOL_DESCRIPTIONS[name]}
+    for name in _READ_TOOL_DEFAULT_PARAMS
+]
+
 _CONNECTOR_PARAM_TOOLS = frozenset({"get_connector_status", "get_traces", "get_connector_task_trace"})
 _CONSUMER_GROUP_PARAM_TOOLS = frozenset({"get_consumer_lag", "get_kafka_lag"})
+# discovery tool — 파이프라인/커넥터 식별자를 산출한다. 식별자에 의존하는 조회는
+# 이 step들이 끝난 뒤 실행돼야 정확하므로 retrieval에서 순차 chain으로 풀린다 (#481).
+_DISCOVERY_TOOLS = frozenset({"list_project_pipelines", "get_pipeline_topology"})
+# 특정 connector/consumer 식별자를 파라미터로 받는 조회 — discovery에 의존한다.
+_IDENTIFIER_DEPENDENT_TOOLS = _CONNECTOR_PARAM_TOOLS | _CONSUMER_GROUP_PARAM_TOOLS
 _IDENTIFIER_STOPWORDS = {
     "connector",
     "connectors",
@@ -84,52 +112,174 @@ async def run_planner(
     registry: ToolClientRegistry | None = None,
     tool_context: ToolContext | None = None,
 ) -> PlannerOutput:
-    msg = user_message.lower()
-    selected: list[tuple[str, dict]] = []
-
-    seen_tools: set[str] = set()
-    for keywords, tool, params in _KEYWORD_TOOL_MAP:
-        if tool in seen_tools:
-            # 한 tool 은 한 번만 호출 — 같은 도구에 대한 중복 step 방지 (#468).
-            continue
-        if any(kw in msg for kw in keywords):
-            selected.append((tool, params))
-            seen_tools.add(tool)
-
-    if not selected:
-        selected.append(_DEFAULT_TOOL)
+    selected = await _llm_select_tools(user_message)
+    selected_by_llm = selected is not None
+    if selected is None:
+        selected = _keyword_select_tools(user_message)
 
     selected_tools = {tool for tool, _ in selected}
-    if selected_tools & (_CONNECTOR_PARAM_TOOLS | _CONSUMER_GROUP_PARAM_TOOLS):
+    if selected_tools & _IDENTIFIER_DEPENDENT_TOOLS:
         identifier = _extract_identifier(user_message)
         if identifier is None and registry is not None and tool_context is not None:
             identifier = await _resolve_single_project_connector(registry, tool_context)
 
         if identifier is None:
-            return PlannerOutput(
-                retrieval_plan=[],
-                clarification_message=_identifier_required_message(selected_tools),
-            )
+            if selected_by_llm:
+                return PlannerOutput(
+                    retrieval_plan=[],
+                    clarification_message=_identifier_required_message(selected_tools),
+                )
+            selected = _fallback_to_project_scope_tools(selected)
+        else:
+            selected = [
+                (tool, _params_with_identifier(tool, params, identifier))
+                for tool, params in selected
+            ]
 
-        selected = [
-            (tool, _params_with_identifier(tool, params, identifier))
-            for tool, params in selected
-        ]
-
+    # depends_on 채우기 (#481): 식별자 의존 조회는 같은 plan의 discovery step에
+    # 의존시켜 retrieval이 순차 chain으로 풀게 한다. 그 외 독립 tool은 depends_on을
+    # 비워 병렬(fan-out) 실행을 유지한다.
+    step_ids = [f"step_{i + 1:03d}" for i in range(len(selected))]
+    discovery_step_ids = [
+        sid for sid, (tool, _) in zip(step_ids, selected) if tool in _DISCOVERY_TOOLS
+    ]
     steps = [
         RetrievalPlanStep(
-            step_id=f"step_{i + 1:03d}",
+            step_id=step_ids[i],
             tool_name=tool,
             params=params,
             purpose=f"{tool} 조회",
             required=True,
-            depends_on=[],
+            depends_on=(
+                [sid for sid in discovery_step_ids if sid != step_ids[i]]
+                if tool in _IDENTIFIER_DEPENDENT_TOOLS
+                else []
+            ),
             plan_hash=_plan_hash(tool, params),
         )
         for i, (tool, params) in enumerate(selected)
     ]
 
     return PlannerOutput(retrieval_plan=steps)
+
+
+def _keyword_select_tools(user_message: str) -> list[tuple[str, dict]]:
+    """LLM 미가용 시 fallback — 기존 keyword→tool 매칭(회귀 보존)."""
+    msg = user_message.lower()
+    selected: list[tuple[str, dict]] = []
+    seen_tools: set[str] = set()
+
+    def add(tool: str, params: dict) -> None:
+        if tool not in seen_tools:
+            selected.append((tool, params))
+            seen_tools.add(tool)
+
+    has_stack = _has_any(msg, {"스택", "스택트레이스", "stacktrace", "예외", "exception"})
+    has_trace = _has_any(msg, {"trace", "span", "latency", "분산추적", "지연추적"})
+    has_event_summary = _has_any(msg, {"이벤트", "event", "인시던트", "incident", "장애"})
+    has_pipeline = _has_any(msg, {"파이프라인", "pipeline"})
+    has_pipeline_list = _has_any(msg, {"리스트", "목록", "연결"})
+    has_lag = _has_any(msg, {"lag", "지연"})
+    has_connector = _has_any(msg, {"커넥터", "connector"})
+    identifier = _extract_identifier(msg)
+
+    if has_stack:
+        if identifier is not None:
+            add("get_connector_task_trace", {})
+        elif has_connector:
+            add("list_connectors", _PROJECT_SCOPE_PARAMS)
+    elif has_trace:
+        if identifier is not None:
+            add("get_traces", {})
+        elif has_connector:
+            add("list_connectors", _PROJECT_SCOPE_PARAMS)
+
+    if has_event_summary:
+        add("analyze_event_log", _EVENT_SUMMARY_PARAMS)
+    if _has_any(msg, {"alert", "알람", "알럿", "경보"}):
+        add("get_alerts", {})
+    if has_connector and not (has_stack or has_trace):
+        if identifier is not None:
+            add("get_connector_status", {})
+        else:
+            add("list_connectors", _PROJECT_SCOPE_PARAMS)
+    if has_pipeline:
+        if has_lag or (_has_any(msg, {"상태", "현황", "status"}) and not has_pipeline_list):
+            add("list_pipelines", _PIPELINE_STATUS_PARAMS)
+        else:
+            add("list_project_pipelines", _PIPELINE_LIST_PARAMS)
+    if _has_any(msg, {"consumer group", "consumer-group", "컨슈머", "consumer"}) or (has_lag and not has_pipeline):
+        if has_lag:
+            add("get_consumer_lag", {})
+        else:
+            add("get_consumer_groups", _PROJECT_SCOPE_PARAMS)
+    if _has_any(msg, {"로그", "log"}) and not has_event_summary:
+        add("search_logs", _LOG_PARAMS)
+    if _has_any(msg, {"오류", "에러"}) and not has_event_summary and "search_logs" not in seen_tools:
+        add("search_logs", _INCIDENT_LOG_PARAMS)
+    if _has_any(msg, {"메트릭", "metric", "지표", "수치", "성능"}):
+        add("get_metrics", {"metric": "pipeline_lag_seconds", "time_range": "last_30m"})
+    if _has_any(msg, {"배포", "deploy", "변경", "change", "토폴로지", "topology"}):
+        add("get_deployments", {})
+
+    if not selected:
+        selected.append(_DEFAULT_TOOL)
+    return selected
+
+
+async def _llm_select_tools(user_message: str) -> list[tuple[str, dict]] | None:
+    """LLM 으로 catalog allowlist 안의 read tool 을 고른다. 실패 시 None(→ keyword)."""
+    from app.llm.structured import complete_structured
+
+    messages = [
+        {"role": "system", "content": planner_prompt.SYSTEM_PROMPT},
+        {"role": "user", "content": planner_prompt.build_user_prompt(user_message, _TOOL_CATALOG)},
+    ]
+    tools = await complete_structured(
+        "planner",
+        messages,
+        _validate_tool_selection,
+        repair_hint=planner_prompt.REPAIR_HINT,
+    )
+    if not tools:
+        return None
+    # catalog 기본 params 로 step 구성 — 식별자 해석은 downstream(#489) 에 위임.
+    return [(tool, dict(_READ_TOOL_DEFAULT_PARAMS[tool])) for tool in tools]
+
+
+def _validate_tool_selection(parsed: dict[str, Any]) -> list[str] | None:
+    raw_tools = parsed.get("tools")
+    if not isinstance(raw_tools, list):
+        return None
+
+    selected: list[str] = []
+    seen: set[str] = set()
+    for item in raw_tools:
+        if not isinstance(item, str):
+            continue
+        name = item.strip()
+        # allowlist 밖 tool(자유 생성·조치 tool)은 버린다 — 한 tool 은 한 번만.
+        if name in _READ_TOOL_ALLOWLIST and name not in seen:
+            selected.append(name)
+            seen.add(name)
+
+    return selected or None
+
+
+def _fallback_to_project_scope_tools(selected: list[tuple[str, dict]]) -> list[tuple[str, dict]]:
+    fallback: list[tuple[str, dict]] = []
+    seen: set[str] = set()
+    for tool, params in selected:
+        if tool in _CONNECTOR_PARAM_TOOLS:
+            next_tool, next_params = "list_connectors", _PROJECT_SCOPE_PARAMS
+        elif tool in _CONSUMER_GROUP_PARAM_TOOLS:
+            next_tool, next_params = "get_consumer_groups", _PROJECT_SCOPE_PARAMS
+        else:
+            next_tool, next_params = tool, params
+        if next_tool not in seen:
+            fallback.append((next_tool, next_params))
+            seen.add(next_tool)
+    return fallback
 
 
 def _params_with_identifier(tool: str, params: dict, identifier: _Identifier) -> dict:
@@ -268,3 +418,7 @@ def _identifier_required_message(selected_tools: set[str]) -> str:
         "커넥터 조회에 사용할 connector 이름을 확정할 수 없습니다. "
         "프로젝트에 connector가 여러 개일 수 있으니 상태나 trace를 확인할 커넥터 이름을 알려주세요."
     )
+
+
+def _has_any(message: str, keywords: set[str]) -> bool:
+    return any(keyword in message for keyword in keywords)

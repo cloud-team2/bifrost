@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from app.persistence.run_repository import get_run_repo
 from app.schemas import ApiResponse, ErrorCode
+from app.schemas.outputs import ActionCandidateOutput
 from app.streaming.event_bus import get_event_bus
 from app.tools.registry import get_tool_registry
 from app.workflow.runner import run_workflow
@@ -30,6 +31,7 @@ class CreateRunRequest(BaseModel):
     incident_id: str | None = None
     remediation_requested: bool = False
     stream: bool = True
+    action_candidate: ActionCandidateOutput | None = None
 
 
 @router.post("/runs")
@@ -59,6 +61,7 @@ async def create_run(req: CreateRunRequest, background_tasks: BackgroundTasks) -
         requested_mode=req.mode,
         requested_incident_id=req.incident_id,
         requested_remediation_requested=req.remediation_requested,
+        requested_action_candidate=req.action_candidate,
     )
 
     return ApiResponse.success(request_id, {
