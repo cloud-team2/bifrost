@@ -30,6 +30,10 @@ env:
   # Agent Run Store / Knowledge Vector Store (pgvector).
   # 코드 기대 env = AI_DATABASE_URL (config.py: env_prefix=AI_, field=database_url). 드라이버 prefix는 db.py가 asyncpg용으로 strip.
   AI_DATABASE_URL: postgresql+asyncpg://agent:agent@agentdb-service.agentdb.svc.cluster.local:5432/agentdb
+  # 분산 추적(#372): 에이전트 run span을 OTel Collector 경유로 송신(tail-sampling #370 공유, ops-backend #366과 동일 경로).
+  # httpx가 Spring 호출에 traceparent 주입 → ops-backend(Micrometer)가 추출해 한 trace로 연결.
+  AI_OTLP_TRACING_ENDPOINT: http://otel-collector.monitoring:4318/v1/traces
+  AI_TRACING_SAMPLE_RATE: "1.0"
 
 secrets:
   llmApiKey: ""   # K8s Secret 'ai-llm-secret'의 api-key 참조 (선택)
