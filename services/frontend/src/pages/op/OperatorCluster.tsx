@@ -158,6 +158,7 @@ function BrokersTab({ onSelectBroker }: { onSelectBroker: (b: BrokerInfo) => voi
                 <div className="mt-1 text-[11.5px] text-gray-400">{b.leaderPartitions} leader partitions · {fmtBytes(b.logDirBytes)}</div>
                 <div className="mt-3 space-y-2.5">
                   <Gauge label="CPU" value={b.cpuPct ?? 0} />
+                  <Gauge label="Mem" value={b.heapUsedBytes != null && b.heapMaxBytes ? (b.heapUsedBytes / b.heapMaxBytes) * 100 : 0} />
                   <Gauge label="Disk" value={b.diskUsedPct ?? 0} />
                 </div>
                 <div className="mt-3 flex gap-4 border-t border-gray-100 pt-2.5 text-[11.5px]">
@@ -184,9 +185,12 @@ function BrokersTab({ onSelectBroker }: { onSelectBroker: (b: BrokerInfo) => voi
 function BrokerDetail({ broker }: { broker: BrokerInfo }) {
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-5 gap-4">
         <MetricCard label="Leader partitions" value={broker.leaderPartitions} icon="server" />
         <MetricCard label="CPU" value={broker.cpuPct != null ? `${broker.cpuPct}%` : '—'} tone={(broker.cpuPct ?? 0) > 80 ? 'warn' : 'good'} />
+        <MetricCard label="Memory (heap)"
+          value={broker.heapUsedBytes != null && broker.heapMaxBytes ? `${fmtBytes(broker.heapUsedBytes)} / ${fmtBytes(broker.heapMaxBytes)}` : '—'}
+          tone={broker.heapUsedBytes != null && broker.heapMaxBytes && broker.heapUsedBytes / broker.heapMaxBytes > 0.85 ? 'warn' : 'good'} />
         <MetricCard label="Disk" value={broker.diskUsedPct != null ? `${broker.diskUsedPct}%` : '—'} tone={(broker.diskUsedPct ?? 0) > 80 ? 'warn' : 'good'} />
         <MetricCard label="Log dir" value={fmtBytes(broker.logDirBytes)} icon="server" />
       </div>

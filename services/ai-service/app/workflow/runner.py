@@ -214,6 +214,22 @@ def _classifier_scope_unclear(classifier_out) -> bool:
     return all(t.type == classifier_agent.UNKNOWN_INCIDENT_TYPE for t in incident_types)
 
 
+def _no_incident_answer(retrieval_out) -> str:
+    """클린/정상 결과(인시던트 0건)일 때의 결정적 종결 답변(#532).
+
+    no-progress 게이트가 같은 plan을 재수집해도 진전이 없다고 판단했을 때,
+    추가 LLM 호출 없이 곧장 내보낼 사용자 답변이다. 수집 근거 건수만 반영한다.
+    retrieval_out이 None이어도 안전하다.
+    """
+    n = len(retrieval_out.evidence_items) if retrieval_out else 0
+    if n > 0:
+        return (
+            f"조회한 데이터에서 인시던트나 이상 징후가 발견되지 않았습니다. "
+            f"(수집 근거 {n}건 검토 결과 정상)"
+        )
+    return "조회한 데이터에서 인시던트나 이상 징후가 발견되지 않았습니다. (정상)"
+
+
 def _policy_revise_action(policy_out) -> bool:
     """Policy Guard의 revise_action 신호 매핑(#476, §3 revise_action).
 
@@ -341,6 +357,10 @@ async def run_workflow(
         change_out = None
         executor_out = None
         verifier_out = None
+        # #532: 같은 plan을 재수집해도 진전이 없는 클린/정상 결과를 감지하기 위한
+        # 로컬 누적기. RunPlanState.executed_plan_hashes는 persistence 전용이고
+        # in-memory supervisor state로 되읽지 않으므로, 런너 루프 스코프에서 직접 모은다.
+        executed_plan_hashes: set[str] = set()
 
         # ── State 재사용 ────────────────────────────────────────────────────────
         # action_execution/approval_decision은 policy_guard/approval_gate부터 시작해
@@ -501,6 +521,50 @@ async def run_workflow(
                             "planner",
                             answer,
                             {"answer": answer, "stage": "planner", "reason": "identifier_required"},
+                        ))
+                        await _publish(bus, event_repo, run_id, _evt(
+                            run_id,
+                            StreamingEventType.RUN_COMPLETED,
+                            "planner",
+                            "분석이 완료되었습니다",
+                            {"answer": answer},
+                        ))
+                        return
+                    # #532: no-progress 게이트. 직전까지 실행한 plan_hash 집합을
+                    # 완전히 포함(subset)하는 동일 plan을 다시 받았다면, 재수집해도
+                    # 같은 빈/정상 근거만 나와 진전이 없다는 뜻이다. classifier
+                    # scope_unclear/verifier gap loopback이 같은 결정적 plan을
+                    # 무한 재수집하다 예산 초과로 실패하는 대신, 클린 결과로 정상 종결한다.
+                    this_plan_hashes = {s.plan_hash for s in planner_out.retrieval_plan}
+                    no_progress = bool(this_plan_hashes) and this_plan_hashes <= executed_plan_hashes
+                    executed_plan_hashes |= this_plan_hashes  # no_progress 계산 후 갱신
+                    if no_progress:
+                        answer = _no_incident_answer(retrieval_out)
+                        await _append_state_patch(
+                            state_repo,
+                            run_id,
+                            namespace="report",
+                            author="Planner",
+                            op="append",
+                            path="/report/draft",
+                            patch={"draft": {"answer": answer, "reason": "no_progress_clean_result"}},
+                        )
+                        await _persist_report_snapshot(
+                            run_id=run_id,
+                            answer=answer,
+                            mode=mode,
+                            retrieval_out=retrieval_out or RetrievalOutput(evidence_items=[]),
+                            rca_out=None,
+                            verifier_out=None,
+                            incident_id=persisted_incident_id,
+                        )
+                        await run_repo.update_status(run_id, "completed", None)
+                        await _publish(bus, event_repo, run_id, _evt(
+                            run_id,
+                            StreamingEventType.PARTIAL_RESULT,
+                            "planner",
+                            answer,
+                            {"answer": answer, "stage": "planner", "reason": "no_progress_clean_result"},
                         ))
                         await _publish(bus, event_repo, run_id, _evt(
                             run_id,

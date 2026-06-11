@@ -108,13 +108,17 @@ kubectl -n platform-kafka wait kafka/platform-kafka --for=condition=Ready --time
 
 ### B3. Kafka Connect 이미지 빌드 + 적재 + 기동
 
-Connect 이미지엔 Debezium(PostgreSQL/MariaDB) + Confluent JDBC sink + JDBC 드라이버가 들어간다.
+Connect 이미지엔 Debezium(PostgreSQL/MariaDB) + Confluent JDBC sink + JDBC 드라이버 + timestamptz 커스텀 컨버터(#425)가 들어간다. 컨버터 JAR을 멀티모듈 Gradle로 함께 빌드하므로 **빌드 컨텍스트는 레포 루트**(`.`)다.
 
 ```bash
-docker build -f infra/local/k8s/Dockerfile.connect-kind -t bifrost/kafka-connect-kind:v1 infra/local/k8s
+docker build -f infra/local/k8s/Dockerfile.connect-kind -t bifrost/kafka-connect-kind:v1 .
 
 # Docker Desktop: kind load 불필요 (로컬 이미지 직접 참조)
 # kind 사용 시: kind load docker-image bifrost/kafka-connect-kind:v1 --name bifrost
+#
+# ⚠️ Docker Desktop k8s는 containerd 이미지 스토어를 쓴다. 같은 태그(v1)로 재빌드하면
+#    containerd가 옛 이미지를 캐시해 안 바뀐다 → 재빌드 시 새 태그를 쓰고
+#    KafkaConnect spec.image를 그 태그로 갱신하거나, kind면 다시 load 한다.
 
 kubectl apply -f infra/local/k8s/connect-kind.yaml
 kubectl -n platform-kafka wait kafkaconnect/platform-connect --for=condition=Ready --timeout=300s

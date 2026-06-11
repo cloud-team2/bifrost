@@ -740,18 +740,21 @@ function SyncTab({ edge }: { edge: Edge }) {
   const sourceRows = sync?.sourceRows ?? -1
   const sinkRows   = sync?.sinkRows ?? -1
   const delta      = sync?.delta ?? -1
-  const sinkReady  = lag >= 0
-  const rowsKnown  = sourceRows >= 0 && sinkRows >= 0       // 양쪽 행수 조회 성공 시에만 비교
-  const rowsMatch  = !rowsKnown || delta === 0              // 행수 모르면 lag만으로 판단
-  const isHealthy  = sinkReady && lag === 0 && !sinkFailed && rowsMatch
-  // lag=0(따라잡음)인데 행수가 안 맞는 경우 — "완료" 대신 불일치로 경고.
-  const rowMismatch = sinkReady && lag === 0 && !sinkFailed && rowsKnown && delta !== 0
-  // % : 처리중이면 caught-up((end−lag)/end), lag=0이지만 행수 불일치면 행수 비율(100 미만),
-  //     완전 일치면 100, 미소비면 0.
-  const syncPct    = !sinkReady ? 0
-    : rowMismatch ? (sourceRows > 0 ? Math.min(99, (sinkRows / sourceRows) * 100) : 0)
+  const rowsKnown    = sourceRows >= 0 && sinkRows >= 0     // 양쪽 행수 조회 성공 시에만 비교
+  const rowsConfirmed = rowsKnown && delta === 0           // 행수가 확정적으로 일치
+  const rowsMatch    = !rowsKnown || delta === 0           // 행수 모르면 lag만으로 판단
+  // 완료: lag로 따라잡았고 행수 OK, 또는 lag 미상(-1)이지만 행수가 확정 일치.
+  // 후자는 Kafka Connect가 sink DB엔 다 썼지만 consumer offset 커밋(offset.flush.interval.ms,
+  // 기본 60s) 전이라 lag을 못 읽는 구간 — 데이터는 맞으므로 "준비중"이 아니라 "완료"로 본다.
+  const isHealthy  = !sinkFailed && ((lag === 0 && rowsMatch) || (lag < 0 && rowsConfirmed))
+  // 행수 불일치: 따라잡았는데(lag=0) sink 행수가 source와 다름.
+  const rowMismatch = !sinkFailed && lag === 0 && rowsKnown && delta !== 0
+  // (그 외 lag<0 && 행수 미확정 = "sink 준비중" — 상태 텍스트 fallback에서 처리)
+  // % : 완료 100, 처리중 caught-up((end−lag)/end), 그 외(불일치/준비중)는 행수 비율, 모르면 0.
+  const syncPct    = isHealthy ? 100
     : lag > 0 ? (endOffset > 0 ? Math.max(0, Math.min(99, ((endOffset - lag) / endOffset) * 100)) : 0)
-    : 100
+    : rowsKnown && sourceRows > 0 ? Math.min(99, (sinkRows / sourceRows) * 100)
+    : 0
   const pctColor   = sinkFailed ? 'text-rose-600' : isHealthy ? 'text-emerald-600' : 'text-amber-600'
   const barColor   = sinkFailed ? 'bg-rose-400'   : isHealthy ? 'bg-emerald-400'  : 'bg-amber-400'
 
@@ -820,13 +823,13 @@ function SyncTab({ edge }: { edge: Edge }) {
                   ? '불러오는 중…'
                   : sinkFailed
                     ? '동기화 오류'
-                    : !sinkReady
-                      ? 'sink 준비중'
-                      : lag > 0
-                        ? `${formatNum(lag)}건 처리중`
-                        : rowMismatch
-                          ? `행수 불일치 (Δ ${formatNum(delta)})`
-                          : '동기화 완료'}
+                    : lag > 0
+                      ? `${formatNum(lag)}건 처리중`
+                      : rowMismatch
+                        ? `행수 불일치 (Δ ${formatNum(delta)})`
+                        : isHealthy
+                          ? '동기화 완료'
+                          : 'sink 준비중'}
               </span>
             </div>
 

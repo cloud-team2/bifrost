@@ -279,6 +279,8 @@ export interface BrokerInfo {
   leaderPartitions: number
   logDirBytes: number
   cpuPct: number | null
+  heapUsedBytes: number | null
+  heapMaxBytes: number | null
   diskUsedPct: number | null
   netInBytesPerSec: number | null
   netOutBytesPerSec: number | null
@@ -534,6 +536,27 @@ export interface ApprovalDecisionResponse {
   approval_id: string
   status: ApprovalDecisionValue | 'pending'
 }
+export interface AgentToolCatalogItem {
+  name: string
+  operation: string
+  risk: string
+  method: string
+  path_template: string
+}
+export interface AgentToolDetail extends AgentToolCatalogItem {
+  params_schema: {
+    required?: string[]
+    properties?: Record<string, unknown>
+  }
+  result_schema: Record<string, unknown>
+}
+export interface AgentToolCatalogResponse {
+  tools: AgentToolCatalogItem[]
+}
+export interface AgentToolExecuteResponse {
+  tool_result: Record<string, unknown>
+  result: unknown
+}
 
 interface FastApiEnvelope<T> {
   ok: boolean
@@ -702,6 +725,12 @@ export const api = {
     agentRequest<AgentRunApprovalsResponse>('GET', `/api/v1/agent/runs/${runId}/approvals`),
   approvalDecision: (approvalId: string, body: ApprovalDecisionInput) =>
     agentRequest<ApprovalDecisionResponse>('POST', `/api/v1/approvals/${approvalId}/decision`, body),
+  listAgentTools: () =>
+    agentRequest<AgentToolCatalogResponse>('GET', '/api/v1/tools'),
+  getAgentTool: (toolName: string) =>
+    agentRequest<AgentToolDetail>('GET', `/api/v1/tools/${toolName}`),
+  executeAgentTool: (toolName: string, body: { project_id: string; params?: Record<string, unknown> }) =>
+    agentRequest<AgentToolExecuteResponse>('POST', `/api/v1/tools/${toolName}/execute`, body),
 
   // events (FR-019)
   listEvents: (wsId: string, level?: string, pipelineId?: string, incidentId?: string) => {
