@@ -7,12 +7,14 @@ from typing import Any
 from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
 
+from app.persistence.evidence_repository import AnyEvidenceRepo, get_evidence_repo
 from app.persistence.state_repository import PostgresStateRepository
 from app.schemas import ApiResponse, ErrorCode
 
 router = APIRouter()
 
 _state_repo: PostgresStateRepository | None = None
+_evidence_repo: AnyEvidenceRepo | None = None
 
 
 def _request_id() -> str:
@@ -48,6 +50,14 @@ def get_state_repo() -> PostgresStateRepository:
     return _state_repo
 
 
+def get_raw_evidence_repo() -> AnyEvidenceRepo:
+    """Provider kept patchable for route tests."""
+    global _evidence_repo
+    if _evidence_repo is None:
+        _evidence_repo = get_evidence_repo()
+    return _evidence_repo
+
+
 def _value_as_str(value: Any) -> str | None:
     if value is None:
         return None
@@ -77,6 +87,23 @@ def _evidence_summary(patch: Any) -> dict[str, Any]:
     }
 
 
+async def _hydrate_by_store_ref(store_ref: str | None) -> dict[str, Any] | None:
+    if not store_ref:
+        return None
+    record = await get_raw_evidence_repo().get(store_ref)
+    if record is None:
+        return None
+    return {
+        "store_ref": record.store_ref,
+        "payload": record.payload,
+        "redaction_status": record.redaction_status,
+        "status": record.status,
+        "tool_name": record.tool_name,
+        "step_id": record.step_id,
+        "created_at": record.created_at.isoformat() if record.created_at else None,
+    }
+
+
 @router.get("/runs/{run_id}/evidence")
 async def list_evidence(run_id: str) -> ApiResponse:
     patches = await _get_patches(run_id)
@@ -101,7 +128,11 @@ async def get_evidence(run_id: str, evidence_id: str) -> Any:
             getattr(patch, "namespace", None) == "evidence"
             and _value_as_str(payload.get("evidence_id")) == evidence_id
         ):
-            return ApiResponse.success(request_id, payload)
+            data = dict(payload)
+            hydrated = await _hydrate_by_store_ref(_value_as_str(payload.get("store_ref")))
+            if hydrated is not None:
+                data["raw"] = hydrated
+            return ApiResponse.success(request_id, data)
     return _failure(
         request_id,
         "EVIDENCE_NOT_FOUND",
@@ -111,9 +142,27 @@ async def get_evidence(run_id: str, evidence_id: str) -> Any:
 
 
 @router.post("/runs/{run_id}/evidence/{evidence_id}/hydrate")
-async def hydrate_evidence(run_id: str, evidence_id: str) -> ApiResponse:
-    return ApiResponse.failure(
-        _request_id(),
-        ErrorCode.NOT_IMPLEMENTED,
-        "evidence hydrate is not implemented in v1 — Spring evidence_store 통합 필요",
+async def hydrate_evidence(run_id: str, evidence_id: str) -> Any:
+    request_id = _request_id()
+    patches = await _get_patches(run_id)
+    for patch in patches:
+        payload = _patch_payload(patch)
+        if (
+            getattr(patch, "namespace", None) == "evidence"
+            and _value_as_str(payload.get("evidence_id")) == evidence_id
+        ):
+            hydrated = await _hydrate_by_store_ref(_value_as_str(payload.get("store_ref")))
+            if hydrated is None:
+                return _failure(
+                    request_id,
+                    "EVIDENCE_RAW_NOT_FOUND",
+                    f"raw evidence not found for: {evidence_id}",
+                    status_code=status.HTTP_404_NOT_FOUND,
+                )
+            return ApiResponse.success(request_id, hydrated)
+    return _failure(
+        request_id,
+        "EVIDENCE_NOT_FOUND",
+        f"evidence not found: {evidence_id}",
+        status_code=status.HTTP_404_NOT_FOUND,
     )

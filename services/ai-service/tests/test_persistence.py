@@ -18,6 +18,7 @@ from app.persistence.change_ticket_repository import (
     STATUS_CHANGE_WINDOW_REQUIRED,
     STATUS_VERIFIED,
 )
+from app.persistence.evidence_repository import InMemoryEvidenceRepository, PostgresEvidenceRepository
 from app.persistence.event_repository import PostgresEventRepository
 from app.persistence.report_repository import InMemoryReportRepository, PostgresReportRepository, ReportSnapshot
 from app.persistence.run_repository import PostgresRunRepository, RunRecord
@@ -277,6 +278,59 @@ async def test_state_repository_get_patches_accepts_asyncpg_jsonb_and_uuid_value
     assert patches[0].author == str(author_id)
     assert patches[0].patch == {"evidence_id": "ev-001", "summary": "collected"}
     assert patches[1].patch == {}
+
+
+@pytest.mark.asyncio
+async def test_evidence_repository_in_memory_put_get():
+    repo = InMemoryEvidenceRepository()
+
+    store_ref = await repo.put(
+        run_id="run-480",
+        evidence_id="ev-001",
+        tool_name="search_logs",
+        step_id="s1",
+        status="success",
+        payload={"logs": ["redacted evidence"]},
+    )
+
+    record = await repo.get(store_ref)
+    assert record is not None
+    assert record.store_ref == "evidence://run-480/ev-001"
+    assert record.payload == {"logs": ["redacted evidence"]}
+    assert record.redaction_status == "redacted"
+
+
+@pytest.mark.asyncio
+async def test_postgres_evidence_repository_put_get():
+    row = {
+        "store_ref": "evidence://run-480/ev-001",
+        "run_id": "run-480",
+        "evidence_id": "ev-001",
+        "tool_name": "search_logs",
+        "step_id": "s1",
+        "status": "success",
+        "payload": json.dumps({"logs": ["redacted evidence"]}),
+        "redaction_status": "redacted",
+        "created_at": _now(),
+    }
+    pool, conn = _make_pool(fetchrow_return=row)
+    repo = PostgresEvidenceRepository(pool=pool)
+
+    store_ref = await repo.put(
+        run_id="run-480",
+        evidence_id="ev-001",
+        tool_name="search_logs",
+        step_id="s1",
+        status="success",
+        payload={"logs": ["redacted evidence"]},
+    )
+    record = await repo.get(store_ref)
+
+    assert store_ref == "evidence://run-480/ev-001"
+    assert record is not None
+    assert record.payload == {"logs": ["redacted evidence"]}
+    assert conn.execute.await_count == 1
+    assert conn.fetchrow.await_count == 1
 
 
 # ---------------------------------------------------------------------------

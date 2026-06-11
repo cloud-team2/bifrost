@@ -176,6 +176,7 @@ class ToolResult(StrictModel):
     evidence_ids: list[str] = Field(default_factory=list)
     audit_event_id: str | None = None
     error: ToolError | None = None
+    raw_payload: dict[str, Any] | list[Any] | None = None
 
 
 class ProjectPipelineSummary(SpringResponseModel):

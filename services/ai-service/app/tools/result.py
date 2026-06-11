@@ -32,6 +32,7 @@ def result_from_spring_response(
             summary=_success_summary(response),
             evidence_ids=evidence_ids,
             audit_event_id=response.audit_event_id,
+            raw_payload=response.model_dump(mode="json"),
         )
 
     error = response.error or ToolError(
@@ -49,6 +50,7 @@ def result_from_spring_response(
         evidence_ids=evidence_ids,
         audit_event_id=response.audit_event_id,
         error=error,
+        raw_payload=response.model_dump(mode="json"),
     )
 
 
@@ -74,6 +76,16 @@ def failed_tool_result(
             retryable=retryable,
             required_action=required_action,
         ),
+        raw_payload={
+            "ok": False,
+            "tool_name": tool_name,
+            "error": {
+                "code": getattr(code, "value", code),
+                "message": message,
+                "retryable": retryable,
+                "required_action": required_action,
+            },
+        },
     )
 
 

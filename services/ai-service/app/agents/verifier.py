@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from app.catalogs import evidence_matrix
 from app.catalogs.root_causes import is_known_root_cause, root_cause_ids
+from app.persistence.evidence_repository import AnyEvidenceRepo, get_evidence_repo
 from app.schemas.outputs import (
     ClassifierOutput,
     ExecutorOutput,
@@ -44,6 +45,7 @@ async def run_verifier(
     classifier_out: ClassifierOutput | None = None,
     executor_out: ExecutorOutput | None = None,
     report_body: str | None = None,
+    evidence_repo: AnyEvidenceRepo | None = None,
 ) -> VerifierOutput:
     if (
         report_body is not None
@@ -63,10 +65,11 @@ async def run_verifier(
         )
 
     if mode == AgentMode.INCIDENT_ANALYSIS:
-        incident_result = _verify_incident_analysis(
+        incident_result = await _verify_incident_analysis(
             rca_out=rca_out,
             retrieval_out=retrieval_out,
             classifier_out=classifier_out,
+            evidence_repo=evidence_repo,
         )
         first = incident_result.verification_results[0]
         if first.status != VerificationStatus.PASS or report_body is None:
@@ -88,11 +91,12 @@ async def run_verifier(
     )
 
 
-def _verify_incident_analysis(
+async def _verify_incident_analysis(
     *,
     rca_out: RcaOutput | None,
     retrieval_out: RetrievalOutput | None,
     classifier_out: ClassifierOutput | None,
+    evidence_repo: AnyEvidenceRepo | None,
 ) -> VerifierOutput:
     del classifier_out
 
@@ -129,7 +133,7 @@ def _verify_incident_analysis(
         return _fail("root_cause", "모든 RCA 후보 confidence가 evidence_matrix 기준 미만", "planner")
 
     evidence_items = retrieval_out.evidence_items if retrieval_out else []
-    evidence_texts = _observed_evidence_texts(evidence_items)
+    evidence_texts = await _observed_evidence_texts(evidence_items, evidence_repo=evidence_repo)
     for candidate in actionable_candidates:
         missing = _missing_required_evidence(candidate, evidence_texts)
         if missing:
@@ -272,21 +276,36 @@ def _missing_required_evidence(
     return missing
 
 
-def _observed_evidence_texts(evidence_items: Iterable[EvidenceItem]) -> tuple[str, ...]:
-    return tuple(
-        " ".join(
-            value
-            for value in (
-                item.evidence_id,
-                str(item.type),
-                item.store_ref,
-                item.summary,
-                item.collected_by or "",
-            )
-            if value
-        )
-        for item in evidence_items
-    )
+async def _observed_evidence_texts(
+    evidence_items: Iterable[EvidenceItem],
+    *,
+    evidence_repo: AnyEvidenceRepo | None,
+) -> tuple[str, ...]:
+    repo = evidence_repo or get_evidence_repo()
+    texts: list[str] = []
+    for item in evidence_items:
+        pieces = [
+            item.evidence_id,
+            str(item.type),
+            item.store_ref,
+            item.summary,
+            item.collected_by or "",
+        ]
+        record = await repo.get(item.store_ref)
+        if record is not None:
+            pieces.append(_flatten_payload_text(record.payload))
+        texts.append(" ".join(value for value in pieces if value))
+    return tuple(texts)
+
+
+def _flatten_payload_text(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        return " ".join(f"{key} {_flatten_payload_text(item)}" for key, item in value.items())
+    if isinstance(value, list):
+        return " ".join(_flatten_payload_text(item) for item in value)
+    return str(value)
 
 
 def _rule_satisfied(rule_text: str, example: str | None, evidence_texts: tuple[str, ...]) -> bool:
