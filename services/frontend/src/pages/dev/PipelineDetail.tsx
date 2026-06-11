@@ -866,11 +866,10 @@ const OP_META: Record<string, { label: string; cls: string }> = {
 function MessagesTab({ edge }: { edge: Edge }) {
   const app = useApp()
   const wsId = app.currentProject?.id
-  const isEda = edge.pattern === 'fan-out'
-  const maxPartitions = isEda ? 6 : 3
-
   const [msgs, setMsgs] = useState<KafkaMessageRecord[]>([])
   const [msgLoading, setMsgLoading] = useState(true)
+  // (#495) 파티션 선택을 하드코딩(3/6) 대신 실제 토픽 파티션 수로
+  const [topicInfo, setTopicInfo] = useState<TopicInfoResponse | null>(null)
 
   useEffect(() => {
     if (!wsId) return
@@ -882,6 +881,17 @@ function MessagesTab({ edge }: { edge: Edge }) {
       .finally(() => { if (!cancelled) setMsgLoading(false) })
     return () => { cancelled = true }
   }, [wsId, edge.id])
+
+  // (#495) 실제 토픽 파티션 수 — 셀렉터를 이걸로 그린다(하드코딩 3/6 제거)
+  useEffect(() => {
+    if (!wsId) return
+    let cancelled = false
+    api.pipelineTopicInfo(wsId, edge.id)
+      .then((t) => { if (!cancelled) setTopicInfo(t) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [wsId, edge.id])
+
   const [partition, setPartition] = useState<'all' | number>('all')
   const [live, setLive] = useState(true)   // 기본 live: 진입 즉시 실시간으로 메시지가 쌓이는 걸 본다(#200)
   const [search, setSearch] = useState('')
@@ -905,6 +915,14 @@ function MessagesTab({ edge }: { edge: Edge }) {
         !JSON.stringify(m.after ?? m.before ?? '').toLowerCase().includes(search.toLowerCase())) return false
     return true
   })
+
+  // (#495) 셀렉터에 띄울 파티션 id 목록 — 실제 토픽 파티션, 로딩 전엔 메시지에 등장한 파티션으로 폴백
+  const partitionIds = useMemo(() => {
+    if (topicInfo?.partitions?.length) {
+      return topicInfo.partitions.map((p) => p.id).sort((a, b) => a - b)
+    }
+    return [...new Set(msgs.map((m) => m.partition))].sort((a, b) => a - b)
+  }, [topicInfo, msgs])
 
   const selectedMsg = selected !== null ? msgs.find((m) => m.offset === selected) ?? null : null
 
@@ -934,8 +952,8 @@ function MessagesTab({ edge }: { edge: Edge }) {
             className="rounded border border-gray-200 px-2 py-1 text-[12px] font-medium text-gray-700 outline-none focus:border-brand-400"
           >
             <option value="all">전체</option>
-            {Array.from({ length: maxPartitions }, (_, i) => (
-              <option key={i} value={i}>P{i}</option>
+            {partitionIds.map((pid) => (
+              <option key={pid} value={pid}>P{pid}</option>
             ))}
           </select>
         </div>
