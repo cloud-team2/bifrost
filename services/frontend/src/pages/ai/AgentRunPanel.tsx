@@ -89,6 +89,8 @@ const DONE_PROGRESS_EVENTS: AgentStreamingEventType[] = [
   'run_started',
 ]
 const RUNNING_PROGRESS_EVENTS: AgentStreamingEventType[] = ['execution_started', 'agent_started']
+const GENERIC_HEADLINE_KEYS = ['summary', 'title', 'message', 'name', 'connector', 'pipeline', 'group', 'id']
+const GENERIC_BADGE_KEYS = new Set(['severity', 'status', 'state', 'level', 'type', 'risk', 'health', 'result'])
 
 const THEMES = {
   brand: {
@@ -2381,9 +2383,137 @@ function ToolPanelCard({ msg }: { msg: ToolPanelMsg }) {
 function GenericToolResultPanel({ result }: { result: unknown }) {
   if (result == null) return <PanelEmpty text="표시할 결과가 없습니다" />
   return (
-    <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-gray-50 px-2 py-2 font-mono text-[10.5px] leading-relaxed text-gray-600">
-      {JSON.stringify(result, null, 2)}
-    </pre>
+    <div className="max-h-72 overflow-auto space-y-2 font-mono text-[11px] leading-relaxed text-gray-600">
+      <GenericToolValue value={result} depth={0} />
+    </div>
+  )
+}
+
+function GenericToolValue({ value, depth }: { value: unknown; depth: number }) {
+  if (Array.isArray(value)) return <GenericArrayValue items={value} depth={depth} />
+  const record = asRecord(value)
+  if (record) return <GenericObjectValue record={record} depth={depth} />
+  return <GenericPrimitiveBlock value={value} />
+}
+
+function GenericObjectValue({ record, depth }: { record: Record<string, unknown>; depth: number }) {
+  const entries = Object.entries(record).filter(([, value]) => value !== undefined)
+  if (entries.length === 0) return <PanelEmpty text="표시할 결과가 없습니다" />
+
+  const scalarEntries = entries.filter(([, value]) => isGenericScalar(value))
+  const nestedEntries = entries.filter(([, value]) => !isGenericScalar(value))
+
+  return (
+    <div className="space-y-2">
+      {scalarEntries.length > 0 && (
+        <div className="grid gap-1.5 sm:grid-cols-2">
+          {scalarEntries.map(([key, value]) => (
+            <GenericScalarField key={key} label={key} value={value} />
+          ))}
+        </div>
+      )}
+      {nestedEntries.map(([key, value]) => (
+        <GenericNestedSection key={key} label={key} value={value} depth={depth + 1} />
+      ))}
+    </div>
+  )
+}
+
+function GenericArrayValue({ items, depth }: { items: unknown[]; depth: number }) {
+  const visibleItems = items.filter((item) => item !== undefined)
+  if (visibleItems.length === 0) return <PanelEmpty text="표시할 항목이 없습니다" />
+
+  return (
+    <div className="space-y-1.5">
+      {visibleItems.map((item, index) => {
+        const record = asRecord(item)
+        if (record) return <GenericRecordCard key={index} record={record} index={index} depth={depth + 1} />
+        return (
+          <div key={index} className="rounded border border-gray-100 bg-gray-50 px-2 py-1.5">
+            <GenericToolValue value={item} depth={depth + 1} />
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function GenericNestedSection({ label, value, depth }: { label: string; value: unknown; depth: number }) {
+  return (
+    <section className="space-y-1">
+      <div className="text-[10.5px] font-semibold uppercase text-gray-400">{formatGenericLabel(label)}</div>
+      <GenericToolValue value={value} depth={depth} />
+    </section>
+  )
+}
+
+function GenericRecordCard({
+  record,
+  index,
+  depth,
+}: {
+  record: Record<string, unknown>
+  index: number
+  depth: number
+}) {
+  const headline = genericRecordHeadline(record, index)
+  const badges = Object.entries(record).filter(([key, value]) => isGenericBadgeKey(key) && isGenericScalar(value))
+  const entries = Object.entries(record).filter(
+    ([key, value]) => value !== undefined && key !== headline.key && !isGenericBadgeKey(key),
+  )
+  const scalarEntries = entries.filter(([, value]) => isGenericScalar(value))
+  const nestedEntries = entries.filter(([, value]) => !isGenericScalar(value))
+
+  return (
+    <article className="space-y-1.5 rounded-md border border-gray-100 bg-gray-50 px-2 py-2">
+      <div className="flex flex-wrap items-start gap-1.5">
+        <div className="min-w-0 flex-1 break-words font-semibold text-gray-700">{headline.text}</div>
+        {badges.map(([key, value]) => (
+          <GenericBadge key={key} label={key} value={value} />
+        ))}
+      </div>
+      {scalarEntries.length > 0 && (
+        <div className="grid gap-1.5 sm:grid-cols-2">
+          {scalarEntries.map(([key, value]) => (
+            <GenericScalarField key={key} label={key} value={value} compact />
+          ))}
+        </div>
+      )}
+      {nestedEntries.map(([key, value]) => (
+        <GenericNestedSection key={key} label={key} value={value} depth={depth + 1} />
+      ))}
+    </article>
+  )
+}
+
+function GenericScalarField({ label, value, compact = false }: { label: string; value: unknown; compact?: boolean }) {
+  return (
+    <div className={cn('min-w-0 rounded border border-gray-100 bg-white px-2', compact ? 'py-1' : 'py-1.5')}>
+      <div className="text-[10px] font-semibold uppercase text-gray-400">{formatGenericLabel(label)}</div>
+      <div className="mt-0.5 break-words text-gray-700">
+        {isGenericBadgeKey(label) || typeof value === 'boolean' ? (
+          <GenericBadge label={label} value={value} />
+        ) : (
+          formatGenericScalar(value)
+        )}
+      </div>
+    </div>
+  )
+}
+
+function GenericPrimitiveBlock({ value }: { value: unknown }) {
+  return (
+    <div className="break-words rounded bg-gray-50 px-2 py-2 text-gray-700">
+      {formatGenericScalar(value)}
+    </div>
+  )
+}
+
+function GenericBadge({ label, value }: { label: string; value: unknown }) {
+  return (
+    <span className={cn('inline-flex max-w-full rounded px-1.5 py-0.5 text-[10.5px] font-semibold', genericBadgeClass(label, value))}>
+      <span className="truncate">{formatGenericScalar(value)}</span>
+    </span>
   )
 }
 
@@ -2801,6 +2931,54 @@ function recordNumber(record: Record<string, unknown> | null, ...keys: string[])
     }
   }
   return null
+}
+
+function isGenericScalar(value: unknown) {
+  return value == null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+}
+
+function genericRecordHeadline(record: Record<string, unknown>, index: number) {
+  for (const key of GENERIC_HEADLINE_KEYS) {
+    const value = record[key]
+    if (isGenericScalar(value)) {
+      const text = formatGenericScalar(value)
+      if (text !== '-') return { key, text }
+    }
+  }
+  return { key: null, text: `item ${index + 1}` }
+}
+
+function isGenericBadgeKey(key: string) {
+  return GENERIC_BADGE_KEYS.has(key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase())
+}
+
+function formatGenericLabel(key: string) {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .trim()
+}
+
+function formatGenericScalar(value: unknown) {
+  if (value == null || value === '') return '-'
+  if (typeof value === 'number') return Number.isFinite(value) ? value.toLocaleString() : '-'
+  if (typeof value === 'boolean') return value ? 'true' : 'false'
+  return String(value)
+}
+
+function genericBadgeClass(label: string, value: unknown) {
+  const normalized = formatGenericScalar(value).toLowerCase()
+  if (typeof value === 'boolean') return value ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-600'
+  if (['critical', 'error', 'failed', 'failure', 'blocked', 'down', 'high'].some((token) => normalized.includes(token))) {
+    return 'bg-rose-50 text-rose-700'
+  }
+  if (['warning', 'warn', 'degraded', 'pending', 'rebalancing', 'medium'].some((token) => normalized.includes(token))) {
+    return 'bg-amber-50 text-amber-700'
+  }
+  if (['ok', 'healthy', 'running', 'success', 'succeeded', 'active', 'resolved', 'closed', 'low'].some((token) => normalized.includes(token))) {
+    return 'bg-emerald-50 text-emerald-700'
+  }
+  return isGenericBadgeKey(label) ? 'bg-sky-50 text-sky-700' : 'bg-gray-100 text-gray-600'
 }
 
 function paramChips(toolName: string, params: Record<string, unknown>): [string, unknown][] {
