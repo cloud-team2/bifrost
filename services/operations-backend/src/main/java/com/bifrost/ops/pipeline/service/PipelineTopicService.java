@@ -105,7 +105,7 @@ public class PipelineTopicService {
             return fetchConsumerGroups(topic);
         } catch (Exception e) {
             log.warn("Consumer group 조회 실패: topic={}, cause={}", topic, e.getMessage());
-            return List.of();
+            throw new ApiException(ErrorCode.INTERNAL_ERROR, "Consumer group 정보를 불러오지 못했습니다");
         }
     }
 
@@ -429,16 +429,27 @@ public class PipelineTopicService {
 
         // 2) 해당 토픽 구독 그룹 필터 (committed offsets로 판별)
         List<String> relevant = new ArrayList<>();
+        Map<String, Map<TopicPartition, OffsetAndMetadata>> committedByGroup = new HashMap<>();
+        int offsetLookupFailures = 0;
         for (String gid : allGroupIds) {
             try {
                 Map<TopicPartition, OffsetAndMetadata> offsets = adminClient
                         .listConsumerGroupOffsets(gid)
                         .partitionsToOffsetAndMetadata()
                         .get(ADMIN_TIMEOUT_SEC, TimeUnit.SECONDS);
-                if (offsets.keySet().stream().anyMatch(tp -> tp.topic().equals(topic))) {
+                Map<TopicPartition, OffsetAndMetadata> topicOffsets = offsets.entrySet().stream()
+                        .filter(e -> e.getKey().topic().equals(topic))
+                        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+                if (!topicOffsets.isEmpty()) {
                     relevant.add(gid);
+                    committedByGroup.put(gid, topicOffsets);
                 }
-            } catch (Exception ignored) {}
+            } catch (Exception e) {
+                offsetLookupFailures++;
+            }
+        }
+        if (offsetLookupFailures > 0) {
+            throw new IllegalStateException("consumer group offset lookup failed");
         }
         if (relevant.isEmpty()) return List.of();
 
@@ -448,10 +459,8 @@ public class PipelineTopicService {
                 .all().get(ADMIN_TIMEOUT_SEC, TimeUnit.SECONDS);
 
         // 4) end offsets for lag
-        List<TopicPartition> tps = descs.values().stream()
-                .flatMap(d -> d.members().stream())
-                .flatMap(m -> m.assignment().topicPartitions().stream())
-                .filter(tp -> tp.topic().equals(topic))
+        List<TopicPartition> tps = committedByGroup.values().stream()
+                .flatMap(offsets -> offsets.keySet().stream())
                 .distinct().toList();
 
         Map<TopicPartition, Long> endOffsets = new HashMap<>();
@@ -469,10 +478,7 @@ public class PipelineTopicService {
             ConsumerGroupDescription desc = descs.get(gid);
             if (desc == null) continue;
 
-            Map<TopicPartition, OffsetAndMetadata> committed = adminClient
-                    .listConsumerGroupOffsets(gid)
-                    .partitionsToOffsetAndMetadata()
-                    .get(ADMIN_TIMEOUT_SEC, TimeUnit.SECONDS);
+            Map<TopicPartition, OffsetAndMetadata> committed = committedByGroup.getOrDefault(gid, Map.of());
 
             List<ConsumerGroupInfo.PartitionOffset> partOffsets = new ArrayList<>();
             long totalLag = 0L;

@@ -229,6 +229,15 @@ public class PipelineMessageService {
 
         return new KafkaMessageRecord(
                 r.partition(), r.offset(), r.timestamp(),
-                r.key(), op, before, after);
+                r.key(), serializedSizeBytes(r), op, before, after);
+    }
+
+    private Long serializedSizeBytes(ConsumerRecord<String, String> r) {
+        return serializedSizeBytes(r.serializedKeySize(), r.serializedValueSize());
+    }
+
+    static Long serializedSizeBytes(int keySize, int valueSize) {
+        if (keySize < 0 && valueSize < 0) return null;
+        return (long) Math.max(keySize, 0) + Math.max(valueSize, 0);
     }
 }

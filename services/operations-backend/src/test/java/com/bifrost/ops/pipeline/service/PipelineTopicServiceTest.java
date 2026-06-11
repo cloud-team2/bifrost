@@ -1,6 +1,7 @@
 package com.bifrost.ops.pipeline.service;
 
 import com.bifrost.ops.auth.jwt.AuthenticatedUser;
+import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.monitoring.query.KafkaMetricsQuery;
 import com.bifrost.ops.monitoring.query.TraceQuery;
 import com.bifrost.ops.pipeline.PipelineLifecycle;
@@ -15,16 +16,29 @@ import com.bifrost.ops.provisioning.persistence.entity.ConnectorEntity;
 import com.bifrost.ops.provisioning.persistence.repository.ConnectorRepository;
 import com.bifrost.ops.workspace.WorkspaceAccessGuard;
 import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.ConsumerGroupDescription;
+import org.apache.kafka.clients.admin.ConsumerGroupListing;
+import org.apache.kafka.clients.admin.DescribeConsumerGroupsResult;
+import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsResult;
+import org.apache.kafka.clients.admin.ListConsumerGroupsResult;
+import org.apache.kafka.clients.admin.ListOffsetsResult;
+import org.apache.kafka.clients.consumer.OffsetAndMetadata;
+import org.apache.kafka.common.ConsumerGroupState;
+import org.apache.kafka.common.KafkaFuture;
+import org.apache.kafka.common.Node;
+import org.apache.kafka.common.TopicPartition;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -39,8 +53,12 @@ class PipelineTopicServiceTest {
     @Mock private KafkaMetricsQuery kafkaMetricsQuery;
 
     private PipelineTopicService service() {
+        return service(mock(AdminClient.class));
+    }
+
+    private PipelineTopicService service(AdminClient adminClient) {
         return new PipelineTopicService(pipelineRepository, connectorRepository, accessGuard,
-                mock(AdminClient.class), snapshotStore, kafkaMetricsQuery, mock(TraceQuery.class));
+                adminClient, snapshotStore, kafkaMetricsQuery, mock(TraceQuery.class));
     }
 
     @Test
@@ -90,6 +108,143 @@ class PipelineTopicServiceTest {
         c.setState(state);
         c.setLastError(lastError);
         return c;
+    }
+
+    @Test
+    void consumerGroupsPropagatesKafkaLookupFailure() {
+        UUID wsId = UUID.randomUUID();
+        UUID id = UUID.randomUUID();
+        AuthenticatedUser principal = new AuthenticatedUser(UUID.randomUUID(), wsId, "u@bifrost.io");
+
+        PipelineEntity p = new PipelineEntity();
+        p.setId(id);
+        p.setTenantId(wsId);
+        p.setPattern(PipelinePattern.FAN_OUT);
+        p.setTopicName("eda.orders.events");
+        when(pipelineRepository.findByIdAndTenantId(id, wsId)).thenReturn(Optional.of(p));
+
+        AdminClient adminClient = mock(AdminClient.class);
+        when(adminClient.listConsumerGroups()).thenThrow(new RuntimeException("kafka unavailable"));
+
+        assertThatThrownBy(() -> service(adminClient).consumerGroups(wsId, principal, id))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("Consumer group");
+    }
+
+    @Test
+    void consumerGroupsPropagatesOffsetLookupFailureWhenEmptyCannotBeProved() throws Exception {
+        UUID wsId = UUID.randomUUID();
+        UUID id = UUID.randomUUID();
+        AuthenticatedUser principal = new AuthenticatedUser(UUID.randomUUID(), wsId, "u@bifrost.io");
+
+        PipelineEntity p = new PipelineEntity();
+        p.setId(id);
+        p.setTenantId(wsId);
+        p.setPattern(PipelinePattern.FAN_OUT);
+        p.setTopicName("eda.orders.events");
+        when(pipelineRepository.findByIdAndTenantId(id, wsId)).thenReturn(Optional.of(p));
+
+        AdminClient adminClient = mock(AdminClient.class);
+        ListConsumerGroupsResult groupsResult = mock(ListConsumerGroupsResult.class);
+        when(adminClient.listConsumerGroups()).thenReturn(groupsResult);
+        when(groupsResult.all()).thenReturn(KafkaFuture.completedFuture(List.of(new ConsumerGroupListing("orders-ui", false))));
+
+        ListConsumerGroupOffsetsResult offsetsResult = mock(ListConsumerGroupOffsetsResult.class);
+        when(adminClient.listConsumerGroupOffsets("orders-ui")).thenReturn(offsetsResult);
+        @SuppressWarnings("unchecked")
+        KafkaFuture<Map<org.apache.kafka.common.TopicPartition, org.apache.kafka.clients.consumer.OffsetAndMetadata>> offsetsFuture =
+                mock(KafkaFuture.class);
+        when(offsetsResult.partitionsToOffsetAndMetadata()).thenReturn(offsetsFuture);
+        when(offsetsFuture.get(org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.any()))
+                .thenThrow(new RuntimeException("offsets unavailable"));
+
+        assertThatThrownBy(() -> service(adminClient).consumerGroups(wsId, principal, id))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("Consumer group");
+    }
+
+    @Test
+    void consumerGroupsPropagatesPartialOffsetLookupFailureInsteadOfReturningPartialData() throws Exception {
+        UUID wsId = UUID.randomUUID();
+        UUID id = UUID.randomUUID();
+        AuthenticatedUser principal = new AuthenticatedUser(UUID.randomUUID(), wsId, "u@bifrost.io");
+
+        PipelineEntity p = new PipelineEntity();
+        p.setId(id);
+        p.setTenantId(wsId);
+        p.setPattern(PipelinePattern.FAN_OUT);
+        p.setTopicName("eda.orders.events");
+        when(pipelineRepository.findByIdAndTenantId(id, wsId)).thenReturn(Optional.of(p));
+
+        AdminClient adminClient = mock(AdminClient.class);
+        ListConsumerGroupsResult groupsResult = mock(ListConsumerGroupsResult.class);
+        when(adminClient.listConsumerGroups()).thenReturn(groupsResult);
+        when(groupsResult.all()).thenReturn(KafkaFuture.completedFuture(List.of(
+                new ConsumerGroupListing("orders-ui", false),
+                new ConsumerGroupListing("orders-worker", false))));
+
+        ListConsumerGroupOffsetsResult okOffsetsResult = mock(ListConsumerGroupOffsetsResult.class);
+        when(adminClient.listConsumerGroupOffsets("orders-ui")).thenReturn(okOffsetsResult);
+        when(okOffsetsResult.partitionsToOffsetAndMetadata()).thenReturn(KafkaFuture.completedFuture(
+                Map.of(new TopicPartition("eda.orders.events", 0), new OffsetAndMetadata(10L))));
+
+        ListConsumerGroupOffsetsResult failedOffsetsResult = mock(ListConsumerGroupOffsetsResult.class);
+        when(adminClient.listConsumerGroupOffsets("orders-worker")).thenReturn(failedOffsetsResult);
+        @SuppressWarnings("unchecked")
+        KafkaFuture<Map<TopicPartition, OffsetAndMetadata>> failedOffsetsFuture = mock(KafkaFuture.class);
+        when(failedOffsetsResult.partitionsToOffsetAndMetadata()).thenReturn(failedOffsetsFuture);
+        when(failedOffsetsFuture.get(org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.any()))
+                .thenThrow(new RuntimeException("offsets unavailable"));
+
+        assertThatThrownBy(() -> service(adminClient).consumerGroups(wsId, principal, id))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("Consumer group");
+    }
+
+    @Test
+    void consumerGroupsUsesCommittedOffsetsForInactiveGroupLag() {
+        UUID wsId = UUID.randomUUID();
+        UUID id = UUID.randomUUID();
+        AuthenticatedUser principal = new AuthenticatedUser(UUID.randomUUID(), wsId, "u@bifrost.io");
+
+        PipelineEntity p = new PipelineEntity();
+        p.setId(id);
+        p.setTenantId(wsId);
+        p.setPattern(PipelinePattern.FAN_OUT);
+        p.setTopicName("eda.orders.events");
+        when(pipelineRepository.findByIdAndTenantId(id, wsId)).thenReturn(Optional.of(p));
+
+        AdminClient adminClient = mock(AdminClient.class);
+        ListConsumerGroupsResult groupsResult = mock(ListConsumerGroupsResult.class);
+        when(adminClient.listConsumerGroups()).thenReturn(groupsResult);
+        when(groupsResult.all()).thenReturn(KafkaFuture.completedFuture(List.of(new ConsumerGroupListing("orders-ui", false))));
+
+        TopicPartition tp = new TopicPartition("eda.orders.events", 0);
+        ListConsumerGroupOffsetsResult offsetsResult = mock(ListConsumerGroupOffsetsResult.class);
+        when(adminClient.listConsumerGroupOffsets("orders-ui")).thenReturn(offsetsResult);
+        when(offsetsResult.partitionsToOffsetAndMetadata()).thenReturn(KafkaFuture.completedFuture(Map.of(tp, new OffsetAndMetadata(10L))));
+
+        DescribeConsumerGroupsResult descResult = mock(DescribeConsumerGroupsResult.class);
+        when(adminClient.describeConsumerGroups(List.of("orders-ui"))).thenReturn(descResult);
+        when(descResult.all()).thenReturn(KafkaFuture.completedFuture(Map.of(
+                "orders-ui",
+                new ConsumerGroupDescription("orders-ui", false, List.of(), "", ConsumerGroupState.EMPTY, Node.noNode()))));
+
+        ListOffsetsResult listOffsetsResult = mock(ListOffsetsResult.class);
+        when(adminClient.listOffsets(org.mockito.ArgumentMatchers.anyMap())).thenReturn(listOffsetsResult);
+        when(listOffsetsResult.all()).thenReturn(KafkaFuture.completedFuture(Map.of(
+                tp,
+                new ListOffsetsResult.ListOffsetsResultInfo(25L, -1L, Optional.empty()))));
+
+        var result = service(adminClient).consumerGroups(wsId, principal, id);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).totalLag()).isEqualTo(15L);
+        assertThat(result.get(0).partitionOffsets()).singleElement().satisfies(offset -> {
+            assertThat(offset.partition()).isEqualTo(0);
+            assertThat(offset.committed()).isEqualTo(10L);
+            assertThat(offset.endOffset()).isEqualTo(25L);
+        });
     }
 
     /** #404: 60분 창을 요청해도 생성시각(5분 전)으로 클램프 → 메트릭 쿼리 시작이 생성시각 이후여야 한다. */

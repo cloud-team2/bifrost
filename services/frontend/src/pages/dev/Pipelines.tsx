@@ -1,14 +1,16 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Icon } from '../../components/Icon'
 import { TechIcon, nodeKind } from '../../components/TechIcon'
 import { PageHead, StatusBadge } from '../../components/blocks'
 import { useApp } from '../../store/AppStore'
 import { CreatePipelineModal } from '../modals/CreatePipelineModal'
-import { nodeName, pipelineConsumers, pipelineLabel } from '../../data/helpers'
+import { nodeName, pipelineLabel } from '../../data/helpers'
 import type { Edge } from '../../data/types'
+import { api, type ConsumerGroupInfo } from '../../lib/api'
 import { cn } from '../../lib/format'
 
 type Tab = 'all' | 'active' | 'issue'
+type ConsumerGroupLoad = { loading: boolean; error: boolean; groups: ConsumerGroupInfo[] }
 
 const TAB_LABELS: Record<Tab, string> = { all: '전체', active: '활성', issue: '이슈' }
 
@@ -20,8 +22,45 @@ export function Pipelines() {
   const all = app.edges.filter((e) => app.currentProject?.pipelineIds.includes(e.id))
   const active = all.filter((e) => e.status === 'active')
   const issue = all.filter((e) => e.status === 'error' || e.status === 'lag')
+  const openIncidents = app.incidents.filter((i) => i.status.toUpperCase() !== 'RESOLVED')
+  const fanOutPipelineIds = all
+    .filter((e) => e.pattern === 'fan-out')
+    .map((e) => e.id)
+    .sort()
+    .join('\0')
 
   const counts: Record<Tab, number> = { all: all.length, active: active.length, issue: issue.length }
+  const [consumerGroups, setConsumerGroups] = useState<Record<string, ConsumerGroupLoad>>({})
+
+  useEffect(() => {
+    const wsId = app.currentProject?.id
+    const ids = fanOutPipelineIds ? fanOutPipelineIds.split('\0') : []
+    if (!wsId || ids.length === 0) {
+      setConsumerGroups({})
+      return
+    }
+
+    let cancelled = false
+    setConsumerGroups((prev) =>
+      Object.fromEntries(ids.map((id) => [
+        id,
+        { loading: true, error: false, groups: prev[id]?.groups ?? [] },
+      ])),
+    )
+
+    Promise.all(
+      ids.map((id) =>
+        api
+          .pipelineConsumerGroups(wsId, id)
+          .then((groups) => [id, { loading: false, error: false, groups }] as const)
+          .catch(() => [id, { loading: false, error: true, groups: [] }] as const),
+      ),
+    ).then((entries) => {
+      if (!cancelled) setConsumerGroups(Object.fromEntries(entries))
+    })
+
+    return () => { cancelled = true }
+  }, [app.currentProject?.id, fanOutPipelineIds])
 
   const filtered = (() => {
     const base = tab === 'active' ? active : tab === 'issue' ? issue : all
@@ -69,11 +108,26 @@ export function Pipelines() {
             </span>
           </button>
         ))}
+        <button
+          onClick={() => app.setView('alerts')}
+          className="ml-2 -mb-px flex items-center gap-1.5 border-b-2 border-transparent px-3 pb-2 text-[13px] font-medium text-gray-500 transition-colors hover:text-gray-700"
+        >
+          <Icon name="bell" size={13} />
+          인시던트
+          <span
+            className={cn(
+              'rounded-full px-1.5 py-0.5 text-[10.5px] font-semibold',
+              openIncidents.length > 0 ? 'bg-rose-100 text-rose-700' : 'bg-gray-100 text-gray-500',
+            )}
+          >
+            {openIncidents.length}
+          </span>
+        </button>
       </div>
 
       <div className="mt-4 space-y-2.5">
         {filtered.map((e) => (
-          <PipelineCard key={e.id} edge={e} />
+          <PipelineCard key={e.id} edge={e} consumerGroups={consumerGroups[e.id]} />
         ))}
         {filtered.length === 0 && (
           <div className="rounded-xl border border-dashed border-gray-200 py-16 text-center text-sm text-gray-400">
@@ -87,11 +141,11 @@ export function Pipelines() {
   )
 }
 
-function PipelineCard({ edge }: { edge: Edge }) {
+function PipelineCard({ edge, consumerGroups }: { edge: Edge; consumerGroups?: ConsumerGroupLoad }) {
   const app = useApp()
   const source = app.nodes.find((n) => n.id === edge.source)
   const sink = edge.sink ? app.nodes.find((n) => n.id === edge.sink) : null
-  const consumers = pipelineConsumers(edge, app.nodes)
+  const groups = consumerGroups?.groups ?? []
 
   const lineColor =
     edge.status === 'error'
@@ -154,20 +208,29 @@ function PipelineCard({ edge }: { edge: Edge }) {
         </div>
       ) : (
         <div className="flex min-w-0 items-center gap-2.5">
-          <div className="flex -space-x-2">
-            {consumers.slice(0, 3).map((c) => (
-              <div key={c.id} className="rounded-lg ring-2 ring-white">
-                <TechIcon kind="service" size={32} />
-              </div>
-            ))}
-            {consumers.length === 0 && (
+          <div className="flex min-w-0 flex-wrap gap-1.5">
+            {consumerGroups?.loading ? (
+              <span className="rounded-lg bg-gray-100 px-2 py-1 text-[11px] text-gray-400">
+                consumers 조회 중
+              </span>
+            ) : consumerGroups?.error ? (
+              <span className="rounded-lg bg-rose-50 px-2 py-1 text-[11px] text-rose-500">
+                consumer 조회 실패
+              </span>
+            ) : groups.length > 0 ? (
+              groups.slice(0, 2).map((g) => (
+                <span key={g.name} className="max-w-[130px] truncate rounded-lg bg-violet-50 px-2 py-1 font-mono text-[11px] text-violet-700">
+                  {g.name}
+                </span>
+              ))
+            ) : (
               <span className="rounded-lg bg-gray-100 px-2 py-1 text-[11px] text-gray-400">
                 consumers 없음
               </span>
             )}
           </div>
-          {consumers.length > 0 && (
-            <span className="text-[12px] text-gray-500">{consumers.length}개 서비스</span>
+          {groups.length > 0 && !consumerGroups?.loading && !consumerGroups?.error && (
+            <span className="shrink-0 text-[12px] text-gray-500">{groups.length}개 그룹</span>
           )}
         </div>
       )}
