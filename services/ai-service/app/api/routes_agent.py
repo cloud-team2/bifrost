@@ -43,6 +43,8 @@ async def create_run(req: CreateRunRequest, background_tasks: BackgroundTasks) -
         run_id,
         req.mode or "simple_query",
         project_id=req.project_id,
+        incident_id=req.incident_id,
+        remediation_requested=req.remediation_requested,
         user_message=user_message,
     )
 
@@ -54,6 +56,9 @@ async def create_run(req: CreateRunRequest, background_tasks: BackgroundTasks) -
         bus=get_event_bus(),
         run_repo=run_repo,
         registry=get_tool_registry(),
+        requested_mode=req.mode,
+        requested_incident_id=req.incident_id,
+        requested_remediation_requested=req.remediation_requested,
     )
 
     return ApiResponse.success(request_id, {

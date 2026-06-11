@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -55,6 +56,26 @@ class _FixedSupervisor:
         stage = self._stages[self._index]
         self._index += 1
         return stage
+
+
+class _RecordingSupervisor(_FixedSupervisor):
+    def __init__(self, stages: list[str]) -> None:
+        super().__init__(stages)
+        self.start_args = None
+        self.start_kwargs = None
+
+    def start_run(self, *args, **kwargs) -> None:
+        self.start_args = args
+        self.start_kwargs = kwargs
+
+
+class _CapturingReportRepository:
+    def __init__(self) -> None:
+        self.created: list[tuple[tuple, dict]] = []
+
+    async def create(self, *args, **kwargs):
+        self.created.append((args, kwargs))
+        return SimpleNamespace(id="rep_001")
 
 
 def _router_out(
@@ -382,3 +403,53 @@ async def test_run_budget_exceeded_emits_run_guards_patch() -> None:
     assert guard_patches[0].author == "Supervisor"
     assert guard_patches[0].op == "version"
     assert guard_patches[0].patch == {"reason": "step_budget"}
+
+
+@pytest.mark.asyncio
+async def test_requested_incident_context_forces_incident_mode_and_report_link() -> None:
+    state_repo = InMemoryStateRepository()
+    report_repo = _CapturingReportRepository()
+    supervisor = _RecordingSupervisor(["report"])
+    bus = EventBus()
+    bus.publish = AsyncMock()  # type: ignore[method-assign]
+    run_repo = AsyncMock()
+    run_repo.get.return_value = SimpleNamespace(incident_id=None, remediation_requested=False)
+
+    with (
+        patch("app.workflow.runner.router_agent.run_router", new_callable=AsyncMock) as mock_router,
+        patch("app.workflow.runner.report_agent.run_report", new_callable=AsyncMock) as mock_report,
+        patch("app.workflow.runner.get_supervisor") as mock_get_sup,
+        patch("app.workflow.runner.get_event_repo") as mock_get_event_repo,
+        patch("app.workflow.runner.get_state_repo") as mock_get_state_repo,
+        patch("app.workflow.runner.get_llm_provider"),
+        patch("app.workflow.runner.get_report_repo") as mock_get_report_repo,
+    ):
+        mock_router.return_value = _router_out(AgentMode.SIMPLE_QUERY, remediation_requested=False)
+        mock_report.return_value = "incident report"
+        mock_get_sup.return_value = supervisor
+        mock_get_event_repo.return_value = InMemoryEventRepository()
+        mock_get_state_repo.return_value = state_repo
+        mock_get_report_repo.return_value = report_repo
+
+        await run_workflow(
+            run_id="run_requested_incident",
+            user_message="상세 분석",
+            project_id="proj_001",
+            bus=bus,
+            run_repo=run_repo,
+            registry=AsyncMock(),
+            requested_incident_id="inc_001",
+            requested_remediation_requested=True,
+        )
+
+    assert supervisor.start_args == ("run_requested_incident", AgentMode.INCIDENT_ANALYSIS)
+    assert supervisor.start_kwargs == {
+        "incident_id": "inc_001",
+        "remediation_requested": True,
+    }
+    assert report_repo.created[0][1]["incident_id"] == "inc_001"
+    incident_patches = [
+        p for p in await state_repo.get_patches("run_requested_incident")
+        if p.namespace == "incident" and p.path == "/incident/incident_id"
+    ]
+    assert incident_patches[0].patch == {"incident_id": "inc_001", "mode": "incident_analysis"}
