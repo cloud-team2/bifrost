@@ -13,6 +13,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from app.agents.slash import resolve_slash
 from app.prompts import planner as planner_prompt
 from app.schemas.outputs import PlannerOutput, RetrievalPlanStep
 from app.schemas.tools import ToolContext, ToolStatus
@@ -112,6 +113,33 @@ async def run_planner(
     registry: ToolClientRegistry | None = None,
     tool_context: ToolContext | None = None,
 ) -> PlannerOutput:
+    # 슬래시 명령은 LLM 없이 결정적으로 단일 read tool 조회로 푼다(#504, zero LLM call).
+    slash = resolve_slash(user_message)
+    if slash is not None and slash.tool:
+        if slash.needs_identifier and not slash.identifier:
+            # 식별자 없는 connector/consumer 명령은 기존 clarification 경로 재사용.
+            return PlannerOutput(
+                retrieval_plan=[],
+                clarification_message=_identifier_required_message({slash.tool}),
+            )
+        params = dict(_READ_TOOL_DEFAULT_PARAMS[slash.tool])
+        if slash.identifier:
+            # 식별자 인자는 #489 해석을 건너뛰고 그대로 params 에 채운다.
+            kind = "consumer_group" if slash.tool in _CONSUMER_GROUP_PARAM_TOOLS else "connector"
+            params = _params_with_identifier(
+                slash.tool, params, _Identifier(value=slash.identifier, kind=kind)
+            )
+        step = RetrievalPlanStep(
+            step_id="step_001",
+            tool_name=slash.tool,
+            params=params,
+            purpose=f"{slash.tool} 조회 (slash)",
+            required=True,
+            depends_on=[],
+            plan_hash=_plan_hash(slash.tool, params),
+        )
+        return PlannerOutput(retrieval_plan=[step])
+
     selected = await _llm_select_tools(user_message)
     selected_by_llm = selected is not None
     if selected is None:

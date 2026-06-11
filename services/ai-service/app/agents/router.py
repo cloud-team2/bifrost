@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.agents.slash import resolve_slash
 from app.prompts import router as router_prompt
 from app.schemas.outputs import RouteDecision, RouterOutput
 from app.schemas.state import AgentMode
@@ -38,6 +39,19 @@ _VALID_MODES = {mode.value for mode in AgentMode}
 
 
 async def run_router(user_message: str) -> RouterOutput:
+    # 슬래시 명령은 LLM 없이 결정적으로 mode 를 확정한다(#504, zero LLM call).
+    slash = resolve_slash(user_message)
+    if slash is not None:
+        return RouterOutput(
+            route_decision=RouteDecision(
+                mode=slash.mode,
+                remediation_requested=False,
+                reuse_existing_analysis=False,
+                reason="slash command shortcut (deterministic, no LLM)",
+                required_flow=list(stages_for_mode(slash.mode, False)),
+            )
+        )
+
     decision = await _llm_route(user_message)
     if decision is None:
         decision = _keyword_route(user_message)
