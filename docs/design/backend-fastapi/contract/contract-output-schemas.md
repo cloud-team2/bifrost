@@ -30,7 +30,7 @@
 - `action_execution`
 - `approval_decision`
 
-Router는 매 사용자 메시지마다 mode를 재판정한다. 현재 router 구현은 keyword에 따라 `simple_query`/`incident_analysis`/`action_execution`/`approval_decision`을 선택하고, `required_flow`는 transition table에서 계산한다. 조치 후보 제시 요청은 `remediation_requested=true`, `action_execution`/`approval_decision`은 `reuse_existing_analysis=true`를 반환한다.
+Router는 매 사용자 메시지마다 mode를 재판정한다. 현재 router는 **lightweight LLM으로 mode를 분류**하고(#483) LLM 미가용 시 keyword fallback하며, `/` 슬래시 입력은 결정적 단축 경로로 처리한다(#504). `required_flow`는 transition table에서 계산한다. 조치 후보 제시 요청은 `remediation_requested=true`, `action_execution`/`approval_decision`은 `reuse_existing_analysis=true`를 반환한다.
 
 현재 transition table 기준 `incident_analysis` + `remediation_requested=true`는 `remediation`과 `policy_guard`까지만 추가한 뒤 Verifier와 Report로 진행한다. `approval_or_change_gate`/`executor` 실행 경로는 이 mode의 current flow에 들어 있지 않다.
 

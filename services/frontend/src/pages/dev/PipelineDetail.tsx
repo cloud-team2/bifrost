@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Bar, BarChart, CartesianGrid, Cell, Tooltip, XAxis, YAxis } from 'recharts'
 import { Icon } from '../../components/Icon'
 import { MetricCard, Panel, StatusBadge } from '../../components/blocks'
@@ -7,6 +7,7 @@ import { TechIcon, nodeKind } from '../../components/TechIcon'
 import { useToast } from '../../components/Toast'
 import { useApp } from '../../store/AppStore'
 import { pipelineLabel } from '../../data/helpers'
+import { sinkDisplayStatus } from '../../lib/mappers'
 import { buildConsumerSnippets, escapeSnippetValue } from '../../lib/pipelineSnippets'
 import type { Edge, Node } from '../../data/types'
 import {
@@ -26,7 +27,7 @@ import {
   type TopicInfoResponse,
   type TraceSummaryResponse,
 } from '../../lib/api'
-import { TraceWaterfall } from '../../components/TraceWaterfall'
+import { TraceFlow } from '../../components/TraceFlow'
 import { cn, formatNum } from '../../lib/format'
 
 const tooltipStyle = {
@@ -77,7 +78,8 @@ export function PipelineDetail() {
 
   // (#267) 원인 attribution → 탭 매핑: DB(연결 끊김/차단) → Overview, 커넥터 FAILED/에러 → Connector.
   const connectorErr = !!connectors?.some((c) => c.state === 'FAILED' || (c.lastError != null && c.lastError !== ''))
-  const dbErr        = source.status === 'error' || sink?.status === 'error'
+  // (#547) sink는 CDC-source readiness(BLOCKED)가 무관 → 연결 끊김(UNREACHABLE)만 error로 센다.
+  const dbErr        = source.status === 'error' || (!!sink && sinkDisplayStatus(sink) === 'error')
   const tabErrors: Record<string, boolean> = { Overview: dbErr, Connector: connectorErr }
 
   return (
@@ -654,42 +656,104 @@ function TraceTab({ edge }: { edge: Edge }) {
   const wsId = app.currentProject?.id
   const traceId = app.selectedTraceId ?? undefined
   const [trace, setTrace] = useState<TraceSummaryResponse | null>(null)
+  const [tracingEnabled, setTracingEnabled] = useState<boolean | null>(null)
   const [error, setError] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
     if (!wsId) return
     let cancelled = false
     setTrace(null)
     setError(false)
-    api.pipelineTrace(wsId, edge.id, traceId)
-      .then((t) => { if (!cancelled) setTrace(t) })
+    Promise.all([
+      api.pipelineTrace(wsId, edge.id, traceId),
+      api.pipelineDataplaneTracing(wsId, edge.id).catch(() => ({ enabled: false })),
+    ])
+      .then(([t, dt]) => { if (!cancelled) { setTrace(t); setTracingEnabled(dt.enabled) } })
       .catch(() => { if (!cancelled) setError(true) })
     return () => { cancelled = true }
-  }, [wsId, edge.id, traceId])
+  }, [wsId, edge.id, traceId, reloadKey])
 
-  if (error) {
-    return (
-      <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white py-16">
-        <Icon name="alert" size={24} className="mb-2 text-rose-300" />
-        <p className="text-[13px] text-gray-400">추적 정보를 불러오지 못했습니다</p>
-      </div>
-    )
+  const refresh = () => setReloadKey((k) => k + 1)
+  const toggleTracing = async () => {
+    if (!wsId || tracingEnabled === null) return
+    setBusy(true)
+    try {
+      await api.setPipelineDataplaneTracing(wsId, edge.id, !tracingEnabled)
+      setTracingEnabled(!tracingEnabled)
+      refresh()
+    } catch {
+      setError(true)
+    } finally {
+      setBusy(false)
+    }
   }
-  if (trace === null) {
-    return (
-      <div className="flex items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white py-16 text-[13px] text-gray-400">
-        불러오는 중…
-      </div>
-    )
-  }
+
+  const hasTrace = trace?.traceId != null && trace.spans.length > 0
+  const btn = 'rounded-md border border-gray-200 px-3 py-1.5 text-[12px] font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50'
+
   return (
     <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-[12px]">
+          <span className="text-gray-500">데이터플레인 추적</span>
+          {tracingEnabled === null ? (
+            <span className="text-gray-300">…</span>
+          ) : tracingEnabled ? (
+            <span className="inline-flex items-center gap-1 text-emerald-600"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />ON</span>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-gray-400"><span className="h-1.5 w-1.5 rounded-full bg-gray-300" />OFF</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={refresh} disabled={busy} className={btn}>새로고침</button>
+          <button onClick={toggleTracing} disabled={busy || tracingEnabled === null} className={btn}>
+            {tracingEnabled ? '추적 끄기' : '추적 켜기'}
+          </button>
+        </div>
+      </div>
+
       {edge.pattern === 'fan-out' && (
         <p className="text-[12px] text-gray-400">
           EDA는 source→topic 구간까지 표시됩니다. consumer(고객 앱)는 같은 traceId로 고객 관측도구에서 이어볼 수 있습니다.
         </p>
       )}
-      <TraceWaterfall trace={trace} />
+
+      {error ? (
+        <EmptyTrace iconClass="text-rose-300" text="추적 정보를 불러오지 못했습니다" />
+      ) : trace === null ? (
+        <div className="flex items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white py-16 text-[13px] text-gray-400">
+          불러오는 중…
+        </div>
+      ) : tracingEnabled === false ? (
+        <EmptyTrace
+          iconClass="text-gray-300"
+          text="이 파이프라인은 데이터플레인 추적이 꺼져 있습니다"
+          sub="추적을 켜면 source→sink 흐름이 trace로 기록됩니다. (켜면 소스 커넥터가 잠깐 재시작됩니다)"
+          action={<button onClick={toggleTracing} disabled={busy} className={btn}>추적 켜기</button>}
+        />
+      ) : !hasTrace ? (
+        <EmptyTrace
+          iconClass="text-gray-300"
+          text="추적은 켜져 있고, 최근 샘플 trace를 기다리는 중입니다"
+          sub={trace.note ?? '약 5% 샘플링이라 일부 레코드만 기록됩니다. 잠시 후 새로고침해 주세요.'}
+          action={<button onClick={refresh} disabled={busy} className={btn}>새로고침</button>}
+        />
+      ) : (
+        <TraceFlow trace={trace} />
+      )}
+    </div>
+  )
+}
+
+function EmptyTrace({ iconClass, text, sub, action }: { iconClass: string; text: string; sub?: string; action?: ReactNode }) {
+  return (
+    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white px-6 py-16 text-center">
+      <Icon name="alert" size={24} className={`mb-2 ${iconClass}`} />
+      <p className="text-[13px] text-gray-500">{text}</p>
+      {sub && <p className="mt-1 max-w-md text-[12px] text-gray-400">{sub}</p>}
+      {action && <div className="mt-3">{action}</div>}
     </div>
   )
 }
@@ -908,6 +972,8 @@ function SyncTab({ edge }: { edge: Edge }) {
 }
 
 function DBNodeCard({ node, role }: { node: Node | null; role: 'Source' | 'Sink' }) {
+  // (#547) sink는 readiness 차단(BLOCKED)을 error 대신 warning으로(연결 끊김만 error).
+  const effStatus = node && role === 'Sink' ? sinkDisplayStatus(node) : node?.status
   if (!node) return (
     <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-gray-200 px-6 py-8">
       <Icon name="database" size={28} className="text-gray-300" />
@@ -930,8 +996,8 @@ function DBNodeCard({ node, role }: { node: Node | null; role: 'Source' | 'Sink'
       </span>
       <div className="flex items-center gap-1.5 text-[11px]">
         <span className={cn('h-1.5 w-1.5 rounded-full',
-          node.status === 'healthy' ? 'bg-emerald-400' : 'bg-amber-400')} />
-        <span className="text-gray-500">{node.status}</span>
+          effStatus === 'healthy' ? 'bg-emerald-400' : effStatus === 'error' ? 'bg-rose-400' : 'bg-amber-400')} />
+        <span className="text-gray-500">{effStatus}</span>
       </div>
     </div>
   )

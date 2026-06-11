@@ -64,4 +64,9 @@ public class PipelineProvisioningService {
         log.info("데이터플레인 추적 토글: pipeline={}, enabled={}", pipelineId, enabled);
         provisioner.setSourceTracing(ConnectorNaming.sourceConnectorName(pipelineId), enabled);
     }
+
+    /** 파이프라인 데이터플레인 추적 토글 현재 상태(#438, Tracing 탭 표시용). */
+    public boolean isDataplaneTracingEnabled(UUID pipelineId) {
+        return provisioner.isSourceTracingEnabled(ConnectorNaming.sourceConnectorName(pipelineId));
+    }
 }

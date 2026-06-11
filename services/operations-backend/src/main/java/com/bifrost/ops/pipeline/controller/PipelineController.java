@@ -3,6 +3,7 @@ package com.bifrost.ops.pipeline.controller;
 import com.bifrost.ops.auth.jwt.AuthenticatedUser;
 import com.bifrost.ops.internalops.dto.TraceSummaryResult;
 import com.bifrost.ops.pipeline.dto.ConnectorResponse;
+import com.bifrost.ops.pipeline.dto.DataplaneTracingState;
 import com.bifrost.ops.pipeline.dto.ConsumerGroupInfo;
 import com.bifrost.ops.pipeline.dto.KafkaMessageRecord;
 import com.bifrost.ops.pipeline.dto.MessagePageResponse;
@@ -244,6 +245,14 @@ public class PipelineController {
                                  @RequestParam boolean enabled,
                                  @AuthenticationPrincipal AuthenticatedUser principal) {
         pipelineService.setDataplaneTracing(wsId, principal, id, enabled);
+    }
+
+    /** 데이터플레인 추적 토글 현재 상태(#565, Tracing 탭). source 커넥터의 tracing SMT 유무. */
+    @GetMapping("/{id}/dataplane-tracing")
+    public DataplaneTracingState dataplaneTracingState(@PathVariable UUID wsId,
+                                                       @PathVariable UUID id,
+                                                       @AuthenticationPrincipal AuthenticatedUser principal) {
+        return new DataplaneTracingState(pipelineService.isDataplaneTracingEnabled(wsId, principal, id));
     }
 
     /**

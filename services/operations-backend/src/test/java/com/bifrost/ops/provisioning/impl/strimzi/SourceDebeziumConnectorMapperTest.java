@@ -162,4 +162,19 @@ class SourceDebeziumConnectorMapperTest {
         assertThat(config).containsEntry("transforms", "route");
         assertThat(config).doesNotContainKey("transforms.tracing.type");
     }
+
+    @Test
+    void isTracingSmtReflectsTransformsState() {
+        // #565: 토글 상태 조회 — transforms에 tracing 포함 여부
+        Map<String, Object> on = new HashMap<>();
+        on.put("transforms", "route,tracing");
+        assertThat(SourceDebeziumConnectorMapper.isTracingSmt(on)).isTrue();
+
+        Map<String, Object> off = new HashMap<>();
+        off.put("transforms", "route");
+        assertThat(SourceDebeziumConnectorMapper.isTracingSmt(off)).isFalse();
+
+        assertThat(SourceDebeziumConnectorMapper.isTracingSmt(new HashMap<>())).isFalse();
+        assertThat(SourceDebeziumConnectorMapper.isTracingSmt(null)).isFalse();
+    }
 }

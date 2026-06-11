@@ -61,6 +61,7 @@ public class PipelineService {
     private final EventService eventService;
     private final AuditService auditService;
     private final com.bifrost.ops.pipeline.kafka.KafkaResourceCleaner kafkaResourceCleaner;
+    private final com.bifrost.ops.database.service.CdcReadinessService cdcReadinessService;
 
     public PipelineService(PipelineRepository pipelineRepository,
                            DatasourceRepository datasourceRepository,
@@ -70,7 +71,8 @@ public class PipelineService {
                            WorkspaceAccessGuard accessGuard,
                            EventService eventService,
                            AuditService auditService,
-                           com.bifrost.ops.pipeline.kafka.KafkaResourceCleaner kafkaResourceCleaner) {
+                           com.bifrost.ops.pipeline.kafka.KafkaResourceCleaner kafkaResourceCleaner,
+                           com.bifrost.ops.database.service.CdcReadinessService cdcReadinessService) {
         this.pipelineRepository = pipelineRepository;
         this.datasourceRepository = datasourceRepository;
         this.workspaceRepository = workspaceRepository;
@@ -80,6 +82,7 @@ public class PipelineService {
         this.eventService = eventService;
         this.auditService = auditService;
         this.kafkaResourceCleaner = kafkaResourceCleaner;
+        this.cdcReadinessService = cdcReadinessService;
     }
 
     // ---------- 목록 / 상세 ----------
@@ -126,6 +129,13 @@ public class PipelineService {
                 throw validation("source와 sink는 서로 다른 DB여야 합니다");
             }
             sink = requireDatasource(wsId, req.sinkDbId(), "sink");
+            // sink 역할 준비도(INSERT 등 쓰기 권한)를 실제로 점검해 sinkReadinessStatus를 채운다(#547).
+            // 소스용 cdcReadinessStatus와 별개. 점검 실패(일시적 연결 등)는 무시하고 생성은 계속.
+            try {
+                cdcReadinessService.checkSink(wsId, sink.getId());
+            } catch (Exception ex) {
+                log.debug("sink 준비도 점검 실패(무시): dbId={}, cause={}", sink.getId(), ex.getMessage());
+            }
         }
         if (pipelineRepository.existsByTenantIdAndName(wsId, req.name())) {
             throw validation("이미 존재하는 파이프라인 이름입니다: " + req.name());
@@ -241,6 +251,13 @@ public class PipelineService {
         accessGuard.requireAccess(wsId, principal);
         PipelineEntity p = load(wsId, id);
         provisioningService.setDataplaneTracing(p.getId(), enabled);
+    }
+
+    /** 데이터플레인 추적 토글 현재 상태(#438/#565, Tracing 탭 표시용). */
+    public boolean isDataplaneTracingEnabled(UUID wsId, AuthenticatedUser principal, UUID id) {
+        accessGuard.requireAccess(wsId, principal);
+        PipelineEntity p = load(wsId, id);
+        return provisioningService.isDataplaneTracingEnabled(p.getId());
     }
 
     @Transactional

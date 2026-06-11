@@ -121,6 +121,8 @@ export interface DatabaseResponse {
   username: string
   password: string
   cdcReadinessStatus: 'OK' | 'WARNING' | 'BLOCKED' | null
+  /** sink(JDBC 쓰기) 준비도(#547). 소스용 cdcReadinessStatus와 별개. null=미점검. */
+  sinkReadinessStatus: 'OK' | 'WARNING' | 'BLOCKED' | null
   /** 연결 헬스 주기 프로브(#179). null=아직 미프로브. */
   connectionStatus: 'HEALTHY' | 'UNREACHABLE' | null
   connectionError: string | null
@@ -683,6 +685,17 @@ export const api = {
     request<TraceSummaryResponse>(
       'GET',
       `/api/v1/workspaces/${wsId}/pipelines/${id}/trace${traceId ? `?traceId=${encodeURIComponent(traceId)}` : ''}`,
+    ),
+  // 데이터플레인 추적 토글(#438/#565) — 현재 상태 조회 / on·off
+  pipelineDataplaneTracing: (wsId: string, id: string) =>
+    request<{ enabled: boolean }>(
+      'GET',
+      `/api/v1/workspaces/${wsId}/pipelines/${id}/dataplane-tracing`,
+    ),
+  setPipelineDataplaneTracing: (wsId: string, id: string, enabled: boolean) =>
+    request<void>(
+      'POST',
+      `/api/v1/workspaces/${wsId}/pipelines/${id}/dataplane-tracing?enabled=${enabled}`,
     ),
   // cluster (#213) — 워크스페이스 공유 인프라, 스코프 없음
   clusterKafka: () => request<KafkaClusterResponse>('GET', `/api/v1/clusters/kafka`),
