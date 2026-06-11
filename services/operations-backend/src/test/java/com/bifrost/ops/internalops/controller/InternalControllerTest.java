@@ -1,6 +1,7 @@
 package com.bifrost.ops.internalops.controller;
 
 import com.bifrost.ops.global.common.datasource.DbType;
+import com.bifrost.ops.internalops.dto.ConnectorStatusListResult;
 import com.bifrost.ops.internalops.dto.OpsEnvelope;
 import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
 import com.bifrost.ops.provisioning.PipelineProvisioningService;
@@ -103,6 +104,32 @@ class InternalControllerTest {
         assertThat(response.getBody().ok()).isFalse();
         assertThat(response.getBody().error().code()).isEqualTo("RESOURCE_NOT_OWNED_BY_PROJECT");
         verify(pipelineService, never()).status(any(), any());
+    }
+
+    @Test
+    void listConnectorStatusesLeavesRuntimeFieldsEmptyWhenStatusReadFails() {
+        UUID tenantId = UUID.randomUUID();
+        UUID pipelineId = UUID.randomUUID();
+        ConnectorEntity connector = connector(pipelineId);
+        connector.setState("RUNNING");
+        connector.setTasksMax(2);
+        when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId)));
+        when(connectorRepository.findByTenantIdOrderByCrName(tenantId)).thenReturn(List.of(connector));
+        when(pipelineService.status("proj-001", "orders-sink")).thenThrow(new RuntimeException("status unavailable"));
+
+        ResponseEntity<OpsEnvelope<ConnectorStatusListResult>> response =
+                controller.listConnectorStatuses("proj-001", new MockHttpServletRequest());
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().operation()).isEqualTo("list_connectors");
+        ConnectorStatusListResult.ConnectorStatusSummary row = response.getBody().result().connectors().getFirst();
+        assertThat(row.connector()).isEqualTo("orders-sink");
+        assertThat(row.type()).isEqualTo("Sink");
+        assertThat(row.status()).isEqualTo("UNKNOWN");
+        assertThat(row.tasksRunning()).isNull();
+        assertThat(row.tasksTotal()).isNull();
+        assertThat(row.error()).isEqualTo("status unavailable");
     }
 
     private static WorkspaceEntity workspace(UUID tenantId) {

@@ -52,6 +52,47 @@ async def test_plain_log_query_routes_to_search_logs():
 
 
 @pytest.mark.asyncio
+async def test_pipeline_status_routes_to_structured_status_tool():
+    plan = await run_planner("파이프라인 상태 보여줘", "proj_001")
+
+    names = _tool_names(plan)
+    assert names == ["list_pipelines"]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_lag_routes_to_pipeline_status_not_consumer_groups():
+    plan = await run_planner("pipeline lag 확인해줘", "proj_001")
+
+    names = _tool_names(plan)
+    assert names == ["list_pipelines"]
+
+
+@pytest.mark.asyncio
+async def test_connector_status_does_not_route_to_pipeline_status():
+    plan = await run_planner("connector 상태 조회", "proj_001")
+
+    names = _tool_names(plan)
+    assert names == ["list_connectors"]
+
+
+@pytest.mark.asyncio
+async def test_event_log_analysis_routes_to_event_summary():
+    plan = await run_planner("이벤트 로그 분석", "proj_001")
+
+    names = _tool_names(plan)
+    assert names == ["analyze_event_log"]
+
+
+@pytest.mark.asyncio
+async def test_mixed_existing_intents_remain_additive():
+    plan = await run_planner("배포 메트릭 확인", "proj_001")
+
+    names = _tool_names(plan)
+    assert "get_metrics" in names
+    assert "get_deployments" in names
+
+
+@pytest.mark.asyncio
 async def test_no_duplicate_tool_steps():
     # "에러 로그" 는 incident·log 버킷 둘 다에 매칭되지만 search_logs step 은 1개여야 한다.
     plan = await run_planner("에러 로그 보여줘", "proj_001")

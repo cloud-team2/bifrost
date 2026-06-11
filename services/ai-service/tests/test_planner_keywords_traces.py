@@ -12,7 +12,26 @@ def _tool_names(plan) -> list[str]:
 
 
 @pytest.mark.asyncio
-async def test_trace_keyword_triggers_get_traces():
+async def test_trace_keyword_without_connector_name_does_not_use_placeholder():
+    plan = await run_planner("connector trace 봐줘", "proj_001")
+
+    names = _tool_names(plan)
+    assert "get_traces" not in names
+    assert "list_connectors" in names
+    assert all(step.params.get("connector_name") != "default-connector" for step in plan.retrieval_plan)
+
+
+@pytest.mark.asyncio
+async def test_trace_keyword_with_prefix_connector_name_triggers_get_traces():
+    plan = await run_planner("connector orders-sink trace 봐줘", "proj_001")
+
+    assert "get_traces" in _tool_names(plan)
+    trace_step = next(step for step in plan.retrieval_plan if step.tool_name == "get_traces")
+    assert trace_step.params == {"connector_name": "orders-sink"}
+
+
+@pytest.mark.asyncio
+async def test_trace_keyword_with_suffix_connector_name_triggers_get_traces():
     plan = await run_planner("orders-sink connector trace 봐줘", "proj_001")
 
     assert "get_traces" in _tool_names(plan)
@@ -23,10 +42,12 @@ async def test_trace_keyword_triggers_get_traces():
 @pytest.mark.asyncio
 async def test_stacktrace_keyword_triggers_connector_task_trace():
     # #373: 예외/스택트레이스는 분산 trace(get_traces)가 아니라 connector task 예외 조회로 분리.
-    plan = await run_planner("orders-sink connector 스택트레이스 좀 보여줘", "proj_001")
+    plan = await run_planner("connector orders-sink 스택트레이스 좀 보여줘", "proj_001")
 
     assert "get_connector_task_trace" in _tool_names(plan)
     assert "get_traces" not in _tool_names(plan)
+    trace_step = next(step for step in plan.retrieval_plan if step.tool_name == "get_connector_task_trace")
+    assert trace_step.params == {"connector_name": "orders-sink"}
 
 
 @pytest.mark.asyncio
@@ -54,14 +75,14 @@ async def test_connect_consumer_group_used_as_is_for_lag():
 
 
 @pytest.mark.asyncio
-async def test_unresolved_connector_query_returns_clarification_without_placeholder():
+async def test_unresolved_consumer_lag_routes_to_consumer_groups_without_placeholder():
     plan = await run_planner("consumer lag 확인해줘", "proj_001")
 
-    assert plan.retrieval_plan == []
-    assert plan.clarification_message is not None
-    assert "커넥터 이름" in plan.clarification_message
-    assert "default-group" not in plan.clarification_message
-    assert "default-connector" not in plan.clarification_message
+    names = _tool_names(plan)
+    assert "get_consumer_groups" in names
+    assert "get_consumer_lag" not in names
+    assert all(step.params.get("consumer_group") != "default-group" for step in plan.retrieval_plan)
+    assert all(step.params.get("connector_name") != "default-connector" for step in plan.retrieval_plan)
 
 
 @pytest.mark.asyncio

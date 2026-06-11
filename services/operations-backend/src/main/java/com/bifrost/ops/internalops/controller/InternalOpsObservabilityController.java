@@ -1,6 +1,8 @@
 package com.bifrost.ops.internalops.controller;
 
 import com.bifrost.ops.adapters.logstore.LokiClient;
+import com.bifrost.ops.event.EventLevel;
+import com.bifrost.ops.event.persistence.repository.EventRepository;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
 import com.bifrost.ops.internalops.AgentHeaders;
@@ -8,6 +10,8 @@ import com.bifrost.ops.internalops.WorkspaceLookup;
 import com.bifrost.ops.internalops.dto.AlertListResult;
 import com.bifrost.ops.internalops.dto.AlertSummaryResult;
 import com.bifrost.ops.internalops.dto.ConsumerLagResult;
+import com.bifrost.ops.internalops.dto.ConsumerGroupsResult;
+import com.bifrost.ops.internalops.dto.EventIncidentSummaryResult;
 import com.bifrost.ops.internalops.dto.IncidentSummaryResult;
 import com.bifrost.ops.internalops.dto.LogSearchResult;
 import com.bifrost.ops.internalops.dto.MetricsResult;
@@ -18,12 +22,14 @@ import com.bifrost.ops.incident.persistence.repository.IncidentRepository;
 import com.bifrost.ops.monitoring.query.ObservabilityMetricsQuery;
 import com.bifrost.ops.monitoring.query.TraceQuery;
 import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
+import com.bifrost.ops.provisioning.dto.ConnectorKind;
 import com.bifrost.ops.provisioning.persistence.entity.ConnectorEntity;
 import com.bifrost.ops.provisioning.persistence.repository.ConnectorRepository;
 import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.ConsumerGroupDescription;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
@@ -73,6 +79,7 @@ public class InternalOpsObservabilityController {
     private final PipelineRepository pipelineRepository;
     private final ConnectorRepository connectorRepository;
     private final IncidentRepository incidentRepository;
+    private final EventRepository eventRepository;
     private final ObservabilityMetricsQuery metricsQuery;
     private final TraceQuery traceQuery;
     private final RestClient connectRestClient;
@@ -84,6 +91,7 @@ public class InternalOpsObservabilityController {
             PipelineRepository pipelineRepository,
             ConnectorRepository connectorRepository,
             IncidentRepository incidentRepository,
+            EventRepository eventRepository,
             ObservabilityMetricsQuery metricsQuery,
             TraceQuery traceQuery,
             @Value("${kafka-connect.rest-url:http://platform-connect-connect-api.platform-kafka.svc:8083}")
@@ -94,6 +102,7 @@ public class InternalOpsObservabilityController {
         this.pipelineRepository = pipelineRepository;
         this.connectorRepository = connectorRepository;
         this.incidentRepository = incidentRepository;
+        this.eventRepository = eventRepository;
         this.metricsQuery = metricsQuery;
         this.traceQuery = traceQuery;
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
@@ -105,7 +114,7 @@ public class InternalOpsObservabilityController {
                 .build();
     }
 
-    /** get_consumer_lag — consumer group 전체 lag 합계. Kafka 미연결 시 lag=0 반환. */
+    /** get_consumer_lag — consumer group 전체 lag 합계. Kafka 조회 실패 시 오류 envelope 반환. */
     @GetMapping("/projects/{projectId}/kafka/consumer-groups/{consumerGroup}/lag")
     public ResponseEntity<OpsEnvelope<ConsumerLagResult>> consumerLag(
             @PathVariable String projectId,
@@ -117,10 +126,67 @@ public class InternalOpsObservabilityController {
         } catch (ApiException e) {
             return apiError(requestId, "get_consumer_lag", e);
         }
-        long totalLag = fetchLag(consumerGroup);
-        String source = totalLag >= 0 ? "kafka-admin" : "unavailable";
-        ConsumerLagResult result = new ConsumerLagResult(consumerGroup, Math.max(0, totalLag), source);
+        LagSnapshot lag = fetchLagSnapshot(consumerGroup);
+        if (lag.error() != null) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(OpsEnvelope.error(requestId, "get_consumer_lag", "UPSTREAM_UNAVAILABLE",
+                            lag.error(), true, "retry_kafka_admin"));
+        }
+        ConsumerLagResult result = new ConsumerLagResult(consumerGroup, lag.lag() == null ? 0L : lag.lag(), "kafka-admin");
         return ResponseEntity.ok(OpsEnvelope.ok(requestId, "get_consumer_lag", result));
+    }
+
+    /** get_consumer_groups — project scope Kafka Connect consumer group 목록 + lag. */
+    @GetMapping("/projects/{projectId}/kafka/consumer-groups")
+    public ResponseEntity<OpsEnvelope<ConsumerGroupsResult>> consumerGroups(
+            @PathVariable String projectId,
+            HttpServletRequest request) {
+        String requestId = AgentHeaders.requestId(request);
+        WorkspaceEntity workspace;
+        try {
+            workspace = requireWorkspace(projectId);
+        } catch (ApiException e) {
+            return apiError(requestId, "get_consumer_groups", e);
+        }
+
+        Map<UUID, String> pipelineNames = pipelineRepository
+                .findByTenantIdOrderByCreatedAtDesc(workspace.getId())
+                .stream()
+                .collect(Collectors.toMap(
+                        p -> p.getId(),
+                        p -> p.getName(),
+                        (left, right) -> left));
+
+        List<ConnectorEntity> sinkConnectors = connectorRepository.findByTenantIdOrderByCrName(workspace.getId())
+                .stream()
+                .filter(connector -> connector.getKind() == ConnectorKind.SINK)
+                .toList();
+
+        List<String> groups = sinkConnectors.stream()
+                .map(connector -> "connect-" + connector.getCrName())
+                .toList();
+        DescribeGroupsSnapshot described = describeGroups(groups);
+        List<ConsumerGroupsResult.ConsumerGroup> rows = new ArrayList<>();
+        String describeError = described.error();
+        String resultError = describeError;
+        for (ConnectorEntity connector : sinkConnectors) {
+            String group = "connect-" + connector.getCrName();
+            ConsumerGroupDescription description = described.groups().get(group);
+            LagSnapshot lag = describeError == null ? fetchLagSnapshot(group) : new LagSnapshot(null, describeError);
+            if (resultError == null && lag.error() != null) {
+                resultError = lag.error();
+            }
+            String error = lag.error() != null ? lag.error() : describeError;
+            rows.add(new ConsumerGroupsResult.ConsumerGroup(
+                    group,
+                    description == null ? "UNKNOWN" : description.state().toString(),
+                    lag.lag(),
+                    pipelineNames.getOrDefault(connector.getPipelineId(), connector.getCrName()),
+                    error));
+        }
+
+        return ResponseEntity.ok(OpsEnvelope.ok(requestId, "get_consumer_groups",
+                new ConsumerGroupsResult(rows, resultError)));
     }
 
     /** search_logs — Loki HTTP API 실구현(S4). */
@@ -219,6 +285,65 @@ public class InternalOpsObservabilityController {
                 .toList();
 
         return ResponseEntity.ok(OpsEnvelope.ok(requestId, "list_alerts", AlertListResult.of(alerts)));
+    }
+
+    /** analyze_event_log — window/level 기준 event + incident 요약. */
+    @GetMapping("/projects/{projectId}/observability/events/summary")
+    public ResponseEntity<OpsEnvelope<EventIncidentSummaryResult>> eventIncidentSummary(
+            @PathVariable String projectId,
+            @RequestParam(required = false, defaultValue = "2h") String window,
+            @RequestParam(required = false, defaultValue = "warn+") String level,
+            HttpServletRequest request) {
+        String requestId = AgentHeaders.requestId(request);
+        WorkspaceEntity workspace;
+        try {
+            workspace = requireWorkspace(projectId);
+        } catch (ApiException e) {
+            return apiError(requestId, "analyze_event_log", e);
+        }
+
+        Instant since = Instant.now().minusSeconds(parseWindowSeconds(window));
+        EventLevel threshold = parseLevelThreshold(level);
+        List<IncidentEntity> openIncidents = incidentRepository
+                .findByTenantIdAndStatusAndSeverityInAndOpenedAtGreaterThanEqualOrderByOpenedAtDesc(
+                        workspace.getId(), "OPEN", severitiesAtOrAbove(threshold), since);
+
+        List<IncidentEntity> criticalIncidents = openIncidents.stream()
+                .filter(incident -> severityRank(incident.getSeverity()) >= severityRank("ERROR"))
+                .toList();
+
+        List<EventIncidentSummaryResult.CriticalIncident> critical = criticalIncidents.stream()
+                .limit(20)
+                .map(incident -> new EventIncidentSummaryResult.CriticalIncident(
+                        incident.getId().toString(),
+                        incident.getSeverity(),
+                        incident.getStatus(),
+                        incident.getTitle(),
+                        incident.getOpenedAt()))
+                .toList();
+
+        List<EventIncidentSummaryResult.WarningEvent> warnings = eventRepository
+                .findByTenantIdAndLevelInAndCreatedAtGreaterThanEqualOrderByCreatedAtDesc(
+                        workspace.getId(), levelsAtOrAbove(threshold), since, PageRequest.of(0, 20))
+                .stream()
+                .map(event -> new EventIncidentSummaryResult.WarningEvent(
+                        event.getId().toString(),
+                        event.getLevel().name(),
+                        event.getType(),
+                        event.getMessage(),
+                        event.getPipelineId() == null ? null : event.getPipelineId().toString(),
+                        event.getIncidentId() == null ? null : event.getIncidentId().toString(),
+                        event.getCreatedAt()))
+                .toList();
+
+        EventIncidentSummaryResult result = new EventIncidentSummaryResult(
+                normalizeWindow(window),
+                normalizeLevel(level),
+                openIncidents.size(),
+                criticalIncidents.size(),
+                critical,
+                warnings);
+        return ResponseEntity.ok(OpsEnvelope.ok(requestId, "analyze_event_log", result));
     }
 
     /**
@@ -526,13 +651,29 @@ public class InternalOpsObservabilityController {
         }
     }
 
-    private long fetchLag(String groupId) {
+    private DescribeGroupsSnapshot describeGroups(List<String> groupIds) {
+        if (groupIds.isEmpty()) {
+            return new DescribeGroupsSnapshot(Map.of(), null);
+        }
+        try {
+            return new DescribeGroupsSnapshot(
+                    adminClient.describeConsumerGroups(groupIds)
+                            .all()
+                            .get(ADMIN_TIMEOUT_SEC, TimeUnit.SECONDS),
+                    null);
+        } catch (Exception e) {
+            log.warn("[InternalOps] consumer group 상태 조회 실패: groups={} cause={}", groupIds, e.getMessage());
+            return new DescribeGroupsSnapshot(Map.of(), e.getMessage());
+        }
+    }
+
+    private LagSnapshot fetchLagSnapshot(String groupId) {
         try {
             Map<TopicPartition, OffsetAndMetadata> committed = adminClient
                     .listConsumerGroupOffsets(groupId)
                     .partitionsToOffsetAndMetadata()
                     .get(ADMIN_TIMEOUT_SEC, TimeUnit.SECONDS);
-            if (committed.isEmpty()) return 0L;
+            if (committed.isEmpty()) return new LagSnapshot(0L, null);
 
             Map<TopicPartition, OffsetSpec> endReqs = committed.keySet().stream()
                     .collect(Collectors.toMap(tp -> tp, tp -> OffsetSpec.latest()));
@@ -544,10 +685,91 @@ public class InternalOpsObservabilityController {
                 long end = ends.containsKey(e.getKey()) ? ends.get(e.getKey()).offset() : 0L;
                 lag += Math.max(0L, end - e.getValue().offset());
             }
-            return lag;
+            return new LagSnapshot(lag, null);
         } catch (Exception e) {
             log.warn("[InternalOps] consumer lag 조회 실패: group={} cause={}", groupId, e.getMessage());
-            return -1L;
+            return new LagSnapshot(null, e.getMessage());
         }
     }
+
+    private static long parseWindowSeconds(String window) {
+        String normalized = normalizeWindow(window);
+        try {
+            long value = Long.parseLong(normalized.substring(0, normalized.length() - 1));
+            char unit = normalized.charAt(normalized.length() - 1);
+            return switch (unit) {
+                case 'm' -> value * 60L;
+                case 'h' -> value * 60L * 60L;
+                case 'd' -> value * 24L * 60L * 60L;
+                default -> 2L * 60L * 60L;
+            };
+        } catch (RuntimeException e) {
+            return 2L * 60L * 60L;
+        }
+    }
+
+    private static String normalizeWindow(String window) {
+        String value = window == null || window.isBlank() ? "2h" : window.trim().toLowerCase();
+        return value.matches("\\d+[mhd]") ? value : "2h";
+    }
+
+    private static String normalizeLevel(String level) {
+        return level == null || level.isBlank() ? "warn+" : level.trim().toLowerCase();
+    }
+
+    private static EventLevel parseLevelThreshold(String level) {
+        String normalized = normalizeLevel(level).replace("+", "");
+        return switch (normalized) {
+            case "error", "critical" -> EventLevel.ERROR;
+            case "info" -> EventLevel.INFO;
+            default -> EventLevel.WARN;
+        };
+    }
+
+    private static int eventLevelRank(EventLevel level) {
+        if (level == null) {
+            return 0;
+        }
+        return switch (level) {
+            case INFO -> 0;
+            case WARN -> 1;
+            case ERROR -> 2;
+        };
+    }
+
+    private static String levelToSeverity(EventLevel level) {
+        return level == EventLevel.ERROR ? "ERROR" : level == EventLevel.WARN ? "WARN" : "INFO";
+    }
+
+    private static List<EventLevel> levelsAtOrAbove(EventLevel threshold) {
+        return switch (threshold) {
+            case ERROR -> List.of(EventLevel.ERROR);
+            case WARN -> List.of(EventLevel.WARN, EventLevel.ERROR);
+            case INFO -> List.of(EventLevel.INFO, EventLevel.WARN, EventLevel.ERROR);
+        };
+    }
+
+    private static List<String> severitiesAtOrAbove(EventLevel threshold) {
+        return switch (threshold) {
+            case ERROR -> List.of("ERROR", "CRITICAL");
+            case WARN -> List.of("WARN", "ERROR", "CRITICAL");
+            case INFO -> List.of("INFO", "WARN", "ERROR", "CRITICAL");
+        };
+    }
+
+    private static int severityRank(String severity) {
+        if (severity == null) {
+            return 0;
+        }
+        return switch (severity.toUpperCase()) {
+            case "CRITICAL" -> 3;
+            case "ERROR" -> 2;
+            case "WARN", "WARNING" -> 1;
+            default -> 0;
+        };
+    }
+
+    private record LagSnapshot(Long lag, String error) {}
+
+    private record DescribeGroupsSnapshot(Map<String, ConsumerGroupDescription> groups, String error) {}
 }

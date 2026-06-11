@@ -12,6 +12,7 @@ import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import org.junit.jupiter.api.Test;
+import org.apache.kafka.clients.admin.AdminClient;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
@@ -40,8 +41,9 @@ class InternalOpsPipelineControllerTest {
     private final WorkspaceRepository workspaceRepository = mock(WorkspaceRepository.class);
     private final PipelineRepository pipelineRepository = mock(PipelineRepository.class);
     private final ConnectorRepository connectorRepository = mock(ConnectorRepository.class);
+    private final AdminClient adminClient = mock(AdminClient.class);
     private final InternalOpsPipelineController controller =
-            new InternalOpsPipelineController(workspaceRepository, pipelineRepository, connectorRepository);
+            new InternalOpsPipelineController(workspaceRepository, pipelineRepository, connectorRepository, adminClient);
 
     private final UUID tenantId = UUID.randomUUID();
 
@@ -121,6 +123,39 @@ class InternalOpsPipelineControllerTest {
         when(workspaceRepository.findByNamespace("missing")).thenReturn(Optional.empty());
         assertThatThrownBy(() -> controller.changes("missing", null, request()))
                 .isInstanceOf(ApiException.class);
+    }
+
+    @Test
+    void listPipelineStatusesIncludesRealPipelineRowsAndLeavesLagEmptyOnKafkaFailure() throws Exception {
+        when(workspaceRepository.findByNamespace(PROJECT_ID)).thenReturn(Optional.of(workspace()));
+        Instant created = Instant.parse("2026-06-01T00:00:00Z");
+        PipelineEntity pipeline = pipeline("orders", created, created, PipelineLifecycle.ACTIVE, null);
+        pipeline.setSinkConnectorName("orders-sink");
+        when(pipelineRepository.findByTenantIdOrderByCreatedAtDesc(tenantId))
+                .thenReturn(List.of(pipeline));
+        when(connectorRepository.findByPipelineId(pipeline.getId())).thenReturn(List.of());
+
+        mockMvc().perform(get("/internal/ops/projects/{projectId}/pipelines/status", PROJECT_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.operation").value("list_pipelines"))
+                .andExpect(jsonPath("$.result.pipelines[0].id").value(pipeline.getId().toString()))
+                .andExpect(jsonPath("$.result.pipelines[0].name").value("orders"))
+                .andExpect(jsonPath("$.result.pipelines[0].status").value("active"))
+                .andExpect(jsonPath("$.result.pipelines[0].lag").doesNotExist())
+                .andExpect(jsonPath("$.result.pipelines[0].error").isNotEmpty());
+    }
+
+    @Test
+    void listPipelineStatusesReturnsEnvelopeForUnknownProject() throws Exception {
+        when(workspaceRepository.findByNamespace("missing")).thenReturn(Optional.empty());
+
+        mockMvc().perform(get("/internal/ops/projects/{projectId}/pipelines/status", "missing")
+                        .header("X-Request-Id", "req-pipelines-404"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.ok").value(false))
+                .andExpect(jsonPath("$.request_id").value("req-pipelines-404"))
+                .andExpect(jsonPath("$.operation").value("list_pipelines"))
+                .andExpect(jsonPath("$.error.code").value("RESOURCE_NOT_FOUND"));
     }
 
     /** ai-service DeploymentsData 계약: result.changes[].{changeId,type,description,changedAt} camelCase + ISO 날짜. */
