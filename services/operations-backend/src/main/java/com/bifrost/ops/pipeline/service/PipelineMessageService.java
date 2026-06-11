@@ -4,6 +4,7 @@ import com.bifrost.ops.auth.jwt.AuthenticatedUser;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
 import com.bifrost.ops.pipeline.dto.KafkaMessageRecord;
+import com.bifrost.ops.pipeline.dto.MessagePageResponse;
 import com.bifrost.ops.pipeline.persistence.entity.PipelineEntity;
 import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
 import com.bifrost.ops.workspace.WorkspaceAccessGuard;
@@ -70,6 +71,91 @@ public class PipelineMessageService {
             log.warn("메시지 조회 실패 (Kafka 접근 불가): topic={}, cause={}", topic, e.getMessage());
             return List.of();
         }
+    }
+
+    /**
+     * 단일 파티션의 오프셋 윈도우를 결정적으로 읽는다(#509, 페이징). {@code startOffset}이 null이면
+     * 해당 파티션 최신 {@code limit}개. 과거 메시지까지 페이지 단위로 열람 가능.
+     */
+    public MessagePageResponse messagePage(UUID wsId, AuthenticatedUser principal, UUID id,
+                                           int partition, Long startOffset, int limit) {
+        accessGuard.requireAccess(wsId, principal);
+        PipelineEntity p = pipelineRepository.findByIdAndTenantId(id, wsId)
+                .orElseThrow(() -> new ApiException(ErrorCode.PIPELINE_NOT_FOUND,
+                        "파이프라인을 찾을 수 없습니다"));
+
+        String topic = p.getTopicName();
+        if (topic == null || topic.isBlank()) return MessagePageResponse.empty(partition);
+
+        int size = Math.max(1, Math.min(limit, 200));
+        try {
+            return fetchPage(topic, partition, startOffset, size);
+        } catch (Exception e) {
+            log.warn("메시지 페이지 조회 실패 (Kafka 접근 불가): topic={}, p={}, cause={}",
+                    topic, partition, e.getMessage());
+            return MessagePageResponse.empty(partition);
+        }
+    }
+
+    private MessagePageResponse fetchPage(String topic, int partition, Long startOffset, int limit) {
+        Map<String, Object> props = consumerProps(limit);
+        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
+            List<PartitionInfo> partInfos = consumer.partitionsFor(topic);
+            if (partInfos == null || partInfos.stream().noneMatch(pi -> pi.partition() == partition)) {
+                return MessagePageResponse.empty(partition);
+            }
+            TopicPartition tp = new TopicPartition(topic, partition);
+            List<TopicPartition> one = List.of(tp);
+            consumer.assign(one);
+
+            long begin = consumer.beginningOffsets(one).getOrDefault(tp, 0L);
+            long end = consumer.endOffsets(one).getOrDefault(tp, 0L);
+
+            // startOffset 미지정 → 최신 N(end-limit). 지정 시 [begin, end] 범위로 클램프.
+            long start = (startOffset == null)
+                    ? Math.max(begin, end - limit)
+                    : Math.min(Math.max(startOffset, begin), Math.max(begin, end));
+            long target = Math.min(end, start + limit);  // 이 페이지가 포함할 마지막+1 offset
+
+            consumer.seek(tp, start);
+            List<ConsumerRecord<String, String>> records = new ArrayList<>();
+            long deadline = System.currentTimeMillis() + 5_000;
+            while (start < target && consumer.position(tp) < target
+                    && System.currentTimeMillis() < deadline) {
+                ConsumerRecords<String, String> polled = consumer.poll(Duration.ofMillis(500));
+                if (polled.isEmpty()) {
+                    if (consumer.position(tp) >= target) break;
+                    continue;
+                }
+                for (ConsumerRecord<String, String> r : polled.records(tp)) {
+                    if (r.offset() >= target) break;
+                    records.add(r);
+                }
+            }
+
+            // 페이지 내 최신순(offset desc) — 기존 테이블 표시와 동일.
+            List<KafkaMessageRecord> out = records.stream()
+                    .sorted(Comparator.comparingLong(ConsumerRecord<String, String>::offset).reversed())
+                    .limit(limit)
+                    .map(this::toRecord)
+                    .toList();
+
+            boolean hasOlder = start > begin;
+            boolean hasNewer = target < end;
+            return new MessagePageResponse(out, partition, start, begin, end, hasOlder, hasNewer);
+        }
+    }
+
+    private Map<String, Object> consumerProps(int maxPoll) {
+        Map<String, Object> props = new HashMap<>(kafkaAdmin.getConfigurationProperties());
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, maxPoll);
+        props.put(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG, 5_000);
+        props.put(ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, 5_000);
+        return props;
     }
 
     private List<KafkaMessageRecord> fetchMessages(String topic, int limit) {
