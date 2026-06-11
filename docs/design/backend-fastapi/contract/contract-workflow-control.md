@@ -152,6 +152,14 @@ State 재사용 규칙:
 
 - `action_execution`/`approval_decision` 콜드 스타트 fallback은 현재 제한적이다. 복원할 action 후보나 policy 결정이 없으면 해당 stage는 빈 입력으로 진행할 수 있다.
 
+##### run 수명과 State 재사용 키 (#479)
+
+- **run 수명 = 1 메시지(turn)** 가 현재 계약이다. FE는 사용자 메시지마다 새 `run_id`를 발급할 수 있고("조치 후보 보여줘"=run A → "재시작해줘"=run B), runner는 이를 강제하거나 같은 run_id 재사용을 요구하지 않는다. State patch(`state_patch` 테이블)는 `run_id` 단위 append-only 이력이므로 한 turn의 산출물은 그 turn의 run_id에만 남는다.
+- **State 재사용 키는 `incident_id`(대화/사건 단위)** 다. 후속 turn(새 run B)이 직전 turn(run A)의 조치 후보·policy 결정을 이어받으려면 `_restore_action_state(...)`가 다음 2단계로 복원한다.
+  1. **intra-run(#454):** 같은 `run_id`의 `/actions/candidates`·`/actions/policy_decisions` patch를 먼저 읽는다(FE가 같은 run_id를 재사용하는 경우).
+  2. **cross-turn(#479):** intra-run 복원이 비면, `persisted_incident_id`로 `agent_run`을 최신순 조회(`list_run_ids_by_incident`)해 같은 incident의 직전 run들에서 처음으로 후보·정책이 잡히는 run을 복원한다. 따라서 FE는 후속 turn에 **같은 incident_id를 전달**하면 되고, 같은 run_id 재사용 계약은 강제하지 않는다.
+- 재사용 키로 `incident_id`를 택한 이유: `agent_run`/State 모델에 이미 존재·전파되는 식별자이고(별도 `conversation_id` 컬럼·마이그레이션·FE 계약 불필요), "같은 사건에 대한 다중 turn"이라는 재사용 의미와 정확히 일치한다. `incident_id`가 없는 turn은 cross-turn 복원을 건너뛰고 빈 입력으로 시작한다(위 콜드 스타트 규칙).
+
 #### 4.2 지연 최소화(latency) 원칙
 
 전체 `incident_analysis`는 LLM 단계가 순차로 이어져 tail latency가 가장 큰 구간이다. 정확성·재현성을 해치지 않는 범위에서 다음으로 응답 시간을 줄인다.
@@ -288,11 +296,11 @@ if route.mode == "incident_analysis":
     run(remediation, policy_guard)          # 조치 요청 시에만 후보 생성
 
 if route.mode == "action_execution":
-    restore_action_state(run_id)              # candidates/policy_decisions
+    restore_action_state(run_id, incident_id)  # run_id → 같은 incident 직전 run 순(#479)
     run(policy_guard)                       # 빈 action list일 수 있음
 
 if route.mode == "approval_decision":
-    restore_action_state(run_id)
+    restore_action_state(run_id, incident_id)
     run(approval_gate)
 
 if classifier.status == "scope_unclear":
