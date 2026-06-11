@@ -374,7 +374,7 @@ Namespace:
 | `harbor` | Active | Harbor registry (GitOps) |
 | `jenkins` | Active | Jenkins (GitOps, JCasC #194) |
 | `argocd` | Active | Argo CD (app-of-apps, child 앱 7개) |
-| `monitoring` | Active | kube-prometheus-stack·Loki·Tempo·exporters (#124) |
+| `monitoring` | Active | kube-prometheus-stack·Loki·Tempo·exporters (#124)·OTel Collector(tail-sampling, #370) |
 
 ### 3. 현재 설치된 핵심 리소스
 
@@ -524,7 +524,7 @@ Spring Boot adapter([server.md §11](./backend-springboot/server.md#11-resource-
 | `harbor` | Harbor (registry) — 계획상 `registry`였으나 실제 ns명 `harbor` | 배포 완료(GitOps) |
 | `jenkins` | Jenkins — 계획상 `cicd`였으나 실제 ns명 `jenkins` | 배포 완료(GitOps) |
 | `argocd` | Argo CD (app-of-apps) | 배포 완료 |
-| `monitoring` | Prometheus, Grafana, Loki, Tempo, exporters | 배포 완료(#124) |
+| `monitoring` | Prometheus, Grafana, Loki, Tempo, exporters, OTel Collector(tail-sampling #370) | 배포 완료(#124/#370) |
 | `metadb` | Spring metadata / audit / evidence DB | 배포 완료 |
 | `agentdb` | FastAPI Agent Run Store + Knowledge Vector Store(pgvector) | 배포 완료(#120, alembic initContainer로 스키마 자동 적용 #255) |
 | `tenantdb` | 고객(테넌트) source/sink DB (데모) | 배포 완료(독립 ArgoCD 앱) |
@@ -652,7 +652,8 @@ FastAPI Agent는 Kubernetes/Kafka credential을 갖지 않는다. Spring Boot Op
 > **✅ 배포 완료 (#124, gitops ArgoCD)**: `monitoring` namespace에 **kube-prometheus-stack**(Prometheus·Grafana·Alertmanager·node-exporter·kube-state-metrics·operator) + **Loki+Promtail**(loki-stack) + **Tempo**(OTLP 4317/4318). Strimzi **kafkaExporter** + Connect **JMX** 활성 → `kafka_*`·`debezium_metrics_*` 수집. ops-backend `PROMETHEUS_URL=http://kps-prometheus.monitoring:9090`로 연결되어 **#126 파이프라인 차트가 실데이터**. Grafana datasource = Prometheus·Loki·Tempo.
 > ArgoCD 앱: **`monitoring` 단일 multi-source 앱**(kps + loki-stack + tempo). gitops `argocd/apps/monitoring.yaml`. Grafana 기본 datasource = Prometheus(Loki는 loki-stack 비기본), loki StatefulSet은 `ignoreDifferences`(SSA 빈 컬렉션) 적용. Prometheus는 전 namespace ServiceMonitor/PodMonitor 수집.
 > **Grafana 접근**: `kps-grafana`(ClusterIP)는 **의도적으로 내부 전용**(외부 서브도메인 미부여). adminPassword가 약하고(`admin`) 외부 노출 실익이 낮아, `kubectl port-forward` 또는 ArgoCD 경유로만 접근한다. 외부 노출이 필요하면 비밀번호 강화 후 ingress-nginx+LE로 `grafana.skala-ai.com` 추가.
-> **잔여**: ops-backend `search_logs`(Loki) 실연동. **Tempo OTLP trace 계측은 ops-backend에 적용됨(#366)** — 파이프라인 작업(생성·상태전이·프로비저닝·폴링) span을 OTLP HTTP(4318)로 Tempo에 송신한다. ai-service(FastAPI) 자체 계측은 다음 라운드(#372).
+> **잔여**: ops-backend `search_logs`(Loki) 실연동. ai-service(FastAPI) 자체 계측은 다음 라운드(#372).
+> **Trace 파이프라인(#366/#370)**: ops-backend가 파이프라인 작업(생성·상태전이·프로비저닝·폴링) span을 OTLP HTTP로 송신한다. dev/prod에서는 **`otel-collector`(contrib, `monitoring` ns) 경유 tail-sampling** — 전량 수신 후 **에러·지연(>1s) trace만 Tempo에 보존**하고 정상 trace는 드롭해 저장량을 줄인다(`argocd/apps/5-otel-collector.yaml`, gitops `monitoring/otel-collector/`). 데이터플레인 span(#371)도 같은 Collector로 모인다.
 >
 > 배치: 전부 `monitoring` namespace, **`app` 노드풀**(taint 없음)에 스케줄. DaemonSet(node-exporter·Promtail)은 data 풀 taint를 toleration 처리해 전 노드에 배치.
 > **모니터링은 Spring Boot만이 아니라 클러스터 전체를 관측한다** — 노드·k8s 오브젝트·컨테이너·Kafka·DB·Spring·FastAPI·frontend가 모두 수집 대상이다.
@@ -665,7 +666,8 @@ FastAPI Agent는 Kubernetes/Kafka credential을 갖지 않는다. Spring Boot Op
 | Loki | 1 (single-binary) | 로그 저장 |
 | Promtail/Alloy | **노드당 1 (DaemonSet)** | 전 노드의 pod stdout 수집 → Loki |
 | node-exporter | **노드당 1 (DaemonSet)** | 노드 자원 metric |
-| Tempo | 1 | distributed trace, connector task trace summary (앱이 OTLP 전송) |
+| OTel Collector | 1 | 앱·데이터플레인 OTLP trace 수신(4317/4318) → **tail-sampling**(에러/지연만 보존) → Tempo export (#370, contrib) |
+| Tempo | 1 | distributed trace, connector task trace summary (Collector 경유 또는 앱 OTLP) |
 | kafka-exporter | 1 | consumer lag/topic metric |
 | JMX exporter | broker/connect sidecar | broker/connect JVM metric |
 | kube-state-metrics | 1 | k8s 오브젝트 상태 metric |
