@@ -111,3 +111,48 @@ def test_failed_response_uses_error_message() -> None:
     )
     assert tool_result.status == ToolStatus.BLOCKED
     assert tool_result.summary == "not allowed"
+
+
+def test_connect_consumer_group_policy_error_is_user_friendly() -> None:
+    response = SpringOpsResponse(
+        ok=False,
+        request_id="req-3",
+        operation="get_consumer_lag",
+        error=ToolError(
+            code=SpringErrorCode.POLICY_DENIED,
+            message="consumer group is not a Kafka Connect-managed group: default-group",
+        ),
+    )
+
+    tool_result = result_from_spring_response(
+        tool_name="get_consumer_lag",
+        risk=RiskLevel.READ_ONLY,
+        response=response,
+    )
+
+    assert tool_result.status == ToolStatus.BLOCKED
+    assert "Kafka Connect가 관리하는 consumer group" in tool_result.summary
+    assert "default-group" not in tool_result.summary
+    assert tool_result.error is not None
+    assert "default-group" not in tool_result.error.message
+
+
+def test_connector_not_found_error_is_user_friendly() -> None:
+    response = SpringOpsResponse(
+        ok=False,
+        request_id="req-4",
+        operation="get_connector_status",
+        error=ToolError(
+            code=SpringErrorCode.CONNECTOR_NOT_FOUND,
+            message="connector not found: default-connector",
+        ),
+    )
+
+    tool_result = result_from_spring_response(
+        tool_name="get_connector_status",
+        risk=RiskLevel.READ_ONLY,
+        response=response,
+    )
+
+    assert "커넥터를 찾을 수 없습니다" in tool_result.summary
+    assert "default-connector" not in tool_result.summary
