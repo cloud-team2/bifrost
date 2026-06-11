@@ -63,6 +63,12 @@ prometheus:
 loki:
   url: ${LOKI_URL:http://loki.monitoring:3100}
 
+# Tempo (query_traces 분산 trace 조회, #373). dev는 라이브 — Tempo가 떠 있고 trace 수신 중.
+# 클러스터 내: tempo.monitoring:3200 / 로컬 포트포워드: kubectl port-forward svc/tempo 3200:3200 -n monitoring
+tempo:
+  url: ${TEMPO_URL:http://tempo.monitoring:3200}
+  enabled: ${TEMPO_ENABLED:true}
+
 
 # 외부 서비스 (Agent는 별도 FastAPI)
 ai-service:

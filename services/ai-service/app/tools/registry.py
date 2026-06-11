@@ -13,10 +13,12 @@ from app.schemas.tools import (
     AlertsData,
     ConnectorActionData,
     ConnectorStatusData,
+    ConnectorTaskTraceData,
     ConsumerGroupActionData,
     ConsumerLagData,
     DeploymentsData,
     GetAlertsParams,
+    GetConnectorTaskTraceParams,
     GetTracesParams,
     IncidentSummaryData,
     ListProjectPipelinesData,
@@ -275,6 +277,18 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
             risk=RiskLevel.READ_ONLY,
             params_model=GetTracesParams,
             result_model=TracesData,
+            path_params=("connector_name",),
+        ),
+        # catalog §8.1 Observability — get_connector_task_trace (operation: get_connector_task_trace, #368/#373)
+        # 에러 근거(Connect task 예외 stack trace)를 분산 trace(get_traces, Tempo)와 분리한다.
+        ToolDefinition(
+            name="get_connector_task_trace",
+            operation="get_connector_task_trace",
+            method="GET",
+            path_template="/internal/ops/projects/{project_id}/connectors/{connector_name}/task-trace",
+            risk=RiskLevel.READ_ONLY,
+            params_model=GetConnectorTaskTraceParams,
+            result_model=ConnectorTaskTraceData,
             path_params=("connector_name",),
         ),
         ToolDefinition(

@@ -353,14 +353,42 @@ class GetTracesParams(StrictModel):
     limit: int | None = None
 
 
+class GetConnectorTaskTraceParams(StrictModel):
+    connector_name: str
+
+
+class TraceSpan(SpringResponseModel):
+    """Tempo span 요약 (#373). 무엇이(name) 어느 서비스에서(service) 얼마나(duration_ms) 걸렸고 실패(status/error)했나."""
+    name: str | None = None
+    service: str | None = None
+    duration_ms: int | None = None
+    status: str | None = None
+    error: str | None = None
+
+
+class TracesData(SpringResponseModel):
+    """get_traces — Tempo 분산 trace summary (#373). 변경 이벤트가 source→topic→sink로 흐르며 어디서 지연/실패했나.
+
+    Spring TraceSummaryResult 와 정합 (to_camel alias 가 camelCase wire 수용). 비활성/미발견/실패 시
+    Spring 이 stub(trace_id=null, status="unknown", spans=[])을 반환하므로 모든 필드 optional.
+    """
+    trace_id: str | None = None
+    pipeline_id: str | None = None
+    status: str | None = None
+    duration_ms: int | None = None
+    spans: list[TraceSpan] = Field(default_factory=list)
+    note: str | None = None
+
+
 class TraceEntry(SpringResponseModel):
     # 명시 alias "taskId" 보존 (alias_generator(to_camel) 가 동일하게 생성하지만 명시성 유지).
     task_id: int | None = Field(default=None, alias="taskId")
     state: str | None = None
-    trace: str
+    trace: str | None = None
 
 
-class TracesData(SpringResponseModel):
+class ConnectorTaskTraceData(SpringResponseModel):
+    """get_connector_task_trace — Kafka Connect task 예외 trace (#368/#373). 에러 근거를 분산 trace(get_traces)와 분리."""
     # Spring 가 "connector" 필드명으로 반환 — alias_generator(to_camel) 의 "connectorName" 과 다르므로 명시 alias 필수.
     connector_name: str | None = Field(default=None, alias="connector")
     traces: list[TraceEntry] = Field(default_factory=list)

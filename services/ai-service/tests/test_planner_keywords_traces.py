@@ -19,6 +19,15 @@ async def test_trace_keyword_triggers_get_traces():
 
 
 @pytest.mark.asyncio
+async def test_stacktrace_keyword_triggers_connector_task_trace():
+    # #373: 예외/스택트레이스는 분산 trace(get_traces)가 아니라 connector task 예외 조회로 분리.
+    plan = await run_planner("sink 스택트레이스 좀 보여줘", "proj_001")
+
+    assert "get_connector_task_trace" in _tool_names(plan)
+    assert "get_traces" not in _tool_names(plan)
+
+
+@pytest.mark.asyncio
 async def test_alert_keyword_triggers_get_alerts():
     plan = await run_planner("alert 좀 보여줘", "proj_001")
 
