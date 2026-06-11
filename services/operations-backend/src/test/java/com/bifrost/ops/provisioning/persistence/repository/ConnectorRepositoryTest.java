@@ -1,6 +1,7 @@
 package com.bifrost.ops.provisioning.persistence.repository;
 
 import com.bifrost.ops.pipeline.ConnectorRuntimeState;
+import com.bifrost.ops.provisioning.persistence.entity.ConnectorEntity;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
@@ -63,6 +64,22 @@ class ConnectorRepositoryTest {
                 ConnectorRuntimeState.FAILED.name(),
                 ConnectorRuntimeState.PARTIALLY_FAILED.name()))
                 .isEqualTo(2L);
+    }
+
+    @Test
+    void findsTenantConnectorsOrderedByCrName() {
+        UUID tenant = UUID.randomUUID();
+        UUID otherTenant = UUID.randomUUID();
+        UUID pipeline = createPipeline(tenant);
+        UUID otherPipeline = createPipeline(otherTenant);
+
+        insertConnector(pipeline, "z-sink", ConnectorRuntimeState.RUNNING);
+        insertConnector(pipeline, "a-source", ConnectorRuntimeState.RUNNING);
+        insertConnector(otherPipeline, "other-sink", ConnectorRuntimeState.RUNNING);
+
+        assertThat(repo.findByTenantIdOrderByCrName(tenant))
+                .extracting(ConnectorEntity::getCrName)
+                .containsExactly("a-source", "z-sink");
     }
 
     private UUID createPipeline(UUID tenantId) {

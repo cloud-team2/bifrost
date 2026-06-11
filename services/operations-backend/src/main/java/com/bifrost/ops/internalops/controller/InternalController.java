@@ -4,6 +4,7 @@ import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
 import com.bifrost.ops.internalops.AgentHeaders;
 import com.bifrost.ops.internalops.WorkspaceLookup;
+import com.bifrost.ops.internalops.dto.ConnectorStatusListResult;
 import com.bifrost.ops.internalops.dto.OpsEnvelope;
 import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
 import com.bifrost.ops.provisioning.PipelineProvisioningService;
@@ -23,6 +24,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -102,6 +104,30 @@ public class InternalController {
         return ResponseEntity.ok(OpsEnvelope.ok(requestId, "get_connector_status", status));
     }
 
+    /** list_connectors — project scope connector runtime 상태 다건 조회. */
+    @GetMapping("/ops/projects/{projectId}/kafka/connectors/status")
+    public ResponseEntity<OpsEnvelope<ConnectorStatusListResult>> listConnectorStatuses(
+            @PathVariable String projectId,
+            HttpServletRequest request) {
+        String requestId = AgentHeaders.requestId(request);
+        WorkspaceEntity workspace;
+        try {
+            workspace = WorkspaceLookup.resolve(workspaceRepository, projectId)
+                    .orElseThrow(() -> new ApiException(ErrorCode.WORKSPACE_NOT_FOUND,
+                            "프로젝트를 찾을 수 없습니다: " + projectId));
+        } catch (ApiException e) {
+            return connectorListApiError(requestId, e);
+        }
+
+        List<ConnectorStatusListResult.ConnectorStatusSummary> connectors = connectorRepository
+                .findByTenantIdOrderByCrName(workspace.getId())
+                .stream()
+                .map(connector -> connectorStatusSummary(projectId, connector))
+                .toList();
+        return ResponseEntity.ok(OpsEnvelope.ok(requestId, "list_connectors",
+                new ConnectorStatusListResult(connectors)));
+    }
+
     @DeleteMapping("/pipelines")
     public ResponseEntity<Void> deletePipeline(@RequestBody PipelineResourceRef resourceRef) {
         pipelineService.delete(resourceRef);
@@ -131,6 +157,51 @@ public class InternalController {
         }
         return ResponseEntity.status(ErrorCode.RESOURCE_NOT_FOUND.status())
                 .body(OpsEnvelope.error(requestId, "get_connector_status",
+                        "RESOURCE_NOT_FOUND", e.getMessage(), false, "check_project_scope"));
+    }
+
+    private ConnectorStatusListResult.ConnectorStatusSummary connectorStatusSummary(
+            String projectId,
+            ConnectorEntity connector) {
+        try {
+            PipelineProvisionStatus status = pipelineService.status(projectId, connector.getCrName());
+            int total = status.tasks().isEmpty() ? connector.getTasksMax() : status.tasks().size();
+            int running = (int) status.tasks().stream()
+                    .filter(task -> "RUNNING".equalsIgnoreCase(task.state()))
+                    .count();
+            return new ConnectorStatusListResult.ConnectorStatusSummary(
+                    connector.getCrName(),
+                    formatConnectorKind(connector),
+                    status.connectorState(),
+                    running,
+                    total,
+                    null,
+                    null);
+        } catch (Exception e) {
+            return new ConnectorStatusListResult.ConnectorStatusSummary(
+                    connector.getCrName(),
+                    formatConnectorKind(connector),
+                    "UNKNOWN",
+                    null,
+                    null,
+                    null,
+                    e.getMessage());
+        }
+    }
+
+    private static String formatConnectorKind(ConnectorEntity connector) {
+        if (connector.getKind() == null) {
+            return "Unknown";
+        }
+        String name = connector.getKind().name().toLowerCase();
+        return Character.toUpperCase(name.charAt(0)) + name.substring(1);
+    }
+
+    private static ResponseEntity<OpsEnvelope<ConnectorStatusListResult>> connectorListApiError(
+            String requestId,
+            ApiException e) {
+        return ResponseEntity.status(e.code().status())
+                .body(OpsEnvelope.error(requestId, "list_connectors",
                         "RESOURCE_NOT_FOUND", e.getMessage(), false, "check_project_scope"));
     }
 }

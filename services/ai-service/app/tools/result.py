@@ -21,6 +21,7 @@ def result_from_spring_response(
     risk: RiskLevel,
     response: SpringOpsResponse,
     requires_approval: bool = False,
+    result: dict | list | None = None,
 ) -> ToolResult:
     evidence_ids = [evidence.evidence_id for evidence in response.evidence]
     if response.ok:
@@ -30,6 +31,7 @@ def result_from_spring_response(
             risk=risk,
             requires_approval=requires_approval,
             summary=_success_summary(response),
+            result=result,
             evidence_ids=evidence_ids,
             audit_event_id=response.audit_event_id,
             raw_payload=response.model_dump(mode="json"),

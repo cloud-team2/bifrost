@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from unittest.mock import AsyncMock
 
@@ -109,6 +111,68 @@ async def test_retrieval_stores_redacted_raw_evidence() -> None:
     assert record.payload["result"]["authorization"] == "[REDACTED]"
     assert "hunter2" not in item.summary
     assert "[REDACTED]" in item.summary
+
+
+@pytest.mark.asyncio
+async def test_retrieval_emits_params_and_result_only_for_structured_panel_tools() -> None:
+    async def call_tool(tool_name, params, context):
+        if tool_name == "analyze_event_log":
+            return ToolResult(
+                tool_name=tool_name,
+                status=ToolStatus.SUCCESS,
+                risk=RiskLevel.READ_ONLY,
+                summary="event summary",
+                evidence_ids=[],
+                result={"openIncidents": 0, "criticalIncidents": 0, "critical": [], "warnings": []},
+            )
+        return ToolResult(
+            tool_name=tool_name,
+            status=ToolStatus.SUCCESS,
+            risk=RiskLevel.READ_ONLY,
+            summary="log summary",
+            evidence_ids=[],
+            result={"raw": "should-not-be-streamed"},
+        )
+
+    registry = AsyncMock()
+    registry.call_tool.side_effect = call_tool
+    bus = EventBus()
+    published = []
+    bus.publish = AsyncMock(side_effect=lambda run_id, evt: published.append(evt))
+    event_repo = InMemoryEventRepository()
+    plan = PlannerOutput(
+        retrieval_plan=[
+            RetrievalPlanStep(
+                step_id="logs",
+                tool_name="search_logs",
+                params={"query": "token=secret"},
+                purpose="logs",
+                depends_on=[],
+                plan_hash="abc",
+            ),
+            RetrievalPlanStep(
+                step_id="events",
+                tool_name="analyze_event_log",
+                params={"window": "2h", "level": "warn+"},
+                purpose="events",
+                depends_on=[],
+                plan_hash="abc",
+            ),
+        ]
+    )
+
+    await run_retrieval("r1", plan, _context(), registry, bus, event_repo)
+
+    started = {e.payload["step_id"]: e.payload for e in published if e.type == StreamingEventType.TOOL_CALL_STARTED}
+    completed = {
+        e.payload["step_id"]: e.payload for e in published if e.type == StreamingEventType.TOOL_CALL_COMPLETED
+    }
+    assert "params" not in started["logs"]
+    assert "params" not in completed["logs"]
+    assert "result" not in completed["logs"]
+    assert started["events"]["params"] == {"window": "2h", "level": "warn+"}
+    assert completed["events"]["params"] == {"window": "2h", "level": "warn+"}
+    assert completed["events"]["result"]["openIncidents"] == 0
 
 
 @pytest.mark.asyncio
@@ -341,3 +405,92 @@ async def test_simple_query_with_operational_tool_calls_runtime_tool_despite_kno
     types = {item.type.value for item in out.evidence_items}
     assert "knowledge" in types
     assert "tool_result" in types
+
+
+# ── #481 depends_on 순차 chain 해석 ───────────────────────────────────────────
+def _ok(tool_name: str) -> ToolResult:
+    return ToolResult(
+        tool_name=tool_name,
+        status=ToolStatus.SUCCESS,
+        risk=RiskLevel.READ_ONLY,
+        summary=f"{tool_name} ok",
+        evidence_ids=[],
+    )
+
+
+@pytest.mark.asyncio
+async def test_retrieval_runs_dependent_step_after_dependency() -> None:
+    """depends_on이 가리키는 선행 step이 완료된 뒤에만 의존 step이 실행된다."""
+    discovery_done = {"flag": False}
+
+    async def fake_call_tool(tool_name, params, context):
+        if tool_name == "get_connector_status":
+            # 의존 step이 discovery 완료 전에 시작되면 실패.
+            assert discovery_done["flag"], "dependent step ran before its dependency completed"
+        if tool_name == "list_project_pipelines":
+            await asyncio.sleep(0.01)
+            discovery_done["flag"] = True
+        return _ok(tool_name)
+
+    registry = AsyncMock()
+    registry.call_tool.side_effect = fake_call_tool
+    bus = EventBus()
+    bus.publish = AsyncMock()
+
+    plan = PlannerOutput(
+        retrieval_plan=[
+            RetrievalPlanStep(
+                step_id="step_001", tool_name="list_project_pipelines", params={},
+                purpose="discovery", depends_on=[], plan_hash="h1",
+            ),
+            RetrievalPlanStep(
+                step_id="step_002", tool_name="get_connector_status",
+                params={"connector_name": "c1"}, purpose="dependent",
+                depends_on=["step_001"], plan_hash="h2",
+            ),
+        ]
+    )
+
+    out = await run_retrieval("r1", plan, _context(), registry, bus, InMemoryEventRepository())
+
+    # 출력은 plan 순서를 보존한다.
+    assert [i.summary for i in out.evidence_items] == [
+        "list_project_pipelines ok",
+        "get_connector_status ok",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_retrieval_runs_independent_steps_in_parallel() -> None:
+    """depends_on이 없는 step들은 같은 wave에서 병렬 실행된다."""
+    gate = asyncio.Event()
+
+    async def fake_call_tool(tool_name, params, context):
+        if tool_name == "get_metrics":
+            # 두 번째 step이 gate를 풀어줘야 진행 → 병렬이 아니면 timeout.
+            await asyncio.wait_for(gate.wait(), timeout=1.0)
+        else:
+            gate.set()
+        return _ok(tool_name)
+
+    registry = AsyncMock()
+    registry.call_tool.side_effect = fake_call_tool
+    bus = EventBus()
+    bus.publish = AsyncMock()
+
+    plan = PlannerOutput(
+        retrieval_plan=[
+            RetrievalPlanStep(
+                step_id="step_001", tool_name="get_metrics", params={},
+                purpose="p", depends_on=[], plan_hash="h1",
+            ),
+            RetrievalPlanStep(
+                step_id="step_002", tool_name="get_deployments", params={},
+                purpose="p", depends_on=[], plan_hash="h2",
+            ),
+        ]
+    )
+
+    out = await run_retrieval("r1", plan, _context(), registry, bus, InMemoryEventRepository())
+
+    assert len(out.evidence_items) == 2

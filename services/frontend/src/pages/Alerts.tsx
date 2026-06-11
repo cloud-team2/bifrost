@@ -5,6 +5,9 @@ import { useApp } from '../store/AppStore'
 import { pipelineLabel } from '../data/helpers'
 import {
   api,
+  type ActionRunCandidateInput,
+  type ActionRunRisk,
+  type ActionRunType,
   ApiError,
   type EventResponse,
   type IncidentReportResponse,
@@ -209,17 +212,36 @@ function reportSummary(report: IncidentReportResponse): string {
 
 interface ReportAction {
   key: string
+  actionId: string
   label: string
   status: string | null
   risk: string | null
-  estimated: string | null
+  estimatedTime: string | null
+  detail: string | null
+  reportId: string
+  actionType: string | null
+  actionName: string | null
+  rootCauseId: string | null
+  reason: string | null
+  expectedEffect: string | null
+  rollbackPlan: string | null
+  toolName: string | null
+  toolParams: Record<string, unknown> | null
+}
+
+interface ReportActionLog {
+  key: string
+  actionId: string
+  status: string
+  toolName: string | null
+  summary: string | null
   reportId: string
 }
 
 function actionArrays(body: unknown): unknown[] {
   if (!isRecord(body)) return []
   const out: unknown[] = []
-  for (const key of ['actions', 'action_candidates', 'actionCandidates', 'approved_actions', 'approvedActions']) {
+  for (const key of ['action_candidates', 'actionCandidates']) {
     const value = body[key]
     if (Array.isArray(value)) out.push(...value)
   }
@@ -230,10 +252,26 @@ function actionArrays(body: unknown): unknown[] {
   return out
 }
 
-function reportActions(reports: IncidentReportResponse[]): ReportAction[] {
+function reportMode(body: unknown): string | null {
+  const mode = isRecord(body) ? pickString(body, ['mode']) : null
+  return mode?.toLowerCase() ?? null
+}
+
+function pickRecordValue(value: unknown, keys: string[]): Record<string, unknown> | null {
+  if (!isRecord(value)) return null
+  for (const key of keys) {
+    const candidate = value[key]
+    if (isRecord(candidate)) return candidate
+  }
+  return null
+}
+
+export function reportActions(reports: IncidentReportResponse[]): ReportAction[] {
   const seen = new Set<string>()
   const actions: ReportAction[] = []
   for (const report of reports) {
+    const mode = reportMode(report.body)
+    if (mode === 'action_execution' || mode === 'approval_decision') continue
     for (const raw of actionArrays(report.body)) {
       if (!isRecord(raw)) continue
       const id = pickString(raw, ['action_id', 'actionId', 'id'])
@@ -242,17 +280,169 @@ function reportActions(reports: IncidentReportResponse[]): ReportAction[] {
       const key = `${report.id}:${id ?? label}`
       if (seen.has(key)) continue
       seen.add(key)
+      const expectedEffect = pickString(raw, ['expected_effect', 'expectedEffect', 'effect'])
+      const reason = pickString(raw, ['reason', 'detail', 'description'])
       actions.push({
         key,
+        actionId: id ?? label,
         label,
         status: pickString(raw, ['status', 'state']),
         risk: pickString(raw, ['risk']),
-        estimated: pickString(raw, ['estimated_duration', 'estimatedDuration', 'estimated_time', 'estimatedTime']),
+        estimatedTime: pickString(raw, ['estimated_duration', 'estimatedDuration', 'estimated_time', 'estimatedTime']),
+        detail: expectedEffect ?? reason,
         reportId: report.id,
+        actionType: pickString(raw, ['action_type', 'actionType', 'type']),
+        actionName: pickString(raw, ['action_name', 'actionName', 'name']),
+        rootCauseId: pickString(raw, ['root_cause_id', 'rootCauseId']),
+        reason,
+        expectedEffect,
+        rollbackPlan: pickString(raw, ['rollback_plan', 'rollbackPlan']),
+        toolName: pickString(raw, ['tool_name', 'toolName']),
+        toolParams: pickRecordValue(raw, ['tool_params', 'toolParams', 'params']),
       })
     }
   }
   return actions
+}
+
+function executionArrays(body: unknown): unknown[] {
+  if (!isRecord(body)) return []
+  const out: unknown[] = []
+  for (const key of ['execution_results', 'executionResults']) {
+    const value = body[key]
+    if (Array.isArray(value)) out.push(...value)
+  }
+  const final = nestedRecord(body, ['final_response', 'finalResponse'])
+  if (final) out.push(...executionArrays(final))
+  return out
+}
+
+export function reportActionLogs(reports: IncidentReportResponse[]): ReportActionLog[] {
+  const logs: ReportActionLog[] = []
+  for (const report of reports) {
+    for (const raw of executionArrays(report.body)) {
+      if (!isRecord(raw)) continue
+      const actionId = pickString(raw, ['action_id', 'actionId', 'id'])
+      const status = pickString(raw, ['status', 'state'])
+      if (!actionId || !status) continue
+      logs.push({
+        key: `${report.id}:${actionId}:${logs.length}`,
+        actionId,
+        status,
+        toolName: pickString(raw, ['tool_name', 'toolName']),
+        summary: pickString(raw, ['summary', 'message', 'detail']),
+        reportId: report.id,
+      })
+    }
+  }
+  return logs
+}
+
+const CONNECTOR_TOOL_ALIASES: Record<string, 'restart_connector' | 'pause_connector' | 'resume_connector'> = {
+  restart_connector: 'restart_connector',
+  restart_connector_task: 'restart_connector',
+  pause_connector: 'pause_connector',
+  resume_connector: 'resume_connector',
+}
+const ACTION_EXECUTION_TOOLS = new Set([
+  'pause_connector',
+  'resume_connector',
+])
+
+function normalizeRisk(value: string | null): ActionRunRisk | null {
+  const normalized = value?.toLowerCase()
+  if (
+    normalized === 'read_only' ||
+    normalized === 'low' ||
+    normalized === 'medium' ||
+    normalized === 'high' ||
+    normalized === 'forbidden'
+  ) {
+    return normalized
+  }
+  return null
+}
+
+function normalizeActionType(value: string | null): ActionRunType | null {
+  const normalized = value?.toLowerCase()
+  if (
+    normalized === 'runtime_tool' ||
+    normalized === 'workflow_action' ||
+    normalized === 'composite_action' ||
+    normalized === 'notification' ||
+    normalized === 'escalation'
+  ) {
+    return normalized
+  }
+  return null
+}
+
+function stringParam(params: Record<string, unknown> | null, key: string): string | null {
+  const value = params?.[key]
+  return typeof value === 'string' && value.trim() ? value : null
+}
+
+function connectorTargetFor(action: ReportAction, pipelines: Edge[]): string | null {
+  const explicit = stringParam(action.toolParams, 'connector_name')
+  if (explicit) return explicit
+  void pipelines
+  return null
+}
+
+function consumerGroupTargetFor(action: ReportAction, pipelines: Edge[]): string | null {
+  const explicitParam = stringParam(action.toolParams, 'consumer_group')
+  if (explicitParam) return explicitParam
+
+  if (action.toolName !== 'restart_consumer_group') return null
+  void pipelines
+  return null
+}
+
+export function buildRunCandidate(action: ReportAction, pipelines: Edge[]): ActionRunCandidateInput | null {
+  const risk = normalizeRisk(action.risk)
+  const actionType = normalizeActionType(action.actionType)
+  if (!risk || actionType !== 'runtime_tool' || !action.toolName) return null
+
+  const connectorTool = CONNECTOR_TOOL_ALIASES[action.toolName]
+  if (connectorTool) {
+    if (!ACTION_EXECUTION_TOOLS.has(connectorTool)) return null
+    const connectorName = connectorTargetFor(action, pipelines)
+    if (!connectorName) return null
+    return {
+      action_id: action.actionId,
+      action_type: actionType,
+      action_name: action.actionName ?? action.label,
+      root_cause_id: action.rootCauseId,
+      risk,
+      reason: action.reason ?? action.detail ?? action.label,
+      expected_effect: action.expectedEffect,
+      rollback_plan: action.rollbackPlan,
+      estimated_duration: action.estimatedTime,
+      tool_name: connectorTool,
+      tool_params: { connector_name: connectorName },
+    }
+  }
+
+  if (action.toolName === 'restart_consumer_group') {
+    if (!ACTION_EXECUTION_TOOLS.has(action.toolName)) return null
+    const consumerGroup = consumerGroupTargetFor(action, pipelines)
+    if (!consumerGroup) return null
+    return {
+      action_id: action.actionId,
+      action_type: actionType,
+      action_name: action.actionName ?? action.label,
+      root_cause_id: action.rootCauseId,
+      risk,
+      reason: action.reason ?? action.detail ?? action.label,
+      expected_effect: action.expectedEffect,
+      rollback_plan: action.rollbackPlan,
+      estimated_duration: action.estimatedTime,
+      tool_name: 'restart_consumer_group',
+      tool_params: { consumer_group: consumerGroup },
+    }
+  }
+
+  return null
 }
 
 /* ================================================================ main view */
@@ -546,6 +736,7 @@ function IncidentPanel({
   const [selectedReport, setSelectedReport] = useState<IncidentReportResponse | null>(null)
   const [reportLoadingId, setReportLoadingId] = useState<string | null>(null)
   const [reportError, setReportError] = useState<string | null>(null)
+  const completedRunMarker = app.agentRunState.status === 'completed' ? app.agentRunState.updatedAt : null
 
   useEffect(() => {
     setEventRows([])
@@ -588,7 +779,7 @@ function IncidentPanel({
     return () => {
       alive = false
     }
-  }, [wsId, incident.id])
+  }, [wsId, incident.id, completedRunMarker])
 
   const panelIncident = detailIncident ?? incident
   const timelineEvents = useMemo(
@@ -611,6 +802,7 @@ function IncidentPanel({
     .filter((edge): edge is Edge => edge !== null)
   const missingImpactIds = impactPipelineIds.filter((id) => !app.edges.some((edge) => edge.id === id))
   const actions = useMemo(() => reportActions(reports), [reports])
+  const actionLogs = useMemo(() => reportActionLogs(reports), [reports])
 
   async function openReport(report: IncidentReportResponse) {
     if (!wsId) return
@@ -624,6 +816,21 @@ function IncidentPanel({
     } finally {
       setReportLoadingId(null)
     }
+  }
+
+  function runAction(action: ReportAction) {
+    const actionCandidate = buildRunCandidate(action, impactPipelines)
+    if (!actionCandidate) return
+    app.dispatchAgentTask({
+      incidentId: panelIncident.id,
+      actionId: action.actionId,
+      incidentTitle: panelIncident.title,
+      label: action.label,
+      detail: action.detail ?? action.reason ?? action.label,
+      risk: actionCandidate.risk,
+      estimatedTime: action.estimatedTime ?? '미정',
+      actionCandidate,
+    })
   }
 
   return (
@@ -799,7 +1006,7 @@ function IncidentPanel({
         </div>
 
         <div className="px-4 py-3">
-          <div className="mb-2 text-[10.5px] font-bold uppercase tracking-wide text-gray-400">조치 이력/권장 조치</div>
+          <div className="mb-2 text-[10.5px] font-bold uppercase tracking-wide text-gray-400">권장 조치</div>
           {reportsLoading ? (
             <div className="rounded-lg border border-dashed border-gray-200 py-6 text-center text-[12px] text-gray-400">
               리포트 기반 조치를 불러오는 중…
@@ -810,7 +1017,9 @@ function IncidentPanel({
             </div>
           ) : actions.length > 0 ? (
             <div className="space-y-2">
-              {actions.map((action) => (
+              {actions.map((action) => {
+                const runCandidate = buildRunCandidate(action, impactPipelines)
+                return (
                 <div key={action.key} className="rounded-lg border border-gray-200 px-3 py-2">
                   <div className="flex items-center gap-2">
                     <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-gray-800">
@@ -818,9 +1027,15 @@ function IncidentPanel({
                     </span>
                     {action.status && <StatusBadge status={action.status} />}
                   </div>
-                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-gray-500">
+                  {action.detail && (
+                    <div className="mt-1 line-clamp-2 text-[11.5px] leading-relaxed text-gray-500">
+                      {action.detail}
+                    </div>
+                  )}
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-gray-500">
                     {action.risk && <span>risk {action.risk}</span>}
-                    {action.estimated && <span>{action.estimated}</span>}
+                    {action.estimatedTime && <span>{action.estimatedTime}</span>}
+                    {action.toolName && <span className="font-mono">{action.toolName}</span>}
                     <button
                       onClick={() => {
                         const report = reports.find((r) => r.id === action.reportId)
@@ -830,13 +1045,50 @@ function IncidentPanel({
                     >
                       근거 리포트
                     </button>
+                    <button
+                      onClick={() => runAction(action)}
+                      disabled={!runCandidate}
+                      title={runCandidate ? 'AI 채팅에서 실제 조치를 실행합니다' : '지원되는 실행 tool 또는 실제 target을 확인하지 못했습니다'}
+                      className="ml-auto inline-flex items-center gap-1 rounded-md bg-gray-900 px-2 py-1 text-[11px] font-semibold text-white hover:bg-gray-800 disabled:bg-gray-200 disabled:text-gray-400"
+                    >
+                      <Icon name="play" size={11} />
+                      Run
+                    </button>
+                  </div>
+                </div>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed border-gray-200 py-6 text-center text-[12px] text-gray-400">
+              report body에 기록된 권장 조치가 없습니다
+            </div>
+          )}
+        </div>
+
+        <div className="px-4 py-3">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="text-[10.5px] font-bold uppercase tracking-wide text-gray-400">조치 이력</div>
+            {actionLogs.length > 0 && <span className="text-[10.5px] text-gray-400">{actionLogs.length}건</span>}
+          </div>
+          {actionLogs.length > 0 ? (
+            <div className="space-y-2">
+              {actionLogs.map((log) => (
+                <div key={log.key} className="rounded-lg border border-gray-200 px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 font-mono text-[11.5px] text-gray-700">{log.actionId}</span>
+                    <StatusBadge status={log.status} />
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-gray-500">
+                    {log.toolName && <span className="font-mono">{log.toolName}</span>}
+                    {log.summary && <span className="min-w-0 flex-1 break-words">{log.summary}</span>}
                   </div>
                 </div>
               ))}
             </div>
           ) : (
             <div className="rounded-lg border border-dashed border-gray-200 py-6 text-center text-[12px] text-gray-400">
-              report body에 기록된 조치가 없습니다
+              실행된 조치 이력이 없습니다
             </div>
           )}
         </div>

@@ -26,6 +26,25 @@ logger = logging.getLogger(__name__)
 # 그 외 도구(list_project_pipelines·get_connector_status·get_consumer_lag 등)는 명시적
 # 운영 조회 의도를 뜻하므로, knowledge 근거가 있어도 실제 운영 데이터를 조회한다 (#478).
 _FALLBACK_ONLY_TOOLS = frozenset({"search_logs"})
+_STRUCTURED_PANEL_TOOLS = frozenset({
+    "get_consumer_groups",
+    "list_pipelines",
+    "list_connectors",
+    "analyze_event_log",
+})
+
+
+def _tool_event_payload(
+    tool_name: str,
+    step_id: str,
+    params: dict[str, Any],
+    **extra: Any,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"tool": tool_name, "step_id": step_id}
+    if tool_name in _STRUCTURED_PANEL_TOOLS:
+        payload["params"] = params
+    payload.update({key: value for key, value in extra.items() if value is not None})
+    return payload
 
 
 def _has_operational_tool(plan: PlannerOutput) -> bool:
@@ -81,7 +100,7 @@ async def run_retrieval(
             type=StreamingEventType.TOOL_CALL_STARTED,
             agent="retrieval",
             message=f"{step.tool_name} 조회 중...",
-            payload={"tool": step.tool_name, "step_id": step.step_id},
+            payload=_tool_event_payload(step.tool_name, step.step_id, step.params),
         ))
 
         result = await registry.call_tool(step.tool_name, step.params, context)
@@ -113,7 +132,13 @@ async def run_retrieval(
                 type=StreamingEventType.TOOL_CALL_COMPLETED,
                 agent="retrieval",
                 message=summary,
-                payload={"tool": step.tool_name, "step_id": step.step_id, "summary": summary},
+                payload=_tool_event_payload(
+                    step.tool_name,
+                    step.step_id,
+                    step.params,
+                    summary=summary,
+                    result=result.result if step.tool_name in _STRUCTURED_PANEL_TOOLS else None,
+                ),
             ))
             await _pub(bus, event_repo, run_id, StreamingEvent(
                 event_id=str(uuid4()),
@@ -149,11 +174,12 @@ async def run_retrieval(
                 type=StreamingEventType.TOOL_CALL_FAILED,
                 agent="retrieval",
                 message=f"{step.tool_name} 호출 실패: {error_msg}",
-                payload={
-                    "tool": step.tool_name,
-                    "step_id": step.step_id,
-                    "error": redact_payload(result.error.model_dump(mode="json")) if result.error else {},
-                },
+                payload=_tool_event_payload(
+                    step.tool_name,
+                    step.step_id,
+                    step.params,
+                    error=redact_payload(result.error.model_dump(mode="json")) if result.error else {},
+                ),
             ))
             evidence = EvidenceItem(
                 evidence_id=evidence_id,
@@ -167,9 +193,40 @@ async def run_retrieval(
 
         return evidence
 
-    # 독립 read-only tool은 병렬(fan-out) 실행
-    tool_evidence = list(await asyncio.gather(*[call_step(s) for s in plan.retrieval_plan]))
+    # depends_on을 해석해 독립 tool은 병렬(fan-out), 의존 tool은 선행 완료 후 순차 실행
+    tool_evidence = await _run_plan_steps(plan.retrieval_plan, call_step)
     return RetrievalOutput(evidence_items=[*knowledge_items, *tool_evidence])
+
+
+async def _run_plan_steps(steps: list, call_step) -> list[EvidenceItem]:
+    """depends_on을 해석한 wave 실행기 (#481).
+
+    depends_on이 없는(또는 선행이 모두 끝난) step들은 같은 wave에서 asyncio.gather로
+    병렬 실행하고, 의존이 남은 step은 선행 step이 끝난 다음 wave로 미룬다. 결과는
+    plan 순서대로 정렬해 반환한다. 미해결/순환 의존은 deadlock 대신 남은 step을
+    한꺼번에 실행해 안전하게 흡수한다.
+    """
+    if not steps:
+        return []
+
+    valid_ids = {s.step_id for s in steps}
+    done: dict[str, EvidenceItem] = {}
+    remaining = list(steps)
+    while remaining:
+        ready = [
+            s
+            for s in remaining
+            if all((dep not in valid_ids) or (dep in done) for dep in s.depends_on)
+        ]
+        if not ready:  # 순환/미해결 의존 — deadlock 방지
+            ready = remaining
+        wave = await asyncio.gather(*[call_step(s) for s in ready])
+        for step, evidence in zip(ready, wave):
+            done[step.step_id] = evidence
+        ready_ids = {s.step_id for s in ready}
+        remaining = [s for s in remaining if s.step_id not in ready_ids]
+
+    return [done[s.step_id] for s in steps]
 
 
 def _raw_payload_for_store(result: Any) -> dict[str, Any] | list[Any]:
