@@ -2380,7 +2380,7 @@ function ToolPanelCard({ msg }: { msg: ToolPanelMsg }) {
   )
 }
 
-function GenericToolResultPanel({ result }: { result: unknown }) {
+export function GenericToolResultPanel({ result }: { result: unknown }) {
   if (result == null) return <PanelEmpty text="표시할 결과가 없습니다" />
   return (
     <div className="max-h-72 overflow-auto space-y-2 font-mono text-[11px] leading-relaxed text-gray-600">
