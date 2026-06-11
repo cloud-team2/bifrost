@@ -128,6 +128,7 @@ class InternalOpsToolCatalogTest {
                 mock(ConnectorRepository.class),
                 mock(com.bifrost.ops.incident.persistence.repository.IncidentRepository.class),
                 mock(com.bifrost.ops.monitoring.query.ObservabilityMetricsQuery.class),
+                mock(com.bifrost.ops.monitoring.query.TraceQuery.class),
                 "http://connect.invalid");
     }
 

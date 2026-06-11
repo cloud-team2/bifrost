@@ -30,8 +30,10 @@ _KEYWORD_TOOL_MAP: list[tuple[set[str], str, dict]] = [
     ({"lag", "컨슈머", "consumer", "지연"}, "get_consumer_lag", {"consumer_group": "default-group"}),
     # incident/장애 → log search for error evidence
     ({"인시던트", "incident", "장애", "오류", "에러"}, "search_logs", _INCIDENT_LOG_PARAMS),
-    # tool-catalog §8.1 Observability — get_traces (connector task trace)
-    ({"trace", "span", "latency", "스택", "스택트레이스"}, "get_traces", {"connector_name": "default-connector"}),
+    # tool-catalog §8.1 Observability — get_traces (Tempo 분산 trace, #373): source→sink 어디서 지연/실패했나
+    ({"trace", "span", "latency", "분산추적", "지연추적"}, "get_traces", {"connector_name": "default-connector"}),
+    # tool-catalog §8.1 Observability — get_connector_task_trace (#368/#373): 커넥터 task 예외 stack trace
+    ({"스택", "스택트레이스", "stacktrace", "예외", "exception"}, "get_connector_task_trace", {"connector_name": "default-connector"}),
     # tool-catalog §8.1 Observability — get_alerts
     ({"alert", "알람", "알럿", "경보"}, "get_alerts", {}),
 ]

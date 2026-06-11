@@ -37,6 +37,12 @@ tracing:
   dataplane:
     enabled: ${DATAPLANE_TRACING_ENABLED:false}
 
+# query_traces Tempo 조회(#373). 기본 off → well-formed stub 반환(파싱 안전). dev에서 TEMPO_ENABLED=true로 라이브.
+# url은 Tempo HTTP query API(기본 3200). OTLP 송신(4318)과는 별개 포트.
+tempo:
+  enabled: ${TEMPO_ENABLED:false}
+  url: ${TEMPO_URL:http://tempo.monitoring:3200}
+
 springdoc:
   swagger-ui:
     path: /swagger-ui.html

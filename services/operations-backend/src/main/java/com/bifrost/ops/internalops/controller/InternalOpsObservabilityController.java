@@ -12,9 +12,11 @@ import com.bifrost.ops.internalops.dto.IncidentSummaryResult;
 import com.bifrost.ops.internalops.dto.LogSearchResult;
 import com.bifrost.ops.internalops.dto.MetricsResult;
 import com.bifrost.ops.internalops.dto.OpsEnvelope;
+import com.bifrost.ops.internalops.dto.TraceSummaryResult;
 import com.bifrost.ops.incident.persistence.entity.IncidentEntity;
 import com.bifrost.ops.incident.persistence.repository.IncidentRepository;
 import com.bifrost.ops.monitoring.query.ObservabilityMetricsQuery;
+import com.bifrost.ops.monitoring.query.TraceQuery;
 import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
 import com.bifrost.ops.provisioning.persistence.entity.ConnectorEntity;
 import com.bifrost.ops.provisioning.persistence.repository.ConnectorRepository;
@@ -72,6 +74,7 @@ public class InternalOpsObservabilityController {
     private final ConnectorRepository connectorRepository;
     private final IncidentRepository incidentRepository;
     private final ObservabilityMetricsQuery metricsQuery;
+    private final TraceQuery traceQuery;
     private final RestClient connectRestClient;
 
     public InternalOpsObservabilityController(
@@ -82,6 +85,7 @@ public class InternalOpsObservabilityController {
             ConnectorRepository connectorRepository,
             IncidentRepository incidentRepository,
             ObservabilityMetricsQuery metricsQuery,
+            TraceQuery traceQuery,
             @Value("${kafka-connect.rest-url:http://platform-connect-connect-api.platform-kafka.svc:8083}")
             String connectRestUrl) {
         this.adminClient = adminClient;
@@ -91,6 +95,7 @@ public class InternalOpsObservabilityController {
         this.connectorRepository = connectorRepository;
         this.incidentRepository = incidentRepository;
         this.metricsQuery = metricsQuery;
+        this.traceQuery = traceQuery;
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(2000);
         factory.setReadTimeout(3000);
@@ -217,14 +222,14 @@ public class InternalOpsObservabilityController {
     }
 
     /**
-     * query_traces — Connect REST task exception trace(S4).
+     * query_traces — Tempo 분산 trace summary(#373). 변경 이벤트가 source→topic→sink로 흐르며
+     * 어디서 지연/실패했는지를 한 trace로 요약한다(RCA 근거). connector task 예외는
+     * {@link #getConnectorTaskTrace}(#368)로 분리되어 있다.
      *
-     * <p>설계상 query_traces(Observability)는 Tempo 분산 trace summary 자리이고, connector task 예외는
-     * {@link #getConnectorTaskTrace}로 분리한다(#368 realign 1단계). 무중단을 위해 현재는 두 엔드포인트가
-     * 동일 본문을 제공하며, 이후 query_traces는 Tempo 기반으로 교체 예정.
+     * <p>{@code tempo.enabled=false}(기본)·미발견·조회 실패 시 well-formed stub을 반환한다(파싱 안전).
      */
     @GetMapping("/projects/{projectId}/connectors/{connectorName}/traces")
-    public ResponseEntity<OpsEnvelope<Map<String, Object>>> queryTraces(
+    public ResponseEntity<OpsEnvelope<TraceSummaryResult>> queryTraces(
             @PathVariable String projectId,
             @PathVariable String connectorName,
             HttpServletRequest request) {
@@ -234,7 +239,34 @@ public class InternalOpsObservabilityController {
         } catch (ApiException e) {
             return apiError(requestId, "query_traces", e);
         }
-        return ResponseEntity.ok(OpsEnvelope.ok(requestId, "query_traces", connectorTaskTraceBody(connectorName)));
+        TraceSummaryResult summary = traceQuery.query(connectorName, resolveConnectorTopic(connectorName));
+        return ResponseEntity.ok(OpsEnvelope.ok(requestId, "query_traces", summary));
+    }
+
+    /** Connect REST {@code /connectors/{name}/topics}의 첫 topic(데이터플레인 trace join 키). 실패/없으면 null. */
+    @SuppressWarnings("unchecked")
+    private String resolveConnectorTopic(String connectorName) {
+        try {
+            Map<String, Object> body = connectRestClient.get()
+                    .uri("/connectors/{name}/topics", connectorName)
+                    .retrieve()
+                    .body(Map.class);
+            if (body == null) {
+                return null;
+            }
+            Object entry = body.get(connectorName);
+            if (!(entry instanceof Map<?, ?> m)) {
+                return null;
+            }
+            Object topics = ((Map<String, Object>) m).get("topics");
+            if (topics instanceof List<?> list && !list.isEmpty()) {
+                return String.valueOf(list.get(0));
+            }
+            return null;
+        } catch (RestClientException e) {
+            log.debug("connector topics Connect REST 실패(무시): connector={} cause={}", connectorName, e.getMessage());
+            return null;
+        }
     }
 
     /**

@@ -273,7 +273,7 @@ Mutation timeout이 발생해도 Spring은 자동 재시도하지 않는다. Kaf
 | Kafka Connect REST Client | Connector status, restart, pause/resume |
 | Prometheus HTTP Client | metric query |
 | Log Store Client | log search |
-| Trace 조회 | 현재 별도 Tempo adapter 없음. internal-ops `query_traces`는 Connect REST task `trace` field를 조회 |
+| Tempo HTTP Query Client | `query_traces` 분산 trace summary (`TempoClient`, #373). `tempo.enabled=false` 기본 → stub, dev는 라이브. 에러 trace는 `get_connector_task_trace`(Connect REST)로 분리 |
 | Notification / Ticket Adapter | escalation, notification, ticket 생성 |
 | Schema Registry Client | schema subject/version/change |
 
@@ -287,13 +287,13 @@ Mutation timeout이 발생해도 Spring은 자동 재시도하지 않는다. Kaf
 | --- | --- | --- | --- |
 | Watcher (Fabric8) | watch(event) | connector/pipeline **상태 전이** | KafkaConnector CR `.status` → `PipelineStatusService` → SSE ([§2 Provisioning §6](./provisioning.md#2-provisioning)) |
 | 폴링 수집기 | 주기 polling | sink consumer lag, connector task event, worker JVM, DB 상태 | Kafka AdminClient(30s)·Connect REST(10s)·Prometheus/PromQL(60s, `prometheus.enabled`)·DB health(60s) (부록 B.1/B.2/B.4/B.6) |
-| 쿼리 어댑터 | on-demand | metric·log·trace | Prometheus·Loki·Connect REST. ops-backend 작업 span은 OTLP로 Tempo 송신(#366). `query_traces` trace는 아직 Connect REST task `trace` field(분리: `get_connector_task_trace` #368, Tempo 교체 #373) |
+| 쿼리 어댑터 | on-demand | metric·log·trace | Prometheus·Loki·Tempo·Connect REST. ops-backend·데이터플레인 span은 OTLP로 Tempo 송신(#366/#371). `query_traces`는 **Tempo 분산 trace summary**(`TempoClient`, #373, `tempo.enabled`), connector task 예외는 `get_connector_task_trace`(Connect REST, #368)로 분리 |
 
 수집 결과의 쓰임: (a) `event` 기록(Watcher/PipelineStatusService 등 일부 경로는 SSE도 직접 발행), (b) 플랫폼 API(`/api/v1/.../metrics`·`/consumer-groups`·`/connectors`·`/cluster` 등)로 **프론트 시각화**(FR-006~009·017·023, [frontend §6/§7](../frontend.md)), (c) Agent의 `/internal/ops` read tool 근거. 현재 poller는 incident 자동 생성 메서드를 호출하지 않는다.
 
 **임베딩하지 않는 것** (별도 스택을 두고 Spring이 질의/소비):
 
-- **Prometheus·Loki**: `monitoring` 네임스페이스의 **별도 스택**([infra §6.7](../infra.md#67-observability)). Spring은 HTTP client로 **질의만** 한다. 현재 build에는 `spring-boot-starter-actuator`만 있고 `micrometer-registry-prometheus` 의존성은 없어 `/actuator/prometheus` 노출은 구현되어 있지 않다. trace evidence는 Tempo adapter가 아니라 Connect REST status trace에서 가져온다.
+- **Prometheus·Loki·Tempo**: `monitoring` 네임스페이스의 **별도 스택**([infra §6.7](../infra.md#67-observability)). Spring은 HTTP client로 **질의만** 한다. 현재 build에는 `spring-boot-starter-actuator`만 있고 `micrometer-registry-prometheus` 의존성은 없어 `/actuator/prometheus` 노출은 구현되어 있지 않다. `query_traces`는 `TempoClient`(HTTP query API)로 분산 trace summary를 가져오고(#373), connector task 예외 stack trace는 `get_connector_task_trace`(Connect REST status trace)에서 가져온다.
 - **Grafana**: 운영자용 대시보드이며 제품 화면이 아니다. 사용자 화면은 프론트가 위 플랫폼 API로 구성한다.
 - **Kafka UI**: 제품에 포함하지 않는다(로컬 `docker-compose` 개발 편의 도구 한정 — [guide](../../guides/getting-started-infra.md)). "Connect REST를 사용자에게 직접 노출하지 않는다"는 원칙과 일치한다.
 

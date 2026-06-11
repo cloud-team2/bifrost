@@ -44,8 +44,23 @@ def test_get_alerts_registered():
     assert definition.risk == RiskLevel.READ_ONLY
 
 
+def test_get_connector_task_trace_registered():
+    # #368/#373: 에러 trace 조회를 분산 trace(get_traces)와 분리한 별도 tool.
+    registry = ToolClientRegistry(transport=httpx.MockTransport(lambda request: httpx.Response(200)))
+
+    definition = registry.get_definition("get_connector_task_trace")
+
+    assert definition is not None
+    assert definition.operation == "get_connector_task_trace"
+    assert definition.method == "GET"
+    assert definition.path_template == "/internal/ops/projects/{project_id}/connectors/{connector_name}/task-trace"
+    assert definition.path_params == ("connector_name",)
+    assert definition.risk == RiskLevel.READ_ONLY
+
+
 @pytest.mark.asyncio
-async def test_get_traces_call_to_spring_mocked():
+async def test_get_traces_returns_tempo_trace_summary():
+    # #373: query_traces 가 Tempo 분산 trace summary(traceId/pipelineId/status/durationMs/spans)를 반환.
     captured_request: httpx.Request | None = None
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -58,13 +73,17 @@ async def test_get_traces_call_to_spring_mocked():
                 "request_id": "req_001",
                 "operation": "query_traces",
                 "result": {
-                    "connector": "default-connector",
-                    "summary": "1 connector task trace collected",
-                    "traces": [
+                    "traceId": "abc123",
+                    "pipelineId": "p1",
+                    "status": "error",
+                    "durationMs": 9,
+                    "spans": [
                         {
-                            "taskId": 0,
-                            "state": "FAILED",
-                            "trace": "java.sql.SQLTransientConnectionException: timeout",
+                            "name": "sink-put",
+                            "service": "platform-connect",
+                            "durationMs": 4,
+                            "status": "error",
+                            "error": "type mismatch",
                         }
                     ],
                 },
@@ -72,7 +91,7 @@ async def test_get_traces_call_to_spring_mocked():
                     {
                         "evidence_id": "ev_trace_001",
                         "store_ref": "evidence://run_001/ev_trace_001",
-                        "summary": "connector task exception trace",
+                        "summary": "distributed trace summary",
                         "redaction_status": "redacted",
                         "type": "trace",
                     }
@@ -90,13 +109,66 @@ async def test_get_traces_call_to_spring_mocked():
     )
 
     assert captured_request is not None
-    assert captured_request.method == "GET"
     assert captured_request.url.path == "/internal/ops/projects/proj_001/connectors/default-connector/traces"
-    assert "connector_name" not in captured_request.url.params
     assert result.status == ToolStatus.SUCCESS
     assert result.risk == RiskLevel.READ_ONLY
-    assert result.summary == "1 connector task trace collected"
+    # 구조적 요약(민감정보 미노출): span 수 + 상태
+    assert "spans: 1" in result.summary
+    assert "status=error" in result.summary
     assert result.evidence_ids == ["ev_trace_001"]
+
+
+@pytest.mark.asyncio
+async def test_get_connector_task_trace_call_to_spring_mocked():
+    captured_request: httpx.Request | None = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal captured_request
+        captured_request = request
+        return httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "request_id": "req_001",
+                "operation": "get_connector_task_trace",
+                "result": {
+                    "connector": "default-connector",
+                    "summary": "1 connector task trace collected",
+                    "traces": [
+                        {
+                            "taskId": 0,
+                            "state": "FAILED",
+                            "trace": "java.sql.SQLTransientConnectionException: timeout",
+                        }
+                    ],
+                },
+                "evidence": [
+                    {
+                        "evidence_id": "ev_tasktrace_001",
+                        "store_ref": "evidence://run_001/ev_tasktrace_001",
+                        "summary": "connector task exception trace",
+                        "redaction_status": "redacted",
+                        "type": "trace",
+                    }
+                ],
+                "audit_event_id": "audit_001",
+            },
+        )
+
+    registry = ToolClientRegistry(transport=httpx.MockTransport(handler))
+
+    result = await registry.call_tool(
+        "get_connector_task_trace",
+        {"connector_name": "default-connector"},
+        _context(),
+    )
+
+    assert captured_request is not None
+    assert captured_request.method == "GET"
+    assert captured_request.url.path == "/internal/ops/projects/proj_001/connectors/default-connector/task-trace"
+    assert result.status == ToolStatus.SUCCESS
+    assert result.summary == "1 connector task trace collected"
+    assert result.evidence_ids == ["ev_tasktrace_001"]
 
 
 @pytest.mark.asyncio
