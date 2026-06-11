@@ -284,6 +284,7 @@ export interface KafkaMessageRecord {
   offset: number
   tsMs: number
   key: string | null
+  sizeBytes: number | null
   op: 'c' | 'u' | 'd' | 'r' | null
   before: Record<string, unknown> | null
   after: Record<string, unknown> | null

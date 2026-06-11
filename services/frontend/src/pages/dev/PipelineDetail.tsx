@@ -8,6 +8,7 @@ import { useToast } from '../../components/Toast'
 import { useApp } from '../../store/AppStore'
 import { pipelineLabel } from '../../data/helpers'
 import { sinkDisplayStatus } from '../../lib/mappers'
+import { formatMessageSize, messageSizeBytes } from '../../lib/messageMetrics'
 import { buildConsumerSnippets, escapeSnippetValue } from '../../lib/pipelineSnippets'
 import type { Edge, Node } from '../../data/types'
 import {
@@ -42,6 +43,8 @@ export function PipelineDetail() {
   const toast = useToast()
   const edge = app.edges.find((e) => e.id === app.selectedPipelineId)
   const isEda = edge?.pattern === 'fan-out'
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleteBusy, setDeleteBusy] = useState(false)
 
   // Connector 탭은 EDA/CDC 모두 표시(실제 커넥터는 ConnectorTab이 백엔드에서 조회, #107)
   // (#266) Sync 내용을 Overview로 이동, Topic & Partition은 별도 'Topic' 탭으로 분리.
@@ -75,6 +78,20 @@ export function PipelineDetail() {
   if (!edge) return <div className="px-6 py-10 text-sm text-gray-500">Pipeline not found.</div>
   const source    = app.nodes.find((n) => n.id === edge.source)!
   const sink      = edge.sink ? app.nodes.find((n) => n.id === edge.sink) ?? null : null
+  const isCreating = edge.status === 'creating'
+  const deletePipeline = async () => {
+    setDeleteBusy(true)
+    try {
+      await app.deletePipeline(edge.id)
+      toast('Pipeline deleted', 'info')
+      app.setView('pipelines')
+      setConfirmDelete(false)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Pipeline 삭제에 실패했습니다', 'error')
+    } finally {
+      setDeleteBusy(false)
+    }
+  }
 
   // (#267) 원인 attribution → 탭 매핑: DB(연결 끊김/차단) → Overview, 커넥터 FAILED/에러 → Connector.
   const connectorErr = !!connectors?.some((c) => c.state === 'FAILED' || (c.lastError != null && c.lastError !== ''))
@@ -104,9 +121,11 @@ export function PipelineDetail() {
           <div className="flex-1" />
           {edge.status === 'paused'
             ? <ActBtn icon="play"  label="Resume" onClick={async () => { await app.resumePipeline(edge.id); toast('Pipeline resumed') }} />
-            : <ActBtn icon="pause" label="Pause"  onClick={async () => { await app.pausePipeline(edge.id); toast('Pipeline paused') }} />}
+            : <ActBtn icon="pause" label="Pause" disabled={isCreating} title={isCreating ? 'creating 상태에서는 일시정지할 수 없습니다' : undefined}
+                onClick={async () => { await app.pausePipeline(edge.id); toast('Pipeline paused') }} />}
           <ActBtn icon="trash" label="Delete" danger
-            onClick={async () => { await app.deletePipeline(edge.id); toast('Pipeline deleted', 'info'); app.setView('pipelines') }} />
+            disabled={isCreating} title={isCreating ? 'creating 상태에서는 삭제할 수 없습니다' : undefined}
+            onClick={() => setConfirmDelete(true)} />
         </div>
         <div className="mt-2.5 flex items-center gap-2 font-mono text-[12px] text-gray-500">
           <span className="text-gray-700">{source.alias ?? source.label}</span>
@@ -133,8 +152,9 @@ export function PipelineDetail() {
       </div>
 
       <div className="mt-4">
-        {/* (#266) Overview = 동기화 뷰(CDC) / 토픽(EDA, sink 없음) · Topic = 토픽&파티션 */}
-        {tab === 'Overview'          && (isEda ? <TopicTab edge={edge} /> : <SyncTab edge={edge} />)}
+        {tab === 'Overview'          && (
+          <OverviewTab edge={edge}>{isEda ? <TopicTab edge={edge} /> : <SyncTab edge={edge} />}</OverviewTab>
+        )}
         {tab === 'Topic'             && <TopicTab edge={edge} />}
         {tab === 'Consumers'         && <ConsumersTab edge={edge} />}
         {tab === 'Connector'         && <ConnectorTab edge={edge} />}
@@ -143,21 +163,82 @@ export function PipelineDetail() {
         {tab === 'Table Mapping'     && <MappingTab edge={edge} />}
         {tab === 'Tracing'           && <TraceTab edge={edge} />}
       </div>
+
+      {confirmDelete && (
+        <DeletePipelineDialog
+          edge={edge}
+          busy={deleteBusy}
+          onCancel={() => setConfirmDelete(false)}
+          onConfirm={deletePipeline}
+        />
+      )}
     </div>
   )
 }
 
-function ActBtn({ icon, label, onClick, danger }: {
-  icon: 'play' | 'pause' | 'trash'; label: string; onClick: () => void; danger?: boolean
+function ActBtn({ icon, label, onClick, danger, disabled, title }: {
+  icon: 'play' | 'pause' | 'trash'
+  label: string
+  onClick: () => void
+  danger?: boolean
+  disabled?: boolean
+  title?: string
 }) {
   return (
-    <button onClick={onClick} className={cn(
+    <button disabled={disabled} title={title} onClick={onClick} className={cn(
       'flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[12.5px] font-medium transition-colors',
       danger ? 'border-rose-200 text-rose-600 hover:bg-rose-50' : 'border-gray-300 text-gray-700 hover:bg-gray-50',
+      disabled && 'cursor-not-allowed opacity-45 hover:bg-transparent',
     )}>
       <Icon name={icon} size={13} />
       {label}
     </button>
+  )
+}
+
+function DeletePipelineDialog({
+  edge,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  edge: Edge
+  busy: boolean
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/30 px-4">
+      <div className="w-full max-w-md overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
+        <div className="flex items-start gap-3 border-b border-gray-100 px-5 py-4">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-rose-50 text-rose-600">
+            <Icon name="trash" size={15} />
+          </div>
+          <div className="min-w-0">
+            <div className="text-[15px] font-semibold text-gray-900">Pipeline 삭제</div>
+            <div className="mt-1 text-[12.5px] leading-relaxed text-gray-500">
+              <span className="font-semibold text-gray-700">{pipelineLabel(edge)}</span> 파이프라인을 삭제합니다. 연결된 백엔드 리소스 삭제 API가 실행됩니다.
+            </div>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 px-5 py-3">
+          <button
+            onClick={onCancel}
+            disabled={busy}
+            className="rounded-md border border-gray-200 px-3 py-1.5 text-[12.5px] font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+          >
+            취소
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={busy}
+            className="rounded-md bg-rose-600 px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-rose-700 disabled:opacity-50"
+          >
+            {busy ? '삭제 중…' : '삭제'}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -184,8 +265,164 @@ function RangeSelector({ value, onChange }: { value: number; onChange: (m: numbe
   )
 }
 
+/* ---------------------------------------------------------------- Overview tab (FR-006 metrics) */
+
+const LAG_WARNING_MESSAGES = 5000
+
+function OverviewTab({ edge, children }: { edge: Edge; children: ReactNode }) {
+  const app = useApp()
+  const wsId = app.currentProject?.id
+  const [metrics, setMetrics] = useState<PipelineMetricsResponse | null>(null)
+  const [throughput, setThroughput] = useState<ThroughputPoint[]>([])
+  const [unsynced, setUnsynced] = useState<MetricPoint[]>([])
+  const [consumerGroups, setConsumerGroups] = useState<ConsumerGroupInfo[] | null>(null)
+  const [rangeMin, setRangeMin] = useState(30)
+  const [metricsError, setMetricsError] = useState(false)
+  const [seriesError, setSeriesError] = useState(false)
+  const [consumerLagError, setConsumerLagError] = useState(false)
+  const isDirect = edge.pattern === 'direct'
+
+  useEffect(() => {
+    if (!wsId) return
+    let cancelled = false
+    setMetrics(null)
+    setThroughput([])
+    setUnsynced([])
+    setMetricsError(false)
+    setSeriesError(false)
+
+    const load = () => {
+      api.pipelineMetrics(wsId, edge.id)
+        .then((m) => { if (!cancelled) { setMetrics(m); setMetricsError(false) } })
+        .catch(() => { if (!cancelled) setMetricsError(true) })
+      const seriesRequests = isDirect
+        ? Promise.all([api.pipelineThroughput(wsId, edge.id, rangeMin), api.pipelineUnsynced(wsId, edge.id, rangeMin)])
+        : api.pipelineThroughput(wsId, edge.id, rangeMin).then((t) => [t, [] as MetricPoint[]] as const)
+      seriesRequests
+        .then(([t, u]) => { if (!cancelled) { setThroughput(t); setUnsynced(u); setSeriesError(false) } })
+        .catch(() => { if (!cancelled) setSeriesError(true) })
+    }
+
+    load()
+    const timer = setInterval(load, 10000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [wsId, edge.id, isDirect, rangeMin])
+
+  useEffect(() => {
+    if (!wsId || isDirect) {
+      setConsumerGroups(null)
+      setConsumerLagError(false)
+      return
+    }
+    let cancelled = false
+    setConsumerGroups(null)
+    setConsumerLagError(false)
+    api.pipelineConsumerGroups(wsId, edge.id)
+      .then((groups) => { if (!cancelled) setConsumerGroups(groups) })
+      .catch(() => { if (!cancelled) { setConsumerGroups([]); setConsumerLagError(true) } })
+    return () => { cancelled = true }
+  }, [wsId, edge.id, isDirect])
+
+  const throughputData = throughput.map((p) => ({
+    t: p.timestamp,
+    produce: p.produceRate,
+    consume: p.consumeRate,
+  }))
+  const unsyncedData = unsynced.map((p) => ({ t: p.timestamp, unsynced: p.value >= 0 ? p.value : null }))
+  const externalLag = consumerGroups?.length
+    ? consumerGroups.reduce((sum, group) => sum + group.totalLag, 0)
+    : null
+  const lag = isDirect ? metrics?.lagMessages : externalLag
+  const errorPct = metrics?.errorPct
+  const lagLabel = isDirect ? 'Consumer lag' : 'External lag'
+  const lagSub = isDirect
+    ? 'messages'
+    : consumerLagError
+      ? '조회 실패'
+      : consumerGroups == null
+        ? '불러오는 중'
+        : consumerGroups.length === 0
+          ? 'Consumer group 없음'
+          : `${consumerGroups.length} groups`
+
+  return (
+    <div className="space-y-4">
+      {metricsError && (
+        <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-[12.5px] text-rose-700">
+          Overview metrics를 불러오지 못했습니다
+        </div>
+      )}
+      <div className="grid gap-3 md:grid-cols-4">
+        <MetricCard label="Produce rate" value={formatMetricValue(metrics?.produceRate)} sub="msg/s" icon="arrow-up" />
+        <MetricCard label="Consume rate" value={formatMetricValue(metrics?.consumeRate)} sub="msg/s" icon="arrow-right" />
+        <MetricCard
+          label={lagLabel}
+          value={lag == null ? '—' : formatNum(lag)}
+          sub={lagSub}
+          icon="alert"
+          tone={lag == null ? 'default' : lag >= LAG_WARNING_MESSAGES ? 'warn' : 'good'}
+        />
+        <MetricCard
+          label="Error rate"
+          value={errorPct == null ? '—' : `${formatMetricValue(errorPct)}%`}
+          icon="pulse"
+          tone={errorPct == null ? 'default' : errorPct > 0 ? 'bad' : 'good'}
+        />
+      </div>
+
+      <Panel title="Produce / Consume Rate" right={<RangeSelector value={rangeMin} onChange={setRangeMin} />}>
+        {seriesError ? (
+          <div className="px-5 py-8 text-center text-[12.5px] text-rose-500">처리량 지표를 불러오지 못했습니다</div>
+        ) : throughputData.length === 0 ? (
+          <div className="px-5 py-8 text-center text-[12.5px] text-gray-400">처리량 지표 없음</div>
+        ) : (
+          <div className="px-5 py-3">
+            <TrendChart
+              data={throughputData}
+              series={[
+                { key: 'produce', label: 'Produce', color: CHART_COLORS.brand },
+                { key: 'consume', label: 'Consume', color: CHART_COLORS.emerald },
+              ]}
+              height={170}
+              timeAxis
+            />
+          </div>
+        )}
+      </Panel>
+
+      {isDirect && (
+        <Panel title="Unsynced rows">
+          {seriesError ? (
+            <div className="px-5 py-8 text-center text-[12.5px] text-rose-500">미동기화 지표를 불러오지 못했습니다</div>
+          ) : unsyncedData.length === 0 ? (
+            <div className="px-5 py-8 text-center text-[12.5px] text-gray-400">미동기화 지표 없음</div>
+          ) : (
+            <div className="px-5 py-3">
+              <TrendChart
+                data={unsyncedData}
+                series={[{ key: 'unsynced', label: 'Unsynced rows', color: CHART_COLORS.amber }]}
+                height={150}
+                timeAxis
+              />
+            </div>
+          )}
+        </Panel>
+      )}
+
+      {children}
+    </div>
+  )
+}
+
+function formatMetricValue(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—'
+  if (Math.abs(value) >= 100) return formatNum(Math.round(value))
+  const digits = Math.abs(value) >= 10 ? 1 : 2
+  return value.toFixed(digits).replace(/\.0+$/, '').replace(/(\.\d*[1-9])0+$/, '$1')
+}
+
 /* ---------------------------------------------------------------- Topic tab (토픽 & 파티션) */
-/* (#266) 기존 Overview에서 Topic & Partition만 분리한 탭. 처리량·메트릭 카드는 폐기(API는 유지). */
+/* Topic & Partition은 독립 탭이며, Overview는 FR-006 metric cards/chart를 함께 렌더한다. */
 
 function TopicTab({ edge }: { edge: Edge }) {
   const app = useApp()
@@ -235,7 +472,7 @@ function TopicTab({ edge }: { edge: Edge }) {
         {/* header row */}
         <div className="flex items-center gap-3 border-b border-gray-100 px-5 py-3.5">
           <span className="font-mono text-[13.5px] font-semibold text-gray-900">{edge.topic}</span>
-          <StatusBadge status="active" />
+          <StatusBadge status={edge.status} />
           <div className="ml-auto flex items-center gap-4 text-[12px] text-gray-500">
             <span><span className="font-semibold text-gray-700">{partitions.length}</span> 파티션</span>
             <span className={cn('font-semibold', isrOk ? 'text-emerald-600' : 'text-amber-600')}>
@@ -1232,7 +1469,7 @@ function MessagesTab({ edge }: { edge: Edge }) {
                       {meta.label}
                     </span>
                   </span>
-                  <span className="font-mono text-[11px] text-gray-400">—</span>
+                  <span className="font-mono text-[11px] text-gray-400">{formatMessageSize(messageSizeBytes(m))}</span>
                 </button>
 
                 {isOpen && selectedMsg && (

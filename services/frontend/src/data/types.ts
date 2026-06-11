@@ -54,7 +54,7 @@ export interface Edge {
   sourceConnector?: string | null
   sinkConnector?: string | null
   status: EdgeStatus
-  partitions: number
+  partitions?: number
   metrics?: { produce_rate: number; consume_rate: number; lag: number; error_pct: number }
   syncStatus?: { sourceRows: number; sinkRows: number; delta: number; lastSynced: string }
 }

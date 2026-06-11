@@ -623,8 +623,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (currentProject) {
         try {
           await api.deletePipeline(currentProject.id, id)
-        } catch {
-          return
+        } catch (e) {
+          throw e
         }
       }
       const removed = edges.find((e) => e.id === id)
