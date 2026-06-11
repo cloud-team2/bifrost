@@ -2,7 +2,10 @@ package com.bifrost.ops.pipeline.status;
 
 import com.bifrost.ops.event.EventLevel;
 import com.bifrost.ops.event.EventService;
+import com.bifrost.ops.database.persistence.entity.DatasourceEntity;
 import com.bifrost.ops.governance.audit.AuditService;
+import com.bifrost.ops.incident.IncidentGroupingKeys;
+import com.bifrost.ops.incident.IncidentService;
 import com.bifrost.ops.pipeline.ConnectorRuntimeState;
 import com.bifrost.ops.pipeline.ConnectorStatusUpdate;
 import com.bifrost.ops.pipeline.PipelineLifecycle;
@@ -17,6 +20,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.List;
 import java.util.Optional;
@@ -36,13 +41,14 @@ class PipelineStatusServiceImplTest {
     @Mock private ConnectorRepository connectorRepository;
     @Mock private com.bifrost.ops.database.persistence.repository.DatasourceRepository datasourceRepository;
     @Mock private EventService eventService;
+    @Mock private IncidentService incidentService;
     @Mock private AuditService auditService;
     @Mock private SsePublisher ssePublisher;
     @Mock private com.bifrost.ops.workspace.persistence.repository.WorkspaceSettingsRepository settingsRepository;
 
     private PipelineStatusServiceImpl service() {
         return new PipelineStatusServiceImpl(pipelineRepository, connectorRepository,
-                datasourceRepository, eventService, auditService, ssePublisher, settingsRepository);
+                datasourceRepository, eventService, incidentService, auditService, ssePublisher, settingsRepository);
     }
 
     // ---------- computeStatus 규칙 ----------
@@ -76,7 +82,6 @@ class PipelineStatusServiceImplTest {
 
     @Test
     void partiallyFailedMapsToError() {
-        // 스펙 B.4: Connector Task FAILED → error. lag는 consumer lag로만 산정(#559).
         assertThat(PipelineStatusServiceImpl.computeStatus(PipelinePattern.FAN_OUT,
                 List.of(connector(ConnectorKind.SOURCE, "PARTIALLY_FAILED")))).isEqualTo(PipelineLifecycle.ERROR);
     }
@@ -105,6 +110,7 @@ class PipelineStatusServiceImplTest {
         p.setName("orders-eda");
         p.setPattern(PipelinePattern.FAN_OUT);
         p.setStatus(PipelineLifecycle.CREATING);
+        p.setSourceConnectorName(pid + "-source");
 
         ConnectorEntity src = connector(ConnectorKind.SOURCE, "RUNNING");
         src.setPipelineId(pid);
@@ -122,6 +128,41 @@ class PipelineStatusServiceImplTest {
         verify(auditService).record(eq(tenant), any(), eq("PIPELINE_STATUS_TRANSITION"), eq("PIPELINE"), eq(pid), any());
         verify(ssePublisher).pipelineStatusChanged(tenant, pid, "active");
         verify(ssePublisher).connectorStateChanged(eq(tenant), eq(pid + "-source"), eq("RUNNING"));
+    }
+
+    @Test
+    void pipelineStatusSsePublishesAfterCommitWhenTransactionSynchronizationIsActive() {
+        UUID pid = UUID.randomUUID();
+        UUID tenant = UUID.randomUUID();
+        PipelineEntity p = new PipelineEntity();
+        p.setId(pid);
+        p.setTenantId(tenant);
+        p.setName("orders-eda");
+        p.setPattern(PipelinePattern.FAN_OUT);
+        p.setStatus(PipelineLifecycle.CREATING);
+        p.setSourceConnectorName(pid + "-source");
+
+        ConnectorEntity src = connector(ConnectorKind.SOURCE, "RUNNING");
+        src.setPipelineId(pid);
+        src.setCrName(pid + "-source");
+        when(connectorRepository.findByCrName(pid + "-source")).thenReturn(Optional.of(src));
+        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(pid)).thenReturn(List.of(src));
+
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            service().applyConnectorStatus(new ConnectorStatusUpdate(
+                    pid + "-source", ConnectorRuntimeState.RUNNING, PipelineLifecycle.ACTIVE, 1, 0, null));
+
+            verify(ssePublisher, never()).pipelineStatusChanged(any(), any(), any());
+            verify(ssePublisher, never()).connectorStateChanged(any(), any(), any());
+            TransactionSynchronizationManager.getSynchronizations()
+                    .forEach(TransactionSynchronization::afterCommit);
+            verify(ssePublisher).pipelineStatusChanged(tenant, pid, "active");
+            verify(ssePublisher).connectorStateChanged(tenant, pid + "-source", "RUNNING");
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 
     @Test
@@ -146,61 +187,332 @@ class PipelineStatusServiceImplTest {
         verify(eventService, never()).record(any(), any(), any(), any(), any());
     }
 
-    // ---------- consumer lag → status (#559, 스펙 B.1) ----------
+    @Test
+    void errorTransitionOpensIncidentAndLinksStatusEvent() {
+        UUID pid = UUID.randomUUID();
+        UUID tenant = UUID.randomUUID();
+        PipelineEntity p = new PipelineEntity();
+        p.setId(pid);
+        p.setTenantId(tenant);
+        p.setName("orders-eda");
+        p.setPattern(PipelinePattern.FAN_OUT);
+        p.setStatus(PipelineLifecycle.ACTIVE);
+        p.setSourceConnectorName(pid + "-source");
 
-    private PipelineEntity cdcPipeline(UUID pid, UUID tenant, PipelineLifecycle status) {
+        ConnectorEntity src = connector(ConnectorKind.SOURCE, "FAILED");
+        src.setPipelineId(pid);
+        src.setCrName(pid + "-source");
+        src.setLastError("task failed");
+        when(connectorRepository.findByCrName(pid + "-source")).thenReturn(Optional.of(src));
+        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(pid)).thenReturn(List.of(src));
+
+        service().applyConnectorStatus(new ConnectorStatusUpdate(
+                pid + "-source", ConnectorRuntimeState.FAILED, PipelineLifecycle.ERROR, 1, 1, "task failed"));
+
+        verify(incidentService).onThresholdViolation(
+                eq(tenant),
+                eq(IncidentGroupingKeys.connectorWorker(pid + "-source")),
+                eq("CONNECTOR"),
+                eq(null),
+                eq(EventLevel.ERROR),
+                eq("Pipeline 'orders-eda' status ERROR"),
+                eq("PIPELINE_STATUS_CHANGED"),
+                org.mockito.ArgumentMatchers.contains("task failed"),
+                eq(pid));
+        verify(eventService, never()).record(eq(tenant), eq(pid), eq(EventLevel.ERROR), eq("PIPELINE_STATUS_CHANGED"), any());
+    }
+
+    @Test
+    void directSinkFailureGroupsIncidentBySinkConnectorWhenLastErrorIsGeneric() {
+        UUID pid = UUID.randomUUID();
+        UUID tenant = UUID.randomUUID();
         PipelineEntity p = new PipelineEntity();
         p.setId(pid);
         p.setTenantId(tenant);
         p.setName("orders-sync");
         p.setPattern(PipelinePattern.DIRECT);
-        p.setStatus(status);
-        return p; // source/sink datasourceId = null → dbUnreachableReason 무시
-    }
+        p.setStatus(PipelineLifecycle.ACTIVE);
+        p.setSourceConnectorName(pid + "-source");
+        p.setSinkConnectorName(pid + "-sink");
 
-    private List<ConnectorEntity> twoRunning() {
-        return List.of(connector(ConnectorKind.SOURCE, "RUNNING"), connector(ConnectorKind.SINK, "RUNNING"));
+        ConnectorEntity source = connector(ConnectorKind.SOURCE, "RUNNING");
+        source.setPipelineId(pid);
+        source.setCrName(pid + "-source");
+        ConnectorEntity sink = connector(ConnectorKind.SINK, "FAILED");
+        sink.setPipelineId(pid);
+        sink.setCrName(pid + "-sink");
+        sink.setLastError("java.sql.BatchUpdateException: duplicate key");
+
+        when(connectorRepository.findByCrName(pid + "-sink")).thenReturn(Optional.of(sink));
+        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(pid)).thenReturn(List.of(source, sink));
+
+        service().applyConnectorStatus(new ConnectorStatusUpdate(
+                pid + "-sink", ConnectorRuntimeState.FAILED, PipelineLifecycle.ERROR, 1, 1,
+                "java.sql.BatchUpdateException: duplicate key"));
+
+        verify(incidentService).onThresholdViolation(
+                eq(tenant),
+                eq(IncidentGroupingKeys.connectorWorker(pid + "-sink")),
+                eq("CONNECTOR"),
+                eq(null),
+                eq(EventLevel.ERROR),
+                eq("Pipeline 'orders-sync' status ERROR"),
+                eq("PIPELINE_STATUS_CHANGED"),
+                org.mockito.ArgumentMatchers.contains("connector '" + pid + "-sink' FAILED"),
+                eq(pid));
     }
 
     @Test
-    void consumerLagAboveWarningTransitionsActiveToLag() {
-        UUID pid = UUID.randomUUID(); UUID tenant = UUID.randomUUID();
-        PipelineEntity p = cdcPipeline(pid, tenant, PipelineLifecycle.ACTIVE);
+    void sourceDbErrorGroupsIncidentByDatasource() {
+        UUID pid = UUID.randomUUID();
+        UUID tenant = UUID.randomUUID();
+        UUID sourceId = UUID.randomUUID();
+        PipelineEntity p = new PipelineEntity();
+        p.setId(pid);
+        p.setTenantId(tenant);
+        p.setName("orders-eda");
+        p.setPattern(PipelinePattern.FAN_OUT);
+        p.setSourceDatasourceId(sourceId);
+        p.setStatus(PipelineLifecycle.ACTIVE);
+
+        ConnectorEntity src = connector(ConnectorKind.SOURCE, "RUNNING");
+        src.setPipelineId(pid);
+        src.setCrName(pid + "-source");
+        DatasourceEntity datasource = new DatasourceEntity();
+        datasource.setId(sourceId);
+        datasource.setName("orders-db");
+        datasource.setConnectionStatus("UNREACHABLE");
+        datasource.setConnectionError("timeout");
+
+        when(connectorRepository.findByCrName(pid + "-source")).thenReturn(Optional.of(src));
         when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
-        when(connectorRepository.findByPipelineId(pid)).thenReturn(twoRunning());
-        // settingsRepository.findById → 미스텁(empty) → 기본 warning 5,000
+        when(connectorRepository.findByPipelineId(pid)).thenReturn(List.of(src));
+        when(datasourceRepository.findById(sourceId)).thenReturn(Optional.of(datasource));
+
+        service().applyConnectorStatus(new ConnectorStatusUpdate(
+                pid + "-source", ConnectorRuntimeState.RUNNING, PipelineLifecycle.ACTIVE, 1, 0, null));
+
+        verify(incidentService).onThresholdViolation(
+                eq(tenant),
+                eq(IncidentGroupingKeys.datasource(sourceId)),
+                eq("DATABASE"),
+                eq(sourceId),
+                eq(EventLevel.ERROR),
+                eq("Pipeline 'orders-eda' status ERROR"),
+                eq("PIPELINE_STATUS_CHANGED"),
+                org.mockito.ArgumentMatchers.contains("source DB 'orders-db' 연결 불가"),
+                eq(pid));
+    }
+
+    @Test
+    void sameErrorStatusWithChangedCauseResolvesOldGroupingAndOpensNewGrouping() {
+        UUID pid = UUID.randomUUID();
+        UUID tenant = UUID.randomUUID();
+        UUID sourceId = UUID.randomUUID();
+        PipelineEntity p = new PipelineEntity();
+        p.setId(pid);
+        p.setTenantId(tenant);
+        p.setName("orders-eda");
+        p.setPattern(PipelinePattern.FAN_OUT);
+        p.setSourceDatasourceId(sourceId);
+        p.setStatus(PipelineLifecycle.ERROR);
+        p.setStatusMessage("source DB 'orders-db' 연결 불가: timeout");
+        p.setSourceConnectorName(pid + "-source");
+
+        ConnectorEntity src = connector(ConnectorKind.SOURCE, "FAILED");
+        src.setPipelineId(pid);
+        src.setCrName(pid + "-source");
+        src.setLastError("connector task failed");
+        when(connectorRepository.findByCrName(pid + "-source")).thenReturn(Optional.of(src));
+        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(pid)).thenReturn(List.of(src));
+        when(datasourceRepository.findById(sourceId)).thenReturn(Optional.empty());
+
+        service().applyConnectorStatus(new ConnectorStatusUpdate(
+                pid + "-source", ConnectorRuntimeState.FAILED, PipelineLifecycle.ERROR, 1, 1, "connector task failed"));
+
+        verify(incidentService).onRecovery(eq(tenant), eq(IncidentGroupingKeys.datasource(sourceId)),
+                eq("PIPELINE_STATUS_CHANGED"), org.mockito.ArgumentMatchers.contains("connector task failed"), eq(pid));
+        verify(incidentService).onThresholdViolation(eq(tenant), eq(IncidentGroupingKeys.connectorWorker(pid + "-source")),
+                eq("CONNECTOR"), eq(null), eq(EventLevel.ERROR), eq("Pipeline 'orders-eda' status ERROR"),
+                eq("PIPELINE_STATUS_CHANGED"), org.mockito.ArgumentMatchers.contains("connector task failed"), eq(pid));
+    }
+
+    @Test
+    void consumerLagAboveWarningTransitionsActiveToLagWithoutOpeningIncident() {
+        UUID pid = UUID.randomUUID();
+        UUID tenant = UUID.randomUUID();
+        PipelineEntity p = new PipelineEntity();
+        p.setId(pid);
+        p.setTenantId(tenant);
+        p.setName("orders-eda");
+        p.setPattern(PipelinePattern.DIRECT);
+        p.setStatus(PipelineLifecycle.ACTIVE);
+
+        ConnectorEntity src = connector(ConnectorKind.SOURCE, "RUNNING");
+        src.setPipelineId(pid);
+        src.setCrName(pid + "-source");
+        ConnectorEntity sink = connector(ConnectorKind.SINK, "RUNNING");
+        sink.setPipelineId(pid);
+        sink.setCrName(pid + "-sink");
+        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(pid)).thenReturn(List.of(src, sink));
 
         service().applyConsumerLag(pid, 6_000L);
 
-        assertThat(p.getStatus()).isEqualTo(PipelineLifecycle.LAG);
-        verify(ssePublisher).pipelineStatusChanged(tenant, pid, "lag");
-        verify(eventService).record(eq(tenant), eq(pid), eq(EventLevel.WARN), eq("PIPELINE_STATUS_CHANGED"), any());
+        verify(eventService).record(eq(tenant), eq(pid), eq(EventLevel.WARN),
+                eq("PIPELINE_STATUS_CHANGED"), org.mockito.ArgumentMatchers.contains("consumer lag 6000"));
+        verify(incidentService, never()).onThresholdViolation(any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
     void consumerLagRecoveryTransitionsLagToActive() {
-        UUID pid = UUID.randomUUID(); UUID tenant = UUID.randomUUID();
-        PipelineEntity p = cdcPipeline(pid, tenant, PipelineLifecycle.LAG);
-        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
-        when(connectorRepository.findByPipelineId(pid)).thenReturn(twoRunning());
+        UUID pid = UUID.randomUUID();
+        UUID tenant = UUID.randomUUID();
+        PipelineEntity p = new PipelineEntity();
+        p.setId(pid);
+        p.setTenantId(tenant);
+        p.setName("orders-sync");
+        p.setPattern(PipelinePattern.DIRECT);
+        p.setStatus(PipelineLifecycle.LAG);
 
-        service().applyConsumerLag(pid, 100L); // < 5,000
+        ConnectorEntity src = connector(ConnectorKind.SOURCE, "RUNNING");
+        src.setPipelineId(pid);
+        src.setCrName(pid + "-source");
+        ConnectorEntity sink = connector(ConnectorKind.SINK, "RUNNING");
+        sink.setPipelineId(pid);
+        sink.setCrName(pid + "-sink");
+        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(pid)).thenReturn(List.of(src, sink));
+
+        service().applyConsumerLag(pid, 100L);
 
         assertThat(p.getStatus()).isEqualTo(PipelineLifecycle.ACTIVE);
-        verify(ssePublisher).pipelineStatusChanged(tenant, pid, "active");
+        verify(eventService).record(eq(tenant), eq(pid), eq(EventLevel.INFO),
+                eq("PIPELINE_STATUS_CHANGED"), org.mockito.ArgumentMatchers.contains("LAG → ACTIVE"));
+        verify(incidentService, never()).onRecovery(any(), any(), any(), any(), any());
     }
 
     @Test
-    void consumerLagDoesNotOverrideError() {
-        UUID pid = UUID.randomUUID(); UUID tenant = UUID.randomUUID();
-        PipelineEntity p = cdcPipeline(pid, tenant, PipelineLifecycle.ACTIVE);
+    void consumerLagTransitionResolvesPreviousErrorIncidentAndRecordsWarningEvent() {
+        UUID pid = UUID.randomUUID();
+        UUID tenant = UUID.randomUUID();
+        UUID sourceId = UUID.randomUUID();
+        PipelineEntity p = new PipelineEntity();
+        p.setId(pid);
+        p.setTenantId(tenant);
+        p.setName("orders-eda");
+        p.setPattern(PipelinePattern.FAN_OUT);
+        p.setSourceDatasourceId(sourceId);
+        p.setStatus(PipelineLifecycle.ERROR);
+        p.setStatusMessage("source DB 'orders-db' 연결 불가: timeout");
+
+        ConnectorEntity src = connector(ConnectorKind.SOURCE, "RUNNING");
+        src.setPipelineId(pid);
+        src.setCrName(pid + "-source");
         when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
-        when(connectorRepository.findByPipelineId(pid)).thenReturn(
-                List.of(connector(ConnectorKind.SOURCE, "RUNNING"), connector(ConnectorKind.SINK, "FAILED")));
+        when(connectorRepository.findByPipelineId(pid)).thenReturn(List.of(src));
+        when(datasourceRepository.findById(sourceId)).thenReturn(Optional.empty());
 
-        service().applyConsumerLag(pid, 9_999_999L); // 큰 lag지만 커넥터 FAILED가 우선
+        service().applyConsumerLag(pid, 6_000L);
 
-        assertThat(p.getStatus()).isEqualTo(PipelineLifecycle.ERROR);
+        verify(incidentService).onRecovery(eq(tenant), eq(IncidentGroupingKeys.datasource(sourceId)),
+                eq("PIPELINE_STATUS_CHANGED"), org.mockito.ArgumentMatchers.contains("ERROR → LAG"), eq(pid));
+        verify(eventService).record(eq(tenant), eq(pid), eq(EventLevel.WARN),
+                eq("PIPELINE_STATUS_CHANGED"), org.mockito.ArgumentMatchers.contains("consumer lag 6000"));
+    }
+
+    @Test
+    void activeTransitionResolvesOpenIncidentInsteadOfWritingPlainEvent() {
+        UUID pid = UUID.randomUUID();
+        UUID tenant = UUID.randomUUID();
+        PipelineEntity p = new PipelineEntity();
+        p.setId(pid);
+        p.setTenantId(tenant);
+        p.setName("orders-eda");
+        p.setPattern(PipelinePattern.FAN_OUT);
+        p.setStatus(PipelineLifecycle.ERROR);
+
+        ConnectorEntity src = connector(ConnectorKind.SOURCE, "RUNNING");
+        src.setPipelineId(pid);
+        src.setCrName(pid + "-source");
+        when(connectorRepository.findByCrName(pid + "-source")).thenReturn(Optional.of(src));
+        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(pid)).thenReturn(List.of(src));
+        when(incidentService.onRecovery(eq(tenant), eq(IncidentGroupingKeys.pipelineAvailability(pid)),
+                eq("PIPELINE_STATUS_CHANGED"), any(), eq(pid))).thenReturn(true);
+
+        service().applyConnectorStatus(new ConnectorStatusUpdate(
+                pid + "-source", ConnectorRuntimeState.RUNNING, PipelineLifecycle.ACTIVE, 1, 0, null));
+
+        verify(incidentService).onRecovery(eq(tenant), eq(IncidentGroupingKeys.pipelineAvailability(pid)),
+                eq("PIPELINE_STATUS_CHANGED"), org.mockito.ArgumentMatchers.contains("ERROR → ACTIVE"), eq(pid));
+        verify(eventService, never()).record(eq(tenant), eq(pid), eq(EventLevel.INFO), eq("PIPELINE_STATUS_CHANGED"), any());
+    }
+
+    @Test
+    void activeTransitionResolvesConnectorIncidentUsingStoredConnectorFailureMessage() {
+        UUID pid = UUID.randomUUID();
+        UUID tenant = UUID.randomUUID();
+        String sinkName = pid + "-sink";
+        PipelineEntity p = new PipelineEntity();
+        p.setId(pid);
+        p.setTenantId(tenant);
+        p.setName("orders-sync");
+        p.setPattern(PipelinePattern.DIRECT);
+        p.setStatus(PipelineLifecycle.ERROR);
+        p.setStatusMessage("connector '" + sinkName + "' FAILED: java.sql.BatchUpdateException");
+        p.setSourceConnectorName(pid + "-source");
+        p.setSinkConnectorName(sinkName);
+
+        ConnectorEntity source = connector(ConnectorKind.SOURCE, "RUNNING");
+        source.setPipelineId(pid);
+        source.setCrName(pid + "-source");
+        ConnectorEntity sink = connector(ConnectorKind.SINK, "RUNNING");
+        sink.setPipelineId(pid);
+        sink.setCrName(sinkName);
+        when(connectorRepository.findByCrName(sinkName)).thenReturn(Optional.of(sink));
+        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(pid)).thenReturn(List.of(source, sink));
+        when(incidentService.onRecovery(eq(tenant), eq(IncidentGroupingKeys.connectorWorker(sinkName)),
+                eq("PIPELINE_STATUS_CHANGED"), any(), eq(pid))).thenReturn(true);
+
+        service().applyConnectorStatus(new ConnectorStatusUpdate(
+                sinkName, ConnectorRuntimeState.RUNNING, PipelineLifecycle.ACTIVE, 1, 0, null));
+
+        assertThat(p.getStatus()).isEqualTo(PipelineLifecycle.ACTIVE);
+        verify(incidentService).onRecovery(eq(tenant), eq(IncidentGroupingKeys.connectorWorker(sinkName)),
+                eq("PIPELINE_STATUS_CHANGED"), org.mockito.ArgumentMatchers.contains("ERROR → ACTIVE"), eq(pid));
+        verify(eventService, never()).record(eq(tenant), eq(pid), eq(EventLevel.INFO), eq("PIPELINE_STATUS_CHANGED"), any());
+    }
+
+    @Test
+    void activeTransitionWritesPlainEventWhenNoIncidentWasOpen() {
+        UUID pid = UUID.randomUUID();
+        UUID tenant = UUID.randomUUID();
+        PipelineEntity p = new PipelineEntity();
+        p.setId(pid);
+        p.setTenantId(tenant);
+        p.setName("orders-eda");
+        p.setPattern(PipelinePattern.FAN_OUT);
+        p.setStatus(PipelineLifecycle.ERROR);
+
+        ConnectorEntity src = connector(ConnectorKind.SOURCE, "RUNNING");
+        src.setPipelineId(pid);
+        src.setCrName(pid + "-source");
+        when(connectorRepository.findByCrName(pid + "-source")).thenReturn(Optional.of(src));
+        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(pid)).thenReturn(List.of(src));
+
+        service().applyConnectorStatus(new ConnectorStatusUpdate(
+                pid + "-source", ConnectorRuntimeState.RUNNING, PipelineLifecycle.ACTIVE, 1, 0, null));
+
+        verify(incidentService).onRecovery(eq(tenant), eq(IncidentGroupingKeys.pipelineAvailability(pid)),
+                eq("PIPELINE_STATUS_CHANGED"), org.mockito.ArgumentMatchers.contains("ERROR → ACTIVE"), eq(pid));
+        verify(eventService).record(eq(tenant), eq(pid), eq(EventLevel.INFO),
+                eq("PIPELINE_STATUS_CHANGED"), org.mockito.ArgumentMatchers.contains("ERROR → ACTIVE"));
     }
 
     private static ConnectorEntity connector(ConnectorKind kind, String state) {

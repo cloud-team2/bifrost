@@ -3,6 +3,8 @@ package com.bifrost.ops.incident.persistence.repository;
 import com.bifrost.ops.incident.persistence.entity.IncidentEntity;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
 import java.util.List;
@@ -19,7 +21,10 @@ public interface IncidentRepository extends JpaRepository<IncidentEntity, UUID> 
             UUID tenantId, String status, String severity, Pageable pageable);
     long countByTenantIdAndStatus(UUID tenantId, String status);
     Optional<IncidentEntity> findByIdAndTenantId(UUID id, UUID tenantId);
-    Optional<IncidentEntity> findByTenantIdAndGroupingKeyAndStatus(UUID tenantId, String groupingKey, String status);
+    List<IncidentEntity> findByTenantIdAndGroupingKeyAndStatusOrderByOpenedAtAsc(
+            UUID tenantId, String groupingKey, String status);
+    @Query(value = "SELECT pg_advisory_xact_lock(hashtextextended(:lockKey, 0))", nativeQuery = true)
+    Object lockIncidentGroup(@Param("lockKey") String lockKey);
     List<IncidentEntity> findByTenantIdAndStatusAndSeverityInAndOpenedAtGreaterThanEqualOrderByOpenedAtDesc(
             UUID tenantId, String status, List<String> severities, Instant openedAt);
 }

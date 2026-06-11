@@ -12,10 +12,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -32,13 +34,16 @@ public class IncidentService {
     private final IncidentRepository incidentRepository;
     private final EventService eventService;
     private final SsePublisher sseService;
+    private final IncidentAnalysisTrigger incidentAnalysisTrigger;
 
     public IncidentService(IncidentRepository incidentRepository,
                            EventService eventService,
-                           SsePublisher sseService) {
+                           SsePublisher sseService,
+                           IncidentAnalysisTrigger incidentAnalysisTrigger) {
         this.incidentRepository = incidentRepository;
         this.eventService = eventService;
         this.sseService = sseService;
+        this.incidentAnalysisTrigger = incidentAnalysisTrigger;
     }
 
     /**
@@ -57,20 +62,23 @@ public class IncidentService {
     public void onThresholdViolation(UUID tenantId, String groupingKey, String sourceType, UUID sourceId,
                                       EventLevel level, String title,
                                       String eventType, String eventMessage, UUID pipelineId) {
+        acquireGroupingLock(tenantId, groupingKey);
+
         // 기존 OPEN incident 조회
-        Optional<IncidentEntity> existing =
-                incidentRepository.findByTenantIdAndGroupingKeyAndStatus(tenantId, groupingKey, "OPEN");
+        List<IncidentEntity> existing = openIncidents(tenantId, groupingKey);
 
         IncidentEntity incident;
         boolean isNew;
-        if (existing.isPresent()) {
-            incident = existing.get();
+        if (!existing.isEmpty()) {
+            incident = existing.get(0);
             isNew = false;
+            List<IncidentResponse> duplicateUpdates = closeDuplicateOpenIncidents(existing);
             // severity escalation: WARN → ERROR 가능
             if (level == EventLevel.ERROR && "WARN".equals(incident.getSeverity())) {
                 incident.setSeverity("ERROR");
                 incidentRepository.save(incident);
             }
+            publishAfterCommit(duplicateUpdates);
         } else {
             incident = new IncidentEntity();
             incident.setTenantId(tenantId);
@@ -90,26 +98,87 @@ public class IncidentService {
 
         // SSE 발행
         String sseEvent = isNew ? "incident_opened" : "incident_updated";
-        sseService.incidentEvent(tenantId, sseEvent, IncidentResponse.from(incident));
+        publishAfterCommit(tenantId, sseEvent, IncidentResponse.from(incident));
+        if (isNew) {
+            incidentAnalysisTrigger.startAfterCommit(tenantId, incident.getId(), title, eventMessage);
+        }
     }
 
     /**
      * 복구 event 수신 시 OPEN incident를 auto-resolve한다.
      */
     @Transactional
-    public void onRecovery(UUID tenantId, String groupingKey, String eventType,
-                            String eventMessage, UUID pipelineId) {
-        incidentRepository.findByTenantIdAndGroupingKeyAndStatus(tenantId, groupingKey, "OPEN")
-                .ifPresent(incident -> {
-                    incident.setStatus("RESOLVED");
-                    incident.setResolvedAt(Instant.now());
-                    incidentRepository.save(incident);
-                    log.info("[incident] auto-resolve: id={} groupingKey={}", incident.getId(), groupingKey);
+    public boolean onRecovery(UUID tenantId, String groupingKey, String eventType,
+                              String eventMessage, UUID pipelineId) {
+        acquireGroupingLock(tenantId, groupingKey);
 
-                    eventService.recordWithIncident(tenantId, pipelineId, EventLevel.INFO,
-                            eventType, eventMessage, incident.getId(), null);
-                    sseService.incidentEvent(tenantId, "incident_updated", IncidentResponse.from(incident));
-                });
+        List<IncidentEntity> existing = openIncidents(tenantId, groupingKey);
+        if (existing.isEmpty()) {
+            return false;
+        }
+
+        Instant resolvedAt = Instant.now();
+        List<IncidentResponse> updates = new ArrayList<>();
+        for (IncidentEntity incident : existing) {
+            incident.setStatus("RESOLVED");
+            incident.setResolvedAt(resolvedAt);
+            incidentRepository.save(incident);
+            updates.add(IncidentResponse.from(incident));
+        }
+        IncidentEntity incident = existing.get(0);
+        log.info("[incident] auto-resolve: id={} groupingKey={}", incident.getId(), groupingKey);
+
+        eventService.recordWithIncident(tenantId, pipelineId, EventLevel.INFO,
+                eventType, eventMessage, incident.getId(), null);
+        publishAfterCommit(tenantId, "incident_updated", updates);
+        return true;
+    }
+
+    private void acquireGroupingLock(UUID tenantId, String groupingKey) {
+        incidentRepository.lockIncidentGroup(tenantId + ":" + groupingKey);
+    }
+
+    private List<IncidentEntity> openIncidents(UUID tenantId, String groupingKey) {
+        return incidentRepository.findByTenantIdAndGroupingKeyAndStatusOrderByOpenedAtAsc(
+                tenantId, groupingKey, "OPEN");
+    }
+
+    private List<IncidentResponse> closeDuplicateOpenIncidents(List<IncidentEntity> incidents) {
+        List<IncidentResponse> updates = new ArrayList<>();
+        if (incidents.size() <= 1) {
+            return updates;
+        }
+        Instant resolvedAt = Instant.now();
+        for (int i = 1; i < incidents.size(); i++) {
+            IncidentEntity duplicate = incidents.get(i);
+            duplicate.setStatus("RESOLVED");
+            duplicate.setResolvedAt(resolvedAt);
+            incidentRepository.save(duplicate);
+            updates.add(IncidentResponse.from(duplicate));
+        }
+        return updates;
+    }
+
+    private void publishAfterCommit(List<IncidentResponse> updates) {
+        updates.forEach(update -> publishAfterCommit(update.tenantId(), "incident_updated", update));
+    }
+
+    private void publishAfterCommit(UUID tenantId, String eventName, List<IncidentResponse> updates) {
+        updates.forEach(update -> publishAfterCommit(tenantId, eventName, update));
+    }
+
+    private void publishAfterCommit(UUID tenantId, String eventName, IncidentResponse response) {
+        Runnable publish = () -> sseService.incidentEvent(tenantId, eventName, response);
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            publish.run();
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                publish.run();
+            }
+        });
     }
 
     /** RCA 기록 */
