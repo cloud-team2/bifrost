@@ -103,6 +103,7 @@ interface Store {
   /* actions */
   createProject: (name: string) => Promise<Project | null>
   reloadProjectData: () => void
+  refreshDatabaseNode: (id: string) => Promise<void>
   addDatabaseNode: (n: Node) => void
   deleteDatabase: (id: string) => Promise<void>
   createPipeline: (input: PipelineCreateInput) => Promise<Edge | null>
@@ -155,6 +156,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [currentProject, setCurrentProject] = useState<Project | null>(null)
   const currentProjectIdRef = useRef<string | null>(null)
+  const projectLoadIdRef = useRef(0)
+  const databaseRefreshIdRef = useRef<Record<string, number>>({})
   const monitoringLoadIdRef = useRef(0)
   const [view, setViewRaw] = useState<View>('pipelines')
   const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(null)
@@ -339,8 +342,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   /** 워크스페이스 선택 시 DB·파이프라인을 백엔드에서 로드하고 project 인덱스를 채운다. */
   async function loadProjectData(wsId: string) {
+    const loadId = ++projectLoadIdRef.current
+    const isActiveLoad = () =>
+      projectLoadIdRef.current === loadId && currentProjectIdRef.current === wsId
     try {
       const [dbs, pls] = await Promise.all([api.listDatabases(wsId), api.listPipelines(wsId)])
+      if (!isActiveLoad()) return
       const nextNodes = dbs.map((d, i) => datasourceToNode(d, i))
       const nextEdges = pls.map(pipelineToEdge)
       setNodes(nextNodes)
@@ -357,10 +364,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         w && w.id === wsId ? { ...w, dbIds, pipelineIds, pipelineCount, activeCount } : w,
       )
     } catch {
+      if (!isActiveLoad()) return
       setNodes([])
       setEdges([])
     }
-    await loadMonitoringData(wsId)
+    if (isActiveLoad()) await loadMonitoringData(wsId)
   }
 
   async function applyAuth(tokens: AuthTokens) {
@@ -539,6 +547,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     reloadProjectData() {
       if (currentProject) loadProjectData(currentProject.id)
+    },
+
+    async refreshDatabaseNode(id) {
+      const wsId = currentProjectIdRef.current
+      if (!wsId) return
+      const projectLoadId = projectLoadIdRef.current
+      const requestId = (databaseRefreshIdRef.current[id] ?? 0) + 1
+      databaseRefreshIdRef.current[id] = requestId
+      const db = await api.getDatabase(wsId, id)
+      if (
+        currentProjectIdRef.current !== wsId
+        || projectLoadIdRef.current !== projectLoadId
+        || databaseRefreshIdRef.current[id] !== requestId
+      ) return
+      setNodes((prev) =>
+        prev.map((node, index) => {
+          if (node.id !== id) return node
+          const next = datasourceToNode(db, index)
+          return { ...next, x: node.x, y: node.y }
+        }),
+      )
     },
 
     addDatabaseNode(node) {
