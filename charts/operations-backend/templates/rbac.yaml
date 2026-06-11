@@ -37,8 +37,16 @@ rules:
   - apiGroups: ["kafka.strimzi.io"]
     resources: ["kafkaconnectors", "kafkausers"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # KafkaConnect CR 조회(Cluster 탭 worker 버전·config). 없으면 connect config/version 누락. #510
+  - apiGroups: ["kafka.strimzi.io"]
+    resources: ["kafkaconnects"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+  # Connect worker 파드 조회(Cluster 탭 KafkaConnect workers). 없으면 workers=0. #510
+  - apiGroups: [""]
+    resources: ["pods"]
     verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
