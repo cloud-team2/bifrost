@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     # Agent run 안전장치 (DETAILS §15.5 루프 방지)
     max_steps_per_run: int = 24
     max_revisions: int = 2
+    # 종료 보장 budget — step/loop 카운터 외 시간·자원 예산 (#481)
+    wall_clock_timeout_seconds: float = 300.0
+    stage_timeout_seconds: float = 120.0
+    max_llm_calls_per_run: int = 16
+    max_tokens_per_run: int = 200_000
 
 
 settings = Settings()

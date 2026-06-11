@@ -170,6 +170,15 @@ def _bool_or_false(value: object) -> bool:
     return value if isinstance(value, bool) else False
 
 
+def _estimate_tokens(*texts: str | None) -> int:
+    """LLM usage가 없을 때를 대비한 거친 토큰 추정(#481).
+
+    실제 토크나이저 없이 char/4 근사(영문 기준 통상치)를 쓴다. 예산 guard 집행용
+    누적치를 위한 것이라 정밀도는 중요치 않다.
+    """
+    return sum(len(t) for t in texts if t) // 4
+
+
 def _agent_mode_or_none(value: object) -> AgentMode | None:
     if isinstance(value, AgentMode):
         return value
@@ -744,6 +753,11 @@ async def run_workflow(
                         user_message, retrieval_out, mode, llm,
                         rca_out=rca_out, classifier_out=classifier_out,
                     )
+                    # #481: Report LLM 호출을 token/call 예산에 계측한다. 예산 초과 시
+                    # 다음 advance(loopback 포함)의 check_all_global이 run을 안전 종료한다.
+                    record_usage = getattr(supervisor, "record_llm_usage", None)
+                    if record_usage is not None:
+                        record_usage(run_id, calls=1, tokens=_estimate_tokens(user_message, answer))
                     verifier_out = await verifier_agent.run_verifier(
                         mode,
                         rca_out=rca_out,

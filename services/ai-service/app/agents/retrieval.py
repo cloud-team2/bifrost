@@ -166,9 +166,40 @@ async def run_retrieval(
 
         return evidence
 
-    # 독립 read-only tool은 병렬(fan-out) 실행
-    tool_evidence = list(await asyncio.gather(*[call_step(s) for s in plan.retrieval_plan]))
+    # depends_on을 해석해 독립 tool은 병렬(fan-out), 의존 tool은 선행 완료 후 순차 실행
+    tool_evidence = await _run_plan_steps(plan.retrieval_plan, call_step)
     return RetrievalOutput(evidence_items=[*knowledge_items, *tool_evidence])
+
+
+async def _run_plan_steps(steps: list, call_step) -> list[EvidenceItem]:
+    """depends_on을 해석한 wave 실행기 (#481).
+
+    depends_on이 없는(또는 선행이 모두 끝난) step들은 같은 wave에서 asyncio.gather로
+    병렬 실행하고, 의존이 남은 step은 선행 step이 끝난 다음 wave로 미룬다. 결과는
+    plan 순서대로 정렬해 반환한다. 미해결/순환 의존은 deadlock 대신 남은 step을
+    한꺼번에 실행해 안전하게 흡수한다.
+    """
+    if not steps:
+        return []
+
+    valid_ids = {s.step_id for s in steps}
+    done: dict[str, EvidenceItem] = {}
+    remaining = list(steps)
+    while remaining:
+        ready = [
+            s
+            for s in remaining
+            if all((dep not in valid_ids) or (dep in done) for dep in s.depends_on)
+        ]
+        if not ready:  # 순환/미해결 의존 — deadlock 방지
+            ready = remaining
+        wave = await asyncio.gather(*[call_step(s) for s in ready])
+        for step, evidence in zip(ready, wave):
+            done[step.step_id] = evidence
+        ready_ids = {s.step_id for s in ready}
+        remaining = [s for s in remaining if s.step_id not in ready_ids]
+
+    return [done[s.step_id] for s in steps]
 
 
 def _raw_payload_for_store(result: Any) -> dict[str, Any] | list[Any]:

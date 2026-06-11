@@ -58,3 +58,27 @@ async def test_no_duplicate_tool_steps():
 
     names = _tool_names(plan)
     assert names.count("search_logs") == 1
+
+
+# ── #481 depends_on 순차 chain ────────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_planner_fills_depends_on_for_identifier_dependent_tool():
+    # discovery(list_project_pipelines) + 식별자 의존(get_connector_status)이 함께
+    # 계획되면 의존 tool은 discovery step에 depends_on을 건다.
+    plan = await run_planner("파이프라인 목록과 `my-connector` 커넥터 상태 알려줘", "proj_001")
+
+    steps = {s.tool_name: s for s in plan.retrieval_plan}
+    assert "list_project_pipelines" in steps
+    assert "get_connector_status" in steps
+    assert steps["list_project_pipelines"].depends_on == []
+    assert steps["get_connector_status"].depends_on == [steps["list_project_pipelines"].step_id]
+
+
+@pytest.mark.asyncio
+async def test_planner_independent_tools_have_empty_depends_on():
+    # discovery tool이 없는 독립 조회는 depends_on이 비어 병렬 실행을 유지한다.
+    plan = await run_planner("메트릭이랑 배포 알려줘", "proj_001")
+
+    assert len(plan.retrieval_plan) >= 2
+    for step in plan.retrieval_plan:
+        assert step.depends_on == []
