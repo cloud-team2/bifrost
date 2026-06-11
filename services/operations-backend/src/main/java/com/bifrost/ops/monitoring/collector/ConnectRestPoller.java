@@ -2,6 +2,9 @@ package com.bifrost.ops.monitoring.collector;
 
 import com.bifrost.ops.event.EventLevel;
 import com.bifrost.ops.event.EventService;
+import com.bifrost.ops.incident.IncidentGroupingKeys;
+import com.bifrost.ops.incident.IncidentService;
+import com.bifrost.ops.pipeline.PipelineLifecycle;
 import com.bifrost.ops.pipeline.persistence.entity.PipelineEntity;
 import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
 import io.micrometer.observation.annotation.Observed;
@@ -33,6 +36,7 @@ public class ConnectRestPoller {
     private final RestClient restClient;
     private final PipelineRepository pipelineRepository;
     private final EventService eventService;
+    private final IncidentService incidentService;
 
     // "connectorName:taskId" → 직전 실패 여부
     private final ConcurrentHashMap<String, Boolean> failedTaskState = new ConcurrentHashMap<>();
@@ -41,16 +45,27 @@ public class ConnectRestPoller {
             @Value("${kafka-connect.rest-url:http://platform-connect-connect-api.platform-kafka.svc:8083}")
             String connectRestUrl,
             PipelineRepository pipelineRepository,
-            EventService eventService) {
+            EventService eventService,
+            IncidentService incidentService) {
+        this(restClient(connectRestUrl), pipelineRepository, eventService, incidentService);
+    }
+
+    ConnectRestPoller(RestClient restClient, PipelineRepository pipelineRepository,
+                      EventService eventService, IncidentService incidentService) {
+        this.restClient = restClient;
+        this.pipelineRepository = pipelineRepository;
+        this.eventService = eventService;
+        this.incidentService = incidentService;
+    }
+
+    private static RestClient restClient(String connectRestUrl) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(2000);
         factory.setReadTimeout(3000);
-        this.restClient = RestClient.builder()
+        return RestClient.builder()
                 .baseUrl(connectRestUrl)
                 .requestFactory(factory)
                 .build();
-        this.pipelineRepository = pipelineRepository;
-        this.eventService = eventService;
     }
 
     @Observed(name = "pipeline.connect.poll")
@@ -67,11 +82,12 @@ public class ConnectRestPoller {
 
         Map<String, PipelineEntity> byConnector = buildConnectorMap();
         Set<String> currentlyFailed = new HashSet<>();
+        Map<String, Set<String>> currentFailuresByConnector = new HashMap<>();
 
         for (Object nameObj : connectors) {
             String name = String.valueOf(nameObj);
             try {
-                pollOne(name, byConnector, currentlyFailed);
+                pollOne(name, byConnector, currentlyFailed, currentFailuresByConnector);
             } catch (Exception e) {
                 log.debug("connector status 조회 실패(무시): name={} cause={}", name, e.getMessage());
             }
@@ -83,8 +99,19 @@ public class ConnectRestPoller {
                 String connectorName = key.split(":")[0];
                 PipelineEntity p = byConnector.get(connectorName);
                 if (p != null) {
-                    eventService.record(p.getTenantId(), p.getId(), EventLevel.INFO,
-                            "CONNECTOR_TASK_RECOVERED", "connector task 복구: " + key);
+                    String message = "connector task 복구: " + key;
+                    if (currentFailuresByConnector.getOrDefault(connectorName, Set.of()).isEmpty()) {
+                        boolean resolved = incidentService.onRecovery(p.getTenantId(),
+                                IncidentGroupingKeys.connectorWorker(connectorName),
+                                "CONNECTOR_TASK_RECOVERED", message, p.getId());
+                        if (!resolved) {
+                            eventService.record(p.getTenantId(), p.getId(), EventLevel.INFO,
+                                    "CONNECTOR_TASK_RECOVERED", message);
+                        }
+                    } else {
+                        eventService.record(p.getTenantId(), p.getId(), EventLevel.INFO,
+                                "CONNECTOR_TASK_RECOVERED", message);
+                    }
                 }
                 failedTaskState.remove(key);
             }
@@ -92,7 +119,8 @@ public class ConnectRestPoller {
     }
 
     @SuppressWarnings("unchecked")
-    private void pollOne(String name, Map<String, PipelineEntity> byConnector, Set<String> currentlyFailed) {
+    private void pollOne(String name, Map<String, PipelineEntity> byConnector, Set<String> currentlyFailed,
+                         Map<String, Set<String>> currentFailuresByConnector) {
         Map<String, Object> status = restClient.get()
                 .uri("/connectors/{name}/status", name)
                 .retrieve()
@@ -108,13 +136,17 @@ public class ConnectRestPoller {
 
             if ("FAILED".equals(state)) {
                 currentlyFailed.add(key);
+                currentFailuresByConnector.computeIfAbsent(name, ignored -> new HashSet<>()).add(key);
                 if (!Boolean.TRUE.equals(failedTaskState.get(key))) {
                     String trace = task.containsKey("trace") ? truncate(String.valueOf(task.get("trace"))) : "";
                     PipelineEntity p = byConnector.get(name);
                     if (p != null) {
-                        eventService.record(p.getTenantId(), p.getId(), EventLevel.ERROR,
-                                "CONNECTOR_TASK_FAILED",
-                                "connector task 실패: " + key + " trace=" + trace);
+                        String message = "connector task 실패: " + key + " trace=" + trace;
+                        incidentService.onThresholdViolation(p.getTenantId(),
+                                IncidentGroupingKeys.connectorWorker(name),
+                                "CONNECTOR", null, EventLevel.ERROR,
+                                "Pipeline '" + p.getName() + "' connector task failed",
+                                "CONNECTOR_TASK_FAILED", message, p.getId());
                     } else {
                         log.warn("connector task 실패 (파이프라인 미매핑): {}", key);
                     }
