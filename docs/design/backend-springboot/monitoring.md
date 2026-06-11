@@ -129,11 +129,11 @@ openOrAttach(severity):
 | FR-009 | Sync | `/pipelines/{id}/sync-status` | `PipelineSyncService.syncStatus(...)` |
 | FR-010 | Messages | `/pipelines/{id}/messages` | §6 bounded consume |
 | FR-017 | DB Metrics | `/databases/{id}/metrics` | 현재 stub 응답 |
-| FR-019 | Activity | `/events` | `event` 테이블 |
+| FR-019 | Alerts event log | `/events` | `event` 테이블. Frontend는 AlertsView 통합 이벤트 로그에서 표시 |
 | - | Backend aggregate(프론트 라우트 없음) | `/monitoring/overview` | 집계 query |
 | FR-021 | Alerts | `/incidents`·`/incidents/{id}` | `IncidentService.list/get`의 incident row. `IncidentResponse`에는 event 역참조 목록이 없다 |
-| FR-023 | Cluster | `/cluster` | KafkaAdmin broker + JMX worker |
-| FR-024 | Resource events | `/resource-events` | 현재 `MonitoringReadService.resourceEvents(...)`는 `AdminClient.listPartitionReassignments()` 기반 `PARTITION_REASSIGNMENT`만 반환한다 |
+| FR-023 | Cluster | `/api/v1/clusters/kafka`·`/api/v1/clusters/connect` | KafkaAdmin broker + JMX worker. Broker 인프라 지표는 프론트에서 미노출 |
+| FR-024 | Resource events | `/monitoring/resource-events` | 현재 `MonitoringReadService.resourceEvents(...)`는 `AdminClient.listPartitionReassignments()` 기반 `PARTITION_REASSIGNMENT`만 반환하며 AlertsView 통합 이벤트 로그에서 표시한다 |
 
 ### 9. 구현 메모
 

@@ -31,12 +31,12 @@
 | FR-016 | 중 | 일반 | 사용자가 Database의 스키마(테이블·컬럼·인덱스)를 탐색한다 | DatabaseDetail → Schema 탭 |
 | FR-017 | 중 | 일반 | 사용자가 Database의 TPS·쿼리 응답 시간·활성 연결 지표를 확인한다 | DatabaseDetail → Metrics 탭 |
 | FR-018 | 중 | 일반 | 사용자가 Database에 연결된 Pipeline 목록과 상태를 확인한다 | DatabaseDetail → Pipelines 탭 |
-| FR-019 | 중 | 일반 | 사용자가 Kafka 이벤트 로그를 레벨·파이프라인별로 필터링하여 조회한다 | ActivityLogView |
+| FR-019 | 중 | 일반 | 사용자가 Kafka 이벤트 로그를 Source·레벨별로 필터링하고 상세를 조회한다 | AlertsView |
 | FR-020 | - | 일반 | v1 와이어프레임 기준 운영 현황 대시보드는 제공하지 않는다 | 제거됨 |
 | FR-021 | 상 | 일반 | 사용자가 인시던트 목록을 확인하고 상세 원인·영향 범위를 조회한다 | AlertsView |
 | FR-022 | 상 | 에이전트 | 사용자가 AI 추천 조치를 위험도·예상 소요시간과 함께 검토한 뒤 Run으로 승인 실행한다 (HITL) | AlertsView, BifrostAgentPanel |
 | FR-023 | 중 | 일반 | 사용자가 Kafka Broker·Kafka Connect Worker 현황을 클러스터 탭에서 확인한다 | OperatorClusterView |
-| FR-024 | 중 | 일반 | 사용자가 클러스터 레이어에서 발생하는 리소스 이벤트 로그를 조회한다 | OperatorResourceEventsView |
+| FR-024 | 중 | 일반 | 사용자가 클러스터 레이어에서 발생하는 리소스 이벤트 로그를 조회한다 | AlertsView |
 | FR-025 | 상 | 에이전트 | 사용자가 AI 채팅 패널에서 Pipeline 조회·상태 확인·Pause/Resume를 자연어로 요청하며 Tool Call이 카드로 시각화된다 | BifrostAgentPanel |
 | FR-026 | 상 | 에이전트 | AI가 다중 파이프라인 랙 급증·커넥터 중단을 자동 감지하여 장애 리포트와 근본 원인·조치 옵션을 생성한다 | BifrostAgentPanel |
 
@@ -173,9 +173,9 @@
 - **기본 흐름**: 1) Pipelines 탭 → 2) 목록(이름·역할·상태) → 3) 클릭 → PipelineDetail.
 
 ### FR-019 — 이벤트 로그 조회
-- **기능 설명**: Kafka 파이프라인 레이어 이벤트 로그를 레벨(INFO/WARN/ERROR)·Pipeline별 필터로 타임라인 조회.
-- **기본 흐름**: 1) ActivityLogView → 2) 레벨 필터 → 3) Pipeline 필터 → 4) 클릭 → 상세.
-- **비고**: Kafka 브로커 내부 인프라 이벤트는 노출하지 않음.
+- **기능 설명**: AlertsView 통합 이벤트 로그에서 Kafka 파이프라인 이벤트와 리소스 이벤트를 실 API 데이터로 조회한다.
+- **기본 흐름**: 1) AlertsView → 2) Source/레벨 필터 → 3) 이벤트 row 클릭 → 4) 상세 패널(시각·타입·메시지·연결 Pipeline/Incident/Resource).
+- **비고**: 데이터는 `/events`와 `/monitoring/resource-events` 응답을 사용하며, 자동 갱신은 동일 API 재조회로 처리한다. Kafka 브로커 내부 인프라 이벤트는 노출하지 않음.
 
 ### FR-020 — 운영 현황 대시보드
 - **상태**: v1 와이어프레임 기준 제거됨.
@@ -195,11 +195,11 @@
 
 ### FR-023 — 클러스터 현황
 - **기능 설명**: Broker·Kafka Connect Worker 현황(탭별). Topic·Consumer Group은 Pipeline 상세에서 관리. Broker CPU/디스크/네트워크 인프라 지표는 인프라 운영 영역으로 미노출.
-- **기본 흐름**: 1) OperatorClusterView(Brokers·Kafka Connect 탭) → 2) Brokers(목록·상태·리더 파티션 수) → 3) Kafka Connect(Worker JVM Heap·CPU·GC + Connector 목록).
+- **기본 흐름**: 1) OperatorClusterView(Brokers·Kafka Connect 탭) → 2) Brokers(목록·상태·리더 파티션 수·연결 정보) → 3) Kafka Connect(Worker JVM Heap·CPU·GC + Connector 목록).
 
 ### FR-024 — 리소스 이벤트 로그
 - **기능 설명**: 파티션 재분배·리더 선출·컨슈머 그룹 리밸런싱 등 클러스터 리소스 이벤트 타임라인.
-- **기본 흐름**: 1) OperatorResourceEventsView → 2) 유형·심각도 필터 → 3) 클릭 → 상세.
+- **기본 흐름**: 1) AlertsView → 2) Resource 필터 → 3) 이벤트 row 클릭 → 4) 상세.
 
 ### FR-025 — AI 채팅 어시스턴트
 - **액터**: 사용자, AI 에이전트
@@ -239,7 +239,7 @@
 | creating | blue(pulse) |
 
 ### 라우팅 맵
-`login` LoginView · `workspaces` WorkspaceListView · `pipelines` PipelinesView · `pipeline-detail` PipelineDetail · `databases` DatabasesView · `database-detail` DatabaseDetail · `activity-log` ActivityLogView · `alerts` AlertsView · `cluster` OperatorClusterView · `resource-events` OperatorResourceEventsView · `settings` SettingsView
+`login` LoginView · `workspaces` WorkspaceListView · `pipelines` PipelinesView · `pipeline-detail` PipelineDetail · `databases` DatabasesView · `database-detail` DatabaseDetail · `alerts` AlertsView · `cluster` OperatorClusterView · `settings` SettingsView
 
 ---
 
