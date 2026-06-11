@@ -21,6 +21,21 @@ export class ApiError extends Error {
   }
 }
 
+export function extractApiErrorPayload(data: unknown, status: number, statusText: string) {
+  const record = asApiRecord(data)
+  const error = asApiRecord(record?.error)
+  return {
+    code: apiRecordString(record, 'code') ?? apiRecordString(error, 'code') ?? String(status),
+    message: firstApiString(
+      apiRecordString(record, 'message'),
+      apiRecordString(error, 'message'),
+      apiRecordString(record, 'detail'),
+      statusText,
+    ) ?? String(status),
+    details: apiRecordDetails(record, 'details') ?? apiRecordDetails(error, 'details') ?? [],
+  }
+}
+
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY)
 }
@@ -43,14 +58,51 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   if (res.status === 204) return undefined as T
 
   const text = await res.text()
-  const data = text ? JSON.parse(text) : null
+  const data = text ? parseResponseJson(text, res.ok) : null
 
   if (!res.ok) {
-    const code = data?.code ?? String(res.status)
-    const message = data?.message ?? res.statusText
-    throw new ApiError(res.status, code, message, data?.details ?? [])
+    const error = extractApiErrorPayload(data, res.status, res.statusText)
+    throw new ApiError(res.status, error.code, error.message, error.details)
   }
   return data as T
+}
+
+function asApiRecord(value: unknown): Record<string, unknown> | null {
+  return value != null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+}
+
+function apiRecordString(record: Record<string, unknown> | null, key: string): string | null {
+  const value = record?.[key]
+  return typeof value === 'string' ? value : null
+}
+
+function firstApiString(...values: (string | null)[]): string | null {
+  for (const value of values) {
+    const trimmed = value?.trim()
+    if (trimmed) return trimmed
+  }
+  return null
+}
+
+function parseResponseJson(text: string, ok: boolean): unknown {
+  try {
+    return JSON.parse(text)
+  } catch (error) {
+    if (ok) throw error
+    return null
+  }
+}
+
+function apiRecordDetails(record: Record<string, unknown> | null, key: string): { field: string; reason: string }[] | null {
+  const value = record?.[key]
+  if (!Array.isArray(value)) return null
+  const details = value.flatMap((item) => {
+    const detail = asApiRecord(item)
+    const field = apiRecordString(detail, 'field')
+    const reason = apiRecordString(detail, 'reason')
+    return field && reason ? [{ field, reason }] : []
+  })
+  return details.length > 0 ? details : null
 }
 
 /* ---------------------------------------------------------------- 응답 타입 */
@@ -572,7 +624,8 @@ async function agentRequest<T>(method: string, path: string, body?: unknown): Pr
   if (envelope && typeof envelope === 'object' && 'ok' in envelope) {
     const wrapped = envelope as FastApiEnvelope<T>
     if (!wrapped.ok) {
-      throw new ApiError(400, wrapped.error?.code ?? 'AGENT_API_ERROR', wrapped.error?.message ?? 'Agent API request failed', wrapped.error?.details ?? [])
+      const error = extractApiErrorPayload(wrapped, 400, 'Agent API request failed')
+      throw new ApiError(400, error.code, error.message, error.details)
     }
     return wrapped.data as T
   }
