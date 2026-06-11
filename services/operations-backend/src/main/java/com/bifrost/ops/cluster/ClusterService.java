@@ -202,14 +202,22 @@ public class ClusterService {
         // 브로커 JMX/JVM exporter는 instance=pod 호스트로 라벨된다(예: platform-kafka-kafka-0.{cluster}-kafka-brokers...).
         // [.]로 id 뒤 점을 고정 매칭해 kafka-1이 kafka-10/11을 잡지 않게 한다. (cAdvisor는 pod 라벨이 없어 0 나옴)
         String inst = "platform-kafka-kafka-" + n.id() + "[.].*";
-        // CPU: JVM process CPU(%). container CPU(cAdvisor)는 라벨 미스로 0이라 process_cpu로 교정.
+        // 환경별 라벨 차이를 'A or B'로 흡수(#510):
+        //  - 로컬: 커스텀 Prometheus(job=kafka-broker, instance=pod호스트) → JVM exporter 메트릭
+        //  - EKS : kube-prometheus-stack은 브로커 JVM/process_cpu를 안 긁음 → kubelet/cadvisor 컨테이너 메트릭으로 폴백
+        String pod = "platform-kafka-kafka-" + n.id();
+        String ctr = "namespace=\"" + namespace + "\",pod=\"" + pod + "\",container=\"kafka\"";
+        // CPU(%): broker JVM process_cpu(로컬) or 컨테이너 CPU 코어*100(EKS).
         Double cpu = scalarOrNull(
-                "rate(process_cpu_seconds_total{job=\"kafka-broker\",instance=~\"" + inst + "\"}[2m]) * 100");
-        // Memory: 브로커 JVM heap used/max(JMX exporter, area=heap). Kafka heap 압박을 보여주는 표준 지표.
+                "(rate(process_cpu_seconds_total{job=\"kafka-broker\",instance=~\"" + inst + "\"}[2m])*100)"
+                + " or (rate(container_cpu_usage_seconds_total{" + ctr + "}[2m])*100)");
+        // Memory: broker JVM heap(로컬) or 컨테이너 메모리 working_set/limit(EKS). heap 압박/메모리 사용량 지표.
         Double heapUsed = scalarOrNull(
-                "sum(jvm_memory_used_bytes{job=\"kafka-broker\",area=\"heap\",instance=~\"" + inst + "\"})");
+                "sum(jvm_memory_used_bytes{job=\"kafka-broker\",area=\"heap\",instance=~\"" + inst + "\"})"
+                + " or sum(container_memory_working_set_bytes{" + ctr + "})");
         Double heapMax = scalarOrNull(
-                "sum(jvm_memory_max_bytes{job=\"kafka-broker\",area=\"heap\",instance=~\"" + inst + "\"})");
+                "sum(jvm_memory_max_bytes{job=\"kafka-broker\",area=\"heap\",instance=~\"" + inst + "\"})"
+                + " or sum(kube_pod_container_resource_limits{" + ctr + ",resource=\"memory\"})");
         // Net: 컨테이너 네트워크가 아니라 Kafka 브로커 처리량(BytesIn/OutPerSec) — 모든 토픽 합.
         Double netIn = scalarOrNull(
                 "sum(rate(kafka_server_brokertopicmetrics_bytesin_total{instance=~\"" + inst + "\"}[2m]))");
@@ -261,19 +269,26 @@ public class ClusterService {
         try {
             List<Pod> pods = k8s.pods().inNamespace(namespace)
                     .withLabel("strimzi.io/cluster", connectCluster).list().getItems();
-            // Service 기반 스크랩이라 per-pod 라벨이 없다 → connect job 집계값을 worker에 귀속(단일 파드 기준).
-            Double heapUsed = scalarOrNull("sum(jvm_memory_used_bytes{area=\"heap\",job=\"kafka-connect\"})");
-            Double heapMax = scalarOrNull("sum(jvm_memory_max_bytes{area=\"heap\",job=\"kafka-connect\"})");
-            Double cpu = round(scalarOrNull("rate(process_cpu_seconds_total{job=\"kafka-connect\"}[2m]) * 100"));
-            Double gc = round(scalarOrNull("sum(jvm_gc_collection_seconds_sum{job=\"kafka-connect\"})"));
             // worker 버전 = KafkaConnect CR spec.version(=Kafka 버전). 컨테이너 이미지 태그(예: 'v1')가 아님.
             String version = connectVersion();
+            // 환경별 라벨 차이 흡수(#510): 로컬은 Service 스크랩(job=kafka-connect, per-pod 라벨 없음) →
+            // 집계값. EKS(kube-prometheus-stack)는 job=<ns>/strimzi-metrics + pod 라벨 → per-pod.
+            String smJob = namespace + "/strimzi-metrics";
             List<Worker> out = new ArrayList<>();
             for (Pod p : pods) {
+                String name = p.getMetadata().getName();
                 String state = p.getStatus() != null ? p.getStatus().getPhase() : "Unknown";
                 String ip = p.getStatus() != null ? p.getStatus().getPodIP() : null;
-                out.add(new Worker(p.getMetadata().getName(), ip, state,
-                        toLong(heapUsed), toLong(heapMax), cpu, gc, version));
+                String pj = "job=\"" + smJob + "\",pod=\"" + name + "\"";
+                Double heapUsed = scalarOrNull("sum(jvm_memory_used_bytes{area=\"heap\",job=\"kafka-connect\"})"
+                        + " or sum(jvm_memory_used_bytes{" + pj + ",area=\"heap\"})");
+                Double heapMax = scalarOrNull("sum(jvm_memory_max_bytes{area=\"heap\",job=\"kafka-connect\"})"
+                        + " or sum(jvm_memory_max_bytes{" + pj + ",area=\"heap\"})");
+                Double cpu = round(scalarOrNull("rate(process_cpu_seconds_total{job=\"kafka-connect\"}[2m])*100"
+                        + " or rate(process_cpu_seconds_total{" + pj + "}[2m])*100"));
+                Double gc = round(scalarOrNull("sum(jvm_gc_collection_seconds_sum{job=\"kafka-connect\"})"
+                        + " or sum(jvm_gc_collection_seconds_sum{" + pj + "})"));
+                out.add(new Worker(name, ip, state, toLong(heapUsed), toLong(heapMax), cpu, gc, version));
             }
             return out;
         } catch (Exception e) {
