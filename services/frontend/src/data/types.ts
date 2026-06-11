@@ -16,6 +16,9 @@ export interface Node {
   x: number
   y: number
   /* database only */
+  // (#547) 역할별 판정용 raw 상태. sink는 CDC-source readiness(BLOCKED)가 무관해 warning으로 낮춘다.
+  connectionStatus?: 'HEALTHY' | 'UNREACHABLE' | null
+  cdcReadinessStatus?: 'OK' | 'WARNING' | 'BLOCKED' | null
   schema?: { tables: number; rows: string; size: string }
   cdc?: { wal_level: string; replication: string; slots: string; wal_senders: string }
   metrics?: { tps: number; lag_ms: number }

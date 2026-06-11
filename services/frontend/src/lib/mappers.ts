@@ -72,9 +72,21 @@ export function datasourceToNode(db: DatabaseResponse, index = 0): Node {
     techLabel: db.engine,
     host: `${db.host}:${db.port}`,
     status: dbNodeStatus(db),
+    connectionStatus: db.connectionStatus,
+    cdcReadinessStatus: db.cdcReadinessStatus,
     x: 120,
     y: 120 + index * 130,
   }
+}
+
+/**
+ * sink 역할에서 보여줄 상태(#547). sink는 CDC-source readiness(REPLICATION/RELOAD 권한 등)가
+ * 필요 없으므로 BLOCKED를 error로 보지 않는다. 실제 장애인 연결 끊김(UNREACHABLE)만 error로 유지하고,
+ * readiness 차단뿐이면 warning으로 낮춘다.
+ */
+export function sinkDisplayStatus(node: Node): NodeStatus {
+  if (node.status !== 'error') return node.status
+  return node.connectionStatus === 'UNREACHABLE' ? 'error' : 'warning'
 }
 
 const CDC_STATE: Record<string, CapabilityCheck['state']> = {

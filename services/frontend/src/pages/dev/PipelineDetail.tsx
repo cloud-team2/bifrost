@@ -7,6 +7,7 @@ import { TechIcon, nodeKind } from '../../components/TechIcon'
 import { useToast } from '../../components/Toast'
 import { useApp } from '../../store/AppStore'
 import { pipelineLabel } from '../../data/helpers'
+import { sinkDisplayStatus } from '../../lib/mappers'
 import { buildConsumerSnippets, escapeSnippetValue } from '../../lib/pipelineSnippets'
 import type { Edge, Node } from '../../data/types'
 import {
@@ -77,7 +78,8 @@ export function PipelineDetail() {
 
   // (#267) 원인 attribution → 탭 매핑: DB(연결 끊김/차단) → Overview, 커넥터 FAILED/에러 → Connector.
   const connectorErr = !!connectors?.some((c) => c.state === 'FAILED' || (c.lastError != null && c.lastError !== ''))
-  const dbErr        = source.status === 'error' || sink?.status === 'error'
+  // (#547) sink는 CDC-source readiness(BLOCKED)가 무관 → 연결 끊김(UNREACHABLE)만 error로 센다.
+  const dbErr        = source.status === 'error' || (!!sink && sinkDisplayStatus(sink) === 'error')
   const tabErrors: Record<string, boolean> = { Overview: dbErr, Connector: connectorErr }
 
   return (
@@ -908,6 +910,8 @@ function SyncTab({ edge }: { edge: Edge }) {
 }
 
 function DBNodeCard({ node, role }: { node: Node | null; role: 'Source' | 'Sink' }) {
+  // (#547) sink는 readiness 차단(BLOCKED)을 error 대신 warning으로(연결 끊김만 error).
+  const effStatus = node && role === 'Sink' ? sinkDisplayStatus(node) : node?.status
   if (!node) return (
     <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-gray-200 px-6 py-8">
       <Icon name="database" size={28} className="text-gray-300" />
@@ -930,8 +934,8 @@ function DBNodeCard({ node, role }: { node: Node | null; role: 'Source' | 'Sink'
       </span>
       <div className="flex items-center gap-1.5 text-[11px]">
         <span className={cn('h-1.5 w-1.5 rounded-full',
-          node.status === 'healthy' ? 'bg-emerald-400' : 'bg-amber-400')} />
-        <span className="text-gray-500">{node.status}</span>
+          effStatus === 'healthy' ? 'bg-emerald-400' : effStatus === 'error' ? 'bg-rose-400' : 'bg-amber-400')} />
+        <span className="text-gray-500">{effStatus}</span>
       </div>
     </div>
   )
