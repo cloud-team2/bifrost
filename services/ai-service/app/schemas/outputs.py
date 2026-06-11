@@ -64,6 +64,7 @@ class RetrievalPlanStep(StrictModel):
 
 class PlannerOutput(StrictModel):
     retrieval_plan: list[RetrievalPlanStep]
+    clarification_message: str | None = None
 
 
 class RetrievalOutput(StrictModel):

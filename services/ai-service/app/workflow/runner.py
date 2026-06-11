@@ -29,6 +29,7 @@ from app.persistence.state_repository import get_state_repo
 from app.schemas.events import StreamingEvent, StreamingEventType
 from app.schemas.outputs import (
     ActionCandidateOutput,
+    RetrievalOutput,
     PolicyDecisionOutput,
     PolicyGuardOutput,
     RemediationOutput,
@@ -37,7 +38,10 @@ from app.schemas.state import (
     ActionCandidate,
     ActionStatus,
     AgentMode,
+    EvidenceItem,
+    EvidenceType,
     PolicyDecisionType,
+    RedactionStatus,
     VerificationStatus,
 )
 from app.schemas.tools import ToolContext
@@ -327,7 +331,68 @@ async def run_workflow(
                 case "planner":
                     await _publish(bus, event_repo, run_id,
                                    _evt(run_id, StreamingEventType.AGENT_STARTED, "planner", "데이터 조회 계획을 수립합니다"))
-                    planner_out = await planner_agent.run_planner(user_message, project_id)
+                    planner_context = ToolContext(
+                        run_id=run_id,
+                        step_id=str(uuid4()),
+                        agent_name="planner",
+                        project_id=project_id,
+                        request_id=str(uuid4()),
+                    )
+                    planner_out = await planner_agent.run_planner(
+                        user_message,
+                        project_id,
+                        registry=registry,
+                        tool_context=planner_context,
+                    )
+                    if planner_out.clarification_message:
+                        answer = planner_out.clarification_message
+                        retrieval_out = RetrievalOutput(
+                            evidence_items=[
+                                EvidenceItem(
+                                    evidence_id=str(uuid4()),
+                                    type=EvidenceType.TOOL_RESULT,
+                                    store_ref=f"planner://{run_id}/identifier-required",
+                                    summary=answer,
+                                    redaction_status=RedactionStatus.REDACTED,
+                                    collected_by="planner",
+                                    collected_at=datetime.now(timezone.utc),
+                                )
+                            ]
+                        )
+                        await _append_state_patch(
+                            state_repo,
+                            run_id,
+                            namespace="report",
+                            author="Planner",
+                            op="append",
+                            path="/report/draft",
+                            patch={"draft": {"answer": answer, "reason": "identifier_required"}},
+                        )
+                        await _persist_report_snapshot(
+                            run_id=run_id,
+                            answer=answer,
+                            mode=mode,
+                            retrieval_out=retrieval_out,
+                            rca_out=None,
+                            verifier_out=None,
+                            incident_id=persisted_incident_id,
+                        )
+                        await run_repo.update_status(run_id, "completed", None)
+                        await _publish(bus, event_repo, run_id, _evt(
+                            run_id,
+                            StreamingEventType.PARTIAL_RESULT,
+                            "planner",
+                            answer,
+                            {"answer": answer, "stage": "planner", "reason": "identifier_required"},
+                        ))
+                        await _publish(bus, event_repo, run_id, _evt(
+                            run_id,
+                            StreamingEventType.RUN_COMPLETED,
+                            "planner",
+                            "분석이 완료되었습니다",
+                            {"answer": answer},
+                        ))
+                        return
                     tool_names = ", ".join(s.tool_name for s in planner_out.retrieval_plan)
                     await _publish(bus, event_repo, run_id,
                                    _evt(run_id, StreamingEventType.AGENT_COMPLETED, "planner", f"조회 도구: {tool_names}"))

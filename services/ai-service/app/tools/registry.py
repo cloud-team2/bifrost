@@ -346,33 +346,51 @@ class ToolClientRegistry:
         params: dict[str, Any],
         context: ToolContext,
     ) -> ToolResult:
+        result, _ = await self.call_tool_with_data(tool_name, params, context)
+        return result
+
+    async def call_tool_with_data(
+        self,
+        tool_name: str,
+        params: dict[str, Any],
+        context: ToolContext,
+    ) -> tuple[ToolResult, dict[str, Any] | list[Any] | None]:
         definition = self.get_definition(tool_name)
         if definition is None:
-            return failed_tool_result(
-                tool_name=tool_name,
-                risk=RiskLevel.FORBIDDEN,
-                code=SpringErrorCode.POLICY_DENIED,
-                message=f"Tool is not registered: {tool_name}",
-                status=ToolStatus.BLOCKED,
+            return (
+                failed_tool_result(
+                    tool_name=tool_name,
+                    risk=RiskLevel.FORBIDDEN,
+                    code=SpringErrorCode.POLICY_DENIED,
+                    message=f"Tool is not registered: {tool_name}",
+                    status=ToolStatus.BLOCKED,
+                ),
+                None,
             )
 
         if definition.requires_approval and not context.idempotency_key:
-            return failed_tool_result(
-                tool_name=tool_name,
-                risk=definition.risk,
-                code=SpringErrorCode.APPROVAL_REQUIRED,
-                message=f"Tool '{tool_name}' requires approval. 멱등키 없이 직접 호출할 수 없습니다.",
-                status=ToolStatus.BLOCKED,
+            return (
+                failed_tool_result(
+                    tool_name=tool_name,
+                    risk=definition.risk,
+                    code=SpringErrorCode.APPROVAL_REQUIRED,
+                    message=f"Tool '{tool_name}' requires approval. 멱등키 없이 직접 호출할 수 없습니다.",
+                    status=ToolStatus.BLOCKED,
+                ),
+                None,
             )
 
         try:
             validated_params = definition.validate_params(params)
         except ValidationError as exc:
-            return failed_tool_result(
-                tool_name=tool_name,
-                risk=definition.risk,
-                code=SpringErrorCode.VALIDATION_FAILED,
-                message=f"Invalid tool parameters: {exc.errors()[0]['msg']}",
+            return (
+                failed_tool_result(
+                    tool_name=tool_name,
+                    risk=definition.risk,
+                    code=SpringErrorCode.VALIDATION_FAILED,
+                    message=f"Invalid tool parameters: {exc.errors()[0]['msg']}",
+                ),
+                None,
             )
 
         try:
@@ -385,21 +403,27 @@ class ToolClientRegistry:
                 json_body=definition.json_body(validated_params),
             )
         except httpx.TimeoutException as exc:
-            return failed_tool_result(
-                tool_name=tool_name,
-                risk=definition.risk,
-                code=SpringErrorCode.TIMEOUT,
-                message=str(exc) or "Spring operation timed out",
-                status=ToolStatus.TIMEOUT,
-                retryable=True,
+            return (
+                failed_tool_result(
+                    tool_name=tool_name,
+                    risk=definition.risk,
+                    code=SpringErrorCode.TIMEOUT,
+                    message=str(exc) or "Spring operation timed out",
+                    status=ToolStatus.TIMEOUT,
+                    retryable=True,
+                ),
+                None,
             )
         except httpx.HTTPError as exc:
-            return failed_tool_result(
-                tool_name=tool_name,
-                risk=definition.risk,
-                code=SpringErrorCode.TRANSIENT_ERROR,
-                message=str(exc) or "Spring operation failed",
-                retryable=True,
+            return (
+                failed_tool_result(
+                    tool_name=tool_name,
+                    risk=definition.risk,
+                    code=SpringErrorCode.TRANSIENT_ERROR,
+                    message=str(exc) or "Spring operation failed",
+                    retryable=True,
+                ),
+                None,
             )
 
         result = result_from_spring_response(
@@ -409,15 +433,18 @@ class ToolClientRegistry:
             requires_approval=definition.requires_approval,
         )
         if result.status != ToolStatus.SUCCESS:
-            return result
+            return result, None
 
         try:
             definition.validate_result(response.result)
         except ValidationError as exc:
-            return failed_tool_result(
-                tool_name=tool_name,
-                risk=definition.risk,
-                code=SpringErrorCode.VALIDATION_FAILED,
-                message=f"Invalid Spring operation result: {exc.errors()[0]['msg']}",
+            return (
+                failed_tool_result(
+                    tool_name=tool_name,
+                    risk=definition.risk,
+                    code=SpringErrorCode.VALIDATION_FAILED,
+                    message=f"Invalid Spring operation result: {exc.errors()[0]['msg']}",
+                ),
+                None,
             )
-        return result
+        return result, response.result

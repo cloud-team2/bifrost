@@ -73,6 +73,53 @@ def _planner_out() -> PlannerOutput:
     )
 
 
+@pytest.mark.asyncio
+async def test_unresolved_connector_identifier_completes_without_gap_loop() -> None:
+    bus = EventBus()
+    published = []
+
+    async def _capture(run_id: str, evt):
+        published.append(evt)
+
+    bus.publish = _capture  # type: ignore[method-assign]
+    run_repo = AsyncMock()
+    registry = AsyncMock()
+    event_repo = InMemoryEventRepository()
+    supervisor = Supervisor(store=InMemoryStateStore(), policy=RetryPolicy())
+    message = "커넥터 이름을 알려주세요."
+
+    with (
+        patch("app.workflow.runner.router_agent.run_router", new_callable=AsyncMock) as mock_router,
+        patch("app.workflow.runner.planner_agent.run_planner", new_callable=AsyncMock) as mock_planner,
+        patch("app.workflow.runner.retrieval_agent.run_retrieval", new_callable=AsyncMock) as mock_retrieval,
+        patch("app.workflow.runner.verifier_agent.run_verifier", new_callable=AsyncMock) as mock_verifier,
+        patch("app.workflow.runner.report_agent.run_report", new_callable=AsyncMock) as mock_report,
+        patch("app.workflow.runner.get_supervisor") as mock_get_sup,
+        patch("app.workflow.runner.get_event_repo") as mock_get_repo,
+    ):
+        mock_get_sup.return_value = supervisor
+        mock_get_repo.return_value = event_repo
+        mock_router.return_value = _router_out(mode=AgentMode.SIMPLE_QUERY)
+        mock_planner.return_value = PlannerOutput(retrieval_plan=[], clarification_message=message)
+
+        await run_workflow(
+            run_id="run_489",
+            user_message="consumer lag 확인해줘",
+            project_id="proj_001",
+            bus=bus,
+            run_repo=run_repo,
+            registry=registry,
+        )
+
+    mock_retrieval.assert_not_awaited()
+    mock_verifier.assert_not_awaited()
+    mock_report.assert_not_awaited()
+    assert supervisor.get_state("run_489").run.guards.gap_loops == 0
+    assert ("run_489", "completed", None) in [call.args for call in run_repo.update_status.call_args_list]
+    completed = [event for event in published if event.type == StreamingEventType.RUN_COMPLETED]
+    assert completed[-1].payload["answer"] == message
+
+
 def _retrieval_out() -> RetrievalOutput:
     return RetrievalOutput(
         evidence_items=[
