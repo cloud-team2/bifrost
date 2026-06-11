@@ -36,9 +36,15 @@ export function routeAgentInput(
   if (missing.length > 0) {
     return {
       kind: 'slash_missing_args',
-      message: `필수 값을 입력하세요: ${parsed.command.usage}`,
+      message: missingSlashArgsMessage(missing, parsed.command.usage),
       input: `${parsed.command.label} `,
     }
   }
   return { kind: 'slash_execute', parsed }
+}
+
+function missingSlashArgsMessage(missing: string[], usage: string) {
+  const params = missing.join(', ')
+  const subject = missing.length === 1 ? `${params}을` : `${params} 값을`
+  return `${subject} 입력해주세요 (사용법: ${usage})`
 }
