@@ -148,8 +148,9 @@ public class PipelineTopicService {
         PipelineEntity p = loadPipeline(wsId, principal, id);
         UUID pipelineId = p.getId();
         String connector = ConnectorNaming.sourceConnectorName(pipelineId);
+        // 토픽으로 정확 매칭(#565): null이면 service만으로 폴백해 같은 워커의 다른 파이프라인 trace가 섞일 수 있음.
         return (traceId == null || traceId.isBlank())
-                ? traceQuery.query(connector, null)
+                ? traceQuery.query(connector, p.getTopicName())
                 : traceQuery.queryById(connector, traceId);
     }
 

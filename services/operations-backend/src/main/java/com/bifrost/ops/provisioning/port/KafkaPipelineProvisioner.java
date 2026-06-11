@@ -28,4 +28,7 @@ public interface KafkaPipelineProvisioner {
 
     /** 데이터플레인 추적 SMT를 source 커넥터에 on/off (per-pipeline 토글, #438). */
     void setSourceTracing(String connectorName, boolean enabled);
+
+    /** source 커넥터에 데이터플레인 tracing SMT가 켜져 있는지(#438 토글 상태 조회). CR 미존재 시 false. */
+    boolean isSourceTracingEnabled(String connectorName);
 }

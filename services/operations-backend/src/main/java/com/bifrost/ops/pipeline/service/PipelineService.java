@@ -243,6 +243,13 @@ public class PipelineService {
         provisioningService.setDataplaneTracing(p.getId(), enabled);
     }
 
+    /** 데이터플레인 추적 토글 현재 상태(#438/#565, Tracing 탭 표시용). */
+    public boolean isDataplaneTracingEnabled(UUID wsId, AuthenticatedUser principal, UUID id) {
+        accessGuard.requireAccess(wsId, principal);
+        PipelineEntity p = load(wsId, id);
+        return provisioningService.isDataplaneTracingEnabled(p.getId());
+    }
+
     @Transactional
     public void delete(UUID wsId, AuthenticatedUser principal, UUID id, boolean force) {
         accessGuard.requireAccess(wsId, principal);
