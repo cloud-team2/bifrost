@@ -56,7 +56,8 @@ class PipelineServiceTest {
     private PipelineService service() {
         return new PipelineService(pipelineRepository, datasourceRepository, workspaceRepository,
                 connectorRepository, provisioningService, accessGuard, eventService, auditService,
-                kafkaResourceCleaner);
+                kafkaResourceCleaner,
+                org.mockito.Mockito.mock(com.bifrost.ops.database.service.CdcReadinessService.class));
     }
 
     private final UUID wsId = UUID.randomUUID();
