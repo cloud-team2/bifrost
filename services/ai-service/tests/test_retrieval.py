@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import AsyncMock
 
 from app.agents.retrieval import run_retrieval
+from app.persistence.evidence_repository import InMemoryEvidenceRepository
 from app.persistence.event_repository import InMemoryEventRepository
 from app.schemas.events import StreamingEventType
 from app.schemas.outputs import PlannerOutput, RetrievalPlanStep
@@ -66,6 +67,51 @@ async def test_retrieval_success_emits_completed_not_failed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_retrieval_stores_redacted_raw_evidence() -> None:
+    registry = AsyncMock()
+    registry.call_tool.return_value = ToolResult(
+        tool_name="search_logs",
+        status=ToolStatus.SUCCESS,
+        risk=RiskLevel.READ_ONLY,
+        summary="log evidence password=hunter2",
+        evidence_ids=[],
+        raw_payload={
+            "result": {
+                "logs": [
+                    "AccessDenied token=abc123",
+                    {"message": "jdbc:postgresql://db", "password": "hunter2"},
+                ],
+                "authorization": "Bearer secret-token",
+            }
+        },
+    )
+    bus = EventBus()
+    bus.publish = AsyncMock()
+    event_repo = InMemoryEventRepository()
+    evidence_repo = InMemoryEvidenceRepository()
+
+    out = await run_retrieval(
+        "r1",
+        _plan("search_logs"),
+        _context(),
+        registry,
+        bus,
+        event_repo,
+        evidence_repo=evidence_repo,
+    )
+
+    item = out.evidence_items[0]
+    record = await evidence_repo.get(item.store_ref)
+    assert record is not None
+    assert item.store_ref.startswith(f"evidence://r1/{item.evidence_id}")
+    assert "hunter2" not in str(record.payload)
+    assert "abc123" not in str(record.payload)
+    assert record.payload["result"]["authorization"] == "[REDACTED]"
+    assert "hunter2" not in item.summary
+    assert "[REDACTED]" in item.summary
+
+
+@pytest.mark.asyncio
 async def test_retrieval_failure_emits_tool_call_failed() -> None:
     registry = AsyncMock()
     registry.call_tool.return_value = ToolResult(
@@ -92,6 +138,39 @@ async def test_retrieval_failure_emits_tool_call_failed() -> None:
     assert "/failed" in out.evidence_items[0].store_ref
     assert "[mock]" not in out.evidence_items[0].summary
     assert "connection refused" in out.evidence_items[0].summary
+
+
+@pytest.mark.asyncio
+async def test_retrieval_failure_event_error_is_redacted() -> None:
+    registry = AsyncMock()
+    registry.call_tool.return_value = ToolResult(
+        tool_name="get_metrics",
+        status=ToolStatus.FAILED,
+        risk=RiskLevel.READ_ONLY,
+        summary="",
+        error=ToolError(
+            code=SpringErrorCode.TRANSIENT_ERROR,
+            message="upstream rejected token=abc123",
+            retryable=True,
+        ),
+    )
+    bus = EventBus()
+    published = []
+    bus.publish = AsyncMock(side_effect=lambda run_id, evt: published.append(evt))
+
+    await run_retrieval(
+        "r1",
+        _plan(),
+        _context(),
+        registry,
+        bus,
+        InMemoryEventRepository(),
+        evidence_repo=InMemoryEvidenceRepository(),
+    )
+
+    failed = next(e for e in published if e.type == StreamingEventType.TOOL_CALL_FAILED)
+    assert "abc123" not in str(failed.payload)
+    assert "[REDACTED]" in failed.payload["error"]["message"]
 
 
 @pytest.mark.asyncio

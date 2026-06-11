@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import pytest
 
 from app.agents.verifier import run_verifier
+from app.persistence.evidence_repository import InMemoryEvidenceRepository
 from app.schemas.outputs import ExecutionResultOutput, ExecutorOutput, RcaOutput, RetrievalOutput
 from app.schemas.state import (
     ActionStatus,
@@ -90,6 +91,34 @@ async def test_incident_full_evidence_pass() -> None:
                 _evidence("ev-auth", "auth/permission error log AccessDenied token expired")
             ]
         ),
+    )
+
+    result = output.verification_results[0]
+    assert result.status == VerificationStatus.PASS
+    assert result.approved_for_final_response is True
+
+
+@pytest.mark.asyncio
+async def test_incident_evidence_matrix_uses_hydrated_raw_payload() -> None:
+    evidence_repo = InMemoryEvidenceRepository()
+    await evidence_repo.put(
+        run_id="test",
+        evidence_id="ev-auth",
+        tool_name="search_logs",
+        step_id="s1",
+        status="success",
+        payload={"logs": ["auth/permission error log AccessDenied token expired"]},
+    )
+
+    output = await run_verifier(
+        AgentMode.INCIDENT_ANALYSIS,
+        rca_out=RcaOutput(root_cause_candidates=[_candidate("SOURCE_AUTH_EXPIRED")]),
+        retrieval_out=RetrievalOutput(
+            evidence_items=[
+                _evidence("ev-auth", "redacted log evidence available")
+            ]
+        ),
+        evidence_repo=evidence_repo,
     )
 
     result = output.verification_results[0]
