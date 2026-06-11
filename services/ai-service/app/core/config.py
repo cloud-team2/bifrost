@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     spring_ops_base_url: str = "http://localhost:8080"
     spring_ops_timeout_seconds: float = 10.0
 
+    # 분산 추적(OTel, #372). 엔드포인트가 비면 비활성 → 로컬/CI는 collector 없이 동작.
+    # dev/prod(gitops)는 AI_OTLP_TRACING_ENDPOINT=http://otel-collector.monitoring:4318/v1/traces 로 켜고,
+    # ops-backend(#366)와 같은 Collector tail-sampling(#370)을 공유한다.
+    otlp_tracing_endpoint: str = ""
+    tracing_sample_rate: float = 1.0
+
     # LLM Provider (역할별 tier는 추후 확장)
     llm_provider: str = "openai"
     llm_api_key: str = ""

@@ -81,6 +81,7 @@ erDiagram
 | Verifier 차단기 | `pass`만 Report로 진행한다. `fail`은 `fail_loops`, `needs_revision`은 `gap_loops` 예산 안에서 책임 Agent로 loopback하며, 예산 초과 시 Report stage 없이 `failed` 종료한다 |
 | 종료 보장 | 현재 구현은 step/gap/fail/scope/revise_action counter guard를 중앙 집행한다. token/time budget은 policy field만 있고 guard check에는 없다 |
 | SoT / MCP | Approval 원본·실행 allowlist = **Spring**. FastAPI approval link는 현재 in-memory facade 상태이며 executor는 Spring mutation에 `X-Approval-Id`를 전달하지 않는다 · MCP v1 미사용 |
+| 분산 추적(#372) | OTel 자동 계측(FastAPI·httpx) + runner 가 여는 루트 span `agent.run`. run 은 `BackgroundTasks` 로 요청 span 밖에서 돌아 자동 계측만으론 안 묶이므로 루트 span 을 직접 연다. `httpx` 가 Spring 호출에 `traceparent` 주입 → Spring(#366)이 추출해 **한 trace**. `AI_OTLP_TRACING_ENDPOINT` 설정 시에만 활성(로컬/CI 비활성). Collector tail-sampling(#370) 공유 |
 
 ## 더 읽기
 
