@@ -43,8 +43,9 @@ Supervisor는 이 단계들을 제어하는 control layer다. Policy Guard와 Ex
 책임:
 
 - 사용자 요청 또는 alert 입력을 해석한다.
-- 매 사용자 메시지마다 현재 router keyword 구현은 `simple_query`, `incident_analysis`, `action_execution`, `approval_decision` 중 하나를 선택한다. 승인/거절 keyword는 `approval_decision`으로 라우팅된다.
-- action keyword가 있으면 `action_execution`을 선택한다. 조치 후보 제시 요청 keyword는 `incident_analysis`로 두되 `remediation_requested=true`를 반환해 RCA 뒤 Remediation/Policy Guard 단계를 붙인다.
+- 매 사용자 메시지마다 mode(`simple_query`/`incident_analysis`/`action_execution`/`approval_decision`) 중 하나를 선택한다. 현재 router는 **lightweight LLM으로 mode를 structured 분류**하고(#483), LLM 미가용·파싱/검증 실패 시 keyword 매칭으로 fallback한다(회귀 보존). 승인/거절은 `approval_decision`으로 라우팅된다.
+- 실행 의도(재시작 등)는 `action_execution`을 선택한다. 조치 후보 제시 요청은 `incident_analysis` + `remediation_requested=true`로 두어 RCA 뒤 Remediation/Policy Guard 단계를 붙인다.
+- `/` 슬래시 입력(`/pipelines`·`/connectors`·`/consumer-groups`·`/events`)은 LLM을 거치지 않는 **결정적 단축 경로**로 처리되어 read-only tool을 직접 선택한다(#504).
 - `reuse_existing_analysis`는 `action_execution`/`approval_decision`에서 `true`이며, runner는 같은 run의 이전 action 후보와 policy 결정을 State patch에서 복원한다.
 - 필요한 경우 Correlation Engine으로 보낸다.
 

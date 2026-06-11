@@ -147,7 +147,7 @@ Executor
 State 재사용 규칙:
 
 - 같은 run/incident 안에서 evidence와 root cause를 재사용하는 것은 목표 규칙이다. 현재 router는 `action_execution`/`approval_decision`에서 `reuse_existing_analysis=true`를 반환하고, runner는 기존 action 후보와 policy 결정을 복원한다. raw evidence hydrate 기반 재사용은 아직 #480 범위다.
-- 단, 새 evidence가 필요하거나 원인이 바뀔 수 있는 신호(새 alert, 시간 경과)가 있으면 재분석해야 한다는 규칙은 현재 keyword router에 구현되어 있지 않다.
+- 단, 새 evidence가 필요하거나 원인이 바뀔 수 있는 신호(새 alert, 시간 경과)가 있으면 재분석해야 한다는 규칙은 현재 router(LLM/keyword)에 구현되어 있지 않다.
 - `simple_query`의 canonical 경로는 Planner·Retrieval·Verifier·Report이며, 위 표의 지식/상태 질의는 Planner·Verifier를 lightweight하게 단축한 형태다. 단축하더라도 답변은 RAG 또는 read tool 근거에 기반한다.
 
 - `action_execution`/`approval_decision` 콜드 스타트 fallback은 현재 제한적이다. 복원할 action 후보나 policy 결정이 없으면 해당 stage는 빈 입력으로 진행할 수 있다.
@@ -168,7 +168,7 @@ State 재사용 규칙:
 | --- | --- | --- |
 | **Retrieval 병렬 read tool** | 독립 read tool fan-out(§13.5, [§4](../tool-catalog.md#4-tool-catalog) [§13.1](../tool-catalog.md#131-read-only-tool-병렬-실행)) | retrieval wall-clock = Σtool → max(tool) |
 | **부분 결과 스트리밍** | 단계 완료 즉시 event 전송, RCA 후보 preview는 `report_preview_available` SSE event payload로 선노출([§16](contract-streaming-events.md#16-contract-streaming-events)) | 체감 지연 ↓, 사용자는 최종 Report 전에 진행/중간 결론 확인 |
-| **stage별 timeout** | 목표 항목. 현재 `check_all_global(...)`은 stage별 timeout을 검사하지 않음 | 구현 시 한 단계 지연이 run 전체를 잡지 않게 함 |
+| **stage별 timeout** | 구현됨(#481). `check_all_global(...)`이 매 stage 진입마다 stage timeout(기본 120s)을 집행 | 한 단계 지연이 run 전체를 잡지 않음 |
 | **저복잡도 stage 축약** | evidence가 적고 incident type이 단일·명확하면 Classifier+RCA를 한 LLM 호출로 합치고, read-only `simple_query`는 Verifier를 경량(룰 체크)으로 단축 | LLM 호출 수 ↓ |
 | **모델 tier 분리** | Router/Planner/Classifier/Report=lightweight, RCA/Verifier=reasoning([§1](../agent-principles.md#1-agent-principles) [§10](../agent-principles.md#10-모델-선택-원칙)) | critical path에서 무거운 모델 호출 최소화 |
 | **State 재사용** | 현재 `action_execution`/`approval_decision`은 이전 action 후보와 policy 결정을 복원한다. raw evidence hydrate 기반 분석 재사용은 #480 범위 | 후속 turn 실행 연속성 확보 |
@@ -181,7 +181,7 @@ State 재사용 규칙:
 | --- | --- |
 | Retrieval read tool timeout | 현재 자동 retry 없음. retrieval agent가 각 tool coroutine을 한 번 생성하고 `asyncio.gather(...)`로 한 번 수집 |
 | LLM structured output validation fail | 1회 repair |
-| RCA evidence gap | Planner가 추가 evidence 계획 후 Retrieval |
+| RCA evidence gap | 현재는 RCA→Planner 직접 loopback 대신, RCA가 `UNKNOWN_WITH_EVIDENCE_GAP` 후보를 내면 Verifier가 `needs_revision`(→Planner)으로 간접 회수한다 |
 | Classifier scope 불명확 | 추가 topology/dependency evidence 수집 |
 | Policy 불명확 | 안전한 decision으로 escalation |
 | Mutation execution timeout | 자동 재시도 금지 |
@@ -190,7 +190,7 @@ Mutation timeout은 같은 action을 자동 재실행하지 않는다. 현재 re
 
 ### 5.1 루프 방지와 종료 보장
 
-workflow에는 순환 경로가 있다(`Verifier → 책임 Agent → … → Verifier`, `RCA evidence_gap → Planner → Retrieval → RCA`, `Policy Guard revise_action → Remediation → Policy Guard`, `Classifier scope_unclear → Planner → Classifier`). 단계별 retry만으로는 ping-pong 무한루프를 막을 수 없으므로, 현재 guard 구현은 step/gap/fail/scope/revise_action 계열 카운터를 검사한다. 가드 카운터는 `run` namespace([§14](contract-state-schema.md#14-contract-state-schema))에 둔다.
+workflow에는 순환 경로가 있다(`Verifier → 책임 Agent → … → Verifier`, `RCA evidence_gap → Planner → Retrieval → RCA`, `Policy Guard revise_action → Remediation → Policy Guard`, `Classifier scope_unclear → Planner → Classifier`). 단계별 retry만으로는 ping-pong 무한루프를 막을 수 없으므로, 현재 guard 구현은 step/gap/fail/scope/revise_action 계열 카운터와 함께 시간·자원 예산(wall-clock/stage timeout/LLM 호출/token, #481)을 검사한다. 가드 카운터는 `run` namespace([§14](contract-state-schema.md#14-contract-state-schema))에 둔다.
 
 | 가드 | 기준(초기값, replay로 보정) | 초과 시 처리 |
 | --- | --- | --- |
@@ -199,16 +199,20 @@ workflow에는 순환 경로가 있다(`Verifier → 책임 Agent → … → Ve
 | **fail 루프 상한** | `Verifier fail → Planner` 반복 ≤ `MAX_FAIL_LOOPS`(기본 1) | `RunBudgetExceeded("fail_loops")` |
 | **scope_unclear 루프 상한** | `Classifier→Planner` 반복 ≤ `MAX_SCOPE_LOOPS`(기본 2) | `RunBudgetExceeded("scope_loops")` |
 | **revise_action 상한** | `Policy Guard↔Remediation` 반복 ≤ `MAX_REVISE_ACTION_LOOPS`(기본 2) | `RunBudgetExceeded("revise_action_loops")` |
+| **wall-clock 예산** | run 경과 시간 ≤ `wall_clock_timeout_seconds`(기본 300s) | `RunBudgetExceeded("wall_clock")` |
+| **stage timeout** | 단일 stage 경과 ≤ `stage_timeout_seconds`(기본 120s) | `RunBudgetExceeded("stage_timeout")` |
+| **LLM 호출 예산** | run 누적 LLM 호출 ≤ `max_llm_calls`(기본 16) | `RunBudgetExceeded("llm_calls")` |
+| **token 예산** | run 누적 token ≤ `max_tokens`(기본 200k) | `RunBudgetExceeded("token_budget")` |
 
-`RetryPolicy`에는 `max_revisions`와 `wall_clock_timeout_seconds` field가 남아 있지만 현재 `check_all_global(...)`은 LLM/token budget, wall-clock timeout, stage별 timeout, generic revision budget을 검사하지 않는다.
+`check_all_global(...)`은 step 예산에 더해 wall-clock/stage timeout/LLM 호출/token 예산을 매 stage 진입마다 집행한다(#481). `RetryPolicy.max_revisions`(generic revision budget)만 정의돼 있고 `check_all_global`에서 집행하지 않는다.
 
 > **`MAX_STEPS`는 안전망이자 경보다.** step budget에 도달한 run은 LLM이 수십 번 호출된 비정상적으로 느린 run이므로, budget 소진을 정상 종료로만 보지 않는다. 예산의 일정 비율(예: 50%)을 넘으면 운영자 alert(`debug_trace`가 아닌 timeline 경고)를 남기고, 도달 빈도는 latency/loop 회귀 지표로 추적한다. 기본값을 과거 40에서 **24**로 낮춰, 정상 분석이 이 한도 근처에 가지 않도록 한다.
 >
-> 현재 `check_all_global(...)`은 stage 진입 시 `run.step_count`를 검사한다. `fail_loops`/`gap_loops`는 Verifier loopback 전이(#453), `scope_loops`/`revise_action_loops`는 Classifier/Policy Guard loopback 전이(#476)에서 증가·상한 처리된다. no-new-evidence 비교, retrieval plan dedup, repeated `needs_revision` reason 비교는 아직 구현되어 있지 않다.
+> 현재 `check_all_global(...)`은 stage 진입 시 `run.step_count`와 시간·자원 예산(#481)을 검사한다. `fail_loops`/`gap_loops`는 Verifier loopback 전이(#453), `scope_loops`/`revise_action_loops`는 Classifier/Policy Guard loopback 전이(#476)에서 증가·상한 처리된다. **무진전(no-progress) 종결은 plan_hash 비교로 구현됐다**: 클린/빈 결과로 동일 plan이 재수집되면(#532) 또는 action 모드에서 실행할 조치가 0건이면(#553) loop를 돌지 않고 정상 종결한다. 일반적 retrieval plan dedup·repeated `needs_revision` reason 비교는 여전히 미구현이다.
 
 **진행성(monotonic progress) 규칙** — 카운터만으로 부족한 경우를 막는다.
 
-- **진행성 guard 상태**: no-new-evidence 비교, retrieval plan dedup, repeated `needs_revision` reason 비교는 현재 코드에 없다. 현재 구현은 numeric counter 중심이다.
+- **진행성 guard 상태**: plan_hash 기반 무진전 종결이 구현됐다 — clean/empty 결과로 동일 plan이 재수집되면 graceful 종결(#532), action 모드에서 실행할 조치 0건이면 graceful 종결(#553). 일반적 no-new-evidence 비교·retrieval plan dedup·repeated `needs_revision` reason 비교는 아직 numeric counter 중심이다.
 - **mutation 비재시도**: mutation timeout/실패는 자동 재실행하지 않는다([§4](../tool-catalog.md#4-tool-catalog) Tool Catalog [§15](contract-workflow-control.md#15-contract-workflow-control)) — 실행 루프 자체가 생기지 않는다.
 
 현재 `RunBudgetExceeded`가 발생하면 runner는 `/run/guards` patch를 남기고 run status를 `failed`로 바꾼 뒤 `RUN_COMPLETED` event를 발행하고 return한다. 이 경로는 Report stage로 진입하지 않는다.
@@ -336,6 +340,6 @@ if verifier.status in ["fail", "needs_revision"]:
     run(next_agent, ..., verifier)            # 예산 초과 시 failed 종료
 ```
 
-> 위 분기는 대표 의사코드다. 현재 코드의 전역 가드는 `run.step_count`, `gap_loops`, `fail_loops`, `scope_loops`, `revise_action_loops`를 검사한다. LLM/token 예산, wall-clock timeout, stage별 timeout은 `RetryPolicy`/문서상 목표 항목이지만 `check_all_global(...)`에서 집행하지 않는다.
+> 위 분기는 대표 의사코드다. 현재 코드의 전역 가드는 `run.step_count`, `gap_loops`, `fail_loops`, `scope_loops`, `revise_action_loops`와 함께 wall-clock/stage timeout/LLM 호출/token 예산(#481)을 `check_all_global(...)`에서 집행한다.
 
 ---
