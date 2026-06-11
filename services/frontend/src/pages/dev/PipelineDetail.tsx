@@ -730,16 +730,27 @@ function SyncTab({ edge }: { edge: Edge }) {
   const rangeLabel = rangeMin >= 60 ? `최근 ${rangeMin / 60}시간` : `최근 ${rangeMin}분`
 
   const tableName  = edge.table ? `${edge.table.schema}.${edge.table.name}` : '—'
-  // (#501) 완료 판정을 행수 → 컨슈머 lag + sink 커넥터 health 기준으로(UI 요소는 그대로).
-  // lag<0 = sink 미소비(준비중), lag=0 = 따라잡음(완료), lag>0 = 처리중. sinkFailed = 오류.
+  // (#501) 완료 판정 = 컨슈머 lag + sink 커넥터 health + 행수 일치.
+  // lag<0 = sink 미소비(준비중), lag>0 = 처리중, sinkFailed = 오류.
+  // (#501 보완) lag=0이라도 sink DB 행수가 source와 다르면 "완료" 아님 — lag=0은 "Kafka를 다
+  // 소비"했다는 뜻이지 "sink에 다 반영됐다"는 보장이 아니다(에러 드롭·sink 대상 불일치 등).
   const lag        = sync?.lag ?? -1
   const endOffset  = sync?.endOffset ?? -1
   const sinkFailed = sync?.sinkFailed ?? false
+  const sourceRows = sync?.sourceRows ?? -1
+  const sinkRows   = sync?.sinkRows ?? -1
+  const delta      = sync?.delta ?? -1
   const sinkReady  = lag >= 0
-  const isHealthy  = sinkReady && lag === 0 && !sinkFailed
-  // % = caught-up 비율((end−lag)/end). 미소비면 0, 토픽 비어있으면 100.
+  const rowsKnown  = sourceRows >= 0 && sinkRows >= 0       // 양쪽 행수 조회 성공 시에만 비교
+  const rowsMatch  = !rowsKnown || delta === 0              // 행수 모르면 lag만으로 판단
+  const isHealthy  = sinkReady && lag === 0 && !sinkFailed && rowsMatch
+  // lag=0(따라잡음)인데 행수가 안 맞는 경우 — "완료" 대신 불일치로 경고.
+  const rowMismatch = sinkReady && lag === 0 && !sinkFailed && rowsKnown && delta !== 0
+  // % : 처리중이면 caught-up((end−lag)/end), lag=0이지만 행수 불일치면 행수 비율(100 미만),
+  //     완전 일치면 100, 미소비면 0.
   const syncPct    = !sinkReady ? 0
-    : endOffset > 0 ? Math.max(0, Math.min(100, ((endOffset - lag) / endOffset) * 100))
+    : rowMismatch ? (sourceRows > 0 ? Math.min(99, (sinkRows / sourceRows) * 100) : 0)
+    : lag > 0 ? (endOffset > 0 ? Math.max(0, Math.min(99, ((endOffset - lag) / endOffset) * 100)) : 0)
     : 100
   const pctColor   = sinkFailed ? 'text-rose-600' : isHealthy ? 'text-emerald-600' : 'text-amber-600'
   const barColor   = sinkFailed ? 'bg-rose-400'   : isHealthy ? 'bg-emerald-400'  : 'bg-amber-400'
@@ -811,9 +822,11 @@ function SyncTab({ edge }: { edge: Edge }) {
                     ? '동기화 오류'
                     : !sinkReady
                       ? 'sink 준비중'
-                      : isHealthy
-                        ? '동기화 완료'
-                        : `${formatNum(lag)}건 처리중`}
+                      : lag > 0
+                        ? `${formatNum(lag)}건 처리중`
+                        : rowMismatch
+                          ? `행수 불일치 (Δ ${formatNum(delta)})`
+                          : '동기화 완료'}
               </span>
             </div>
 
