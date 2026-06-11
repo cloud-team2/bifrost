@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { Icon, type IconName } from '../../components/Icon'
 import { Spinner } from '../../components/ui'
 import { useToast } from '../../components/Toast'
@@ -14,6 +14,13 @@ import {
   type WorkspaceMemberRole,
 } from '../../lib/api'
 import { cn } from '../../lib/format'
+import { routeAgentInput } from '../../lib/agentInputRouting'
+import {
+  buildSlashCommands,
+  slashCommandParams,
+  slashSearch,
+  type SlashToolCommand,
+} from '../../lib/slashCommands'
 
 const AGENT_EVENT_TYPES: AgentStreamingEventType[] = [
   'run_started',
@@ -173,7 +180,8 @@ interface AgentRunPanelProps {
   icon: IconName
   accent: ThemeName
   initialMessage?: string
-  quickActions: string[]
+  quickActions?: string[]
+  slashCommands?: boolean
   inputPlaceholder: string
   runningPlaceholder: string
   hitlLabel?: string
@@ -185,7 +193,8 @@ export function AgentRunPanel({
   icon,
   accent,
   initialMessage,
-  quickActions,
+  quickActions = [],
+  slashCommands = false,
   inputPlaceholder,
   runningPlaceholder,
   hitlLabel,
@@ -198,6 +207,13 @@ export function AgentRunPanel({
   )
   const [input, setInput] = useState('')
   const [running, setRunning] = useState(false)
+  const [slashState, setSlashState] = useState<{
+    loading: boolean
+    commands: SlashToolCommand[]
+    error: string | null
+  }>({ loading: false, commands: [], error: null })
+  const [slashActiveIndex, setSlashActiveIndex] = useState(0)
+  const [slashMenuDismissed, setSlashMenuDismissed] = useState(false)
   const [roleState, setRoleState] = useState<{
     loading: boolean
     role: WorkspaceMemberRole | null
@@ -211,12 +227,22 @@ export function AgentRunPanel({
   const seenEvents = useRef<Set<string>>(new Set())
   const finalAnswerRunIds = useRef<Set<string>>(new Set())
   const scroll = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const slashOptionRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const taskHandled = useRef(false)
   const runCompleteHandler = useRef<((success: boolean) => void) | null>(null)
 
   const wsId = app.currentProject?.id ?? null
   const myEmail = app.currentUser?.email ?? ''
   const canApprove = roleState.role === 'OWNER' || roleState.role === 'ADMIN'
+  const slashQuery = slashCommands ? slashSearch(input) : null
+  const slashOptions = slashQuery == null
+    ? []
+    : slashState.commands.filter((command) => command.slug.includes(slashQuery) || command.toolName.includes(slashQuery))
+  const slashMenuOpen = slashCommands && !running && !slashMenuDismissed && slashQuery != null && (slashState.loading || !!slashState.error || slashOptions.length > 0)
+  const activeSlashCommand = slashOptions[Math.min(slashActiveIndex, Math.max(slashOptions.length - 1, 0))]
+  const slashMenuId = useId()
+  const activeSlashOptionId = activeSlashCommand ? `${slashMenuId}-${activeSlashCommand.slug}` : undefined
 
   function updateMsgs(updater: (prev: AgentMsg[]) => AgentMsg[]) {
     setMsgs((prev) => {
@@ -279,6 +305,56 @@ export function AgentRunPanel({
     startTask(task)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [app.agentTask])
+
+  useEffect(() => {
+    if (!slashCommands) return
+    let cancelled = false
+    setSlashState({ loading: true, commands: [], error: null })
+    api
+      .listAgentTools()
+      .then(async (catalog) => {
+        const readTools = catalog.tools.filter((tool) => tool.risk === 'read_only')
+        const details = await Promise.all(readTools.map((tool) => api.getAgentTool(tool.name)))
+        if (cancelled) return
+        setSlashState({
+          loading: false,
+          commands: buildSlashCommands(details.map((tool) => ({
+            name: tool.name,
+            method: tool.method,
+            path: tool.path_template,
+            risk: tool.risk,
+            params_schema: tool.params_schema,
+          })), STRUCTURED_TOOL_INTRO),
+          error: null,
+        })
+      })
+      .catch((e) => {
+        if (cancelled) return
+        setSlashState({
+          loading: false,
+          commands: [],
+          error: e instanceof ApiError ? e.message : 'tool catalog를 불러오지 못했습니다',
+        })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [slashCommands])
+
+  useEffect(() => {
+    setSlashActiveIndex(0)
+  }, [input, slashState.commands.length])
+
+  useEffect(() => {
+    if (!slashMenuOpen || !activeSlashCommand) return
+    slashOptionRefs.current[activeSlashCommand.slug]?.scrollIntoView({ block: 'nearest' })
+  }, [slashMenuOpen, activeSlashCommand])
+
+  function primeRequiredSlashCommand(command: SlashToolCommand) {
+    setInput(`${command.label} `)
+    setSlashMenuDismissed(true)
+    window.setTimeout(() => inputRef.current?.focus(), 0)
+  }
 
   function appendText(role: TextMsg['role'], text: string) {
     updateMsgs((m) => [...m, { id: ++seq.current, kind: 'text', role, text }])
@@ -348,10 +424,107 @@ export function AgentRunPanel({
   }
 
   function send(text: string) {
-    const v = text.trim()
-    if (!v || running) return
+    const route = routeAgentInput(text, {
+      slashCommands,
+      slashLoading: slashState.loading,
+      slashError: slashState.error,
+      commands: slashState.commands,
+    })
+    if (route.kind === 'empty' || running) return
+    if (route.kind === 'slash_execute') {
+      setInput('')
+      void runSlashCommand(route.parsed.command, route.parsed.args)
+      return
+    }
+    if (route.kind === 'slash_missing_args') {
+      appendText('assistant', route.message)
+      setInput(route.input)
+      return
+    }
+    if (route.kind === 'slash_loading' || route.kind === 'slash_error' || route.kind === 'slash_unknown') {
+      appendText('assistant', route.message)
+      return
+    }
     setInput('')
-    void startRun(v, { visibleUserText: v })
+    void startRun(route.message, { visibleUserText: route.message })
+  }
+
+  async function runSlashCommand(command: SlashToolCommand, args: string[] = []) {
+    if (running) return
+    const projectRef = app.currentProject?.slug || app.currentProject?.id || null
+    if (!projectRef) {
+      appendText('assistant', '프로젝트를 선택한 뒤 slash command를 실행할 수 있습니다.')
+      return
+    }
+
+    esRef.current?.close()
+    const runId = `slash_${Date.now()}_${seq.current + 1}`
+    const panelKey = `${runId}:${command.toolName}`
+    const params = slashCommandParams(command, args)
+    setRunning(true)
+    runningRef.current = true
+    appendText('user', [command.label, ...args].join(' '))
+    updateMsgs((m) => [
+      ...m,
+      {
+        id: ++seq.current,
+        kind: 'toolPanel',
+        runId,
+        panelKey,
+        toolName: command.toolName,
+        params,
+        state: 'running',
+        summary: 'slash command 직접 호출',
+        result: null,
+        error: null,
+      },
+    ])
+    app.setAgentRunState({
+      runId,
+      status: 'running',
+      lastEventType: 'slash_command_started',
+      lastMessage: `${command.label} 직접 호출 중`,
+    })
+
+    try {
+      const response = await api.executeAgentTool(command.toolName, { project_id: projectRef, params })
+      finishSlashCommand(panelKey, runId, 'done', response.result ?? null, null)
+      toast('조회 완료', 'success')
+    } catch (e) {
+      const message = e instanceof ApiError ? e.message : 'tool 조회에 실패했습니다'
+      finishSlashCommand(panelKey, runId, 'failed', null, message)
+      toast(message, 'error')
+    }
+  }
+
+  function finishSlashCommand(
+    panelKey: string,
+    runId: string,
+    state: Extract<ProgressState, 'done' | 'failed'>,
+    result: unknown,
+    error: string | null,
+  ) {
+    updateMsgs((prev) =>
+      prev.map((msg) =>
+        msg.kind === 'toolPanel' && msg.panelKey === panelKey
+          ? {
+              ...msg,
+              state,
+              summary: state === 'done' ? 'slash command 직접 호출 완료' : msg.summary,
+              result,
+              error,
+            }
+          : msg,
+      ),
+    )
+    setRunning(false)
+    runningRef.current = false
+    app.setAgentRunState({
+      runId,
+      status: state === 'done' ? 'completed' : 'failed',
+      lastEventType: state === 'done' ? 'slash_command_completed' : 'slash_command_failed',
+      lastMessage: state === 'done' ? 'slash command 조회 완료' : error,
+    })
   }
 
   function startTask(task: AgentTask) {
@@ -876,25 +1049,135 @@ export function AgentRunPanel({
         })}
       </div>
 
-      <div className="flex flex-wrap gap-1.5 border-t border-gray-100 px-3 pt-2.5">
-        {quickActions.map((q) => (
-          <button
-            key={q}
-            onClick={() => send(q)}
-            disabled={running}
-            className={cn('rounded-full border px-2.5 py-1 text-[11px] font-medium', theme.quick)}
+      {quickActions.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 border-t border-gray-100 px-3 pt-2.5">
+          {quickActions.map((q) => (
+            <button
+              key={q}
+              onClick={() => send(q)}
+              disabled={running}
+              className={cn('rounded-full border px-2.5 py-1 text-[11px] font-medium', theme.quick)}
+            >
+              {q}
+            </button>
+          ))}
+        </div>
+      )}
+      {slashMenuOpen && (
+        <div className="border-t border-gray-100 px-3 pt-2">
+          <div
+            id={slashMenuId}
+            role="listbox"
+            className="max-h-64 overflow-y-auto rounded-lg border border-gray-200 bg-white text-[12px] shadow-sm"
           >
-            {q}
-          </button>
-        ))}
-      </div>
+            {slashState.loading ? (
+              <div className="flex items-center gap-2 px-3 py-2 text-gray-500">
+                <Spinner size={12} />
+                <span>tool catalog loading</span>
+              </div>
+            ) : slashState.error ? (
+              <div className="break-words px-3 py-2 text-rose-600">{slashState.error}</div>
+            ) : (
+              slashOptions.map((command, index) => (
+                <div
+                  key={command.toolName}
+                  id={`${slashMenuId}-${command.slug}`}
+                  role="option"
+                  aria-selected={index === slashActiveIndex}
+                  ref={(node) => {
+                    slashOptionRefs.current[command.slug] = node
+                  }}
+                  onMouseEnter={() => setSlashActiveIndex(index)}
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    const route = routeAgentInput(input, {
+                      slashCommands,
+                      slashLoading: slashState.loading,
+                      slashError: slashState.error,
+                      commands: slashState.commands,
+                    })
+                    if (isTypedRequiredSlashExecution(route, command)) {
+                      send(input)
+                    } else if (command.argParams.length > 0) {
+                      primeRequiredSlashCommand(command)
+                    } else {
+                      setInput('')
+                      void runSlashCommand(command)
+                    }
+                  }}
+                  className={cn(
+                    'flex w-full items-start gap-2 px-3 py-2 text-left',
+                    index === slashActiveIndex ? 'bg-gray-50' : 'hover:bg-gray-50',
+                  )}
+                >
+                  <span className="shrink-0 rounded bg-gray-900 px-1.5 py-0.5 font-mono text-[10.5px] text-white">
+                    {command.label}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block break-words font-medium text-gray-700">{command.description}</span>
+                    <span className="block break-all font-mono text-[10.5px] text-gray-400">
+                      {command.usage} · {command.toolName}
+                    </span>
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
       <div className="flex items-center gap-2 px-3 py-2.5">
         <input
+          ref={inputRef}
           value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && send(input)}
+          onChange={(e) => {
+            setInput(e.target.value)
+            setSlashMenuDismissed(false)
+          }}
+          onKeyDown={(e) => {
+            if (slashMenuOpen && e.key === 'Escape') {
+              e.preventDefault()
+              setSlashMenuDismissed(true)
+              return
+            }
+            if (slashMenuOpen && slashOptions.length > 0) {
+              if (e.key === 'ArrowDown') {
+                e.preventDefault()
+                setSlashActiveIndex((index) => (index + 1) % slashOptions.length)
+                return
+              }
+              if (e.key === 'ArrowUp') {
+                e.preventDefault()
+                setSlashActiveIndex((index) => (index - 1 + slashOptions.length) % slashOptions.length)
+                return
+              }
+              if (e.key === 'Enter' && activeSlashCommand) {
+                e.preventDefault()
+                const route = routeAgentInput(input, {
+                  slashCommands,
+                  slashLoading: slashState.loading,
+                  slashError: slashState.error,
+                  commands: slashState.commands,
+                })
+                if (isTypedRequiredSlashExecution(route, activeSlashCommand)) {
+                  send(input)
+                } else if (activeSlashCommand.argParams.length > 0) {
+                  primeRequiredSlashCommand(activeSlashCommand)
+                } else {
+                  setInput('')
+                  void runSlashCommand(activeSlashCommand)
+                }
+                return
+              }
+            }
+            if (e.key === 'Enter') send(input)
+          }}
           placeholder={running ? runningPlaceholder : inputPlaceholder}
           disabled={running}
+          role={slashCommands ? 'combobox' : undefined}
+          aria-autocomplete={slashCommands ? 'list' : undefined}
+          aria-expanded={slashCommands ? slashMenuOpen : undefined}
+          aria-controls={slashMenuOpen ? slashMenuId : undefined}
+          aria-activedescendant={slashMenuOpen ? activeSlashOptionId : undefined}
           className={cn(
             'h-9 flex-1 rounded-lg border border-gray-200 bg-gray-50 px-3 text-[13px] outline-none focus:bg-white disabled:opacity-60',
             theme.inputFocus,
@@ -1081,7 +1364,7 @@ function ToolPanelCard({ msg }: { msg: ToolPanelMsg }) {
             <Icon name="table" size={13} className="mt-0.5 text-gray-500" />
           )}
           <div className="min-w-0 flex-1">
-            <div className="break-words leading-relaxed text-gray-700">{STRUCTURED_TOOL_INTRO[msg.toolName]}</div>
+            <div className="break-words leading-relaxed text-gray-700">{toolDescription(msg.toolName)}</div>
             <div className="mt-1.5 flex flex-wrap gap-1.5">
               <span className="max-w-full break-all rounded bg-gray-900 px-1.5 py-0.5 font-mono text-[10.5px] text-white">{msg.toolName}</span>
               {paramChips(msg.toolName, msg.params).map(([key, value]) => (
@@ -1110,10 +1393,19 @@ function ToolPanelCard({ msg }: { msg: ToolPanelMsg }) {
         ) : msg.toolName === 'analyze_event_log' ? (
           <EventSummaryPanel result={result} />
         ) : (
-          <PanelEmpty text="표시할 결과가 없습니다" />
+          <GenericToolResultPanel result={msg.result} />
         )}
       </div>
     </div>
+  )
+}
+
+function GenericToolResultPanel({ result }: { result: unknown }) {
+  if (result == null) return <PanelEmpty text="표시할 결과가 없습니다" />
+  return (
+    <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-gray-50 px-2 py-2 font-mono text-[10.5px] leading-relaxed text-gray-600">
+      {JSON.stringify(result, null, 2)}
+    </pre>
   )
 }
 
@@ -1463,6 +1755,14 @@ function runAnswerKey(runId: string) {
   return `${runId}:answer`
 }
 
+function isTypedRequiredSlashExecution(route: ReturnType<typeof routeAgentInput>, command: SlashToolCommand) {
+  return (
+    route.kind === 'slash_execute' &&
+    route.parsed.command.toolName === command.toolName &&
+    route.parsed.command.argParams.length > 0
+  )
+}
+
 function failureSummary(event: AgentRunEvent) {
   const error = payloadString(event, 'error')
   return event.message || error || 'Agent Run 처리 중 오류가 발생했습니다.'
@@ -1536,6 +1836,10 @@ function paramChips(toolName: string, params: Record<string, unknown>): [string,
 
 function isStructuredTool(toolName: string) {
   return Object.prototype.hasOwnProperty.call(STRUCTURED_TOOL_INTRO, toolName)
+}
+
+function toolDescription(toolName: string) {
+  return STRUCTURED_TOOL_INTRO[toolName] ?? toolName.replace(/_/g, ' ')
 }
 
 function formatParamValue(value: unknown) {

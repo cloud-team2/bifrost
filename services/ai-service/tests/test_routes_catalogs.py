@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import json
+
+import httpx
 from fastapi.testclient import TestClient
 
+from app.api import routes_catalogs
 from app.catalogs.failure_types import list_failure_types
 from app.core.config import settings
 from app.main import app
+from app.tools.registry import ToolClientRegistry
 
 client = TestClient(app)
 
@@ -86,6 +91,104 @@ def test_get_tool_not_found():
     body = resp.json()
     assert body["ok"] is False
     assert body["error"]["code"] == "TOOL_NOT_FOUND"
+
+
+def test_execute_read_tool_calls_registry_without_agent_workflow(monkeypatch):
+    captured: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        return httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "request_id": "spring_req",
+                "operation": "list_connectors",
+                "result": {"connectors": []},
+                "evidence": [],
+            },
+        )
+
+    registry = ToolClientRegistry(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(routes_catalogs, "get_tool_registry", lambda: registry)
+
+    resp = client.post(
+        "/api/v1/tools/list_connectors/execute",
+        json={"project_id": "proj-001", "params": {}},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["data"]["result"] == {"connectors": []}
+    assert body["data"]["tool_result"]["tool_name"] == "list_connectors"
+    assert captured["path"] == "/internal/ops/projects/proj-001/kafka/connectors/status"
+
+
+def test_execute_read_tool_allows_read_only_post_tools(monkeypatch):
+    captured: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["path"] = request.url.path
+        captured["body"] = request.content.decode()
+        return httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "request_id": "spring_req",
+                "operation": "search_logs",
+                "result": {"logs": [], "total": 0, "note": "empty"},
+                "evidence": [],
+            },
+        )
+
+    registry = ToolClientRegistry(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(routes_catalogs, "get_tool_registry", lambda: registry)
+
+    resp = client.post(
+        "/api/v1/tools/search_logs/execute",
+        json={"project_id": "proj-001", "params": {"query": "error", "limit": 10}},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["data"]["result"]["logs"] == []
+    assert body["data"]["tool_result"]["tool_name"] == "search_logs"
+    assert captured["method"] == "POST"
+    assert captured["path"] == "/internal/ops/projects/proj-001/observability/logs/search"
+    assert json.loads(captured["body"])["query"] == "error"
+
+
+def test_execute_read_tool_returns_validation_error_for_missing_params(monkeypatch):
+    registry = ToolClientRegistry(transport=httpx.MockTransport(lambda request: httpx.Response(500)))
+    monkeypatch.setattr(routes_catalogs, "get_tool_registry", lambda: registry)
+
+    resp = client.post(
+        "/api/v1/tools/search_logs/execute",
+        json={"project_id": "proj-001", "params": {}},
+    )
+
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "VALIDATION_FAILED"
+
+
+def test_execute_tool_blocks_mutation_tools(monkeypatch):
+    registry = ToolClientRegistry(transport=httpx.MockTransport(lambda request: httpx.Response(500)))
+    monkeypatch.setattr(routes_catalogs, "get_tool_registry", lambda: registry)
+
+    resp = client.post(
+        "/api/v1/tools/pause_connector/execute",
+        json={"project_id": "proj-001", "params": {"connector_name": "orders-sink"}},
+    )
+
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "POLICY_DENIED"
 
 
 def test_catalog_version_present():

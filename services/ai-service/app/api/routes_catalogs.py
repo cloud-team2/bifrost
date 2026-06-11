@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from app.catalogs.failure_types import list_failure_types
 from app.catalogs.incident_rootcause_map import INCIDENT_ROOT_CAUSE_MAP
@@ -15,9 +16,15 @@ from app.catalogs.runbooks import list_runbooks
 from app.core.config import settings
 from app.schemas import ApiResponse
 from app.schemas.state import ActionType, RiskLevel
+from app.schemas.tools import ToolContext, ToolStatus
 from app.tools.registry import ToolDefinition, get_tool_registry
 
 router = APIRouter()
+
+
+class ExecuteToolRequest(BaseModel):
+    project_id: str
+    params: dict[str, Any] = Field(default_factory=dict)
 
 
 def _request_id() -> str:
@@ -173,3 +180,48 @@ async def get_tool(tool_name: str) -> Any:
     if definition is None:
         return _failure(request_id, "TOOL_NOT_FOUND", f"tool not found: {tool_name}")
     return ApiResponse.success(request_id, _tool_detail(definition))
+
+
+@router.post("/tools/{tool_name}/execute")
+async def execute_read_tool(tool_name: str, req: ExecuteToolRequest) -> Any:
+    request_id = _request_id()
+    registry = get_tool_registry()
+    definition = registry.get_definition(tool_name)
+    if definition is None:
+        return _failure(request_id, "TOOL_NOT_FOUND", f"tool not found: {tool_name}")
+    if definition.risk != RiskLevel.READ_ONLY or definition.requires_approval:
+        return _failure(
+            request_id,
+            "POLICY_DENIED",
+            f"tool is not a read-only slash command target: {tool_name}",
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    context = ToolContext(
+        run_id=f"slash_{uuid.uuid4().hex[:16]}",
+        step_id=str(uuid.uuid4()),
+        agent_name="slash_command",
+        project_id=req.project_id,
+        request_id=request_id,
+    )
+    tool_result, result = await registry.call_tool_with_data(tool_name, req.params, context)
+    if tool_result.status != ToolStatus.SUCCESS:
+        error = tool_result.error
+        code = getattr(error.code, "value", error.code) if error else "SPRING_BACKEND_ERROR"
+        message = error.message if error else tool_result.summary
+        retryable = bool(error.retryable) if error else False
+        return _failure(
+            request_id,
+            str(code),
+            message,
+            status_code=status.HTTP_400_BAD_REQUEST,
+            retryable=retryable,
+        )
+
+    return ApiResponse.success(
+        request_id,
+        {
+            "tool_result": tool_result.model_dump(mode="json"),
+            "result": result,
+        },
+    )
