@@ -66,6 +66,8 @@ interface Store {
   currentProject: Project | null
   view: View
   selectedPipelineId: string | null
+  selectedTraceId: string | null
+  pipelineTab: string | null
   selectedDatabaseId: string | null
   opSelectedIncidentId: string | null
   login: (email: string, password: string) => Promise<boolean>
@@ -74,6 +76,7 @@ interface Store {
   setProject: (p: Project | null) => void
   setView: (v: View) => void
   openPipeline: (id: string) => void
+  openPipelineTrace: (pipelineId: string, traceId: string) => void
   openDatabase: (id: string) => void
   openIncident: (id: string) => void
   clearOpSelectedIncident: () => void
@@ -153,6 +156,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const monitoringLoadIdRef = useRef(0)
   const [view, setViewRaw] = useState<View>('pipelines')
   const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(null)
+  const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null)
+  const [pipelineTab, setPipelineTab] = useState<string | null>(null)
   const [selectedDatabaseId, setSelectedDatabaseId] = useState<string | null>(null)
   const [opSelectedIncidentId, setOpSelectedIncidentId] = useState<string | null>(null)
   const [aiPanelOpen, setAiPanelOpen] = useState(false)
@@ -376,6 +381,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     currentProject,
     view,
     selectedPipelineId,
+    selectedTraceId,
+    pipelineTab,
     selectedDatabaseId,
     opSelectedIncidentId,
 
@@ -441,8 +448,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     openPipeline(id) {
       setSelectedPipelineId(id)
+      setSelectedTraceId(null)
+      setPipelineTab(null)
       setViewRaw('pipeline-detail')
       pushNav(snapshot({ view: 'pipeline-detail', selectedPipelineId: id }))
+    },
+    openPipelineTrace(pipelineId, traceId) {
+      setSelectedPipelineId(pipelineId)
+      setSelectedTraceId(traceId)
+      setPipelineTab('Tracing')
+      setViewRaw('pipeline-detail')
+      pushNav(snapshot({ view: 'pipeline-detail', selectedPipelineId: pipelineId }))
     },
     openDatabase(id) {
       setSelectedDatabaseId(id)
