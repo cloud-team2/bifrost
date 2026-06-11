@@ -22,6 +22,14 @@ export default defineConfig({
         target: ai,
         changeOrigin: true,
       },
+      '^/api/v1/tools(?:[/?]|$)': {
+        target: ai,
+        changeOrigin: true,
+      },
+      '^/api/v1/catalogs(?:[/?]|$)': {
+        target: ai,
+        changeOrigin: true,
+      },
       // FastAPI 메타 라우트(#377) — ai-service가 직접 서빙. generic '/api'(operations-backend)보다 먼저 매치돼야 한다.
       '^/api/v1/(health|ready|version|capabilities)(?:[/?]|$)': {
         target: ai,

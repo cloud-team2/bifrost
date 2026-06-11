@@ -11,16 +11,33 @@ import {
   type AgentRunEvent,
   type AgentStreamingEventType,
   type ApprovalDecisionValue,
+  type CdcReadinessResponse,
+  type DatabaseResponse,
+  type PipelineResponse,
+  type SchemaTable,
   type WorkspaceMemberRole,
 } from '../../lib/api'
 import { cn } from '../../lib/format'
 import { routeAgentInput } from '../../lib/agentInputRouting'
+import { hasTraceEvidenceLink, shouldAppendEvidenceCard, type ChatEvidence } from '../../lib/agentEvidence'
 import {
   buildSlashCommands,
   slashCommandParams,
   slashSearch,
   type SlashToolCommand,
 } from '../../lib/slashCommands'
+import {
+  buildPipelineCreateInput,
+  databaseEndpoint,
+  databaseLabel,
+  pipelineWizardStartCandidate,
+  readinessAllowsCreate,
+  readinessBlocked,
+  suggestPipelineName,
+  tableKey,
+  type PipelineWizardPattern,
+  type PipelineWizardTable,
+} from './pipelineWizard'
 
 const AGENT_EVENT_TYPES: AgentStreamingEventType[] = [
   'run_started',
@@ -153,17 +170,35 @@ interface ApprovalMsg {
   state: 'pending' | 'submitting' | 'approved' | 'rejected' | 'error'
   error: string | null
 }
-interface EvidenceMsg {
+interface EvidenceMsg extends ChatEvidence {
   id: number
   kind: 'evidence'
-  evidenceId: string | null
-  evidenceType: string | null
   summary: string | null
   redactionStatus: string | null
-  traceId?: string | null
-  pipelineId?: string | null
 }
-type AgentMsg = TextMsg | StatusMsg | ProgressMsg | ToolPanelMsg | ApprovalMsg | EvidenceMsg
+type PipelineWizardStep = 'source' | 'target' | 'table' | 'readiness' | 'created'
+type PipelineWizardLoading = 'databases' | 'schema' | 'readiness' | 'creating' | null
+interface PipelineWizardMsg {
+  id: number
+  kind: 'pipelineWizard'
+  workspaceId: string
+  step: PipelineWizardStep
+  databases: DatabaseResponse[]
+  sourceDbId: string | null
+  pattern: PipelineWizardPattern | null
+  sinkDbId: string | null
+  tables: SchemaTable[]
+  table: PipelineWizardTable | null
+  readiness: {
+    source: CdcReadinessResponse | null
+    sink: CdcReadinessResponse | null
+  }
+  name: string
+  created: PipelineResponse | null
+  loading: PipelineWizardLoading
+  error: string | null
+}
+type AgentMsg = TextMsg | StatusMsg | ProgressMsg | ToolPanelMsg | ApprovalMsg | EvidenceMsg | PipelineWizardMsg
 
 const STRUCTURED_TOOL_INTRO: Record<string, string> = {
   get_consumer_groups: 'Consumer Group의 lag 현황과 상태를 조회합니다.',
@@ -171,6 +206,8 @@ const STRUCTURED_TOOL_INTRO: Record<string, string> = {
   list_connectors: 'Kafka Connector 상태 및 Task 정보를 조회합니다.',
   analyze_event_log: '최근 2시간 이벤트 로그와 인시던트 현황을 분석합니다.',
 }
+const SLASH_CATALOG_ERROR_MESSAGE = '도구 목록을 불러오지 못했습니다. 잠시 후 다시 시도하세요.'
+const STALE_PIPELINE_WIZARD_MESSAGE = '프로젝트가 변경되어 이 파이프라인 생성 흐름을 계속할 수 없습니다. 현재 프로젝트에서 다시 시작하세요.'
 
 type ThemeName = keyof typeof THEMES
 
@@ -261,6 +298,16 @@ export function AgentRunPanel({
   }, [running])
 
   useEffect(() => {
+    updateMsgs((prev) =>
+      prev.map((msg) =>
+        msg.kind === 'pipelineWizard' && msg.workspaceId !== wsId && msg.step !== 'created'
+          ? { ...msg, loading: null, error: STALE_PIPELINE_WIZARD_MESSAGE }
+          : msg,
+      ),
+    )
+  }, [wsId])
+
+  useEffect(() => {
     scroll.current?.scrollTo({ top: scroll.current.scrollHeight, behavior: 'smooth' })
   }, [msgs])
 
@@ -333,7 +380,7 @@ export function AgentRunPanel({
         setSlashState({
           loading: false,
           commands: [],
-          error: e instanceof ApiError ? e.message : 'tool catalog를 불러오지 못했습니다',
+          error: SLASH_CATALOG_ERROR_MESSAGE,
         })
       })
     return () => {
@@ -358,6 +405,350 @@ export function AgentRunPanel({
 
   function appendText(role: TextMsg['role'], text: string) {
     updateMsgs((m) => [...m, { id: ++seq.current, kind: 'text', role, text }])
+  }
+
+  function findPipelineWizard(messageId: number) {
+    return msgsRef.current.find((msg): msg is PipelineWizardMsg => msg.kind === 'pipelineWizard' && msg.id === messageId) ?? null
+  }
+
+  function isCurrentPipelineWizardWorkspace(msg: PipelineWizardMsg) {
+    return !!wsId && msg.workspaceId === wsId
+  }
+
+  function markStalePipelineWizard(messageId: number) {
+    updatePipelineWizard(messageId, (msg) => ({
+      ...msg,
+      loading: null,
+      error: STALE_PIPELINE_WIZARD_MESSAGE,
+    }))
+  }
+
+  function updatePipelineWizard(messageId: number, updater: (msg: PipelineWizardMsg) => PipelineWizardMsg) {
+    updateMsgs((prev) =>
+      prev.map((msg) => (msg.kind === 'pipelineWizard' && msg.id === messageId ? updater(msg) : msg)),
+    )
+  }
+
+  async function startPipelineWizard(visibleUserText: string) {
+    if (!wsId) {
+      appendText('assistant', '프로젝트를 선택한 뒤 파이프라인을 생성할 수 있습니다.')
+      return
+    }
+
+    appendText('user', visibleUserText)
+    const messageId = ++seq.current
+    updateMsgs((prev) => [
+      ...prev,
+      {
+        id: messageId,
+        kind: 'pipelineWizard',
+        workspaceId: wsId,
+        step: 'source',
+        databases: [],
+        sourceDbId: null,
+        pattern: null,
+        sinkDbId: null,
+        tables: [],
+        table: null,
+        readiness: { source: null, sink: null },
+        name: '',
+        created: null,
+        loading: 'databases',
+        error: null,
+      },
+    ])
+
+    await loadPipelineWizardDatabases(messageId, wsId)
+  }
+
+  async function loadPipelineWizardDatabases(messageId: number, workspaceId: string) {
+    updatePipelineWizard(messageId, (msg) => ({ ...msg, loading: 'databases', error: null }))
+    try {
+      const databases = await api.listDatabases(workspaceId)
+      updatePipelineWizard(messageId, (msg) => ({
+        ...msg,
+        databases,
+        loading: null,
+        error: null,
+      }))
+    } catch (e) {
+      updatePipelineWizard(messageId, (msg) => ({
+        ...msg,
+        loading: null,
+        error: e instanceof ApiError ? e.message : '데이터베이스 목록을 불러오지 못했습니다.',
+      }))
+    }
+  }
+
+  async function selectPipelineWizardSource(messageId: number, sourceDbId: string) {
+    const current = findPipelineWizard(messageId)
+    if (!current) return
+    if (!isCurrentPipelineWizardWorkspace(current)) {
+      markStalePipelineWizard(messageId)
+      return
+    }
+    const workspaceId = current.workspaceId
+    updatePipelineWizard(messageId, (msg) => ({
+      ...msg,
+      step: 'target',
+      sourceDbId,
+      pattern: null,
+      sinkDbId: null,
+      tables: [],
+      table: null,
+      readiness: { source: null, sink: null },
+      name: '',
+      created: null,
+      loading: 'schema',
+      error: null,
+    }))
+
+    try {
+      const schema = await api.databaseSchema(workspaceId, sourceDbId)
+      const latest = findPipelineWizard(messageId)
+      if (!latest || latest.sourceDbId !== sourceDbId || latest.workspaceId !== workspaceId || !isCurrentPipelineWizardWorkspace(latest)) return
+      updatePipelineWizard(messageId, (msg) => ({
+        ...msg,
+        tables: schema.tables,
+        loading: null,
+        error: null,
+      }))
+    } catch (e) {
+      const latest = findPipelineWizard(messageId)
+      if (!latest || latest.sourceDbId !== sourceDbId || latest.workspaceId !== workspaceId || !isCurrentPipelineWizardWorkspace(latest)) return
+      updatePipelineWizard(messageId, (msg) => ({
+        ...msg,
+        tables: [],
+        loading: null,
+        error: e instanceof ApiError ? e.message : '소스 DB 스키마를 불러오지 못했습니다.',
+      }))
+    }
+  }
+
+  function selectPipelineWizardPattern(messageId: number, pattern: PipelineWizardPattern) {
+    const current = findPipelineWizard(messageId)
+    if (!current) return
+    if (!isCurrentPipelineWizardWorkspace(current)) {
+      markStalePipelineWizard(messageId)
+      return
+    }
+    updatePipelineWizard(messageId, (msg) => ({
+      ...msg,
+      step: pattern === 'fan-out' ? 'table' : 'target',
+      pattern,
+      sinkDbId: null,
+      table: null,
+      readiness: { source: null, sink: null },
+      name: '',
+      created: null,
+      error: null,
+    }))
+  }
+
+  function selectPipelineWizardSink(messageId: number, sinkDbId: string) {
+    const current = findPipelineWizard(messageId)
+    if (!current) return
+    if (!isCurrentPipelineWizardWorkspace(current)) {
+      markStalePipelineWizard(messageId)
+      return
+    }
+    updatePipelineWizard(messageId, (msg) => ({
+      ...msg,
+      step: 'table',
+      sinkDbId,
+      table: null,
+      readiness: { source: null, sink: null },
+      name: '',
+      created: null,
+      error: null,
+    }))
+  }
+
+  function selectPipelineWizardTable(messageId: number, table: PipelineWizardTable) {
+    const current = findPipelineWizard(messageId)
+    if (!current) return
+    if (!isCurrentPipelineWizardWorkspace(current)) {
+      markStalePipelineWizard(messageId)
+      return
+    }
+    const source = current.databases.find((db) => db.id === current.sourceDbId) ?? null
+    const sink = current.databases.find((db) => db.id === current.sinkDbId) ?? null
+    const name = suggestPipelineName(source, table, current.pattern, sink)
+    updatePipelineWizard(messageId, (msg) => ({
+      ...msg,
+      step: 'readiness',
+      table,
+      readiness: { source: null, sink: null },
+      name: msg.name || name,
+      created: null,
+      loading: 'readiness',
+      error: null,
+    }))
+    if (current.sourceDbId && current.pattern) {
+      void checkPipelineWizardReadiness(messageId, {
+        workspaceId: current.workspaceId,
+        sourceDbId: current.sourceDbId,
+        pattern: current.pattern,
+        sinkDbId: current.sinkDbId,
+        table,
+      })
+    }
+  }
+
+  async function checkPipelineWizardReadiness(
+    messageId: number,
+    snapshot?: {
+      workspaceId: string
+      sourceDbId: string
+      pattern: PipelineWizardPattern
+      sinkDbId: string | null
+      table: PipelineWizardTable | null
+    },
+  ) {
+    const current = findPipelineWizard(messageId)
+    const target = snapshot ?? (current?.sourceDbId && current.pattern
+      ? {
+          workspaceId: current.workspaceId,
+          sourceDbId: current.sourceDbId,
+          pattern: current.pattern,
+          sinkDbId: current.sinkDbId,
+          table: current.table,
+        }
+      : null)
+    if (!target) return
+    const latestBeforeRequest = findPipelineWizard(messageId)
+    if (!latestBeforeRequest || !isCurrentPipelineWizardWorkspace(latestBeforeRequest)) {
+      markStalePipelineWizard(messageId)
+      return
+    }
+    if (target.pattern === 'direct' && !target.sinkDbId) return
+    const workspaceId = target.workspaceId
+    const sourceDbId = target.sourceDbId
+    const sinkDbId = target.pattern === 'direct' ? target.sinkDbId : null
+    const selectedTable = target.table ? tableKey(target.table) : null
+
+    updatePipelineWizard(messageId, (msg) => ({ ...msg, loading: 'readiness', error: null }))
+    try {
+      const [source, sink] = await Promise.all([
+        api.cdcReadiness(workspaceId, sourceDbId),
+        sinkDbId ? api.sinkReadiness(workspaceId, sinkDbId) : Promise.resolve(null),
+      ])
+      const latest = findPipelineWizard(messageId)
+      if (
+        !latest ||
+        latest.workspaceId !== workspaceId ||
+        !isCurrentPipelineWizardWorkspace(latest) ||
+        latest.sourceDbId !== sourceDbId ||
+        latest.sinkDbId !== sinkDbId ||
+        (latest.table ? tableKey(latest.table) : null) !== selectedTable
+      ) return
+      updatePipelineWizard(messageId, (msg) => ({
+        ...msg,
+        readiness: { source, sink },
+        loading: null,
+        error: null,
+      }))
+    } catch (e) {
+      updatePipelineWizard(messageId, (msg) => ({
+        ...msg,
+        loading: null,
+        error: e instanceof ApiError ? e.message : 'readiness 확인에 실패했습니다.',
+      }))
+    }
+  }
+
+  function updatePipelineWizardName(messageId: number, name: string) {
+    const current = findPipelineWizard(messageId)
+    if (!current) return
+    if (!isCurrentPipelineWizardWorkspace(current)) {
+      markStalePipelineWizard(messageId)
+      return
+    }
+    updatePipelineWizard(messageId, (msg) => ({ ...msg, name }))
+  }
+
+  async function createPipelineFromWizard(messageId: number) {
+    const current = findPipelineWizard(messageId)
+    if (!current?.sourceDbId || !current.pattern || !current.table || !current.name.trim()) return
+    if (!isCurrentPipelineWizardWorkspace(current)) {
+      markStalePipelineWizard(messageId)
+      return
+    }
+    if (current.pattern === 'direct' && !current.sinkDbId) return
+    if (!readinessAllowsCreate(current.readiness.source, current.readiness.sink, current.pattern)) return
+
+    updatePipelineWizard(messageId, (msg) => ({ ...msg, loading: 'creating', error: null }))
+    try {
+      const created = await api.createPipeline(current.workspaceId, buildPipelineCreateInput({
+        name: current.name,
+        pattern: current.pattern,
+        sourceDbId: current.sourceDbId,
+        sinkDbId: current.sinkDbId,
+        table: current.table,
+      }))
+      const failed = created.status === 'error'
+      updatePipelineWizard(messageId, (msg) => ({
+        ...msg,
+        step: 'created',
+        created,
+        loading: null,
+        error: failed ? created.statusMessage ?? '파이프라인 생성 요청이 오류 상태로 종료되었습니다.' : null,
+      }))
+      toast(
+        failed ? created.statusMessage ?? '파이프라인 생성에 실패했습니다' : '파이프라인 생성 요청됨 — 활성화되면 자동 반영됩니다',
+        failed ? 'error' : 'success',
+      )
+    } catch (e) {
+      updatePipelineWizard(messageId, (msg) => ({
+        ...msg,
+        loading: null,
+        error: e instanceof ApiError ? e.message : '파이프라인 생성에 실패했습니다.',
+      }))
+      toast(e instanceof ApiError ? e.message : '파이프라인 생성에 실패했습니다.', 'error')
+    }
+  }
+
+  function retryPipelineWizard(messageId: number) {
+    const current = findPipelineWizard(messageId)
+    if (!current) return
+    if (!isCurrentPipelineWizardWorkspace(current)) {
+      markStalePipelineWizard(messageId)
+      return
+    }
+    if (current.step === 'source' || current.databases.length === 0) {
+      void loadPipelineWizardDatabases(messageId, current.workspaceId)
+      return
+    }
+    if (current.step === 'target' && current.sourceDbId && current.tables.length === 0) {
+      void selectPipelineWizardSource(messageId, current.sourceDbId)
+      return
+    }
+    if (current.step === 'readiness') {
+      void checkPipelineWizardReadiness(messageId)
+    }
+  }
+
+  function backPipelineWizardToSource(messageId: number) {
+    const current = findPipelineWizard(messageId)
+    if (!current) return
+    if (!isCurrentPipelineWizardWorkspace(current)) {
+      markStalePipelineWizard(messageId)
+      return
+    }
+    updatePipelineWizard(messageId, (msg) => ({
+      ...msg,
+      step: 'source',
+      sourceDbId: null,
+      pattern: null,
+      sinkDbId: null,
+      tables: [],
+      table: null,
+      readiness: { source: null, sink: null },
+      name: '',
+      created: null,
+      loading: null,
+      error: null,
+    }))
   }
 
   async function startRun(
@@ -424,6 +815,12 @@ export function AgentRunPanel({
   }
 
   function send(text: string) {
+    const wizardMessage = pipelineWizardStartCandidate(text, { running })
+    if (wizardMessage) {
+      setInput('')
+      void startPipelineWizard(wizardMessage)
+      return
+    }
     const route = routeAgentInput(text, {
       slashCommands,
       slashLoading: slashState.loading,
@@ -625,19 +1022,26 @@ export function AgentRunPanel({
       return
     }
     if (event.type === 'evidence_collected') {
-      updateMsgs((m) => [
-        ...m,
-        {
-          id: ++seq.current,
-          kind: 'evidence',
-          evidenceId: payloadString(event, 'evidence_id'),
-          evidenceType: payloadString(event, 'evidence_type'),
-          summary: payloadString(event, 'summary'),
-          redactionStatus: payloadString(event, 'redaction_status'),
-          traceId: payloadString(event, 'trace_id'),
-          pipelineId: payloadString(event, 'pipeline_id'),
-        },
-      ])
+      const evidence: Omit<EvidenceMsg, 'id' | 'kind'> = {
+        evidenceId: payloadString(event, 'evidence_id'),
+        evidenceType: payloadString(event, 'evidence_type'),
+        summary: payloadString(event, 'summary'),
+        redactionStatus: payloadString(event, 'redaction_status'),
+        traceId: payloadString(event, 'trace_id'),
+        pipelineId: payloadString(event, 'pipeline_id'),
+      }
+      updateMsgs((m) => {
+        const existingEvidence = m.filter((msg): msg is EvidenceMsg => msg.kind === 'evidence')
+        if (!shouldAppendEvidenceCard(existingEvidence, evidence)) return m
+        return [
+          ...m,
+          {
+            id: ++seq.current,
+            kind: 'evidence',
+            ...evidence,
+          },
+        ]
+      })
       return
     }
     if (event.type === 'report_preview' || event.type === 'report_preview_available') {
@@ -1029,6 +1433,22 @@ export function AgentRunPanel({
           if (m.kind === 'evidence') {
             return <EvidenceCard key={m.id} msg={m} onOpenTrace={app.openPipelineTrace} />
           }
+          if (m.kind === 'pipelineWizard') {
+            return (
+              <PipelineWizardCard
+                key={m.id}
+                msg={m}
+                onSelectSource={(sourceDbId) => selectPipelineWizardSource(m.id, sourceDbId)}
+                onSelectPattern={(pattern) => selectPipelineWizardPattern(m.id, pattern)}
+                onSelectSink={(sinkDbId) => selectPipelineWizardSink(m.id, sinkDbId)}
+                onSelectTable={(table) => selectPipelineWizardTable(m.id, table)}
+                onNameChange={(name) => updatePipelineWizardName(m.id, name)}
+                onCreate={() => createPipelineFromWizard(m.id)}
+                onRetry={() => retryPipelineWizard(m.id)}
+                onBackToSource={() => backPipelineWizardToSource(m.id)}
+              />
+            )
+          }
           if (m.kind === 'toolPanel') return <ToolPanelCard key={m.id} msg={m} />
           if (m.kind === 'approval') {
             return (
@@ -1212,6 +1632,529 @@ function TextBubble({ msg, theme }: { msg: TextMsg; theme: (typeof THEMES)[Theme
   )
 }
 
+function PipelineWizardCard({
+  msg,
+  onSelectSource,
+  onSelectPattern,
+  onSelectSink,
+  onSelectTable,
+  onNameChange,
+  onCreate,
+  onRetry,
+  onBackToSource,
+}: {
+  msg: PipelineWizardMsg
+  onSelectSource: (sourceDbId: string) => void
+  onSelectPattern: (pattern: PipelineWizardPattern) => void
+  onSelectSink: (sinkDbId: string) => void
+  onSelectTable: (table: PipelineWizardTable) => void
+  onNameChange: (name: string) => void
+  onCreate: () => void
+  onRetry: () => void
+  onBackToSource: () => void
+}) {
+  const source = msg.databases.find((db) => db.id === msg.sourceDbId) ?? null
+  const sink = msg.databases.find((db) => db.id === msg.sinkDbId) ?? null
+  const sinkOptions = msg.databases.filter((db) => db.id !== msg.sourceDbId)
+  const canCreate =
+    !!msg.sourceDbId &&
+    !!msg.pattern &&
+    !!msg.table &&
+    !!msg.name.trim() &&
+    (msg.pattern !== 'direct' || !!msg.sinkDbId) &&
+    readinessAllowsCreate(msg.readiness.source, msg.readiness.sink, msg.pattern)
+  const blocked = readinessBlocked(msg.readiness.source) || readinessBlocked(msg.readiness.sink)
+  const busy = msg.loading != null
+  const schemaUnavailable = !!msg.sourceDbId && msg.loading !== 'schema' && msg.tables.length === 0 && !!msg.error
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white text-[12px] text-gray-700">
+      <div className="flex items-start gap-2 border-b border-gray-100 px-3 py-2.5">
+        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-gray-900 text-white">
+          <Icon name="route" size={14} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="font-semibold text-gray-900">파이프라인 생성</span>
+            <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10.5px] font-medium text-gray-500">
+              {pipelineWizardStepLabel(msg)}
+            </span>
+          </div>
+          <div className="mt-0.5 break-words text-[11.5px] text-gray-500">
+            {pipelineWizardSummary(msg, source, sink)}
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-3 px-3 py-3">
+        <PipelineWizardProgress msg={msg} />
+
+        {msg.step === 'source' && (
+          <div className="space-y-2">
+            <WizardSectionTitle title="Source DB" detail="변경을 감지할 데이터베이스를 선택하세요." />
+            {msg.loading === 'databases' ? (
+              <WizardLoading text="데이터베이스 목록을 불러오는 중" />
+            ) : msg.error && msg.databases.length === 0 ? (
+              <WizardError text={msg.error} onRetry={onRetry} />
+            ) : msg.databases.length === 0 ? (
+              <WizardEmpty text="등록된 데이터베이스가 없습니다." />
+            ) : (
+              <div className="space-y-1.5">
+                {msg.databases.map((db) => (
+                  <DatabaseChoiceButton
+                    key={db.id}
+                    db={db}
+                    readinessKind="source"
+                    selected={db.id === msg.sourceDbId}
+                    disabled={busy}
+                    blockOnKnownStatus
+                    onClick={() => onSelectSource(db.id)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {msg.step === 'target' && (
+          <div className="space-y-3">
+            <SelectionSummary source={source} sink={sink} table={msg.table} pattern={msg.pattern} />
+            <div className="space-y-2">
+              <WizardSectionTitle title="전달 방식" detail="Sink DB가 필요한지 선택하세요." />
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <PatternChoiceButton
+                  title="여러 서비스에 전달"
+                  detail="Kafka topic으로 발행합니다."
+                  icon="share"
+                  selected={msg.pattern === 'fan-out'}
+                  disabled={busy || schemaUnavailable}
+                  onClick={() => onSelectPattern('fan-out')}
+                />
+                <PatternChoiceButton
+                  title="다른 DB에 복제"
+                  detail="Sink DB에 동기화합니다."
+                  icon="database"
+                  selected={msg.pattern === 'direct'}
+                  disabled={busy || schemaUnavailable || sinkOptions.length === 0}
+                  onClick={() => onSelectPattern('direct')}
+                />
+              </div>
+              {sinkOptions.length === 0 && (
+                <WizardEmpty text="다른 DB에 복제하려면 Source 외 Sink DB를 먼저 등록하세요." />
+              )}
+            </div>
+            {msg.pattern === 'direct' && (
+              <div className="space-y-2">
+                <WizardSectionTitle title="Sink DB" detail="데이터를 받을 데이터베이스를 선택하세요." />
+                {sinkOptions.length === 0 ? (
+                  <WizardEmpty text="선택 가능한 Sink DB가 없습니다." />
+                ) : (
+                  <div className="space-y-1.5">
+                    {sinkOptions.map((db) => (
+                      <DatabaseChoiceButton
+                        key={db.id}
+                        db={db}
+                        readinessKind="sink"
+                        selected={db.id === msg.sinkDbId}
+                        disabled={busy}
+                        onClick={() => onSelectSink(db.id)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {msg.loading === 'schema' && <WizardLoading text="소스 DB 스키마를 불러오는 중" />}
+            {msg.error && msg.loading !== 'schema' && (
+              <div className="space-y-2">
+                <WizardError text={msg.error} onRetry={onRetry} />
+                <button
+                  type="button"
+                  onClick={onBackToSource}
+                  className="rounded border border-gray-200 px-2.5 py-1.5 text-[11.5px] font-medium text-gray-600 hover:bg-gray-50"
+                >
+                  Source 다시 선택
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {msg.step === 'table' && (
+          <div className="space-y-3">
+            <SelectionSummary source={source} sink={sink} table={msg.table} pattern={msg.pattern} />
+            <div className="space-y-2">
+              <WizardSectionTitle title="테이블" detail="소스 DB 스키마에서 대상 테이블을 선택하세요." />
+              {msg.loading === 'schema' ? (
+                <WizardLoading text="소스 DB 스키마를 불러오는 중" />
+              ) : msg.error && msg.tables.length === 0 ? (
+                <WizardError text={msg.error} onRetry={onRetry} />
+              ) : msg.tables.length === 0 ? (
+                <WizardEmpty text="조회된 테이블이 없습니다." />
+              ) : (
+                <div className="max-h-64 space-y-1.5 overflow-y-auto">
+                  {msg.tables.map((table) => {
+                    const selected = msg.table ? tableKey(table) === tableKey(msg.table) : false
+                    return (
+                      <button
+                        type="button"
+                        key={tableKey(table)}
+                        disabled={busy}
+                        onClick={() => onSelectTable({ schema: table.schema, name: table.name })}
+                        className={cn(
+                          'flex w-full items-center gap-2 rounded-md border px-2.5 py-2 text-left',
+                          selected ? 'border-brand-500 bg-brand-50' : 'border-gray-200 hover:bg-gray-50',
+                          busy && 'opacity-60',
+                        )}
+                      >
+                        <Icon name="table" size={13} className={selected ? 'text-brand-600' : 'text-gray-400'} />
+                        <span className="min-w-0 flex-1 break-all font-mono text-[11.5px] text-gray-700">
+                          {tableKey(table)}
+                        </span>
+                        <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[10.5px] text-gray-500">
+                          {table.columns.length} cols
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {msg.step === 'readiness' && (
+          <div className="space-y-3">
+            <SelectionSummary source={source} sink={sink} table={msg.table} pattern={msg.pattern} />
+            <div className="space-y-2">
+              <WizardSectionTitle title="Readiness" detail="Source CDC와 Sink 준비 상태를 확인합니다." />
+              {msg.loading === 'readiness' ? (
+                <WizardLoading text="readiness 확인 중" />
+              ) : msg.error && !msg.readiness.source ? (
+                <WizardError text={msg.error} onRetry={onRetry} />
+              ) : (
+                <div className="space-y-2">
+                  <ReadinessResult title="Source CDC" readiness={msg.readiness.source} />
+                  {msg.pattern === 'direct' && <ReadinessResult title="Sink" readiness={msg.readiness.sink} />}
+                </div>
+              )}
+            </div>
+            {msg.readiness.source && (
+              <div className="space-y-2 border-t border-gray-100 pt-3">
+                <label className="block text-[11.5px] font-medium text-gray-600" htmlFor={`pipeline-name-${msg.id}`}>
+                  파이프라인 이름
+                </label>
+                <input
+                  id={`pipeline-name-${msg.id}`}
+                  value={msg.name}
+                  onChange={(e) => onNameChange(e.target.value)}
+                  disabled={msg.loading === 'creating'}
+                  className="h-9 w-full rounded-md border border-gray-200 px-2.5 text-[12.5px] outline-none focus:border-brand-500 disabled:opacity-60"
+                />
+                {blocked && (
+                  <div className="break-words rounded border border-rose-100 bg-rose-50 px-2 py-1.5 text-[11.5px] text-rose-700">
+                    BLOCKED readiness 항목이 있어 생성할 수 없습니다.
+                  </div>
+                )}
+                {msg.error && msg.readiness.source && (
+                  <div className="break-words rounded border border-rose-100 bg-rose-50 px-2 py-1.5 text-[11.5px] text-rose-700">
+                    {msg.error}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  disabled={!canCreate || msg.loading === 'creating'}
+                  onClick={onCreate}
+                  className="flex h-9 w-full items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3 text-[12.5px] font-semibold text-white hover:bg-brand-700 disabled:bg-brand-300"
+                >
+                  {msg.loading === 'creating' ? <Spinner size={13} /> : <Icon name="play-circle" size={14} />}
+                  파이프라인 생성
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {msg.step === 'created' && msg.created && (
+          <div className="space-y-3">
+            <SelectionSummary source={source} sink={sink} table={msg.table} pattern={msg.pattern} />
+            <div
+              className={cn(
+                'rounded-md border px-3 py-2.5',
+                msg.created.status === 'error'
+                  ? 'border-rose-100 bg-rose-50'
+                  : 'border-emerald-100 bg-emerald-50',
+              )}
+            >
+              <div
+                className={cn(
+                  'mb-1 flex items-center gap-1.5 font-semibold',
+                  msg.created.status === 'error' ? 'text-rose-800' : 'text-emerald-800',
+                )}
+              >
+                <Icon name={msg.created.status === 'error' ? 'alert' : 'check'} size={13} strokeWidth={3} />
+                {msg.created.status === 'error' ? '생성 요청 오류' : '생성 요청 완료'}
+              </div>
+              <div
+                className={cn(
+                  'space-y-1 font-mono text-[11px]',
+                  msg.created.status === 'error' ? 'text-rose-900' : 'text-emerald-900',
+                )}
+              >
+                <div className="break-all">id={msg.created.id}</div>
+                <div className="break-words">status={msg.created.status}</div>
+                {msg.created.statusMessage && <div className="break-words">message={msg.created.statusMessage}</div>}
+                <div className="break-all">topic={msg.created.topic ?? '-'}</div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function PipelineWizardProgress({ msg }: { msg: PipelineWizardMsg }) {
+  const steps: PipelineWizardStep[] = ['source', 'target', 'table', 'readiness', 'created']
+  const activeIndex = steps.indexOf(msg.step)
+  return (
+    <div className="grid grid-cols-5 gap-1">
+      {steps.map((step, index) => (
+        <div
+          key={step}
+          className={cn(
+            'h-1.5 rounded-full',
+            index < activeIndex || msg.step === 'created'
+              ? 'bg-emerald-400'
+              : index === activeIndex
+                ? 'bg-brand-500'
+                : 'bg-gray-200',
+          )}
+        />
+      ))}
+    </div>
+  )
+}
+
+function DatabaseChoiceButton({
+  db,
+  readinessKind,
+  selected,
+  disabled,
+  blockOnKnownStatus = false,
+  onClick,
+}: {
+  db: DatabaseResponse
+  readinessKind: 'source' | 'sink'
+  selected: boolean
+  disabled: boolean
+  blockOnKnownStatus?: boolean
+  onClick: () => void
+}) {
+  const readinessStatus = databaseReadinessStatus(db, readinessKind)
+  const blocked = readinessStatus === 'BLOCKED' || db.connectionStatus === 'UNREACHABLE'
+  const choiceDisabled = disabled || (blockOnKnownStatus && blocked)
+  return (
+    <button
+      type="button"
+      disabled={choiceDisabled}
+      onClick={onClick}
+      className={cn(
+        'flex w-full items-center gap-2 rounded-md border px-2.5 py-2 text-left',
+        selected ? 'border-brand-500 bg-brand-50' : 'border-gray-200 hover:bg-gray-50',
+        choiceDisabled && 'cursor-not-allowed opacity-60',
+      )}
+    >
+      <Icon name="database" size={14} className={blocked ? 'text-rose-500' : selected ? 'text-brand-600' : 'text-gray-400'} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[12.5px] font-medium text-gray-800">{databaseLabel(db)}</span>
+        <span className="block truncate font-mono text-[10.5px] text-gray-400">{databaseEndpoint(db)}</span>
+      </span>
+      <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[10.5px] font-medium text-gray-500">
+        {db.engine}
+      </span>
+      {readinessStatus && (
+        <span
+          className={cn(
+            'shrink-0 rounded px-1.5 py-0.5 text-[10.5px] font-semibold',
+            readinessChipClass(readinessStatus),
+          )}
+        >
+          {readinessStatus}
+        </span>
+      )}
+      {blockOnKnownStatus && blocked && (
+        <span className="shrink-0 rounded bg-rose-50 px-1.5 py-0.5 text-[10.5px] font-semibold text-rose-700">
+          선택 불가
+        </span>
+      )}
+    </button>
+  )
+}
+
+function PatternChoiceButton({
+  title,
+  detail,
+  icon,
+  selected,
+  disabled,
+  onClick,
+}: {
+  title: string
+  detail: string
+  icon: IconName
+  selected: boolean
+  disabled: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        'flex items-start gap-2 rounded-md border px-2.5 py-2 text-left',
+        selected ? 'border-brand-500 bg-brand-50' : 'border-gray-200 hover:bg-gray-50',
+        disabled && 'opacity-60',
+      )}
+    >
+      <Icon name={icon} size={14} className={selected ? 'mt-0.5 text-brand-600' : 'mt-0.5 text-gray-400'} />
+      <span className="min-w-0">
+        <span className="block break-words font-medium text-gray-800">{title}</span>
+        <span className="block break-words text-[11px] text-gray-500">{detail}</span>
+      </span>
+    </button>
+  )
+}
+
+function SelectionSummary({
+  source,
+  sink,
+  table,
+  pattern,
+}: {
+  source: DatabaseResponse | null
+  sink: DatabaseResponse | null
+  table: PipelineWizardTable | null
+  pattern: PipelineWizardPattern | null
+}) {
+  return (
+    <div className="grid gap-1.5 rounded-md border border-gray-100 bg-gray-50 px-2.5 py-2 font-mono text-[10.5px] text-gray-500">
+      <div className="break-all">source={source ? databaseLabel(source) : '-'}</div>
+      <div className="break-all">target={pattern === 'direct' ? (sink ? databaseLabel(sink) : '-') : pattern === 'fan-out' ? 'fan-out topic' : '-'}</div>
+      <div className="break-all">table={table ? tableKey(table) : '-'}</div>
+    </div>
+  )
+}
+
+function ReadinessResult({ title, readiness }: { title: string; readiness: CdcReadinessResponse | null }) {
+  if (!readiness) return <WizardEmpty text={`${title} readiness 결과가 없습니다.`} />
+  return (
+    <div className="rounded-md border border-gray-200">
+      <div className="flex items-center justify-between gap-2 border-b border-gray-100 px-2.5 py-2">
+        <span className="font-semibold text-gray-800">{title}</span>
+        <span className={cn('rounded px-1.5 py-0.5 text-[10.5px] font-semibold', readinessChipClass(readiness.overallStatus))}>
+          {readiness.overallStatus}
+        </span>
+      </div>
+      <div className="divide-y divide-gray-100">
+        {readiness.checks.length === 0 ? (
+          <div className="px-2.5 py-2 text-[11.5px] text-gray-400">체크 항목 없음</div>
+        ) : (
+          readiness.checks.map((check) => (
+            <div key={check.name} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 px-2.5 py-2">
+              <div className="min-w-0">
+                <div className="break-words font-medium text-gray-700">{check.name}</div>
+                <div className="mt-0.5 break-words font-mono text-[10.5px] text-gray-400">
+                  actual={check.actual || '-'} / expected={check.expected || '-'}
+                </div>
+                {check.hint && <div className="mt-0.5 break-words text-[11px] text-gray-500">{check.hint}</div>}
+              </div>
+              <span className={cn('h-fit rounded px-1.5 py-0.5 text-[10.5px] font-semibold', readinessChipClass(check.status))}>
+                {check.status}
+              </span>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
+function WizardSectionTitle({ title, detail }: { title: string; detail: string }) {
+  return (
+    <div>
+      <div className="text-[12px] font-semibold text-gray-800">{title}</div>
+      <div className="break-words text-[11.5px] text-gray-500">{detail}</div>
+    </div>
+  )
+}
+
+function WizardLoading({ text }: { text: string }) {
+  return (
+    <div className="flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11.5px] text-gray-500">
+      <Spinner size={12} />
+      <span>{text}</span>
+    </div>
+  )
+}
+
+function WizardError({ text, onRetry }: { text: string; onRetry: () => void }) {
+  return (
+    <div className="space-y-2 rounded-md border border-rose-100 bg-rose-50 px-2.5 py-2 text-[11.5px] text-rose-700">
+      <div className="break-words">{text}</div>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="rounded border border-rose-200 bg-white px-2 py-1 text-[11.5px] font-medium text-rose-700 hover:bg-rose-50"
+      >
+        다시 시도
+      </button>
+    </div>
+  )
+}
+
+function WizardEmpty({ text }: { text: string }) {
+  return <div className="rounded-md border border-dashed border-gray-200 px-2.5 py-3 text-center text-[11.5px] text-gray-400">{text}</div>
+}
+
+function pipelineWizardStepLabel(msg: PipelineWizardMsg) {
+  if (msg.loading === 'databases') return 'DB 조회'
+  if (msg.loading === 'schema') return '스키마 조회'
+  if (msg.loading === 'readiness') return 'readiness'
+  if (msg.loading === 'creating') return '생성 중'
+  if (msg.step === 'source') return 'Source 선택'
+  if (msg.step === 'target') return 'Target 선택'
+  if (msg.step === 'table') return '테이블 선택'
+  if (msg.step === 'readiness') return '확인'
+  return '완료'
+}
+
+function pipelineWizardSummary(
+  msg: PipelineWizardMsg,
+  source: DatabaseResponse | null,
+  sink: DatabaseResponse | null,
+) {
+  if (msg.step === 'created' && msg.created) return `${msg.created.name} · ${msg.created.status}`
+  if (!source) return '보유 DB 목록에서 Source를 선택하세요.'
+  if (!msg.pattern) return `${databaseLabel(source)} 선택됨`
+  if (msg.pattern === 'direct' && !sink) return `${databaseLabel(source)}에서 복제할 Sink DB를 선택하세요.`
+  if (!msg.table) return 'Source 스키마에서 테이블을 선택하세요.'
+  return `${databaseLabel(source)}.${msg.table.name} 생성 준비`
+}
+
+function databaseReadinessStatus(db: DatabaseResponse, kind: 'source' | 'sink'): CdcReadinessResponse['overallStatus'] | null {
+  if (kind === 'source') return db.cdcReadinessStatus
+  const value = (db as { sinkReadinessStatus?: unknown }).sinkReadinessStatus
+  return value === 'OK' || value === 'WARNING' || value === 'BLOCKED' ? value : null
+}
+
+function readinessChipClass(status: CdcReadinessResponse['overallStatus']) {
+  if (status === 'OK') return 'bg-emerald-50 text-emerald-700'
+  if (status === 'WARNING') return 'bg-amber-50 text-amber-700'
+  return 'bg-rose-50 text-rose-700'
+}
+
 function StatusCard({ msg, theme }: { msg: StatusMsg; theme: (typeof THEMES)[ThemeName] }) {
   const label = msg.agent ? AGENT_LABEL[msg.agent] ?? msg.agent : msg.eventType
   return (
@@ -1240,10 +2183,7 @@ function EvidenceCard({
   msg: EvidenceMsg
   onOpenTrace: (pipelineId: string, traceId: string) => void
 }) {
-  const hasTraceLink =
-    msg.evidenceType === 'trace' &&
-    msg.traceId &&
-    msg.pipelineId
+  const hasTraceLink = hasTraceEvidenceLink(msg)
   return (
     <div className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-[12px] text-gray-700">
       <div className="mb-1 flex items-center gap-1.5 font-semibold text-gray-800">
@@ -1255,7 +2195,7 @@ function EvidenceCard({
         <button
           type="button"
           className="mt-1.5 rounded-md border border-gray-200 px-3 py-1.5 text-[12px] font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-          onClick={() => onOpenTrace(msg.pipelineId!, msg.traceId!)}
+          onClick={() => onOpenTrace(msg.pipelineId, msg.traceId)}
         >
           Tracing 탭에서 상세 보기
         </button>
