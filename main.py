@@ -105,87 +105,57 @@ def get_daily_summary():
             
     return summary_data
 
+def _clip(text, limit=2900):
+    """Slack section text는 3000자 한도. 초과 시 잘라서 안내."""
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "\n…(길어서 일부 생략)"
+
 def format_slack_message(summary_data):
     if not summary_data:
         return []
 
+    today = datetime.datetime.now().strftime('%Y-%m-%d')
+    total_commits = sum(len(r["commits"]) for r in summary_data)
+    total_prs = sum(len(r["prs"]) for r in summary_data)
+    total_open = sum(len([p for p in r["prs"] if p["state"] == "open"]) for r in summary_data)
+    total_issues = sum(len(r["issues"]) for r in summary_data)
+
     blocks = [
-        {
-            "type": "header",
-            "text": {
-                "type": "plain_text",
-                "text": "🚀 Bifrost 프로젝트 일일 작업 리포트",
-                "emoji": True
-            }
-        },
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f"*생성 일시:* {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}\n*대상 브랜치:* `dev`"
-            }
-        },
-        {"type": "divider"}
+        {"type": "header", "text": {"type": "plain_text",
+            "text": f"🚀 Bifrost 일일 작업 리포트 ({today})", "emoji": True}},
+        {"type": "section", "text": {"type": "mrkdwn",
+            "text": f"📊 *오늘 작업량* — 커밋 *{total_commits}* · PR *{total_prs}* (열림 {total_open}) · 이슈 *{total_issues}*"}},
+        {"type": "divider"},
     ]
-    
+
     for repo in summary_data:
-        # Header for the repository
-        blocks.append({
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f"*📍 <https://github.com/{repo['name']}|{repo['name']}>*"
-            }
-        })
-
-        # 1. Merged Changes (Commits)
-        if repo["commits"]:
-            commit_text = "✅ *반영된 작업 (Merges)*\n"
-            for c in repo["commits"][:10]:
-                commit_text += f"• {c['msg']} (@{c['author']})\n"
-            if len(repo["commits"]) > 10:
-                commit_text += f"• _외 {len(repo['commits'])-10}개의 작업 더보기..._\n"
-            
-            blocks.append({
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": commit_text
-                }
-            })
-
-        # 2. Work in Progress (Open Pull Requests)
-        open_prs = [pr for pr in repo["prs"] if pr["state"] == "open"]
+        commits = repo["commits"]
+        open_prs = [p for p in repo["prs"] if p["state"] == "open"]
+        issues = repo["issues"]
+        L = [f"*📍 <https://github.com/{repo['name']}|{repo['name']}>*  ·  커밋 {len(commits)} · PR {len(repo['prs'])}(열림 {len(open_prs)}) · 이슈 {len(issues)}"]
+        if commits:
+            L.append("\n✅ *반영된 작업*")
+            for c in commits[:5]:
+                L.append(f"• {c['msg']} (@{c['author']})")
+            if len(commits) > 5:
+                L.append(f"• _외 {len(commits)-5}개_")
         if open_prs:
-            pr_text = "📂 *진행 중인 작업 (Open PRs)*\n"
-            for pr in open_prs:
-                pr_text += f"• 🏗️ <{pr['url']}|#{pr['number']} {pr['title']}>\n"
-            
-            blocks.append({
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": pr_text
-                }
-            })
-
-        # 3. Issues
-        if repo["issues"]:
-            issue_text = "🚩 *이슈 및 알림 (Issues)*\n"
-            for issue in repo["issues"]:
-                status = "🟣 [Closed]" if issue["state"] == "closed" else "🔴 [Open]"
-                issue_text += f"• {status} <{issue['url']}|#{issue['number']} {issue['title']}>\n"
-            
-            blocks.append({
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": issue_text
-                }
-            })
-
+            L.append("\n📂 *진행 중 PR*")
+            for pr in open_prs[:5]:
+                L.append(f"• <{pr['url']}|#{pr['number']} {pr['title']}>")
+            if len(open_prs) > 5:
+                L.append(f"• _외 {len(open_prs)-5}개_")
+        if issues:
+            L.append("\n🚩 *이슈*")
+            for issue in issues[:5]:
+                status = "🟣" if issue["state"] == "closed" else "🔴"
+                L.append(f"• {status} <{issue['url']}|#{issue['number']} {issue['title']}>")
+            if len(issues) > 5:
+                L.append(f"• _외 {len(issues)-5}개_")
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": _clip("\n".join(L))}})
         blocks.append({"type": "divider"})
-        
+
     return blocks
 
 def send_to_slack(blocks):
