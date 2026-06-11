@@ -258,10 +258,16 @@ async def run_workflow(
 
         # ── State 재사용 ────────────────────────────────────────────────────────
         # action_execution/approval_decision은 policy_guard/approval_gate부터 시작해
-        # 같은 turn 안에서는 조치 후보를 만들지 않는다. 같은 run(멀티턴)의 이전
-        # remediation/policy State를 복원해 빈 action list로 시작하는 문제를 해소한다.
+        # 같은 turn 안에서는 조치 후보를 만들지 않는다. 같은 run(멀티턴, #454)의 이전
+        # remediation/policy State를 복원하고, FE가 메시지마다 새 run을 생성해 후속
+        # turn이 다른 run_id로 들어오면 같은 incident_id의 직전 run에서 복원한다(#479).
         if mode in (AgentMode.ACTION_EXECUTION, AgentMode.APPROVAL_DECISION):
-            restored_rem, restored_policy = await _restore_action_state(state_repo, run_id)
+            restored_rem, restored_policy = await _restore_action_state(
+                state_repo,
+                run_id,
+                incident_id=persisted_incident_id,
+                run_repo=run_repo,
+            )
             if restored_rem is not None:
                 remediation_out = restored_rem
             if restored_policy is not None:
@@ -815,16 +821,11 @@ async def run_workflow(
         await bus.close_run(run_id)
 
 
-async def _restore_action_state(
+async def _restore_action_state_from_run(
     state_repo: Any,
     run_id: str,
 ) -> tuple[RemediationOutput | None, PolicyGuardOutput | None]:
-    """같은 run의 append-only State patch에서 조치 후보·정책 결정을 복원한다.
-
-    action_execution/approval_decision turn은 remediation 단계를 다시 돌지 않으므로,
-    이전 turn(같은 run_id)이 남긴 `/actions/candidates`·`/actions/policy_decisions`
-    patch를 읽어 Policy Guard/Executor에 공급한다. 복원 실패는 빈 결과로 흡수한다.
-    """
+    """단일 run_id의 append-only State patch에서 조치 후보·정책 결정을 복원한다."""
     try:
         patches = await state_repo.get_patches(run_id)
     except Exception as exc:
@@ -861,6 +862,68 @@ async def _restore_action_state(
             logger.warning("state restore: policy rebuild failed run=%s error=%s", run_id, exc)
 
     return remediation_out, policy_out
+
+
+async def _sibling_run_ids(
+    run_repo: Any,
+    incident_id: str,
+    exclude_run_id: str,
+) -> list[str]:
+    """같은 incident_id의 직전 run_id를 최신순으로 반환한다(#479).
+
+    run_repo가 list_run_ids_by_incident를 제공하지 않거나(AsyncMock 등) 비정상
+    값을 돌려주면 빈 list로 흡수해 복원이 조용히 no-op이 되게 한다.
+    """
+    fn = getattr(run_repo, "list_run_ids_by_incident", None)
+    if fn is None:
+        return []
+    try:
+        result = await fn(incident_id, exclude_run_id=exclude_run_id)
+    except Exception as exc:
+        logger.warning(
+            "state restore: sibling lookup failed incident=%s error=%s", incident_id, exc
+        )
+        return []
+    if not isinstance(result, list):
+        return []
+    return [r for r in result if isinstance(r, str)]
+
+
+async def _restore_action_state(
+    state_repo: Any,
+    run_id: str,
+    *,
+    incident_id: str | None = None,
+    run_repo: Any = None,
+) -> tuple[RemediationOutput | None, PolicyGuardOutput | None]:
+    """조치 후보·정책 결정 State를 복원한다(intra-run + cross-turn, #454·#479).
+
+    action_execution/approval_decision turn은 remediation 단계를 다시 돌지 않으므로,
+    `/actions/candidates`·`/actions/policy_decisions` patch를 읽어 Policy
+    Guard/Executor에 공급한다.
+
+    먼저 같은 run_id의 patch를 본다(#454, 같은 run 멀티턴). FE가 메시지마다 새
+    run을 생성하면 후속 turn(새 run_id)에는 후보 patch가 없으므로, incident_id가
+    있으면 같은 incident의 직전 run들을 최신순으로 조회해 처음으로 후보·정책이
+    잡히는 run에서 복원한다(#479, cross-turn 멀티 run). 복원 실패는 빈 결과로 흡수한다.
+    """
+    remediation_out, policy_out = await _restore_action_state_from_run(state_repo, run_id)
+    if remediation_out is not None or policy_out is not None:
+        return remediation_out, policy_out
+
+    if not incident_id or run_repo is None:
+        return remediation_out, policy_out
+
+    for sibling_run_id in await _sibling_run_ids(run_repo, incident_id, run_id):
+        sib_rem, sib_policy = await _restore_action_state_from_run(state_repo, sibling_run_id)
+        if sib_rem is not None or sib_policy is not None:
+            logger.info(
+                "state restore: reused candidates from run=%s incident=%s for run=%s",
+                sibling_run_id, incident_id, run_id,
+            )
+            return sib_rem, sib_policy
+
+    return None, None
 
 
 def _find_tool_name(action_id: str, remediation_out) -> str | None:
