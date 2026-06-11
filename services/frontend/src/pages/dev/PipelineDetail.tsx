@@ -47,9 +47,14 @@ export function PipelineDetail() {
     ? ['Overview', 'Consumers', 'Connector', 'Messages', 'Connection Guide', 'Tracing']
     : ['Overview', 'Topic', 'Connector', 'Messages', 'Table Mapping', 'Tracing']
 
-  const [tab, setTab] = useState(() =>
-    app.pipelineTab && tabs.includes(app.pipelineTab) ? app.pipelineTab : tabs[0],
-  )
+  const [tab, setTab] = useState(tabs[0])
+
+  useEffect(() => {
+    if (app.pipelineTab && tabs.includes(app.pipelineTab)) {
+      setTab(app.pipelineTab)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [app.pipelineTab, app.selectedPipelineId])
 
   // (#267) 탭별 에러 위치 표시용 — 커넥터 상태를 폴링해 FAILED/lastError를 감지(복구 시 자동 해제).
   const wsId = app.currentProject?.id

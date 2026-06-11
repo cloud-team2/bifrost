@@ -215,6 +215,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSelectedPipelineId(s.selectedPipelineId)
     setSelectedDatabaseId(s.selectedDatabaseId)
     setOpSelectedIncidentId(s.opSelectedIncidentId)
+    setSelectedTraceId(null)
+    setPipelineTab(null)
   }
   const applySnapshotRef = useRef(applySnapshot)
   applySnapshotRef.current = applySnapshot
@@ -415,6 +417,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       clearMonitoringData()
       setSelectedPipelineId(null)
       setSelectedDatabaseId(null)
+      setSelectedTraceId(null)
+      setPipelineTab(null)
       setAiPanelOpen(false)
       setAgentRunStateRaw(emptyAgentRunState())
     },
@@ -428,6 +432,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setSelectedPipelineId(null)
         setSelectedDatabaseId(null)
         setOpSelectedIncidentId(null)
+        setSelectedTraceId(null)
+        setPipelineTab(null)
         setAgentRunStateRaw(emptyAgentRunState())
         loadProjectData(p.id)
       }

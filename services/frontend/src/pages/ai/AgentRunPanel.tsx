@@ -880,7 +880,7 @@ function EvidenceCard({
   onOpenTrace: (pipelineId: string, traceId: string) => void
 }) {
   const hasTraceLink =
-    (msg.evidenceType === 'trace' || (msg.evidenceType ?? '').includes('trace')) &&
+    msg.evidenceType === 'trace' &&
     msg.traceId &&
     msg.pipelineId
   return (
@@ -893,7 +893,7 @@ function EvidenceCard({
       {hasTraceLink && (
         <button
           type="button"
-          className="mt-1.5 rounded-md border border-gray-200 px-3 py-1 text-[11.5px] font-medium text-gray-600 hover:bg-gray-50"
+          className="mt-1.5 rounded-md border border-gray-200 px-3 py-1.5 text-[12px] font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
           onClick={() => onOpenTrace(msg.pipelineId!, msg.traceId!)}
         >
           Tracing 탭에서 상세 보기
