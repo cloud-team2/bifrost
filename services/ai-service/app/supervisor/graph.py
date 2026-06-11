@@ -81,6 +81,42 @@ class Supervisor:
         self._store.patch(run_id, _apply)
         return nxt
 
+    def _register_loopback(
+        self,
+        run_id: str,
+        *,
+        counter: str,
+        limit: int,
+        next_agent: str | None,
+    ) -> None:
+        """공통 loopback 등록기(§5.1 루프 가드).
+
+        ``next_agent``가 있으면 ``counter`` 예산 내에서 그 stage로 되돌릴 loopback을
+        등록하고 카운터를 증가시킨다. 예산이 이미 소진됐으면 다음 advance에서
+        ``RunBudgetExceeded(counter)``를 올리도록 ``_force_fail``에 표시한다.
+        ``next_agent``가 ``None``이면(정상 진행) 직전 등록만 초기화하고 끝낸다.
+
+        진입 시점이 아니라 이 전이 결정 지점에서 예산을 집행하므로, 카운터가 상한에
+        닿은 채로도 마지막 loopback 한 번은 끝까지 실행된다(§3 flowchart 순환).
+        """
+        state = self._store.get(run_id)
+        if state is None:
+            raise KeyError(f"Run not found: {run_id}")
+
+        # 직전 stage에서 남았을 수 있는 loopback 등록을 초기화.
+        self._pending_loopback.pop(run_id, None)
+
+        if next_agent is None:
+            return
+
+        if getattr(state.run.guards, counter) >= limit:
+            # 예산 소진 → 다음 advance에서 failed 종료(유한 종료 보장).
+            self._force_fail[run_id] = counter
+            return
+
+        self._store.patch(run_id, lambda s: _bump_guard(s, counter))
+        self._pending_loopback[run_id] = next_agent
+
     def record_verifier_result(
         self,
         run_id: str,
@@ -98,32 +134,51 @@ class Supervisor:
         종료 보장(§5.1): loopback은 fail_loops/gap_loops 상한으로, 그 외 모든
         경로는 step 예산으로 유한 종료된다.
         """
-        state = self._store.get(run_id)
-        if state is None:
-            raise KeyError(f"Run not found: {run_id}")
-
-        # 직전 stage에서 남았을 수 있는 loopback 등록을 초기화.
-        self._pending_loopback.pop(run_id, None)
-
-        if status == VerificationStatus.PASS or next_agent is None:
-            return
-
-        if status == VerificationStatus.FAIL:
+        if status == VerificationStatus.PASS:
+            next_agent = None  # pass는 절대 loopback하지 않는다.
+            counter, limit = "gap_loops", self._policy.max_gap_loops
+        elif status == VerificationStatus.FAIL:
             counter, limit = "fail_loops", self._policy.max_fail_loops
         else:  # NEEDS_REVISION
             counter, limit = "gap_loops", self._policy.max_gap_loops
 
-        if getattr(state.run.guards, counter) >= limit:
-            # 예산 소진 → 다음 advance에서 failed 종료(검증 안 된 Report 차단).
-            self._force_fail[run_id] = counter
-            return
+        self._register_loopback(run_id, counter=counter, limit=limit, next_agent=next_agent)
 
-        def _bump(s: AgentState) -> AgentState:
-            setattr(s.run.guards, counter, getattr(s.run.guards, counter) + 1)
-            return s
+    def record_classifier_result(self, run_id: str, *, scope_unclear: bool) -> None:
+        """Classifier scope_unclear → Planner 재수집 loopback(§3 'scope 불명확').
 
-        self._store.patch(run_id, _bump)
-        self._pending_loopback[run_id] = next_agent
+        scope_unclear이면 ``scope_loops`` 예산 내에서 Planner로 되돌려 evidence를
+        더 수집한다. 초과 시 다음 advance에서 ``RunBudgetExceeded("scope_loops")``로
+        run failed(유한 종료). scope가 명확하면 정적 테이블대로 RCA로 진행한다.
+        """
+        next_agent = "planner" if scope_unclear else None
+        self._register_loopback(
+            run_id,
+            counter="scope_loops",
+            limit=self._policy.max_scope_loops,
+            next_agent=next_agent,
+        )
+
+    def record_policy_guard_result(self, run_id: str, *, revise_action: bool) -> None:
+        """Policy Guard revise_action → Remediation 재생성 loopback(§3 revise_action).
+
+        revise_action이면 ``revise_action_loops`` 예산 내에서 Remediation으로 되돌려
+        더 안전한 조치 후보를 재생성한다. 초과 시 다음 advance에서
+        ``RunBudgetExceeded("revise_action_loops")``로 run failed(유한 종료).
+        정상 결정이면 정적 테이블대로 Verifier로 진행한다.
+        """
+        next_agent = "remediation" if revise_action else None
+        self._register_loopback(
+            run_id,
+            counter="revise_action_loops",
+            limit=self._policy.max_revise_action_loops,
+            next_agent=next_agent,
+        )
+
+
+def _bump_guard(state: AgentState, counter: str) -> AgentState:
+    setattr(state.run.guards, counter, getattr(state.run.guards, counter) + 1)
+    return state
 
 
 def _infer_mode(state: AgentState) -> AgentMode:
