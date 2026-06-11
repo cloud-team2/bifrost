@@ -128,7 +128,7 @@ Report는 tool을 직접 호출하지 않는다. 검증된 State만 사용한다
 
 ### 8. Runtime Tool Catalog
 
-현재 FastAPI `ToolClientRegistry`에는 16개 논리 tool definition이 있다(#373: `get_connector_task_trace` 추가). 이 표는 FastAPI registry의 실제 목록이고, Spring `GET /internal/ops/admin/tool-catalog`와 동일하지 않다.
+현재 FastAPI `ToolClientRegistry`에는 20개 논리 tool definition이 있다. 이 표는 FastAPI registry의 실제 목록이고, Spring `GET /internal/ops/admin/tool-catalog`와 동일하지 않다.
 
 | Tool | Operation | Method | Path template | Risk | Approval |
 | --- | --- | --- | --- | --- | --- |
@@ -136,9 +136,12 @@ Report는 tool을 직접 호출하지 않는다. 검증된 State만 사용한다
 | `get_metrics` | `query_metrics` | `GET` | `/internal/ops/projects/{project_id}/observability/metrics` | `read_only` | no |
 | `get_deployments` | `get_recent_changes` | `GET` | `/internal/ops/projects/{project_id}/pipelines/changes` | `read_only` | no |
 | `get_connector_status` | `get_connector_status` | `GET` | `/internal/ops/projects/{project_id}/kafka/connectors/{connector_name}/status` | `read_only` | no |
+| `list_connectors` | `list_connectors` | `GET` | `/internal/ops/projects/{project_id}/kafka/connectors/status` | `read_only` | no |
 | `get_consumer_lag` | `get_consumer_lag` | `GET` | `/internal/ops/projects/{project_id}/kafka/consumer-groups/{consumer_group}/lag` | `read_only` | no |
+| `get_consumer_groups` | `get_consumer_groups` | `GET` | `/internal/ops/projects/{project_id}/kafka/consumer-groups` | `read_only` | no |
 | `get_kafka_lag` | `get_consumer_lag` | `GET` | `/internal/ops/projects/{project_id}/kafka/consumer-groups/{consumer_group}/lag` | `read_only` | no. Alias for `get_consumer_lag` |
 | `list_project_pipelines` | `list_project_pipelines` | `GET` | `/internal/ops/projects/{project_id}/pipelines` | `read_only` | no |
+| `list_pipelines` | `list_pipelines` | `GET` | `/internal/ops/projects/{project_id}/pipelines/status` | `read_only` | no |
 | `get_pipeline_topology` | `get_pipeline_topology` | `GET` | `/internal/ops/projects/{project_id}/pipelines/{pipeline_id}/topology` | `read_only` | no |
 | `get_incident_summary` | `get_incident_summary` | `GET` | `/internal/ops/incidents/{incident_id}/summary` | `read_only` | no |
 | `restart_connector` | `restart_connector` | `POST` | `/internal/ops/projects/{project_id}/connectors/{connector_name}/restart` | `high` | yes |
@@ -148,23 +151,34 @@ Report는 tool을 직접 호출하지 않는다. 검증된 State만 사용한다
 | `get_traces` | `query_traces` | `GET` | `/internal/ops/projects/{project_id}/connectors/{connector_name}/traces` | `read_only` | no |
 | `get_connector_task_trace` | `get_connector_task_trace` | `GET` | `/internal/ops/projects/{project_id}/connectors/{connector_name}/task-trace` | `read_only` | no |
 | `get_alerts` | `list_alerts` | `GET` | `/internal/ops/projects/{project_id}/observability/alerts` | `read_only` | no |
+| `analyze_event_log` | `analyze_event_log` | `GET` | `/internal/ops/projects/{project_id}/observability/events/summary` | `read_only` | no |
 
-Spring runtime read catalog는 이 중 구현된 read endpoint 8개만 반환한다.
+Spring runtime catalog는 현재 18개 operation을 반환한다(read operation + approval-gated mutation). FastAPI registry는 사용자 친화 alias(`get_metrics`, `get_deployments`, `get_alerts`, `get_traces`, `get_kafka_lag`)와 Spring catalog operation 이름을 분리할 수 있다.
 
 | Spring catalog operation | FastAPI registry 대응 |
 | --- | --- |
 | `get_consumer_lag` | `get_consumer_lag`, `get_kafka_lag` alias |
+| `get_consumer_groups` | `get_consumer_groups` |
 | `search_logs` | `search_logs` |
+| `query_metrics` | `get_metrics` |
 | `query_traces` | `get_traces` |
 | `list_alerts` | `get_alerts` |
+| `analyze_event_log` | `analyze_event_log` |
 | `get_incident_summary` | `get_incident_summary` |
 | `list_project_pipelines` | `list_project_pipelines` |
+| `list_pipelines` | `list_pipelines` |
+| `get_recent_changes` | `get_deployments` |
 | `get_pipeline_topology` | `get_pipeline_topology` |
 | `get_connector_status` | `get_connector_status` |
+| `list_connectors` | `list_connectors` |
+| `restart_connector` | `restart_connector` |
+| `pause_connector` | `pause_connector` |
+| `resume_connector` | `resume_connector` |
+| `restart_consumer_group` | `restart_consumer_group` |
 
 현재 path/operation 매핑과 result schema는 완전히 호환되지 않는다. FastAPI `ToolResult`는 strict schema를 검증하므로 그대로 호출하면 일부 read tool은 response parsing 실패가 날 수 있다. 예: Spring `get_consumer_lag`는 `consumerGroup`/`totalLag`/`source`를 반환하지만 FastAPI schema는 `consumer_group`/`total_lag`와 optional `partitions`를 요구한다. Spring `search_logs`는 `logs`/`total`/`note`를 반환하지만 FastAPI schema는 `match_count`/`summary`를 요구한다. Spring `get_connector_status`는 `connectorName`/`connectorState`/`tasks[].id`를 반환하지만 FastAPI schema는 `connector_name`/`state`/`tasks[].task_id`를 요구한다. Spring `get_incident_summary`는 `incidentId`/`status`/`note`만 반환하지만 FastAPI schema는 `incident_id`/`severity`/`trigger_event`/`related_event_count`/`grouping_key`를 요구한다. Spring `list_project_pipelines`는 bare `PipelineResponse[]`를 반환하지만 FastAPI schema는 `{"pipelines": [...]}` object를 요구한다. Spring `get_pipeline_topology`는 `pipelineId`/`sourceDbId`/`topic`/`sourceConnector`/`sinkConnector` 형태지만 FastAPI schema는 `pipeline_id`/nested `source`/`topics`/connector `cr_name` 형태를 요구한다.
 
-`get_metrics`와 `get_deployments`는 FastAPI registry에는 남아 있지만 현재 Spring `tool-catalog`와 controller endpoint에는 없다. Agent가 사용할 구현 가능 tool로 간주하면 안 된다.
+FastAPI `get_kafka_lag`는 별도 Spring operation이 아니라 `get_consumer_lag` alias다. FastAPI `get_connector_task_trace`는 Spring endpoint를 가리키지만 현재 Spring admin `tool-catalog`에는 별도 operation으로 노출되지 않는다.
 
 ### 9. Mutation Runtime Tool Catalog
 
