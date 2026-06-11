@@ -4,6 +4,7 @@ import com.bifrost.ops.auth.jwt.AuthenticatedUser;
 import com.bifrost.ops.pipeline.dto.ConnectorResponse;
 import com.bifrost.ops.pipeline.dto.ConsumerGroupInfo;
 import com.bifrost.ops.pipeline.dto.KafkaMessageRecord;
+import com.bifrost.ops.pipeline.dto.MessagePageResponse;
 import com.bifrost.ops.pipeline.dto.ConnectionGuideResponse;
 import com.bifrost.ops.pipeline.dto.PipelineCreateRequest;
 import com.bifrost.ops.pipeline.dto.PipelineMetricsResponse;
@@ -127,13 +128,27 @@ public class PipelineController {
         return pipelineTopicService.consumerGroups(wsId, principal, id);
     }
 
-    /** 토픽 최신 메시지(#126, Messages 탭). Kafka 미연결 시 빈 목록 반환. */
+    /** 토픽 최신 메시지(#126, Messages 탭). 전 파티션 최근 N 머지. Kafka 미연결 시 빈 목록 반환. */
     @GetMapping("/{id}/messages")
     public List<KafkaMessageRecord> messages(@PathVariable UUID wsId,
                                              @PathVariable UUID id,
                                              @AuthenticationPrincipal AuthenticatedUser principal,
                                              @RequestParam(defaultValue = "20") int limit) {
         return pipelineMessageService.messages(wsId, principal, id, limit);
+    }
+
+    /**
+     * 단일 파티션 오프셋 페이징(#509, Messages 탭). {@code startOffset} 미지정 시 해당 파티션 최신 N.
+     * begin/end offset과 hasOlder/hasNewer로 과거 메시지까지 페이지 단위로 열람한다.
+     */
+    @GetMapping("/{id}/messages/page")
+    public MessagePageResponse messagePage(@PathVariable UUID wsId,
+                                           @PathVariable UUID id,
+                                           @AuthenticationPrincipal AuthenticatedUser principal,
+                                           @RequestParam int partition,
+                                           @RequestParam(required = false) Long startOffset,
+                                           @RequestParam(defaultValue = "50") int limit) {
+        return pipelineMessageService.messagePage(wsId, principal, id, partition, startOffset, limit);
     }
 
     /** Connection Guide(#303). bootstrap/auth/topic 정보를 비밀값 없이 반환한다. */

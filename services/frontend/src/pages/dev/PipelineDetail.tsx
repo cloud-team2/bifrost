@@ -16,6 +16,7 @@ import {
   type ConsumerGroupInfo,
   type EventDistPoint,
   type KafkaMessageRecord,
+  type MessagePageResponse,
   type MetricPoint,
   type PipelineMetricsResponse,
   type SyncStatusResponse,
@@ -898,19 +899,42 @@ function MessagesTab({ edge }: { edge: Edge }) {
   const [selected, setSelected] = useState<number | null>(null)
   const [rawView, setRawView] = useState(false)
 
-  // live 모드: 3초마다 새로고침
+  // (#509) 단일 파티션 선택 시 오프셋 페이징 모드. pageStart=null → 해당 파티션 최신 N.
+  const PAGE_SIZE = 50
+  const pageMode = partition !== 'all'
+  const [page, setPage] = useState<MessagePageResponse | null>(null)
+  const [pageStart, setPageStart] = useState<number | null>(null)
+  const [pageLoading, setPageLoading] = useState(false)
+
+  // 파티션을 바꾸면 페이지를 최신으로 리셋
+  useEffect(() => { setPageStart(null); setSelected(null) }, [partition])
+
+  // 페이지 모드: partition/pageStart 변경마다 결정적으로 해당 윈도우 조회
   useEffect(() => {
-    if (!live || !wsId) return
+    if (!wsId || !pageMode) { setPage(null); return }
+    let cancelled = false
+    setPageLoading(true)
+    api.pipelineMessagePage(wsId, edge.id, partition as number, pageStart, PAGE_SIZE)
+      .then((r) => { if (!cancelled) setPage(r) })
+      .catch(() => { if (!cancelled) setPage(null) })
+      .finally(() => { if (!cancelled) setPageLoading(false) })
+    return () => { cancelled = true }
+  }, [wsId, edge.id, pageMode, partition, pageStart])
+
+  // live 모드: 3초마다 새로고침 (전체 뷰에서만 — 페이징 모드는 결정적 윈도우라 자동갱신 안 함)
+  useEffect(() => {
+    if (!live || !wsId || pageMode) return
     const id = setInterval(() => {
       api.pipelineMessages(wsId, edge.id, 50)
         .then((m) => setMsgs(m))
         .catch(() => {})
     }, 3000)
     return () => clearInterval(id)
-  }, [live, wsId, edge.id])
+  }, [live, wsId, edge.id, pageMode])
 
-  const visible = msgs.filter((m) => {
-    if (partition !== 'all' && m.partition !== partition) return false
+  // 표시 소스: 전체 뷰는 최근 N 머지(msgs), 파티션 뷰는 페이지 레코드
+  const sourceMsgs = pageMode ? (page?.records ?? []) : msgs
+  const visible = sourceMsgs.filter((m) => {
     if (search && !m.key?.toLowerCase().includes(search.toLowerCase()) &&
         !JSON.stringify(m.after ?? m.before ?? '').toLowerCase().includes(search.toLowerCase())) return false
     return true
@@ -924,7 +948,22 @@ function MessagesTab({ edge }: { edge: Edge }) {
     return [...new Set(msgs.map((m) => m.partition))].sort((a, b) => a - b)
   }, [topicInfo, msgs])
 
-  const selectedMsg = selected !== null ? msgs.find((m) => m.offset === selected) ?? null : null
+  const selectedMsg = selected !== null ? sourceMsgs.find((m) => m.offset === selected) ?? null : null
+
+  // 페이징 핸들러(과거/최신 방향). startOffset 기준으로 한 페이지씩 이동.
+  function goOlder() {
+    if (!page) return
+    setSelected(null)
+    setPageStart(Math.max(page.beginOffset, page.startOffset - PAGE_SIZE))
+  }
+  function goNewer() {
+    if (!page) return
+    setSelected(null)
+    const next = page.startOffset + PAGE_SIZE
+    // 마지막 페이지를 넘어서면 최신(null)로
+    setPageStart(next + PAGE_SIZE >= page.endOffset ? null : next)
+  }
+  function goLatest() { setSelected(null); setPageStart(null) }
 
   function buildRawEnvelope(m: KafkaMessageRecord) {
     return {
@@ -985,20 +1024,26 @@ function MessagesTab({ edge }: { edge: Edge }) {
           Raw envelope
         </button>
 
-        {/* live toggle */}
+        {/* live toggle — 페이징(특정 파티션) 모드에선 결정적 윈도우라 비활성 */}
         <button
           onClick={() => setLive((v) => !v)}
+          disabled={pageMode}
+          title={pageMode ? '파티션 페이징 모드에서는 Live가 비활성화됩니다' : undefined}
           className={cn(
             'flex items-center gap-1.5 rounded border px-2.5 py-1 text-[11.5px] font-medium transition-colors',
-            live ? 'border-rose-300 bg-rose-50 text-rose-600' : 'border-gray-200 text-gray-500 hover:bg-gray-50',
+            pageMode ? 'cursor-not-allowed border-gray-200 text-gray-300'
+              : live ? 'border-rose-300 bg-rose-50 text-rose-600' : 'border-gray-200 text-gray-500 hover:bg-gray-50',
           )}
         >
-          <span className={cn('h-1.5 w-1.5 rounded-full', live ? 'animate-pulse bg-rose-500' : 'bg-gray-300')} />
-          {live ? 'Live' : 'Live'}
+          <span className={cn('h-1.5 w-1.5 rounded-full',
+            pageMode ? 'bg-gray-300' : live ? 'animate-pulse bg-rose-500' : 'bg-gray-300')} />
+          Live
         </button>
 
         <span className="ml-auto text-[11px] text-gray-400">
-          {visible.length}개 메시지
+          {pageMode && page
+            ? `P${partition} · offset ${formatNum(page.startOffset)}–${formatNum(Math.max(page.startOffset, page.startOffset + visible.length - 1))} / end ${formatNum(page.endOffset)}`
+            : `${visible.length}개 메시지`}
         </span>
       </div>
 
@@ -1012,7 +1057,7 @@ function MessagesTab({ edge }: { edge: Edge }) {
         </div>
 
         <div className="divide-y divide-gray-50">
-          {msgLoading ? (
+          {(pageMode ? pageLoading : msgLoading) ? (
             <div className="py-12 text-center text-[13px] text-gray-400">불러오는 중…</div>
           ) : visible.length === 0 ? (
             <div className="py-12 text-center text-[13px] text-gray-400">메시지가 없습니다.</div>
@@ -1082,6 +1127,39 @@ function MessagesTab({ edge }: { edge: Edge }) {
             )
           })}
         </div>
+
+        {/* (#509) 페이징 컨트롤 — 특정 파티션 선택 시. 과거~최신 전체를 페이지 단위로 열람 */}
+        {pageMode && page && (
+          <div className="flex items-center gap-2 border-t border-gray-100 bg-gray-50/60 px-4 py-2">
+            <button
+              onClick={goOlder}
+              disabled={!page.hasOlder || pageLoading}
+              className={cn('flex items-center gap-1 rounded border px-2.5 py-1 text-[11.5px] font-medium transition-colors',
+                page.hasOlder && !pageLoading ? 'border-gray-200 text-gray-600 hover:bg-white' : 'cursor-not-allowed border-gray-100 text-gray-300')}
+            >
+              <Icon name="chevron-left" size={12} />과거
+            </button>
+            <button
+              onClick={goNewer}
+              disabled={!page.hasNewer || pageLoading}
+              className={cn('flex items-center gap-1 rounded border px-2.5 py-1 text-[11.5px] font-medium transition-colors',
+                page.hasNewer && !pageLoading ? 'border-gray-200 text-gray-600 hover:bg-white' : 'cursor-not-allowed border-gray-100 text-gray-300')}
+            >
+              최신<Icon name="chevron-right" size={12} />
+            </button>
+            <button
+              onClick={goLatest}
+              disabled={!page.hasNewer || pageLoading}
+              className={cn('rounded border px-2.5 py-1 text-[11.5px] font-medium transition-colors',
+                page.hasNewer && !pageLoading ? 'border-gray-200 text-gray-600 hover:bg-white' : 'cursor-not-allowed border-gray-100 text-gray-300')}
+            >
+              맨 끝(최신)
+            </button>
+            <span className="ml-auto font-mono text-[11px] text-gray-400">
+              begin {formatNum(page.beginOffset)} · end {formatNum(page.endOffset)}
+            </span>
+          </div>
+        )}
       </div>
     </div>
   )

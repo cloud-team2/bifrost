@@ -234,6 +234,16 @@ export interface KafkaMessageRecord {
   before: Record<string, unknown> | null
   after: Record<string, unknown> | null
 }
+/** 메시지 브라우저 페이지(#509). 단일 파티션 오프셋 윈도우 + 페이징 메타. */
+export interface MessagePageResponse {
+  records: KafkaMessageRecord[]
+  partition: number
+  startOffset: number
+  beginOffset: number
+  endOffset: number
+  hasOlder: boolean
+  hasNewer: boolean
+}
 /** 파이프라인 메트릭(#126). */
 export interface PipelineMetricsResponse {
   produceRate: number
@@ -596,6 +606,10 @@ export const api = {
     request<ConsumerGroupInfo[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/consumer-groups`),
   pipelineMessages: (wsId: string, id: string, limit = 20) =>
     request<KafkaMessageRecord[]>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/messages?limit=${limit}`),
+  // (#509) 단일 파티션 오프셋 페이징. startOffset 미지정 → 해당 파티션 최신 N.
+  pipelineMessagePage: (wsId: string, id: string, partition: number, startOffset: number | null, limit = 50) =>
+    request<MessagePageResponse>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/messages/page?partition=${partition}`
+      + (startOffset != null ? `&startOffset=${startOffset}` : '') + `&limit=${limit}`),
   pipelineMetrics: (wsId: string, id: string) =>
     request<PipelineMetricsResponse>('GET', `/api/v1/workspaces/${wsId}/pipelines/${id}/metrics`),
   pipelineThroughput: (wsId: string, id: string, minutes = 30) =>
