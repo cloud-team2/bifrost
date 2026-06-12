@@ -154,6 +154,21 @@ public class DatabaseService {
         OpsLog.ok("Database", "DB 삭제", "name=" + e.getName());
     }
 
+    /** 워크스페이스 삭제 전 DB/secret 정리. 파이프라인에서 사용 중이면 기존 DB 삭제 정책과 같이 거부한다. */
+    @Transactional
+    public void deleteAllForWorkspace(UUID tenantId) {
+        if (!repo.findSourceDatasourceIds(tenantId).isEmpty() || !repo.findSinkDatasourceIds(tenantId).isEmpty()) {
+            throw new ApiException(ErrorCode.VALIDATION_FAILED,
+                    "이 워크스페이스의 DB를 사용하는 파이프라인이 있습니다. 파이프라인을 먼저 삭제하세요.");
+        }
+        for (DatasourceEntity e : repo.findByTenantIdOrderByCreatedAtDesc(tenantId)) {
+            secretStore.delete(e.getSecretRef());
+            repo.delete(e);
+            OpsLog.ok("Database", "DB 삭제", "name=" + e.getName());
+        }
+        repo.flush();
+    }
+
     /** 이 DB를 source로 쓰는 파이프라인 목록(FR-018). */
     @Transactional(readOnly = true)
     public List<DatabasePipelineSummary> listPipelines(UUID tenantId, UUID dbId) {
