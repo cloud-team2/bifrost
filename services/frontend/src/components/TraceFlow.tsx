@@ -4,19 +4,11 @@ import { cn, fmtDuration } from '../lib/format'
 
 const HATCH = 'repeating-linear-gradient(45deg,#f3f4f6,#f3f4f6 5px,#e9eaed 5px,#e9eaed 10px)'
 
-// (#632) 설정 시 Grafana/Tempo로 딥링크. {traceId} 자리에 traceId를 치환한다. 미설정 시 버튼 숨김.
-const GRAFANA_TRACE_URL = import.meta.env.VITE_GRAFANA_TRACE_URL as string | undefined
-function grafanaTraceUrl(traceId: string | null): string | null {
-  if (!GRAFANA_TRACE_URL || !traceId) return null
-  return GRAFANA_TRACE_URL.replace('{traceId}', encodeURIComponent(traceId))
-}
-
 /** 데이터플레인 trace를 "지연 분해" 막대로 렌더(#614, #632). end-to-end 시간과 어디서 시간이 걸리는지 한눈에. */
 export function TraceFlow({ trace }: { trace: TraceSummaryResponse }) {
   const { segments, totalMicros, hasSink } = buildLatencyBreakdown(trace)
   const isError = trace.status === 'error'
   const errored = trace.spans.filter((s) => s.status === 'error' && s.error)
-  const grafana = grafanaTraceUrl(trace.traceId)
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4">
@@ -24,16 +16,6 @@ export function TraceFlow({ trace }: { trace: TraceSummaryResponse }) {
         <span className="text-[15px] font-semibold text-gray-900">end-to-end {fmtDuration(totalMicros)}</span>
         <span className={cn('text-[12px]', isError ? 'text-rose-500' : 'text-emerald-600')}>{isError ? '오류' : '정상'}</span>
         {trace.traceId && <span className="font-mono text-[11px] text-gray-400">{trace.traceId.slice(0, 16)}</span>}
-        {grafana && (
-          <a
-            href={grafana}
-            target="_blank"
-            rel="noreferrer"
-            className="ml-auto text-[11px] font-medium text-brand-600 hover:underline"
-          >
-            Grafana에서 전체 trace 보기 ↗
-          </a>
-        )}
       </div>
 
       <div className="mb-1.5 flex items-center justify-between text-[10.5px] text-gray-400">
