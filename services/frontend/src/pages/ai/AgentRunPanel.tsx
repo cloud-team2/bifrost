@@ -877,6 +877,7 @@ export function AgentRunPanel({
       appendText('user', feedback.userText)
       appendText('assistant', feedback.assistantText)
       setInput(feedback.input)
+      window.setTimeout(() => inputRef.current?.focus(), 0)
       return
     }
     if (route.kind === 'slash_loading' || route.kind === 'slash_error' || route.kind === 'slash_unknown') {
