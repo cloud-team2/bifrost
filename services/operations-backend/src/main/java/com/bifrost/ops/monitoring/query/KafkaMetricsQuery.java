@@ -86,8 +86,13 @@ public class KafkaMetricsQuery {
     public java.util.Map<Long, Double> sourceDelaySeries(String server, long startSec, long endSec, long stepSec) {
         // 평활화 창은 스크랩 간격(~15~30s)보다 충분히 커야 여러 스크랩을 평균내 추세가 보인다(최소 60s).
         long smoothSec = Math.max(60L, stepSec);
+        // MilliSecondsBehindSource는 이벤트 처리 시점에만 갱신되고 idle 동안 마지막 값을 유지한다(#623).
+        // 실시간 지연 그래프이므로, 해당 창에 실제로 이벤트가 흐른 버킷에서만 값을 내보내 idle 구간은 그래프를 끊는다.
+        // (totalnumberofeventsseen 증가량 > 0 으로 게이팅 → 샘플 없으면 프론트가 빈 구간으로 처리)
+        String sel = "{server=\"" + server + "\"}";
         return client.queryRange(
-                "max(avg_over_time(debezium_metrics_millisecondsbehindsource{server=\"" + server + "\"}[" + smoothSec + "s]))",
+                "max(avg_over_time(debezium_metrics_millisecondsbehindsource" + sel + "[" + smoothSec + "s]))"
+                        + " and on() (max(increase(debezium_metrics_totalnumberofeventsseen" + sel + "[" + smoothSec + "s])) > 0)",
                 startSec, endSec, stepSec);
     }
 
