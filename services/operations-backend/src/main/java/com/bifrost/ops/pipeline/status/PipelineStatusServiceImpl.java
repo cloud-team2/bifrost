@@ -258,12 +258,23 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
     }
 
     private static IncidentCause incidentCauseFromStoredMessage(PipelineEntity p, String reason) {
-        if (reason != null && reason.contains("source DB") && p.getSourceDatasourceId() != null) {
+        if (reason == null) {
+            return IncidentCause.pipeline(p);
+        }
+        if (reason.contains("source DB") && p.getSourceDatasourceId() != null) {
             return IncidentCause.datasource(p.getSourceDatasourceId());
         }
-        if (reason != null && reason.contains("sink DB") && p.getSinkDatasourceId() != null) {
+        if (reason.contains("sink DB") && p.getSinkDatasourceId() != null) {
             return IncidentCause.datasource(p.getSinkDatasourceId());
         }
+        // (#596) 커넥터 사유는 UUID 대신 역할 키워드로 매칭(메시지 정제 후에도 회복 그룹핑 유지).
+        if (reason.contains("소스 커넥터") && p.getSourceConnectorName() != null) {
+            return IncidentCause.connector(p.getSourceConnectorName());
+        }
+        if (reason.contains("싱크 커넥터") && p.getSinkConnectorName() != null) {
+            return IncidentCause.connector(p.getSinkConnectorName());
+        }
+        // 구버전 메시지(crName 직접 포함) 호환.
         String connectorName = connectorNameMentionedIn(p, reason);
         if (connectorName != null) {
             return IncidentCause.connector(connectorName);
@@ -346,13 +357,18 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
         return state == null ? "" : state.toUpperCase();
     }
 
-    /** 커넥터들 중 첫 lastError를 pipeline 상태 사유로 쓴다. 없으면 null. */
+    /** 커넥터들 중 첫 lastError를 사람이 읽을 수 있게 정제해 pipeline 상태 사유로 쓴다(#596). 없으면 null. */
     private static String firstError(List<ConnectorEntity> connectors) {
         return connectors.stream()
-                .map(ConnectorEntity::getLastError)
-                .filter(e -> e != null && !e.isBlank())
+                .filter(c -> c.getLastError() != null && !c.getLastError().isBlank())
                 .findFirst()
+                .map(c -> sanitizeConnectorError(c.getLastError()))
                 .orElse(null);
+    }
+
+    /** 커넥터 raw lastError를 사용자용 한 줄 요약으로 정제한다(#596, 공용 {@link ConnectorErrorMessages}). */
+    private static String sanitizeConnectorError(String raw) {
+        return ConnectorErrorMessages.summarize(raw);
     }
 
     private static ConnectorEntity firstFailedConnector(List<ConnectorEntity> connectors) {
@@ -365,14 +381,22 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
                 .orElse(null);
     }
 
+    /**
+     * 사용자용 커넥터 실패 사유(#596). 커넥터 UUID(crName) 대신 파이프라인명 + 역할(소스/싱크)을 쓰고,
+     * raw lastError는 {@link #sanitizeConnectorError}로 정제한다.
+     * 역할 키워드("소스/싱크 커넥터")는 {@link #incidentCauseFromStoredMessage}의 회복 매칭에도 쓰인다.
+     */
     private static String connectorFailureMessage(PipelineEntity p, ConnectorEntity connector) {
-        String connectorName = connectorName(p, connector);
-        String state = parseState(connector.getState());
-        String lastError = connector.getLastError();
-        String prefix = connectorName != null
-                ? "connector '" + connectorName + "' " + state
-                : "connector " + state;
-        return lastError == null || lastError.isBlank() ? prefix : prefix + ": " + lastError;
+        String who = connectorRoleKo(connector);
+        String summary = sanitizeConnectorError(connector.getLastError());
+        return "'" + p.getName() + "' " + who + " 오류: " + summary;
+    }
+
+    /** 커넥터 역할 표기: SOURCE→"소스 커넥터", SINK→"싱크 커넥터", 그 외→"커넥터". */
+    private static String connectorRoleKo(ConnectorEntity connector) {
+        if (connector.getKind() == com.bifrost.ops.provisioning.dto.ConnectorKind.SOURCE) return "소스 커넥터";
+        if (connector.getKind() == com.bifrost.ops.provisioning.dto.ConnectorKind.SINK) return "싱크 커넥터";
+        return "커넥터";
     }
 
     private static IncidentCause connectorIncidentCause(PipelineEntity p, ConnectorEntity connector) {

@@ -260,8 +260,39 @@ class PipelineStatusServiceImplTest {
                 eq(EventLevel.ERROR),
                 eq("Pipeline 'orders-sync' status ERROR"),
                 eq("PIPELINE_STATUS_CHANGED"),
-                org.mockito.ArgumentMatchers.contains("connector '" + pid + "-sink' FAILED"),
+                org.mockito.ArgumentMatchers.contains("싱크 커넥터 오류"),  // (#596) UUID·raw 예외 제거된 정제 메시지
                 eq(pid));
+    }
+
+    @Test
+    void connectorFailureMessageIsSanitized() {
+        // (#596) raw Strimzi 예외 → 사람이 읽는 요약, 커넥터 UUID·스택·엔드포인트 제거
+        UUID pid = UUID.randomUUID();
+        UUID tenant = UUID.randomUUID();
+        PipelineEntity p = new PipelineEntity();
+        p.setId(pid); p.setTenantId(tenant); p.setName("orders-sync");
+        p.setPattern(PipelinePattern.DIRECT); p.setStatus(PipelineLifecycle.ACTIVE);
+        p.setSourceConnectorName(pid + "-source"); p.setSinkConnectorName(pid + "-sink");
+
+        String raw = "io.strimzi.operator.cluster.operator.assembly.ConnectRestException: PUT /connectors/"
+                + pid + "-source/config returned 400 (400): Connector configuration is invalid and contains "
+                + "the following 1 error(s): The connection attempt failed. ... /connector-plugins/{connectorType}/config/validate";
+        ConnectorEntity source = connector(ConnectorKind.SOURCE, "FAILED");
+        source.setPipelineId(pid); source.setCrName(pid + "-source"); source.setLastError(raw);
+        ConnectorEntity sink = connector(ConnectorKind.SINK, "RUNNING");
+        sink.setPipelineId(pid); sink.setCrName(pid + "-sink");
+        when(connectorRepository.findByCrName(pid + "-source")).thenReturn(Optional.of(source));
+        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(pid)).thenReturn(List.of(source, sink));
+
+        service().applyConnectorStatus(new ConnectorStatusUpdate(
+                pid + "-source", ConnectorRuntimeState.FAILED, PipelineLifecycle.ERROR, 1, 1, raw));
+
+        assertThat(p.getStatusMessage())
+                .isEqualTo("'orders-sync' 소스 커넥터 오류: DB 연결 실패 (호스트·포트·네트워크 확인)");
+        assertThat(p.getStatusMessage())
+                .doesNotContain("io.strimzi").doesNotContain("ConnectRestException")
+                .doesNotContain(pid.toString());
     }
 
     @Test
