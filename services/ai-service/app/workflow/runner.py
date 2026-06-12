@@ -592,6 +592,19 @@ async def _run_workflow_impl(
                     this_plan_hashes = {s.plan_hash for s in planner_out.retrieval_plan}
                     no_progress = bool(this_plan_hashes) and this_plan_hashes <= executed_plan_hashes
                     executed_plan_hashes |= this_plan_hashes  # no_progress 계산 후 갱신
+                    if no_progress and remediation_requested and rca_out is None:
+                        # #592: 조치 후보를 요청한 run은 같은 plan 재수집으로 진전이
+                        # 없어도 클린 종료하지 않는다. 재수집을 생략하고 지금까지의
+                        # evidence로 rca→remediation→policy_guard를 이어가 조치 후보를
+                        # 제시한다(FR-022, 실행 전 정지). rca_out이 이미 있으면(verifier
+                        # loopback 재진입) 기존 클린 종료를 유지해 무한 재생성을 막는다.
+                        supervisor.force_next_stage(run_id, "rca")
+                        await _publish(bus, event_repo, run_id, _evt(
+                            run_id, StreamingEventType.PARTIAL_RESULT, "planner",
+                            "추가 수집 없이 기존 근거로 조치 후보 생성을 진행합니다",
+                            {"stage": "planner", "reason": "no_progress_remediation_continue"},
+                        ))
+                        continue
                     if no_progress:
                         answer = _no_incident_answer(retrieval_out)
                         await _append_state_patch(

@@ -54,6 +54,34 @@ def test_create_run_passes_incident_context_to_background_workflow(monkeypatch):
     assert workflow_calls[0]["requested_remediation_requested"] is True
 
 
+def test_create_run_rejects_non_uuid_project_id(monkeypatch):
+    """#592: 비 UUID project_id(예: demo-team)는 500 대신 VALIDATION_FAILED."""
+    repo = FakeRunRepo()
+    workflow_calls: list[dict[str, Any]] = []
+
+    async def fake_run_workflow(**kwargs: Any) -> None:
+        workflow_calls.append(kwargs)
+
+    monkeypatch.setattr(routes_agent, "get_run_repo", lambda: repo)
+    monkeypatch.setattr(routes_agent, "run_workflow", fake_run_workflow)
+    monkeypatch.setattr(routes_agent, "get_event_bus", lambda: object())
+    monkeypatch.setattr(routes_agent, "get_tool_registry", lambda: object())
+
+    response = client.post("/api/v1/agent/runs", json={
+        "project_id": "demo-team",
+        "mode": "incident_analysis",
+        "message": "조치 후보 보여줘",
+        "remediation_requested": True,
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "VALIDATION_FAILED"
+    assert repo.created == []
+    assert workflow_calls == []
+
+
 def test_create_run_passes_action_candidate_to_background_workflow(monkeypatch):
     repo = FakeRunRepo()
     workflow_calls: list[dict[str, Any]] = []
