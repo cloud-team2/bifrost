@@ -23,4 +23,9 @@ public final class IncidentGroupingKeys {
     public static String consumerLag(String group) {
         return "consumer-lag:" + group;
     }
+
+    /** 토픽 복제 헬스(under-replicated·offline 파티션, #633 Phase 2). */
+    public static String topicReplication(String topic) {
+        return "topic:" + topic + ":replication";
+    }
 }

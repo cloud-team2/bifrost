@@ -1,11 +1,13 @@
 """RCA assistant prompt construction."""
 from __future__ import annotations
 
+from app.prompts.domain import DOMAIN_PRIMER
+
 import json
 
 from app.catalogs.types import EvidenceProfile, RootCause
 
-SYSTEM_PROMPT = """\
+SYSTEM_PROMPT = DOMAIN_PRIMER + """\
 당신은 Bifrost RCA Assistant 다. RCA Engine 이 아니다.
 
 엄격한 제약:

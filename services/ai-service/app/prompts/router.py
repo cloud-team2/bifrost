@@ -1,11 +1,13 @@
 """Router agent prompt — 사용자 메시지를 mode + remediation_requested 로 분류."""
 from __future__ import annotations
 
+from app.prompts.domain import DOMAIN_PRIMER
+
 import json
 
 from app.schemas.state import AgentMode
 
-SYSTEM_PROMPT = """\
+SYSTEM_PROMPT = DOMAIN_PRIMER + """\
 You are the Router for Bifrost incident-response orchestration.
 사용자의 가장 최근 메시지를 정확히 하나의 mode 로 분류한다.
 

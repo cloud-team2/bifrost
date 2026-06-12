@@ -1,7 +1,9 @@
 """Report agent prompt — 최종 보고서 markdown 합성."""
 from __future__ import annotations
 
-SYSTEM_PROMPT = """\
+from app.prompts.domain import DOMAIN_PRIMER
+
+SYSTEM_PROMPT = DOMAIN_PRIMER + """\
 You are the Report agent for Bifrost.
 
 Your job: given the full run state (incident, classifier, RCA, remediation candidates,

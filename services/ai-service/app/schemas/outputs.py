@@ -69,6 +69,9 @@ class PlannerOutput(StrictModel):
 
 class RetrievalOutput(StrictModel):
     evidence_items: list[EvidenceItem]
+    # (#633) ReAct 루프가 전체 도구 결과로 합성한 답변. simple_query 최종 답으로 우선 사용한다
+    # (report 단계는 evidence 요약만 봐서 sql_read 행값 등 실데이터를 못 살리기 때문).
+    answer: str | None = None
 
 
 class IncidentTypeOutput(StrictModel):

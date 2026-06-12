@@ -7,9 +7,11 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+from app.agents.agentic import ToolCallRecord, run_tool_loop
 from app.core.config import settings
 from app.evidence.redaction import redact_payload, redact_text
 from app.knowledge.vector_store import get_vector_store
+from app.llm.provider import get_llm_provider
 from app.persistence.evidence_repository import AnyEvidenceRepo, get_evidence_repo
 from app.persistence.event_repository import AnyEventRepo, InMemoryEventRepository, append_event
 from app.schemas.events import StreamingEvent, StreamingEventType
@@ -55,6 +57,61 @@ def _has_operational_tool(plan: PlannerOutput) -> bool:
 async def _pub(bus: EventBus, repo: AnyEventRepo, run_id: str, event: StreamingEvent) -> None:
     await append_event(repo, run_id, event)
     await bus.publish(run_id, event)
+
+
+async def _evidence_from_executed(
+    run_id: str,
+    record: ToolCallRecord,
+    bus: EventBus,
+    event_repo: AnyEventRepo,
+    evidence_repo: AnyEvidenceRepo,
+) -> EvidenceItem:
+    """ReAct 루프(#633)가 이미 실행한 ToolResult 를 EvidenceItem 으로 변환 + SSE 발행.
+
+    call_step 의 성공/실패 evidence 경로를 미러한다(도구는 루프가 이미 호출했으므로 재호출 없음).
+    """
+    step_id = str(uuid4())
+    tool_name = record.tool_name
+    result = record.result
+    await _pub(bus, event_repo, run_id, StreamingEvent(
+        event_id=str(uuid4()), run_id=run_id, timestamp=datetime.now(timezone.utc),
+        type=StreamingEventType.TOOL_CALL_STARTED, agent="retrieval",
+        message=f"{tool_name} 조회 중...",
+        payload=_tool_event_payload(tool_name, step_id, record.params),
+    ))
+    evidence_id = str(uuid4())
+    failed = result.status != ToolStatus.SUCCESS
+    if failed:
+        summary = f"{tool_name}: {redact_text(result.error.message if result.error else '조회 실패')}"
+    else:
+        summary = redact_text(result.summary)
+    store_ref = await evidence_repo.put(
+        run_id=run_id, evidence_id=evidence_id, tool_name=tool_name, step_id=step_id,
+        status=result.status.value, payload=redact_payload(_raw_payload_for_store(result)),
+        failed=failed,
+    )
+    await _pub(bus, event_repo, run_id, StreamingEvent(
+        event_id=str(uuid4()), run_id=run_id, timestamp=datetime.now(timezone.utc),
+        type=(StreamingEventType.TOOL_CALL_FAILED if failed else StreamingEventType.TOOL_CALL_COMPLETED),
+        agent="retrieval", message=summary,
+        payload=_tool_event_payload(
+            tool_name, step_id, record.params, summary=summary,
+            result=result.result if tool_name in _STRUCTURED_PANEL_TOOLS else None),
+    ))
+    evidence = EvidenceItem(
+        evidence_id=evidence_id, type=EvidenceType.TOOL_RESULT, store_ref=store_ref,
+        summary=summary, redaction_status=RedactionStatus.REDACTED,
+        collected_by="retrieval", collected_at=datetime.now(timezone.utc),
+    )
+    if not failed:
+        await _pub(bus, event_repo, run_id, StreamingEvent(
+            event_id=str(uuid4()), run_id=run_id, timestamp=datetime.now(timezone.utc),
+            type=StreamingEventType.EVIDENCE_COLLECTED, agent="retrieval",
+            message=f"근거 수집: {summary[:80]}",
+            payload={"evidence_id": evidence_id, "evidence_type": evidence.type.value,
+                     "summary": summary[:80], "redaction_status": evidence.redaction_status.value},
+        ))
+    return evidence
 
 
 async def run_retrieval(
@@ -192,6 +249,27 @@ async def run_retrieval(
             )
 
         return evidence
+
+    # (#633 harness) tool-calling 가능하면 ReAct 루프로 도구를 반복 호출(chaining)해 근거를 모은다.
+    # flat plan 과 달리 한 도구 결과(예: topology 의 커넥터 이름)를 다음 도구 입력으로 잇는다.
+    # LLM 미연결 등으로 루프가 진전 못 하면 기존 flat plan 으로 폴백한다.
+    # 루프는 planner 의 flat plan 과 무관하게 스스로 도구를 고르므로 _has_operational_tool 게이트로
+    # 막지 않는다(planner 가 search_logs 같은 fallback 만 골라도 루프가 sql_read 등을 선택할 수 있게).
+    # 순수 지식 질의는 위 knowledge 단락(short-circuit)에서 이미 처리된다.
+    provider = get_llm_provider()
+    if mode in (AgentMode.SIMPLE_QUERY, AgentMode.INCIDENT_ANALYSIS) and provider.supports_tools():
+        loop_result = await run_tool_loop(
+            user_message=user_message or "", registry=registry, context=context, provider=provider,
+        )
+        if loop_result.used_llm and loop_result.calls:
+            tool_evidence = [
+                await _evidence_from_executed(run_id, rec, bus, event_repo, evidence_repo)
+                for rec in loop_result.calls
+            ]
+            return RetrievalOutput(
+                evidence_items=[*knowledge_items, *tool_evidence],
+                answer=loop_result.answer or None,
+            )
 
     # depends_on을 해석해 독립 tool은 병렬(fan-out), 의존 tool은 선행 완료 후 순차 실행
     tool_evidence = await _run_plan_steps(plan.retrieval_plan, call_step)
