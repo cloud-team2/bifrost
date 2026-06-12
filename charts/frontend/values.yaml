@@ -4,7 +4,7 @@ image:
   # in-cluster Harbor (library 프로젝트). 빌드/배포는 CICD(#123, Jenkins→Harbor→ArgoCD).
   repository: harbor.harbor.svc.cluster.local/library/bifrost-frontend
   pullPolicy: IfNotPresent
-  tag: "53c6035d"
+  tag: "99f4c3ae"
 
 imagePullSecrets:
   - name: harbor-push-secret
