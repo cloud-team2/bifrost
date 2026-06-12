@@ -13,6 +13,7 @@ from app.schemas.tools import (
     AlertsData,
     ConnectorActionData,
     ConnectorStatusListData,
+    DatasourceListData,
     ConnectorStatusData,
     ConnectorTaskTraceData,
     ConsumerGroupActionData,
@@ -64,6 +65,10 @@ class ConnectorStatusParams(ToolParams):
 
 
 class ListConnectorsParams(ToolParams):
+    pass
+
+
+class ListDatasourcesParams(ToolParams):
     pass
 
 
@@ -202,6 +207,17 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
             risk=RiskLevel.READ_ONLY,
             params_model=ListConnectorsParams,
             result_model=ConnectorStatusListData,
+            structured_result=True,
+        ),
+        # list_datasources — 프로젝트 DB 목록·헬스(#633). 'DB 현황' 질의에 답할 도구.
+        ToolDefinition(
+            name="list_datasources",
+            operation="list_datasources",
+            method="GET",
+            path_template="/internal/ops/projects/{project_id}/datasources",
+            risk=RiskLevel.READ_ONLY,
+            params_model=ListDatasourcesParams,
+            result_model=DatasourceListData,
             structured_result=True,
         ),
         ToolDefinition(

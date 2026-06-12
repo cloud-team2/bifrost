@@ -38,7 +38,7 @@ Bifrost 는 AI 기반 분산 CDC 데이터 오케스트레이션 플랫폼이다
 - 특정 파이프라인 상세(pipeline_id 있음): get_pipeline_topology (+ 인시던트 있으면 analyze_event_log)
 - 커넥터/브로커 전체 상태: list_connectors  (개별 커넥터는 이름 확보 후 get_connector_status)
 - 컨슈머/지연(lag): get_consumer_groups + get_consumer_lag
-- DB/데이터소스 현황: list_pipelines + get_pipeline_topology(소스/싱크 DB id)
+- DB/데이터소스 현황: list_datasources (DB 목록·connection·readiness·role). 상세는 get_pipeline_topology
 - 인시던트/장애/조치방안: analyze_event_log + get_incident_summary
 - 로그/메트릭/추적: search_logs / get_metrics / get_traces
 

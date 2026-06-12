@@ -54,6 +54,7 @@ class InternalOpsToolCatalogTest {
                         "get_pipeline_topology",
                         "get_connector_status",
                         "list_connectors",
+                        "list_datasources",
                         "restart_connector",
                         "pause_connector",
                         "resume_connector",
@@ -75,6 +76,7 @@ class InternalOpsToolCatalogTest {
                 tool("get_pipeline_topology", "GET", "/internal/ops/projects/{projectId}/pipelines/{pipelineId}/topology"),
                 tool("get_connector_status", "GET", "/internal/ops/projects/{projectId}/kafka/connectors/{connectorName}/status"),
                 tool("list_connectors", "GET", "/internal/ops/projects/{projectId}/kafka/connectors/status"),
+                tool("list_datasources", "GET", "/internal/ops/projects/{projectId}/datasources"),
                 tool("restart_connector", "POST", "/internal/ops/projects/{projectId}/connectors/{connectorName}/restart"),
                 tool("pause_connector", "POST", "/internal/ops/projects/{projectId}/connectors/{connectorName}/pause"),
                 tool("resume_connector", "POST", "/internal/ops/projects/{projectId}/connectors/{connectorName}/resume"),
@@ -106,6 +108,7 @@ class InternalOpsToolCatalogTest {
         context.getBeanFactory().registerSingleton("internalOpsController", controller);
         context.getBeanFactory().registerSingleton("internalOpsObservabilityController", observabilityController());
         context.getBeanFactory().registerSingleton("internalOpsPipelineController", pipelineController());
+        context.getBeanFactory().registerSingleton("internalOpsDatasourceController", datasourceController());
         context.getBeanFactory().registerSingleton("internalOpsMutationController", mutationController());
         context.getBeanFactory().registerSingleton("internalController", internalController());
         context.refresh();
@@ -149,6 +152,12 @@ class InternalOpsToolCatalogTest {
                 mock(PipelineRepository.class),
                 mock(ConnectorRepository.class),
                 mock(AdminClient.class));
+    }
+
+    private InternalOpsDatasourceController datasourceController() {
+        return new InternalOpsDatasourceController(
+                mock(WorkspaceRepository.class),
+                mock(com.bifrost.ops.database.persistence.repository.DatasourceRepository.class));
     }
 
     private InternalOpsMutationController mutationController() {

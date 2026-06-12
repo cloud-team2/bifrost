@@ -84,6 +84,7 @@ public class InternalOpsController {
                 tool("get_pipeline_topology",  "GET",  "/internal/ops/projects/{projectId}/pipelines/{pipelineId}/topology"),
                 tool("get_connector_status",   "GET",  "/internal/ops/projects/{projectId}/kafka/connectors/{connectorName}/status"),
                 tool("list_connectors",        "GET",  "/internal/ops/projects/{projectId}/kafka/connectors/status"),
+                tool("list_datasources",       "GET",  "/internal/ops/projects/{projectId}/datasources"),
                 // mutation tool (#395) — InternalOpsMutationController(#308) 실구현과 정합.
                 tool("restart_connector",      "POST", "/internal/ops/projects/{projectId}/connectors/{connectorName}/restart"),
                 tool("pause_connector",        "POST", "/internal/ops/projects/{projectId}/connectors/{connectorName}/pause"),
