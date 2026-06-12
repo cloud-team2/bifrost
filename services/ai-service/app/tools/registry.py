@@ -126,6 +126,8 @@ class ToolDefinition:
     requires_approval: bool = False
     alias_for: str | None = None
     structured_result: bool = False
+    # 사용자 노출용 한 문장 설명 — 카탈로그 API·슬래시 커맨드 드롭다운(#599).
+    description: str = ""
 
     def validate_params(self, params: dict[str, Any]) -> BaseModel:
         return self.params_model.model_validate(params)
@@ -156,6 +158,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         # ── catalog §8.1 Observability ──────────────────────────────────────
         ToolDefinition(
             name="search_logs",
+            description="파이프라인 로그를 키워드·기간 조건으로 검색합니다.",
             operation="search_logs",
             method="POST",
             path_template="/internal/ops/projects/{project_id}/observability/logs/search",
@@ -166,6 +169,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ),
         ToolDefinition(
             name="get_metrics",
+            description="프로젝트 운영 메트릭(처리량·지연 등)을 조회합니다.",
             operation="query_metrics",
             method="GET",
             path_template="/internal/ops/projects/{project_id}/observability/metrics",
@@ -176,6 +180,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         # ── catalog §8.2 Pipeline / Change ──────────────────────────────────
         ToolDefinition(
             name="get_deployments",
+            description="최근 파이프라인 배포·설정 변경 이력을 조회합니다.",
             operation="get_recent_changes",
             method="GET",
             path_template="/internal/ops/projects/{project_id}/pipelines/changes",
@@ -186,6 +191,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         # ── catalog §8.3 Kafka / Kafka Connect ──────────────────────────────
         ToolDefinition(
             name="get_connector_status",
+            description="지정 Connector의 상태와 Task 정보를 조회합니다.",
             operation="get_connector_status",
             method="GET",
             path_template="/internal/ops/projects/{project_id}/kafka/connectors/{connector_name}/status",
@@ -196,6 +202,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ),
         ToolDefinition(
             name="list_connectors",
+            description="Kafka Connector 상태 및 Task 정보를 조회합니다.",
             operation="list_connectors",
             method="GET",
             path_template="/internal/ops/projects/{project_id}/kafka/connectors/status",
@@ -206,6 +213,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ),
         ToolDefinition(
             name="get_consumer_lag",
+            description="지정 Consumer Group의 파티션별 lag을 조회합니다.",
             operation="get_consumer_lag",
             method="GET",
             path_template="/internal/ops/projects/{project_id}/kafka/consumer-groups/{consumer_group}/lag",
@@ -216,6 +224,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ),
         ToolDefinition(
             name="get_consumer_groups",
+            description="Consumer Group의 lag 현황과 상태를 조회합니다.",
             operation="get_consumer_groups",
             method="GET",
             path_template="/internal/ops/projects/{project_id}/kafka/consumer-groups",
@@ -226,6 +235,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ),
         ToolDefinition(
             name="get_kafka_lag",
+            description="지정 Consumer Group의 파티션별 lag을 조회합니다.",
             operation="get_consumer_lag",
             method="GET",
             path_template="/internal/ops/projects/{project_id}/kafka/consumer-groups/{consumer_group}/lag",
@@ -238,6 +248,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         # ── catalog §8.4 Pipeline read (Spring PR #154) ──────────────────────
         ToolDefinition(
             name="list_project_pipelines",
+            description="프로젝트의 파이프라인 목록을 조회합니다.",
             operation="list_project_pipelines",
             method="GET",
             path_template="/internal/ops/projects/{project_id}/pipelines",
@@ -247,6 +258,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ),
         ToolDefinition(
             name="list_pipelines",
+            description="현재 프로젝트의 파이프라인 상태를 조회합니다.",
             operation="list_pipelines",
             method="GET",
             path_template="/internal/ops/projects/{project_id}/pipelines/status",
@@ -257,6 +269,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ),
         ToolDefinition(
             name="get_pipeline_topology",
+            description="지정 파이프라인의 토폴로지(source→topic→sink 구성)를 조회합니다.",
             operation="get_pipeline_topology",
             method="GET",
             path_template="/internal/ops/projects/{project_id}/pipelines/{pipeline_id}/topology",
@@ -268,6 +281,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         # ── catalog §8.5 Incident summary (Spring PR #157) ───────────────────
         ToolDefinition(
             name="get_incident_summary",
+            description="지정 인시던트의 요약 정보를 조회합니다.",
             operation="get_incident_summary",
             method="GET",
             path_template="/internal/ops/incidents/{incident_id}/summary",
@@ -279,6 +293,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         # ── catalog §8.6 Mutation — Kafka Connect 운영 조치 ──────────────────
         ToolDefinition(
             name="restart_connector",
+            description="지정 Connector를 재시작합니다. (승인 필요)",
             operation="restart_connector",
             method="POST",
             path_template="/internal/ops/projects/{project_id}/connectors/{connector_name}/restart",
@@ -290,6 +305,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ),
         ToolDefinition(
             name="pause_connector",
+            description="지정 Connector를 일시 중지합니다. (승인 필요)",
             operation="pause_connector",
             method="POST",
             path_template="/internal/ops/projects/{project_id}/connectors/{connector_name}/pause",
@@ -301,6 +317,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ),
         ToolDefinition(
             name="resume_connector",
+            description="일시 중지된 Connector를 재개합니다. (승인 필요)",
             operation="resume_connector",
             method="POST",
             path_template="/internal/ops/projects/{project_id}/connectors/{connector_name}/resume",
@@ -312,6 +329,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ),
         ToolDefinition(
             name="restart_consumer_group",
+            description="지정 Consumer Group을 재시작합니다. (승인 필요)",
             operation="restart_consumer_group",
             method="POST",
             path_template="/internal/ops/projects/{project_id}/kafka/consumer-groups/{consumer_group}/restart",
@@ -323,6 +341,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ),
         ToolDefinition(
             name="get_traces",
+            description="지정 Connector의 최근 trace 이벤트를 조회합니다.",
             operation="query_traces",
             method="GET",
             path_template="/internal/ops/projects/{project_id}/connectors/{connector_name}/traces",
@@ -335,6 +354,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         # 에러 근거(Connect task 예외 stack trace)를 분산 trace(get_traces, Tempo)와 분리한다.
         ToolDefinition(
             name="get_connector_task_trace",
+            description="지정 Connector의 Task 단위 trace를 조회합니다.",
             operation="get_connector_task_trace",
             method="GET",
             path_template="/internal/ops/projects/{project_id}/connectors/{connector_name}/task-trace",
@@ -345,6 +365,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ),
         ToolDefinition(
             name="get_alerts",
+            description="프로젝트의 최근 알림(alert) 목록을 조회합니다.",
             operation="list_alerts",
             method="GET",
             path_template="/internal/ops/projects/{project_id}/observability/alerts",
@@ -354,6 +375,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ),
         ToolDefinition(
             name="analyze_event_log",
+            description="최근 2시간 이벤트 로그와 인시던트 현황을 분석합니다.",
             operation="analyze_event_log",
             method="GET",
             path_template="/internal/ops/projects/{project_id}/observability/events/summary",
