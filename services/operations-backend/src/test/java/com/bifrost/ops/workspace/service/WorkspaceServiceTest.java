@@ -1,6 +1,8 @@
 package com.bifrost.ops.workspace.service;
 
 import com.bifrost.ops.auth.jwt.AuthenticatedUser;
+import com.bifrost.ops.auth.persistence.repository.UserRepository;
+import com.bifrost.ops.database.service.DatabaseService;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
 import com.bifrost.ops.pipeline.PipelineLifecycle;
@@ -15,6 +17,7 @@ import com.bifrost.ops.workspace.dto.WorkspaceUpdateRequest;
 import com.bifrost.ops.workspace.persistence.entity.ProjectMemberEntity;
 import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
 import com.bifrost.ops.workspace.persistence.repository.ProjectMemberRepository;
+import com.bifrost.ops.workspace.persistence.repository.WorkspaceCleanupRepository;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -30,6 +33,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -40,9 +45,13 @@ class WorkspaceServiceTest {
     @Mock private PipelineRepository pipelineRepository;
     @Mock private TenantProvisionerPort tenantProvisioner;
     @Mock private WorkspaceAccessGuard accessGuard;
+    @Mock private UserRepository userRepository;
+    @Mock private DatabaseService databaseService;
+    @Mock private WorkspaceCleanupRepository cleanupRepository;
 
     private WorkspaceService service() {
-        return new WorkspaceService(workspaceRepository, memberRepository, pipelineRepository, tenantProvisioner, accessGuard);
+        return new WorkspaceService(workspaceRepository, memberRepository, pipelineRepository, tenantProvisioner,
+                accessGuard, userRepository, databaseService, cleanupRepository);
     }
 
     private final UUID userId = UUID.randomUUID();
@@ -165,6 +174,71 @@ class WorkspaceServiceTest {
         WorkspaceResponse out = service().update(wsId, principal, new WorkspaceUpdateRequest(null, "   "));
 
         assertThat(out.timezone()).isNull();
+    }
+
+    @Test
+    void deleteRemovesEmptyNonHomeWorkspace() {
+        UUID wsId = UUID.randomUUID();
+        WorkspaceEntity workspace = entity(wsId, "Team A", "team-a");
+        when(memberRepository.existsByIdWorkspaceIdAndIdUserIdAndRoleIn(wsId, userId, List.of(Role.OWNER, Role.ADMIN)))
+                .thenReturn(true);
+        when(workspaceRepository.findById(wsId)).thenReturn(Optional.of(workspace));
+        when(pipelineRepository.countByTenantIdAndStatus(wsId, PipelineLifecycle.ACTIVE)).thenReturn(0L);
+        when(pipelineRepository.countByTenantId(wsId)).thenReturn(0L);
+        when(userRepository.existsByTenantId(wsId)).thenReturn(false);
+
+        service().delete(wsId, principal);
+
+        verify(databaseService).deleteAllForWorkspace(wsId);
+        verify(cleanupRepository).deleteWorkspaceMetadata(wsId);
+        verify(tenantProvisioner).deprovision(wsId);
+    }
+
+    @Test
+    void deleteRejectsWorkspaceWithActivePipelines() {
+        UUID wsId = UUID.randomUUID();
+        when(memberRepository.existsByIdWorkspaceIdAndIdUserIdAndRoleIn(wsId, userId, List.of(Role.OWNER, Role.ADMIN)))
+                .thenReturn(true);
+        when(workspaceRepository.findById(wsId)).thenReturn(Optional.of(entity(wsId, "Team A", "team-a")));
+        when(pipelineRepository.countByTenantIdAndStatus(wsId, PipelineLifecycle.ACTIVE)).thenReturn(1L);
+
+        assertThatThrownBy(() -> service().delete(wsId, principal))
+                .isInstanceOfSatisfying(ApiException.class, e ->
+                        assertThat(e.code()).isEqualTo(ErrorCode.VALIDATION_FAILED));
+        verify(cleanupRepository, never()).deleteWorkspaceMetadata(any());
+    }
+
+    @Test
+    void deleteRejectsHomeWorkspace() {
+        UUID wsId = principal.tenantId();
+        when(memberRepository.existsByIdWorkspaceIdAndIdUserIdAndRoleIn(wsId, userId, List.of(Role.OWNER, Role.ADMIN)))
+                .thenReturn(true);
+        when(workspaceRepository.findById(wsId)).thenReturn(Optional.of(entity(wsId, "Team A", "team-a")));
+        when(pipelineRepository.countByTenantIdAndStatus(wsId, PipelineLifecycle.ACTIVE)).thenReturn(0L);
+        when(pipelineRepository.countByTenantId(wsId)).thenReturn(0L);
+
+        assertThatThrownBy(() -> service().delete(wsId, principal))
+                .isInstanceOfSatisfying(ApiException.class, e ->
+                        assertThat(e.code()).isEqualTo(ErrorCode.VALIDATION_FAILED));
+        verify(tenantProvisioner, never()).deprovision(any());
+        verify(cleanupRepository, never()).deleteWorkspaceMetadata(any());
+    }
+
+    @Test
+    void deleteDoesNotDeprovisionWhenLocalCleanupFails() {
+        UUID wsId = UUID.randomUUID();
+        when(memberRepository.existsByIdWorkspaceIdAndIdUserIdAndRoleIn(wsId, userId, List.of(Role.OWNER, Role.ADMIN)))
+                .thenReturn(true);
+        when(workspaceRepository.findById(wsId)).thenReturn(Optional.of(entity(wsId, "Team A", "team-a")));
+        when(pipelineRepository.countByTenantIdAndStatus(wsId, PipelineLifecycle.ACTIVE)).thenReturn(0L);
+        when(pipelineRepository.countByTenantId(wsId)).thenReturn(0L);
+        when(userRepository.existsByTenantId(wsId)).thenReturn(false);
+        doThrow(new IllegalStateException("cleanup failed")).when(cleanupRepository).deleteWorkspaceMetadata(wsId);
+
+        assertThatThrownBy(() -> service().delete(wsId, principal))
+                .isInstanceOf(IllegalStateException.class);
+        verify(databaseService).deleteAllForWorkspace(wsId);
+        verify(tenantProvisioner, never()).deprovision(any());
     }
 
     private static WorkspaceEntity entity(UUID id, String name, String namespace) {

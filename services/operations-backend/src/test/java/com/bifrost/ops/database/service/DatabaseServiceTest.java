@@ -180,6 +180,37 @@ class DatabaseServiceTest {
         });
     }
 
+    @Test
+    void deleteAllForWorkspaceRemovesDatasourcesAndSecretsWhenUnused() {
+        DatasourceEntity one = entity("orders", DbType.POSTGRESQL);
+        DatasourceEntity two = entity("warehouse", DbType.MARIADB);
+        one.setSecretRef("ref-orders");
+        two.setSecretRef("ref-warehouse");
+        when(repo.findSourceDatasourceIds(ws)).thenReturn(List.of());
+        when(repo.findSinkDatasourceIds(ws)).thenReturn(List.of());
+        when(repo.findByTenantIdOrderByCreatedAtDesc(ws)).thenReturn(List.of(one, two));
+
+        service.deleteAllForWorkspace(ws);
+
+        verify(secretStore).delete(one.getSecretRef());
+        verify(secretStore).delete(two.getSecretRef());
+        verify(repo).delete(one);
+        verify(repo).delete(two);
+        verify(repo).flush();
+    }
+
+    @Test
+    void deleteAllForWorkspaceRejectsDatasourcesUsedByPipelines() {
+        UUID dbId = UUID.randomUUID();
+        when(repo.findSourceDatasourceIds(ws)).thenReturn(List.of(dbId));
+
+        assertThatThrownBy(() -> service.deleteAllForWorkspace(ws))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).code()).isEqualTo(ErrorCode.VALIDATION_FAILED));
+        verify(secretStore, never()).delete(any());
+        verify(repo, never()).delete(any());
+    }
+
     private DatasourceEntity entity(String name, DbType type) {
         DatasourceEntity e = new DatasourceEntity();
         e.setId(UUID.randomUUID());

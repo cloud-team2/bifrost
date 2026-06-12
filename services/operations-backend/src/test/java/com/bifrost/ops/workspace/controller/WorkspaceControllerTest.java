@@ -76,6 +76,16 @@ class WorkspaceControllerTest {
     }
 
     @Test
+    void deleteDelegatesAndReturns204() {
+        UUID wsId = UUID.randomUUID();
+
+        ResponseEntity<Void> resp = controller.delete(wsId, principal);
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(204);
+        verify(service).delete(wsId, principal);
+    }
+
+    @Test
     void memberEndpointsDelegateWithExpectedStatusCodes() {
         UUID wsId = UUID.randomUUID();
         UUID userId = UUID.randomUUID();

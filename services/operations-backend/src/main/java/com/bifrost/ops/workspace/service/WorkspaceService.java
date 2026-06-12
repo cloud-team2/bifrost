@@ -1,6 +1,8 @@
 package com.bifrost.ops.workspace.service;
 
 import com.bifrost.ops.auth.jwt.AuthenticatedUser;
+import com.bifrost.ops.auth.persistence.repository.UserRepository;
+import com.bifrost.ops.database.service.DatabaseService;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
 import com.bifrost.ops.global.common.log.OpsLog;
@@ -17,12 +19,15 @@ import com.bifrost.ops.workspace.dto.WorkspaceUpdateRequest;
 import com.bifrost.ops.workspace.persistence.entity.ProjectMemberEntity;
 import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
 import com.bifrost.ops.workspace.persistence.repository.ProjectMemberRepository;
+import com.bifrost.ops.workspace.persistence.repository.WorkspaceCleanupRepository;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.List;
 import java.util.UUID;
@@ -44,17 +49,26 @@ public class WorkspaceService {
     private final PipelineRepository pipelineRepository;
     private final TenantProvisionerPort tenantProvisioner;
     private final WorkspaceAccessGuard accessGuard;
+    private final UserRepository userRepository;
+    private final DatabaseService databaseService;
+    private final WorkspaceCleanupRepository cleanupRepository;
 
     public WorkspaceService(WorkspaceRepository workspaceRepository,
                             ProjectMemberRepository memberRepository,
                             PipelineRepository pipelineRepository,
                             TenantProvisionerPort tenantProvisioner,
-                            WorkspaceAccessGuard accessGuard) {
+                            WorkspaceAccessGuard accessGuard,
+                            UserRepository userRepository,
+                            DatabaseService databaseService,
+                            WorkspaceCleanupRepository cleanupRepository) {
         this.workspaceRepository = workspaceRepository;
         this.memberRepository = memberRepository;
         this.pipelineRepository = pipelineRepository;
         this.tenantProvisioner = tenantProvisioner;
         this.accessGuard = accessGuard;
+        this.userRepository = userRepository;
+        this.databaseService = databaseService;
+        this.cleanupRepository = cleanupRepository;
     }
 
     /** 로그인 사용자가 소유한 워크스페이스 목록(생성순). 카드 요약용 파이프라인 카운트 포함(#105). */
@@ -133,6 +147,56 @@ public class WorkspaceService {
             workspace.setTimezone(req.timezone().isBlank() ? null : req.timezone().trim());
         }
         return withCounts(workspaceRepository.saveAndFlush(workspace));
+    }
+
+    /**
+     * 워크스페이스 삭제. 기존 delete 패턴과 같이 hard delete이며, 파이프라인과 home workspace는 먼저 정리해야 한다.
+     */
+    @Transactional
+    public void delete(UUID wsId, AuthenticatedUser principal) {
+        requireManager(wsId, principal);
+        WorkspaceEntity workspace = workspaceRepository.findById(wsId)
+                .orElseThrow(() -> new ApiException(ErrorCode.WORKSPACE_NOT_FOUND, "워크스페이스를 찾을 수 없습니다"));
+
+        long activePipelines = pipelineRepository.countByTenantIdAndStatus(wsId, PipelineLifecycle.ACTIVE);
+        if (activePipelines > 0) {
+            throw new ApiException(ErrorCode.VALIDATION_FAILED,
+                    "활성 파이프라인이 있는 워크스페이스는 삭제할 수 없습니다. 파이프라인을 먼저 삭제하세요.");
+        }
+        if (pipelineRepository.countByTenantId(wsId) > 0) {
+            throw new ApiException(ErrorCode.VALIDATION_FAILED,
+                    "파이프라인이 있는 워크스페이스는 삭제할 수 없습니다. 파이프라인을 먼저 삭제하세요.");
+        }
+        if (wsId.equals(principal.tenantId()) || userRepository.existsByTenantId(wsId)) {
+            throw new ApiException(ErrorCode.VALIDATION_FAILED,
+                    "사용자의 home 워크스페이스는 삭제할 수 없습니다.");
+        }
+
+        databaseService.deleteAllForWorkspace(wsId);
+        cleanupRepository.deleteWorkspaceMetadata(wsId);
+        deprovisionAfterCommit(wsId);
+        OpsLog.ok("Project", "프로젝트 삭제",
+                "name=" + workspace.getName() + ", namespace=" + workspace.getNamespace() + ", wsId=" + wsId);
+    }
+
+    private void deprovisionAfterCommit(UUID wsId) {
+        Runnable task = () -> {
+            try {
+                tenantProvisioner.deprovision(wsId);
+            } catch (Exception e) {
+                log.warn("워크스페이스 외부 리소스 정리 실패 — workspace {}", wsId, e);
+            }
+        };
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            task.run();
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                task.run();
+            }
+        });
     }
 
     private void requireManager(UUID wsId, AuthenticatedUser principal) {
