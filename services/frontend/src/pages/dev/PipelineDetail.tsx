@@ -290,20 +290,40 @@ function TopicTab({ edge }: { edge: Edge }) {
   const isrPct = topicInfo?.isrPct ?? 100
   const isrOk = isrPct >= 100
 
-  // EDA 핵심 지표: Debezium MilliSecondsBehindSource 추이
+  // EDA 핵심 지표: Debezium MilliSecondsBehindSource 추이. 범위는 overview처럼 5/15/30/1h/3h 선택.
+  const [delayRangeMin, setDelayRangeMin] = useState(15)
   const [sourceDelaySeries, setSourceDelaySeries] = useState<MetricPoint[]>([])
   useEffect(() => {
     if (!wsId) return
     let cancelled = false
     const load = () => {
-      api.pipelineSourceDelay(wsId, edge.id).then((d) => { if (!cancelled) setSourceDelaySeries(d) }).catch(() => {})
+      api.pipelineSourceDelay(wsId, edge.id, delayRangeMin).then((d) => { if (!cancelled) setSourceDelaySeries(d) }).catch(() => {})
     }
     load()
     const timer = setInterval(load, 10000)
     return () => { cancelled = true; clearInterval(timer) }
-  }, [wsId, edge.id])
+  }, [wsId, edge.id, delayRangeMin])
 
-  const sourceDelayData = sourceDelaySeries.map((p) => ({ t: p.timestamp, delay: p.value >= 0 ? p.value : null }))
+  // 소스 지연(Grafana식): 선택 창 전체를 고정 시간축으로 깔고, 데이터가 흐른 버킷에만 값을,
+  // idle 버킷은 null로 둬 선을 끊는다(connectNulls=false). 백엔드는 흐른 버킷만 반환하므로
+  // 여기서 창 전체 그리드를 재구성해 빈 구간을 명시적으로 null 처리한다.
+  const sourceDelayWindow = useMemo(() => {
+    const stepMs = Math.max(15, delayRangeMin) * 1000 // 백엔드 stepFor(min)=max(15,min)s 와 동일 해상도
+    const now = Date.now()
+    const start = now - delayRangeMin * 60 * 1000
+    const byBucket = new Map<number, number>()
+    for (const p of sourceDelaySeries) {
+      if (p.value < 0) continue // -1 = idle 센티넬
+      byBucket.set(Math.round((p.timestamp - start) / stepMs), p.value)
+    }
+    const n = Math.ceil((now - start) / stepMs)
+    const data: { t: number; delay: number | null }[] = []
+    for (let b = 0; b <= n; b++) {
+      data.push({ t: start + b * stepMs, delay: byBucket.has(b) ? (byBucket.get(b) as number) : null })
+    }
+    return { data, domain: [start, now] as [number, number], hasData: byBucket.size > 0 }
+  }, [sourceDelaySeries, delayRangeMin])
+  const sourceDelayData = sourceDelayWindow.data
 
   return (
     <div className="space-y-4">
@@ -379,10 +399,10 @@ function TopicTab({ edge }: { edge: Edge }) {
 
       {/* EDA 지표: Debezium MilliSecondsBehindSource(소스 지연) 추이 */}
       <Panel title="Source Delay"
-        right={<span className="text-[12px] text-gray-400">Debezium MilliSecondsBehindSource · 최근 2시간</span>}>
-        {sourceDelayData.length === 0 ? (
+        right={<RangeSelector value={delayRangeMin} onChange={setDelayRangeMin} />}>
+        {!sourceDelayWindow.hasData ? (
           <div className="px-5 py-8 text-center text-[12.5px] text-gray-400">
-            지표 없음 — Prometheus 미연동이거나 파이프라인이 아직 활성화되지 않았습니다
+            지표 없음 — 선택한 기간 동안 흐른 데이터가 없습니다 (Prometheus 미연동이거나 idle)
           </div>
         ) : (
           <div className="px-5 pb-4 pt-2">
@@ -391,6 +411,8 @@ function TopicTab({ edge }: { edge: Edge }) {
               series={[{ key: 'delay', label: '소스 지연 (ms)', color: CHART_COLORS.violet }]}
               height={160}
               timeAxis
+              xDomain={sourceDelayWindow.domain}
+              showDots
             />
           </div>
         )}
