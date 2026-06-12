@@ -70,9 +70,6 @@ spec:
     // Kafka Connect 커스텀 이미지(#425)가 push하는 고정 버전 태그. KafkaConnect spec.image가
     // 참조하는 값(infra/k8s/kafka/kafka-connect.yaml)과 일치해야 한다 — 이미지가 바뀌면 둘을 함께 bump.
     CONNECT_TAG = '1.0.0-converter'
-    // (#632) frontend Grafana trace 딥링크 URL({traceId} 치환). 비우면 tracing 탭 딥링크 버튼 숨김.
-    //   실제 Grafana/Tempo Explore URL로 채울 것. 예: https://grafana.<cluster>/explore?...{traceId}...
-    GRAFANA_TRACE_URL = ''
   }
 
   options {
@@ -132,14 +129,11 @@ spec:
               // kaniko가 rootfs를 덮어 다음 빌드 셸이 사라지는 문제를 컨테이너 격리로 회피.
               for (svc in env.TO_BUILD.trim().split(' ')) {
                 def ctx = (svc == 'operations-backend') ? "${WORKSPACE}" : "${WORKSPACE}/services/${svc}"
-                // (#632) frontend만 Grafana 딥링크 URL을 빌드타임 주입(VITE_*는 build 시 정적으로 박힘). 비면 생략(버튼 숨김).
-                def buildArgs = (svc == 'frontend' && env.GRAFANA_TRACE_URL?.trim()) ? "--build-arg VITE_GRAFANA_TRACE_URL='${env.GRAFANA_TRACE_URL}'" : ''
                 container("kaniko-${svc}") {
                   sh """
                     /kaniko/executor \
                       --context=dir://${ctx} \
                       --dockerfile=${WORKSPACE}/services/${svc}/Dockerfile \
-                      ${buildArgs} \
                       --destination=${HARBOR}/${PROJECT}/bifrost-${svc}:${TAG} \
                       --destination=${HARBOR}/${PROJECT}/bifrost-${svc}:latest \
                       --insecure --skip-tls-verify --insecure-pull
