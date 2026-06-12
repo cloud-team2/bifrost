@@ -7,7 +7,7 @@ from fastapi import APIRouter, BackgroundTasks
 from pydantic import BaseModel
 
 from app.persistence.run_repository import get_run_repo
-from app.schemas import ApiResponse, ErrorCode
+from app.schemas import ApiResponse
 from app.schemas.state import AgentMode
 from app.streaming.event_bus import get_event_bus
 from app.tools.registry import get_tool_registry
@@ -98,18 +98,4 @@ async def trigger_approval_decision(req: ApprovalDecisionRequest, background_tas
         "mode": AgentMode.APPROVAL_DECISION.value,
         "event_stream_url": f"/api/v1/agent/runs/{run_id}/events",
         "status": "running",
-    })
-
-
-@router.get("/runs/{run_id}/actions")
-def list_run_actions(run_id: str) -> ApiResponse:
-    """run에 연관된 action 후보를 조회한다 (현재는 run 상태만 반환)."""
-    request_id = _req_id()
-    rec = get_run_repo().get(run_id)
-    if rec is None:
-        return ApiResponse.failure(request_id, ErrorCode.RUN_NOT_FOUND, f"run not found: {run_id}")
-    return ApiResponse.success(request_id, {
-        "run_id": run_id,
-        "status": rec.status,
-        "mode": rec.mode,
     })
