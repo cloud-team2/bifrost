@@ -1,14 +1,22 @@
-import type { TraceSpanResponse } from './api'
+import type { TraceSpanResponse, TraceSummaryResponse } from './api'
 
-/** Flow 단계뷰(#565)용 단계 모델. 데이터플레인 trace를 source→topic→sink 흐름으로 환산. */
+/** 지연 분해 막대(#614)용 세그먼트 상태. */
 export type FlowStatus = 'ok' | 'error' | 'neutral'
 
-export interface FlowStage {
-  id: 'source' | 'publish' | 'topic' | 'consume' | 'sink'
+export interface LatencySegment {
+  key: 'publish' | 'transit' | 'consume'
   label: string
-  kind: 'endpoint' | 'span' // endpoint=개념 노드(span 없음), span=실제 측정 구간
-  durationMs: number | null
+  service: string | null
+  ms: number
+  /** false면 직접 측정값이 아니라 총시간에서 추정한 구간(topic·전파). */
+  measured: boolean
   status: FlowStatus
+}
+
+export interface LatencyBreakdown {
+  segments: LatencySegment[]
+  totalMs: number
+  hasSink: boolean
 }
 
 const PUBLISH_RE = /publish|produce|send/i
@@ -20,28 +28,31 @@ function statusOf(s?: TraceSpanResponse): FlowStatus {
 }
 
 /**
- * span 목록을 flow 단계로 환산한다. publish(소스 produce) / consume(싱크 consume) span을
- * 이름 규칙으로 식별하고, 규칙에 안 맞으면 순서로 추정한다. span이 없으면 빈 배열.
+ * 데이터플레인 trace를 "지연 분해" 막대용 세그먼트로 환산한다(#614).
+ * publish(소스 produce)/consume(싱크 consume) span을 이름 규칙으로 식별하고, 규칙에 안 맞으면 순서로 추정한다.
+ * 측정 구간(Debezium/Sink) 사이의 미측정 구간(topic·전파)은 총시간에서 측정합을 빼 추정한다.
+ * span 시작시각이 없어 실제 waterfall은 만들 수 없으므로 "어디서 시간이 걸리나"만 보여준다.
  */
-export function buildFlowStages(spans: TraceSpanResponse[]): FlowStage[] {
-  if (spans.length === 0) return []
-
+export function buildLatencyBreakdown(trace: TraceSummaryResponse): LatencyBreakdown {
+  const spans = trace.spans
   const publish = spans.find((s) => PUBLISH_RE.test(s.name))
   const consume = spans.find((s) => s !== publish && CONSUME_RE.test(s.name))
   const rest = spans.filter((s) => s !== publish && s !== consume)
   const pub = publish ?? rest.shift()
   const con = consume ?? rest.shift()
 
-  const stages: FlowStage[] = [
-    { id: 'source', label: 'Source DB', kind: 'endpoint', durationMs: null, status: statusOf(pub) },
-  ]
+  const segments: LatencySegment[] = []
   if (pub) {
-    stages.push({ id: 'publish', label: 'Debezium', kind: 'span', durationMs: pub.durationMs, status: statusOf(pub) })
+    segments.push({ key: 'publish', label: 'Debezium', service: pub.service, ms: pub.durationMs, measured: true, status: statusOf(pub) })
   }
-  stages.push({ id: 'topic', label: 'Topic', kind: 'endpoint', durationMs: null, status: 'neutral' })
+  const measured = (pub?.durationMs ?? 0) + (con?.durationMs ?? 0)
+  const transitMs = Math.max(0, Math.round(trace.durationMs - measured))
+  if (pub && transitMs > 0) {
+    segments.push({ key: 'transit', label: 'topic·전파', service: null, ms: transitMs, measured: false, status: 'neutral' })
+  }
   if (con) {
-    stages.push({ id: 'consume', label: 'Sink', kind: 'span', durationMs: con.durationMs, status: statusOf(con) })
-    stages.push({ id: 'sink', label: 'Sink DB', kind: 'endpoint', durationMs: null, status: statusOf(con) })
+    segments.push({ key: 'consume', label: 'Sink', service: con.service, ms: con.durationMs, measured: true, status: statusOf(con) })
   }
-  return stages
+
+  return { segments, totalMs: trace.durationMs, hasSink: !!con }
 }
