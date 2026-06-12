@@ -20,3 +20,11 @@ export function formatNum(n: number): string {
 export function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n))
 }
+
+/** trace span 시간 표시(#632): 1ms 미만은 µs, 그 이상은 소수 ms(트레일링 .0 없이). */
+export function fmtDuration(micros: number): string {
+  if (!micros || micros <= 0) return '0'
+  if (micros < 1000) return `${Math.round(micros)}µs`
+  const ms = micros / 1000
+  return ms < 10 ? `${Math.round(ms * 10) / 10}ms` : `${Math.round(ms)}ms`
+}
