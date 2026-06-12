@@ -24,6 +24,13 @@ const commands = buildSlashCommands([
     path: '/internal/ops/projects/{project_id}/kafka/topics/{topic_name}/partitions/{partition_id}/lag',
     params_schema: { required: ['topic_name', 'partition_id'] },
   },
+  {
+    name: 'get_pipeline_status',
+    method: 'GET',
+    risk: 'read_only',
+    path: '/internal/ops/projects/{project_id}/pipelines/{pipeline_id}/status',
+    params_schema: { required: ['pipeline_id'] },
+  },
 ])
 
 describe('routeAgentInput', () => {
@@ -69,12 +76,12 @@ describe('routeAgentInput', () => {
 
     expect(routed).toEqual({
       kind: 'slash_missing_args',
-      message: 'connector_name을 입력해주세요 (사용법: /connectors-status <connector_name>)',
+      message: '찾아보고싶은 connector_name을 알려주세요',
       input: '/connectors-status ',
     })
   })
 
-  it('lists multiple missing argument names in the slash guidance', () => {
+  it('asks for the first missing arg when several slash args are missing', () => {
     const routed = routeAgentInput('/topics-partitions-lag', {
       slashCommands: true,
       slashLoading: false,
@@ -84,7 +91,7 @@ describe('routeAgentInput', () => {
 
     expect(routed).toEqual({
       kind: 'slash_missing_args',
-      message: 'topic_name, partition_id 값을 입력해주세요 (사용법: /topics-partitions-lag <topic_name> <partition_id>)',
+      message: '찾아보고싶은 topic_name을 알려주세요',
       input: '/topics-partitions-lag ',
     })
   })
@@ -99,8 +106,23 @@ describe('routeAgentInput', () => {
 
     expect(routed).toEqual({
       kind: 'slash_missing_args',
-      message: 'partition_id을 입력해주세요 (사용법: /topics-partitions-lag <topic_name> <partition_id>)',
+      message: '조회할 partition_id를 알려주세요',
       input: '/topics-partitions-lag orders ',
+    })
+  })
+
+  it('uses lookup wording for id-shaped slash args', () => {
+    const routed = routeAgentInput('/pipelines-status', {
+      slashCommands: true,
+      slashLoading: false,
+      slashError: null,
+      commands,
+    })
+
+    expect(routed).toEqual({
+      kind: 'slash_missing_args',
+      message: '조회할 pipeline_id를 알려주세요',
+      input: '/pipelines-status ',
     })
   })
 

@@ -442,12 +442,6 @@ export function AgentRunPanel({
     slashOptionRefs.current[activeSlashCommand.slug]?.scrollIntoView({ block: 'nearest' })
   }, [slashMenuOpen, activeSlashCommand])
 
-  function primeRequiredSlashCommand(command: SlashToolCommand) {
-    setInput(`${command.label} `)
-    setSlashMenuDismissed(true)
-    window.setTimeout(() => inputRef.current?.focus(), 0)
-  }
-
   function appendText(role: TextMsg['role'], text: string) {
     updateMsgs((m) => [...m, { id: ++seq.current, kind: 'text', role, text }])
   }
@@ -879,8 +873,10 @@ export function AgentRunPanel({
       return
     }
     if (route.kind === 'slash_missing_args') {
-      appendText('assistant', route.message)
-      setInput(route.input)
+      const feedback = slashMissingArgsFeedback(text, route)
+      appendText('user', feedback.userText)
+      appendText('assistant', feedback.assistantText)
+      setInput(feedback.input)
       return
     }
     if (route.kind === 'slash_loading' || route.kind === 'slash_error' || route.kind === 'slash_unknown') {
@@ -1692,10 +1688,9 @@ export function AgentRunPanel({
                       slashError: slashState.error,
                       commands: slashState.commands,
                     })
-                    if (isTypedRequiredSlashExecution(route, command)) {
-                      send(input)
-                    } else if (command.argParams.length > 0) {
-                      primeRequiredSlashCommand(command)
+                    const selectedInput = slashSelectionSubmissionText(input, route, command)
+                    if (selectedInput) {
+                      send(selectedInput)
                     } else {
                       setInput('')
                       void runSlashCommand(command)
@@ -1746,10 +1741,9 @@ export function AgentRunPanel({
                   slashError: slashState.error,
                   commands: slashState.commands,
                 })
-                if (isTypedRequiredSlashExecution(route, activeSlashCommand)) {
-                  send(input)
-                } else if (activeSlashCommand.argParams.length > 0) {
-                  primeRequiredSlashCommand(activeSlashCommand)
+                const selectedInput = slashSelectionSubmissionText(input, route, activeSlashCommand)
+                if (selectedInput) {
+                  send(selectedInput)
                 } else {
                   setInput('')
                   void runSlashCommand(activeSlashCommand)
@@ -3132,12 +3126,30 @@ function runAnswerKey(runId: string) {
   return `${runId}:answer`
 }
 
-function isTypedRequiredSlashExecution(route: ReturnType<typeof routeAgentInput>, command: SlashToolCommand) {
-  return (
-    route.kind === 'slash_execute' &&
-    route.parsed.command.toolName === command.toolName &&
-    route.parsed.command.argParams.length > 0
-  )
+export function slashSelectionSubmissionText(
+  value: string,
+  route: ReturnType<typeof routeAgentInput>,
+  command: SlashToolCommand,
+) {
+  if (route.kind === 'slash_execute' && route.parsed.command.toolName === command.toolName) return value
+  if (route.kind === 'slash_missing_args' && firstToken(route.input) === command.label) return value
+  if (command.argParams.length > 0) return command.label
+  return null
+}
+
+export function slashMissingArgsFeedback(
+  value: string,
+  route: Extract<ReturnType<typeof routeAgentInput>, { kind: 'slash_missing_args' }>,
+) {
+  return {
+    userText: value.trim(),
+    assistantText: route.message,
+    input: route.input,
+  }
+}
+
+function firstToken(value: string) {
+  return value.trim().split(/\s+/, 1)[0] ?? ''
 }
 
 function failureSummary(event: AgentRunEvent) {
