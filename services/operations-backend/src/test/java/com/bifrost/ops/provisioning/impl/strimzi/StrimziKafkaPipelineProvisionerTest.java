@@ -178,4 +178,20 @@ class StrimziKafkaPipelineProvisionerTest {
         assertThat(result.connectors()).hasSize(1);
         assertThat(result.connectors().get(0).name()).endsWith("-source");
     }
+
+    @Test
+    void setSourceTracingTogglesOnExistingConnector() {
+        // #625: 토글은 기존 source 커넥터 CR을 GET(→ metadata.resourceVersion 포함)해 재적용한다.
+        // resourceVersion이 실린 채 createOr가 CREATE를 시도하면 실서버는
+        // "resourceVersion should not be set on objects to be created"(500)로 거부했다.
+        // GET→재적용 라운드트립이 예외 없이 on/off 되는지(이전엔 토글 경로에 테스트가 없었음) 검증한다.
+        StrimziKafkaPipelineProvisioner p = provisioner(resolvingStore(), sourceMapper, sinkMapper);
+        String source = p.createPipelineResources(edaCommand()).connectors().get(0).name();
+
+        p.setSourceTracing(source, true);
+        assertThat(p.isSourceTracingEnabled(source)).isTrue();
+
+        p.setSourceTracing(source, false);
+        assertThat(p.isSourceTracingEnabled(source)).isFalse();
+    }
 }
