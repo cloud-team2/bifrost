@@ -270,12 +270,25 @@ function TopicTab({ edge }: { edge: Edge }) {
   const wsId = app.currentProject?.id
 
   const [topicInfo, setTopicInfo] = useState<TopicInfoResponse | null>(null)
+  const [topicInfoErr, setTopicInfoErr] = useState(false)
 
   useEffect(() => {
     if (!wsId) return
     let cancelled = false
     const load = () => {
-      api.pipelineTopicInfo(wsId, edge.id).then((t) => { if (!cancelled) setTopicInfo(t) }).catch(() => {})
+      api.pipelineTopicInfo(wsId, edge.id)
+        .then((t) => {
+          if (!cancelled) {
+            setTopicInfo(t)
+            setTopicInfoErr(false)
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setTopicInfo(null)
+            setTopicInfoErr(true)
+          }
+        })
     }
     load()
     const timer = setInterval(load, 5000)
@@ -284,9 +297,11 @@ function TopicTab({ edge }: { edge: Edge }) {
 
   const partitions = topicInfo?.partitions ?? []
   const retentionMs = topicInfo?.retentionMs ?? -1
-  const retention = retentionMs > 0
-    ? retentionMs >= 86400000 ? `${Math.round(retentionMs / 86400000)}일` : `${Math.round(retentionMs / 3600000)}시간`
-    : '—'
+  const retention = topicInfoErr
+    ? '조회 실패'
+    : retentionMs > 0
+      ? retentionMs >= 86400000 ? `${Math.round(retentionMs / 86400000)}일` : `${Math.round(retentionMs / 3600000)}시간`
+      : '—'
   const isrPct = topicInfo?.isrPct ?? 100
   const isrOk = isrPct >= 100
 
@@ -335,9 +350,9 @@ function TopicTab({ edge }: { edge: Edge }) {
           <span className="font-mono text-[13.5px] font-semibold text-gray-900">{edge.topic}</span>
           <StatusBadge status={edge.status} />
           <div className="ml-auto flex items-center gap-4 text-[12px] text-gray-500">
-            <span><span className="font-semibold text-gray-700">{partitions.length}</span> 파티션</span>
-            <span className={cn('font-semibold', isrOk ? 'text-emerald-600' : 'text-amber-600')}>
-              ISR {isrOk ? '정상' : `${Math.round(isrPct)}%`}
+            <span>{topicInfoErr ? '파티션 조회 실패' : <><span className="font-semibold text-gray-700">{partitions.length}</span> 파티션</>}</span>
+            <span className={cn('font-semibold', topicInfoErr ? 'text-rose-600' : isrOk ? 'text-emerald-600' : 'text-amber-600')}>
+              ISR {topicInfoErr ? '조회 실패' : isrOk ? '정상' : `${Math.round(isrPct)}%`}
             </span>
             <span>Retention <span className="font-semibold text-gray-700">{retention}</span></span>
           </div>
@@ -385,11 +400,11 @@ function TopicTab({ edge }: { edge: Edge }) {
               })
             })()}
             {partitions.length === 0 && (
-              <tr><td colSpan={5} className="px-5 py-6 text-center text-gray-400">파티션 정보 없음</td></tr>
+              <tr><td colSpan={5} className="px-5 py-6 text-center text-gray-400">{topicInfoErr ? '토픽 정보를 불러오지 못했습니다' : '파티션 정보 없음'}</td></tr>
             )}
           </tbody>
         </table>
-        {!isrOk && (
+        {!topicInfoErr && !isrOk && (
           <div className="mx-5 mb-4 mt-1 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[12px] text-amber-700">
             <Icon name="alert" size={13} className="shrink-0" />
             Under-replicated partitions 감지 — 브로커 장애 시 데이터 유실 위험
@@ -974,6 +989,7 @@ function SyncTab({ edge }: { edge: Edge }) {
   // 추세 차트 실데이터(#126, Prometheus range): 전송된 데이터 개수·이벤트분포.
   // (consumer lag 추이는 60초 커밋 톱니파라 행 동기화와 무관해 오독되므로 노출하지 않는다, #200)
   const [eventSeries, setEventSeries] = useState<EventDistPoint[]>([])
+  const [eventDistErr, setEventDistErr] = useState(false)
   const [rangeMin, setRangeMin] = useState(15)   // 시계열 차트 시간 범위(기본 15분)
   useEffect(() => {
     if (!wsId) return
@@ -985,7 +1001,19 @@ function SyncTab({ edge }: { edge: Edge }) {
       api.pipelineSyncStatus(wsId, edge.id)
         .then((s) => { if (!cancelled) setSync(s) })
         .catch(() => { if (!cancelled) setSyncErr(true) })
-      api.pipelineEventDist(wsId, edge.id, rangeMin).then((d) => { if (!cancelled) setEventSeries(d) }).catch(() => {})
+      api.pipelineEventDist(wsId, edge.id, rangeMin)
+        .then((d) => {
+          if (!cancelled) {
+            setEventSeries(d)
+            setEventDistErr(false)
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setEventSeries([])
+            setEventDistErr(true)
+          }
+        })
     }
     load()
     const timer = setInterval(load, 5000)
@@ -1028,12 +1056,13 @@ function SyncTab({ edge }: { edge: Edge }) {
   // 소스지연은 Debezium이 전달할 데이터가 없을 때(idle) -1을 준다. 이때는 "지연 0"이 아니라
   // 측정값이 없는 것이므로 null로 두어 그래프를 끊는다(Prometheus처럼). 0으로 클램프하면 거짓 0.
   // t = epoch ms → 실제 시간축(scale=time)으로 배치. 데이터 없는 구간은 빈 공간(균등 시각 눈금).
-  // 백엔드는 값이 있는 버킷만 반환 → 빈 구간을 step(=max(30,minutes)s) 간격으로 0-채움해
-  // 균등 간격 연속 막대(Grafana 스타일)로 만든다. 마지막 점을 앵커로 잡아 데이터가 그리드에 정렬되게 함.
+  // 백엔드가 빈 응답을 주면 차트를 합성하지 않고 "데이터 없음"으로 표시한다.
+  // 실데이터가 있는 경우에만 중간 빈 버킷을 0으로 채워 균등 간격 연속 막대(Grafana 스타일)로 만든다.
   const eventDist   = useMemo(() => {
     const stepMs = Math.max(60, rangeMin) * 1000 // 백엔드 evStep(분당 1버킷, 분 경계 고정)과 동일
     const pts    = [...eventSeries].sort((a, b) => a.timestamp - b.timestamp)
-    const end    = pts.length ? pts[pts.length - 1].timestamp : Math.floor(Date.now() / stepMs) * stepMs
+    if (pts.length === 0) return []
+    const end    = pts[pts.length - 1].timestamp
     const start  = end - rangeMin * 60_000
     const byTs   = new Map(pts.map((p) => [p.timestamp, p]))
     const grid: { t: number; insert: number; update: number; delete: number; count: number }[] = []
@@ -1047,6 +1076,10 @@ function SyncTab({ edge }: { edge: Edge }) {
   // 약 6개 라벨만 노출(나머지 버킷은 솎음) → 균등 간격 시각 눈금
   const tickEvery = Math.max(0, Math.ceil(eventDist.length / 6) - 1)
   const axis = { fontSize: 10, fill: '#94a3b8' }
+  const eventDistEmptyText = eventDistErr ? '이벤트 분포 조회 실패' : '이벤트 데이터 없음'
+  const eventDistEmptySub = eventDistErr
+    ? 'Prometheus 또는 백엔드 조회를 완료하지 못했습니다.'
+    : '선택한 기간에 표시할 이벤트 분포 데이터가 없습니다.'
 
   return (
     <div className="space-y-4">
@@ -1131,7 +1164,13 @@ function SyncTab({ edge }: { edge: Edge }) {
       {/* ── 차트 패널 ─────────────────────────────────────────────── */}
       {/* 전송 레코드 현황 — 분당 변경 이벤트 수(insert+update+delete). 누적 행 수가 아닌 throughput 지표 */}
       <Panel title="전송 레코드 현황" right={<RangeSelector value={rangeMin} onChange={setRangeMin} />}>
-        <div className="px-4 py-3">
+        {eventDist.length === 0 ? (
+          <div className="px-5 py-8 text-center">
+            <p className="text-[12.5px] text-gray-500">{eventDistEmptyText}</p>
+            <p className="mt-1 text-[11.5px] text-gray-400">{eventDistEmptySub}</p>
+          </div>
+        ) : (
+          <div className="px-4 py-3">
           <ResponsiveChart width="100%" height={140}>
             <BarChart data={eventDist} maxBarSize={22} barCategoryGap="8%" margin={{ top: 4, right: 8, left: -28, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
@@ -1142,11 +1181,18 @@ function SyncTab({ edge }: { edge: Edge }) {
               <Bar dataKey="count" fill={CHART_COLORS.brand} name="전송 레코드" radius={[2, 2, 0, 0]} />
             </BarChart>
           </ResponsiveChart>
-        </div>
+          </div>
+        )}
       </Panel>
 
       <Panel title="이벤트 타입 분포" right={<span className="text-[12px] text-gray-400">{rangeLabel}</span>}>
-        <div className="px-4 py-3">
+        {eventDist.length === 0 ? (
+          <div className="px-5 py-8 text-center">
+            <p className="text-[12.5px] text-gray-500">{eventDistEmptyText}</p>
+            <p className="mt-1 text-[11.5px] text-gray-400">{eventDistEmptySub}</p>
+          </div>
+        ) : (
+          <div className="px-4 py-3">
           <ResponsiveChart width="100%" height={140}>
             <BarChart data={eventDist} maxBarSize={22} barCategoryGap="8%" margin={{ top: 4, right: 8, left: -28, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
@@ -1167,7 +1213,8 @@ function SyncTab({ edge }: { edge: Edge }) {
               </div>
             ))}
           </div>
-        </div>
+          </div>
+        )}
       </Panel>
     </div>
   )
@@ -1319,10 +1366,6 @@ function MessagesTab({ edge }: { edge: Edge }) {
     return {
       op: m.op,
       ts_ms: m.tsMs,
-      source: {
-        table: edge.table?.name ?? 'table',
-        lsn: `0/${m.offset.toString(16).toUpperCase()}`,
-      },
       before: m.before,
       after: m.after,
     }
@@ -1452,6 +1495,7 @@ function MessagesTab({ edge }: { edge: Edge }) {
                       /* raw debezium envelope */
                       <div>
                         <div className="mb-1 text-[10.5px] font-semibold uppercase tracking-wide text-gray-400">Debezium Envelope</div>
+                        <div className="mb-2 text-[11px] text-gray-400">source 메타데이터는 API 응답에 없어 표시하지 않습니다.</div>
                         <pre className="overflow-x-auto rounded-lg border border-gray-200 bg-[#1b1e24] px-4 py-3 font-mono text-[11.5px] leading-relaxed text-gray-200">
                           {JSON.stringify(buildRawEnvelope(m), null, 2)}
                         </pre>

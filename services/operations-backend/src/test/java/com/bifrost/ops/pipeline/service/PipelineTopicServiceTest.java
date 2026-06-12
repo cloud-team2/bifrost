@@ -19,6 +19,7 @@ import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.ConsumerGroupDescription;
 import org.apache.kafka.clients.admin.ConsumerGroupListing;
 import org.apache.kafka.clients.admin.DescribeConsumerGroupsResult;
+import org.apache.kafka.clients.admin.DescribeTopicsResult;
 import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsResult;
 import org.apache.kafka.clients.admin.ListConsumerGroupsResult;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
@@ -108,6 +109,50 @@ class PipelineTopicServiceTest {
         c.setState(state);
         c.setLastError(lastError);
         return c;
+    }
+
+    @Test
+    void topicInfoPropagatesKafkaLookupFailureInsteadOfMaskingHealthyDefaults() {
+        UUID wsId = UUID.randomUUID();
+        UUID id = UUID.randomUUID();
+        AuthenticatedUser principal = new AuthenticatedUser(UUID.randomUUID(), wsId, "u@bifrost.io");
+
+        PipelineEntity p = new PipelineEntity();
+        p.setId(id);
+        p.setTenantId(wsId);
+        p.setPattern(PipelinePattern.FAN_OUT);
+        p.setTopicName("eda.orders.events");
+        when(pipelineRepository.findByIdAndTenantId(id, wsId)).thenReturn(Optional.of(p));
+
+        AdminClient adminClient = mock(AdminClient.class);
+        when(adminClient.describeTopics(List.of("eda.orders.events"))).thenThrow(new RuntimeException("kafka unavailable"));
+
+        assertThatThrownBy(() -> service(adminClient).topicInfo(wsId, principal, id))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("토픽 정보");
+    }
+
+    @Test
+    void topicInfoPropagatesMissingTopicDescriptionInsteadOfMaskingHealthyDefaults() {
+        UUID wsId = UUID.randomUUID();
+        UUID id = UUID.randomUUID();
+        AuthenticatedUser principal = new AuthenticatedUser(UUID.randomUUID(), wsId, "u@bifrost.io");
+
+        PipelineEntity p = new PipelineEntity();
+        p.setId(id);
+        p.setTenantId(wsId);
+        p.setPattern(PipelinePattern.FAN_OUT);
+        p.setTopicName("eda.orders.events");
+        when(pipelineRepository.findByIdAndTenantId(id, wsId)).thenReturn(Optional.of(p));
+
+        AdminClient adminClient = mock(AdminClient.class);
+        DescribeTopicsResult describeTopics = mock(DescribeTopicsResult.class);
+        when(adminClient.describeTopics(List.of("eda.orders.events"))).thenReturn(describeTopics);
+        when(describeTopics.allTopicNames()).thenReturn(KafkaFuture.completedFuture(Map.of()));
+
+        assertThatThrownBy(() -> service(adminClient).topicInfo(wsId, principal, id))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("토픽 정보");
     }
 
     @Test
@@ -279,5 +324,28 @@ class PipelineTopicServiceTest {
                 startCap.capture(), org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong());
         // 클램프가 없으면 (now-60분)-evStep로 한참 이전이어야 하지만, 생성시각으로 잘려 createdAt 근처여야 한다.
         assertThat(startCap.getValue()).isGreaterThanOrEqualTo(createdSec - 60);
+    }
+
+    @Test
+    void eventDistributionPropagatesPrometheusLookupFailureInsteadOfEmptyData() {
+        UUID wsId = UUID.randomUUID();
+        UUID id = UUID.randomUUID();
+        AuthenticatedUser principal = new AuthenticatedUser(UUID.randomUUID(), wsId, "u@bifrost.io");
+
+        PipelineEntity p = new PipelineEntity();
+        p.setId(id);
+        p.setTenantId(wsId);
+        p.setPattern(PipelinePattern.DIRECT);
+        p.setTopicName("cdc.table.team.shop-1234.public.orders");
+        when(pipelineRepository.findByIdAndTenantId(id, wsId)).thenReturn(Optional.of(p));
+        when(kafkaMetricsQuery.isEnabled()).thenReturn(true);
+        when(kafkaMetricsQuery.eventCountSeries(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyLong())).thenThrow(new RuntimeException("prometheus unavailable"));
+
+        assertThatThrownBy(() -> service().eventDistribution(wsId, principal, id, 15))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("이벤트 분포");
     }
 }

@@ -93,7 +93,7 @@ public class PipelineTopicService {
             return fetchTopicInfo(topic);
         } catch (Exception e) {
             log.warn("토픽 정보 조회 실패 (Kafka 접근 불가): topic={}, cause={}", topic, e.getMessage());
-            return new TopicInfoResponse(topic, 100.0, -1L, List.of());
+            throw new ApiException(ErrorCode.INTERNAL_ERROR, "토픽 정보를 불러오지 못했습니다");
         }
     }
 
@@ -323,7 +323,7 @@ public class PipelineTopicService {
             return out;
         } catch (Exception e) {
             log.warn("이벤트 분포 조회 실패: server={}, cause={}", server, e.getMessage());
-            return List.of();
+            throw new ApiException(ErrorCode.INTERNAL_ERROR, "이벤트 분포를 불러오지 못했습니다");
         }
     }
 
@@ -374,7 +374,7 @@ public class PipelineTopicService {
         // 1) describe topic → partitions, replicas, isr
         TopicDescription td = adminClient.describeTopics(List.of(topic))
                 .allTopicNames().get(ADMIN_TIMEOUT_SEC, TimeUnit.SECONDS).get(topic);
-        if (td == null) return new TopicInfoResponse(topic, 100.0, -1L, List.of());
+        if (td == null) throw new IllegalStateException("topic description missing");
 
         List<TopicPartitionInfo> partitions = td.partitions();
 
