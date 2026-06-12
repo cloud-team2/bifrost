@@ -5,6 +5,8 @@ import com.bifrost.ops.global.common.error.ErrorCode;
 import com.bifrost.ops.incident.dto.IncidentReportResponse;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
@@ -14,18 +16,26 @@ import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.StreamSupport;
 
 @Service
 public class IncidentReportService {
 
+    private static final Logger log = LoggerFactory.getLogger(IncidentReportService.class);
+
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
+    private final AiServiceEndpoint aiServiceEndpoint;
+    private final AtomicBoolean disabledWarningLogged = new AtomicBoolean(false);
 
-    public IncidentReportService(@Value("${ai-service.url:http://localhost:8082}") String aiServiceUrl,
+    public IncidentReportService(@Value("${ai-service.url:}") String aiServiceUrl,
                                  RestClient.Builder restClientBuilder,
                                  ObjectMapper objectMapper) {
-        this.restClient = restClientBuilder.baseUrl(stripTrailingSlash(aiServiceUrl)).build();
+        this.aiServiceEndpoint = AiServiceEndpoint.from(aiServiceUrl);
+        this.restClient = aiServiceEndpoint.configured()
+                ? restClientBuilder.baseUrl(aiServiceEndpoint.baseUrl()).build()
+                : restClientBuilder.build();
         this.objectMapper = objectMapper;
     }
 
@@ -49,6 +59,12 @@ public class IncidentReportService {
     }
 
     private JsonNode fetchReports(UUID incidentId) {
+        if (!aiServiceEndpoint.configured()) {
+            if (disabledWarningLogged.compareAndSet(false, true)) {
+                log.warn("[incident] incident reports lookup disabled: {}", aiServiceEndpoint.disabledReason());
+            }
+            throw new ApiException(ErrorCode.INTERNAL_ERROR, "ai-service is not configured");
+        }
         try {
             JsonNode root = restClient.get()
                     .uri("/api/v1/incidents/{incidentId}/reports", incidentId)
@@ -79,13 +95,6 @@ public class IncidentReportService {
                 node.path("verified").asBoolean(false),
                 node.path("body").isMissingNode() ? objectMapper.createObjectNode() : node.path("body"),
                 instant(node, "created_at", "createdAt"));
-    }
-
-    private static String stripTrailingSlash(String value) {
-        if (value == null || value.isBlank()) {
-            return "http://localhost:8082";
-        }
-        return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
     }
 
     private static String text(JsonNode node, String... names) {

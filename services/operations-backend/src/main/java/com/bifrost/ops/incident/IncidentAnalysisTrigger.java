@@ -12,6 +12,7 @@ import org.springframework.web.client.RestClientException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Starts ai-service incident_analysis runs for newly opened incidents. */
 @Service
@@ -20,10 +21,15 @@ public class IncidentAnalysisTrigger {
     private static final Logger log = LoggerFactory.getLogger(IncidentAnalysisTrigger.class);
 
     private final RestClient restClient;
+    private final AiServiceEndpoint aiServiceEndpoint;
+    private final AtomicBoolean disabledWarningLogged = new AtomicBoolean(false);
 
-    public IncidentAnalysisTrigger(@Value("${ai-service.url:http://localhost:8082}") String aiServiceUrl,
+    public IncidentAnalysisTrigger(@Value("${ai-service.url:}") String aiServiceUrl,
                                    RestClient.Builder restClientBuilder) {
-        this.restClient = restClientBuilder.baseUrl(stripTrailingSlash(aiServiceUrl)).build();
+        this.aiServiceEndpoint = AiServiceEndpoint.from(aiServiceUrl);
+        this.restClient = aiServiceEndpoint.configured()
+                ? restClientBuilder.baseUrl(aiServiceEndpoint.baseUrl()).build()
+                : restClientBuilder.build();
     }
 
     public void startAfterCommit(UUID tenantId, UUID incidentId, String title, String eventMessage) {
@@ -41,6 +47,12 @@ public class IncidentAnalysisTrigger {
     }
 
     void start(UUID tenantId, UUID incidentId, String title, String eventMessage) {
+        if (!aiServiceEndpoint.configured()) {
+            if (disabledWarningLogged.compareAndSet(false, true)) {
+                log.warn("[incident] ai incident_analysis disabled: {}", aiServiceEndpoint.disabledReason());
+            }
+            return;
+        }
         try {
             restClient.post()
                     .uri("/api/v1/agent/runs")
@@ -73,12 +85,5 @@ public class IncidentAnalysisTrigger {
             return eventMessage;
         }
         return title + "\n" + eventMessage;
-    }
-
-    private static String stripTrailingSlash(String value) {
-        if (value == null || value.isBlank()) {
-            return "http://localhost:8082";
-        }
-        return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
     }
 }

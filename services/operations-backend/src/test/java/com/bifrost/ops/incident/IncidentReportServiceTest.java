@@ -105,10 +105,34 @@ class IncidentReportServiceTest {
         context.server.verify();
     }
 
+    @Test
+    void listRejectsBlankAiServiceUrlWithoutHttpCall() {
+        TestContext context = context(" ");
+
+        assertThatThrownBy(() -> context.service.list(UUID.randomUUID()))
+                .isInstanceOfSatisfying(ApiException.class,
+                        ex -> assertThat(ex.code()).isEqualTo(ErrorCode.INTERNAL_ERROR));
+        context.server.verify();
+    }
+
+    @Test
+    void listRejectsLocalhostAiServiceUrlWithoutHttpCall() {
+        TestContext context = context("http://localhost:8082");
+
+        assertThatThrownBy(() -> context.service.list(UUID.randomUUID()))
+                .isInstanceOfSatisfying(ApiException.class,
+                        ex -> assertThat(ex.code()).isEqualTo(ErrorCode.INTERNAL_ERROR));
+        context.server.verify();
+    }
+
     private static TestContext context() {
+        return context(AI_URL);
+    }
+
+    private static TestContext context(String aiServiceUrl) {
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        IncidentReportService service = new IncidentReportService(AI_URL, builder, new ObjectMapper());
+        IncidentReportService service = new IncidentReportService(aiServiceUrl, builder, new ObjectMapper());
         return new TestContext(service, server);
     }
 
