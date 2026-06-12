@@ -94,3 +94,20 @@
 .bifrost-fade {
   animation: bifrost-fade 0.18s ease-out;
 }
+
+/* trace 대기 표시용 3-dot 순차 펄스 */
+@keyframes bifrost-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+.bifrost-dot {
+  animation: bifrost-dot 1.2s ease-in-out infinite;
+}

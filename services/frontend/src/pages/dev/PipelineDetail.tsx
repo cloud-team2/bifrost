@@ -27,6 +27,7 @@ import {
   type TraceSummaryResponse,
 } from '../../lib/api'
 import { TraceFlow } from '../../components/TraceFlow'
+import { Modal } from '../../components/Modal'
 import { cn, formatNum } from '../../lib/format'
 
 const tooltipStyle = {
@@ -732,10 +733,13 @@ function TraceTab({ edge }: { edge: Edge }) {
   const app = useApp()
   const wsId = app.currentProject?.id
   const traceId = app.selectedTraceId ?? undefined
+  const toast = useToast()
   const [trace, setTrace] = useState<TraceSummaryResponse | null>(null)
   const [tracingEnabled, setTracingEnabled] = useState<boolean | null>(null)
   const [error, setError] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [pending, setPending] = useState<'on' | 'off' | null>(null)
+  const [confirmOpen, setConfirmOpen] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
@@ -753,42 +757,58 @@ function TraceTab({ edge }: { edge: Edge }) {
   }, [wsId, edge.id, traceId, reloadKey])
 
   const refresh = () => setReloadKey((k) => k + 1)
-  const toggleTracing = async () => {
+
+  // 토글은 소스 커넥터를 재시작하므로 확인 모달을 거친다. 실패 시 optimistic 상태를 롤백한다.
+  const applyToggle = async () => {
     if (!wsId || tracingEnabled === null) return
+    const next = !tracingEnabled
+    const prev = tracingEnabled
+    setConfirmOpen(false)
+    setPending(next ? 'on' : 'off')
     setBusy(true)
+    setTracingEnabled(next)
     try {
-      await api.setPipelineDataplaneTracing(wsId, edge.id, !tracingEnabled)
-      setTracingEnabled(!tracingEnabled)
+      await api.setPipelineDataplaneTracing(wsId, edge.id, next)
+      toast(next ? '데이터플레인 추적을 켰습니다' : '데이터플레인 추적을 껐습니다', next ? 'success' : 'info')
       refresh()
-    } catch {
-      setError(true)
+    } catch (e) {
+      setTracingEnabled(prev)
+      toast(e instanceof Error ? e.message : '추적 설정 변경에 실패했습니다', 'error')
     } finally {
       setBusy(false)
+      setPending(null)
     }
   }
 
   const hasTrace = trace?.traceId != null && trace.spans.length > 0
   const btn = 'rounded-md border border-gray-200 px-3 py-1.5 text-[12px] font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50'
+  const primaryBtn = 'rounded-md bg-brand-600 px-3.5 py-1.5 text-[12px] font-semibold text-white hover:bg-brand-700 disabled:opacity-50'
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 text-[12px]">
-          <span className="text-gray-500">데이터플레인 추적</span>
-          {tracingEnabled === null ? (
-            <span className="text-gray-300">…</span>
-          ) : tracingEnabled ? (
-            <span className="inline-flex items-center gap-1 text-emerald-600"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />ON</span>
-          ) : (
-            <span className="inline-flex items-center gap-1 text-gray-400"><span className="h-1.5 w-1.5 rounded-full bg-gray-300" />OFF</span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
+      {/* 헤더: 토글 스위치 + 상태 + 재시작·샘플링 안내(상시 노출) */}
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <TraceToggle
+              on={tracingEnabled === true}
+              disabled={busy || tracingEnabled === null}
+              onClick={() => setConfirmOpen(true)}
+            />
+            <span className="text-[13px] font-semibold text-gray-800">데이터플레인 추적</span>
+            {tracingEnabled === null ? (
+              <span className="text-[11px] text-gray-300">…</span>
+            ) : tracingEnabled ? (
+              <span className="text-[11px] font-semibold text-emerald-600">ON</span>
+            ) : (
+              <span className="text-[11px] font-medium text-gray-400">OFF</span>
+            )}
+          </div>
           <button onClick={refresh} disabled={busy} className={btn}>새로고침</button>
-          <button onClick={toggleTracing} disabled={busy || tracingEnabled === null} className={btn}>
-            {tracingEnabled ? '추적 끄기' : '추적 켜기'}
-          </button>
         </div>
+        <p className="text-[11.5px] text-gray-400">
+          켜기/끄기 시 소스 커넥터가 잠깐 재시작됩니다 (수십 초) · 약 5% 샘플링
+        </p>
       </div>
 
       {edge.pattern === 'fan-out' && (
@@ -797,38 +817,121 @@ function TraceTab({ edge }: { edge: Edge }) {
         </p>
       )}
 
-      {error ? (
-        <EmptyTrace iconClass="text-rose-300" text="추적 정보를 불러오지 못했습니다" />
-      ) : trace === null ? (
-        <div className="flex items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white py-16 text-[13px] text-gray-400">
-          불러오는 중…
-        </div>
-      ) : tracingEnabled === false ? (
-        <EmptyTrace
-          iconClass="text-gray-300"
-          text="이 파이프라인은 데이터플레인 추적이 꺼져 있습니다"
-          sub="추적을 켜면 source→sink 흐름이 trace로 기록됩니다. (켜면 소스 커넥터가 잠깐 재시작됩니다)"
-          action={<button onClick={toggleTracing} disabled={busy} className={btn}>추적 켜기</button>}
+      {busy ? (
+        <TraceState
+          icon={<Spinner />}
+          text={pending === 'off' ? '추적을 끄는 중…' : '추적을 켜는 중…'}
+          sub="소스 커넥터 재시작 중 (수십 초)"
         />
+      ) : tracingEnabled === null ? (
+        <TraceState icon={<Spinner />} text="불러오는 중…" />
+      ) : tracingEnabled === false ? (
+        <TraceState
+          icon={<span className="text-[20px] leading-none text-gray-300">◯</span>}
+          text="이 파이프라인은 데이터플레인 추적이 꺼져 있습니다"
+          sub="추적을 켜면 source→sink 흐름이 trace로 기록됩니다."
+          action={<button onClick={() => setConfirmOpen(true)} className={primaryBtn}>추적 켜기</button>}
+        />
+      ) : error ? (
+        <TraceState
+          tone="error"
+          icon={<Icon name="alert" size={20} className="text-rose-400" />}
+          text="추적 정보를 불러오지 못했습니다"
+          action={<button onClick={refresh} className={btn}>다시 시도</button>}
+        />
+      ) : trace === null ? (
+        <TraceState icon={<Spinner />} text="불러오는 중…" />
       ) : !hasTrace ? (
-        <EmptyTrace
-          iconClass="text-gray-300"
-          text="추적은 켜져 있고, 최근 샘플 trace를 기다리는 중입니다"
-          sub={trace.note ?? '약 5% 샘플링이라 일부 레코드만 기록됩니다. 잠시 후 새로고침해 주세요.'}
-          action={<button onClick={refresh} disabled={busy} className={btn}>새로고침</button>}
+        <TraceState
+          icon={<TraceWaitDots />}
+          text="trace 대기 중"
+          sub={trace.note ?? '켜져 있고 최근 샘플 trace를 기다리는 중입니다. 약 5% 샘플링이라 일부 레코드만 기록됩니다.'}
+          action={<button onClick={refresh} className={btn}>새로고침</button>}
         />
       ) : (
         <TraceFlow trace={trace} />
       )}
+
+      <Modal
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        title={tracingEnabled ? '데이터플레인 추적을 끌까요?' : '데이터플레인 추적을 켤까요?'}
+        subtitle="소스 커넥터가 잠깐 재시작됩니다 (수십 초)."
+        footer={
+          <>
+            <button onClick={() => setConfirmOpen(false)} className={btn}>취소</button>
+            <button onClick={applyToggle} className={primaryBtn}>{tracingEnabled ? '끄기' : '켜기'}</button>
+          </>
+        }
+      >
+        <p className="text-[13px] text-gray-600">
+          {tracingEnabled
+            ? '추적을 끄면 이후 변경 이벤트의 trace가 더 이상 기록되지 않습니다.'
+            : '추적을 켜면 변경 이벤트마다 약 5% 샘플링으로 trace가 기록됩니다.'}
+        </p>
+      </Modal>
     </div>
   )
 }
 
-function EmptyTrace({ iconClass, text, sub, action }: { iconClass: string; text: string; sub?: string; action?: ReactNode }) {
+function TraceToggle({ on, disabled, onClick }: { on: boolean; disabled: boolean; onClick: () => void }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white px-6 py-16 text-center">
-      <Icon name="alert" size={24} className={`mb-2 ${iconClass}`} />
-      <p className="text-[13px] text-gray-500">{text}</p>
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-pressed={on}
+      className={cn(
+        'relative inline-flex h-[22px] w-[38px] shrink-0 items-center rounded-full transition-colors disabled:opacity-50',
+        on ? 'bg-emerald-500' : 'bg-gray-300',
+      )}
+    >
+      <span
+        className={cn(
+          'inline-block h-[18px] w-[18px] rounded-full bg-white shadow transition-transform',
+          on ? 'translate-x-[18px]' : 'translate-x-[2px]',
+        )}
+      />
+    </button>
+  )
+}
+
+function Spinner() {
+  return <span className="bifrost-spin inline-block h-5 w-5 rounded-full border-[2.5px] border-gray-200 border-t-gray-500" />
+}
+
+function TraceWaitDots() {
+  return (
+    <span className="flex items-center gap-1">
+      {[0, 0.15, 0.3].map((d) => (
+        <span key={d} className="bifrost-dot h-1.5 w-1.5 rounded-full bg-emerald-500" style={{ animationDelay: `${d}s` }} />
+      ))}
+    </span>
+  )
+}
+
+function TraceState({
+  icon,
+  text,
+  sub,
+  action,
+  tone,
+}: {
+  icon: ReactNode
+  text: string
+  sub?: string
+  action?: ReactNode
+  tone?: 'error'
+}) {
+  return (
+    <div
+      className={cn(
+        'flex flex-col items-center justify-center rounded-xl border bg-white px-6 py-16 text-center',
+        tone === 'error' ? 'border-gray-200 border-l-[3px] border-l-rose-400' : 'border-dashed border-gray-200',
+      )}
+    >
+      <div className="mb-2 flex h-6 items-center justify-center">{icon}</div>
+      <p className="text-[13px] text-gray-600">{text}</p>
       {sub && <p className="mt-1 max-w-md text-[12px] text-gray-400">{sub}</p>}
       {action && <div className="mt-3">{action}</div>}
     </div>
