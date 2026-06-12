@@ -7,30 +7,73 @@ import {
   SlashCommandOptionContent,
   progressCounts,
   remediationCandidatesFromPayload,
+  slashMissingArgsFeedback,
+  slashSelectionSubmissionText,
   type RcaPreviewMsg,
   type RemediationMsg,
 } from './AgentRunPanel'
+import { routeAgentInput } from '../../lib/agentInputRouting'
 import type { SlashToolCommand } from '../../lib/slashCommands'
 
 describe('SlashCommandOptionContent', () => {
-  it('keeps slash usage hints visible without exposing internal tool names', () => {
-    const command: SlashToolCommand = {
-      slug: 'connectors-status',
-      label: '/connectors-status',
-      toolName: 'get_connector_status',
-      path: '/internal/ops/projects/{project_id}/kafka/connectors/{connector_name}/status',
-      description: 'Connector status',
-      pathParams: ['connector_name'],
-      argParams: ['connector_name'],
-      usage: '/connectors-status <connector_name>',
-    }
+  const connectorStatusCommand: SlashToolCommand = {
+    slug: 'connectors-status',
+    label: '/connectors-status',
+    toolName: 'get_connector_status',
+    path: '/internal/ops/projects/{project_id}/kafka/connectors/{connector_name}/status',
+    description: 'Connector status',
+    pathParams: ['connector_name'],
+    argParams: ['connector_name'],
+    usage: '/connectors-status <connector_name>',
+  }
 
-    const html = renderToStaticMarkup(<SlashCommandOptionContent command={command} />)
+  it('keeps slash usage hints visible without exposing internal tool names', () => {
+    const html = renderToStaticMarkup(<SlashCommandOptionContent command={connectorStatusCommand} />)
 
     expect(html).toContain('/connectors-status')
     expect(html).toContain('&lt;connector_name&gt;')
     expect(html).toContain('Connector status')
     expect(html).not.toContain('get_connector_status')
+  })
+
+  it('submits selected required-argument slash commands through the normal send path', () => {
+    const exactMissingRoute = routeAgentInput('/connectors-status', {
+      slashCommands: true,
+      slashLoading: false,
+      slashError: null,
+      commands: [connectorStatusCommand],
+    })
+    const partialRoute = routeAgentInput('/con', {
+      slashCommands: true,
+      slashLoading: false,
+      slashError: null,
+      commands: [connectorStatusCommand],
+    })
+
+    expect(slashSelectionSubmissionText('/connectors-status', exactMissingRoute, connectorStatusCommand))
+      .toBe('/connectors-status')
+    expect(slashSelectionSubmissionText('/con', partialRoute, connectorStatusCommand))
+      .toBe('/connectors-status')
+  })
+
+  it('keeps missing-argument slash submissions visible as user text without executing tools', () => {
+    const route = routeAgentInput('/connectors-status', {
+      slashCommands: true,
+      slashLoading: false,
+      slashError: null,
+      commands: [connectorStatusCommand],
+    })
+
+    expect(route.kind).toBe('slash_missing_args')
+    if (route.kind !== 'slash_missing_args') return
+    const feedback = slashMissingArgsFeedback('/connectors-status', route)
+
+    expect(feedback).toEqual({
+      userText: '/connectors-status',
+      assistantText: '찾아보고싶은 connector_name을 알려주세요',
+      input: '/connectors-status ',
+    })
+    expect(feedback.assistantText).not.toContain('사용법')
   })
 })
 

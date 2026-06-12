@@ -36,7 +36,7 @@ export function routeAgentInput(
   if (missing.length > 0) {
     return {
       kind: 'slash_missing_args',
-      message: missingSlashArgsMessage(missing, parsed.command.usage),
+      message: missingSlashArgsMessage(missing),
       input: slashInputWithProvidedArgs(parsed),
     }
   }
@@ -47,8 +47,9 @@ function slashInputWithProvidedArgs(parsed: ParsedSlashCommand) {
   return `${parsed.command.label}${parsed.args.length > 0 ? ` ${parsed.args.join(' ')}` : ''} `
 }
 
-function missingSlashArgsMessage(missing: string[], usage: string) {
-  const params = missing.join(', ')
-  const subject = missing.length === 1 ? `${params}을` : `${params} 값을`
-  return `${subject} 입력해주세요 (사용법: ${usage})`
+function missingSlashArgsMessage(missing: string[]) {
+  const param = missing[0]
+  if (param.endsWith('_name') || param.endsWith('Name')) return `찾아보고싶은 ${param}을 알려주세요`
+  if (param.endsWith('_id') || param.endsWith('Id')) return `조회할 ${param}를 알려주세요`
+  return `입력할 ${param} 값을 알려주세요`
 }
