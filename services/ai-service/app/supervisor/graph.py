@@ -155,6 +155,17 @@ class Supervisor:
 
         self._register_loopback(run_id, counter=counter, limit=limit, next_agent=next_agent)
 
+    def force_next_stage(self, run_id: str, next_agent: str) -> None:
+        """다음 advance에서 정적 테이블 대신 지정 stage로 진행한다(#592).
+
+        no-progress 게이트가 재수집을 생략하고 기존 evidence로 rca→remediation을
+        이어갈 때 사용하는 단발 전방 점프. loopback 예산 카운터를 소비하지 않으며,
+        전체 흐름의 유한 종료는 step 예산(check_all_global)이 보장한다.
+        """
+        if self._store.get(run_id) is None:
+            raise KeyError(f"Run not found: {run_id}")
+        self._pending_loopback[run_id] = next_agent
+
     def record_classifier_result(self, run_id: str, *, scope_unclear: bool) -> None:
         """Classifier scope_unclear → Planner 재수집 loopback(§3 'scope 불명확').
 
