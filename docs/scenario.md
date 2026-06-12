@@ -69,7 +69,7 @@ Frontend → operations-backend: POST /api/v1/workspaces {name}
 
 ```text
 1. 자동 감지(lag≥5,000·Connector FAILED 등) 또는 사용자 자연어 요청
-     → Frontend → FastAPI: POST /api/v1/agent/runs {project_id, message, incident_id?}
+     → Frontend → FastAPI: POST /api/v1/agent/runs {project_id, mode?, message, incident_id?, remediation_requested?, stream?, action_candidate?}
 2. FastAPI workflow(기본 diagnose_only): Router→Correlation→Planner→Retrieval→Classifier→RCA→Verifier→Report
      → 운영 조회는 operations-backend /internal/ops read tool로 위임(Agent는 K8s/Kafka 직접 접근 X)
      → 원문은 Evidence Store, State엔 reference만. 진행은 SSE(agent_started/tool_call_completed/...)

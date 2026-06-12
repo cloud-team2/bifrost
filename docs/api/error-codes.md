@@ -58,6 +58,25 @@ Bifrost API가 반환하는 에러 코드의 단일 출처. 코드 추가/변경
 
 Approval/Change Ticket controller가 명시적으로 `OpsEnvelope`를 반환하는 경로는 위 문자열 envelope을 따른다. Bean Validation, JSON parse, 일부 `ApiException` fallback은 전역 `GlobalExceptionHandler`를 거쳐 숫자형 `ErrorResponse`로 내려갈 수 있으므로, 클라이언트는 `/internal/ops/**`에서 두 envelope을 모두 허용해야 한다.
 
+### Tool-layer `SpringErrorCode` enum (ai-service)
+
+ai-service tool client가 인식하는 `error.code` 전체 집합은 `services/ai-service/app/schemas/tools.py`의 `SpringErrorCode` enum이다. 이 enum은 위 "현재 Spring 구현 기준 문자열 코드" 표의 superset으로, Spring이 아직 emit하지 않더라도 client가 매핑·처리할 수 있도록 정의된 코드를 포함한다. enum이 알지 못하는 문자열 코드는 `ToolError.code`가 `str`로 그대로 보존한다(`code: SpringErrorCode | str`). HTTP 상태는 client mirror이므로 고정되지 않고 Spring 응답을 따른다.
+
+위 표에 이미 있는 코드(`VALIDATION_FAILED`, `APPROVAL_REQUIRED`, `APPROVAL_EXPIRED`, `APPROVAL_SCOPE_MISMATCH`, `CONFLICT`, `RESOURCE_NOT_FOUND`, `RESOURCE_NOT_OWNED_BY_PROJECT`, `CONNECTOR_NOT_FOUND`, `CONSUMER_GROUP_NOT_FOUND`, `TIMEOUT`, `UPSTREAM_UNAVAILABLE`, `INTERNAL_ERROR`) 외에 enum이 추가로 정의하는 코드는 다음과 같다.
+
+| Code | 의미 |
+| --- | --- |
+| `POLICY_DENIED` | 정책상 실행 차단 |
+| `CHANGE_TICKET_REQUIRED` | mutation 실행에 change ticket이 필요하거나 실행 가능한 상태가 아님 |
+| `CHANGE_WINDOW_CLOSED` | change ticket의 실행 window가 열려 있지 않음 |
+| `CHANGE_SCOPE_MISMATCH` | change ticket scope(operation/params 등) 불일치 |
+| `PIPELINE_NOT_FOUND` | 대상 pipeline 없음 |
+| `INCIDENT_NOT_FOUND` | 대상 incident 없음 |
+| `IDEMPOTENCY_REPLAY` | 같은 idempotency key의 replay 감지 |
+| `TRANSIENT_ERROR` | 재시도 가능한 일시 오류 |
+| `PERMISSION_DENIED` | actor 권한 부족 |
+| `UNAUTHENTICATED` | 인증 컨텍스트 없음 |
+
 ## 코드 번호 규칙
 
 | 범위 | 도메인 |

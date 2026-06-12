@@ -25,6 +25,7 @@
 | `search_logs` | `POST /internal/ops/projects/{projectId}/observability/logs/search` | implemented | `logs`, `total`, `note` |
 | `query_metrics` | `GET /internal/ops/projects/{projectId}/observability/metrics` | implemented | metric query result |
 | `query_traces` | `GET /internal/ops/projects/{projectId}/connectors/{connectorName}/traces` | implemented | `connector`, `traces`, optional `note` |
+| `get_connector_task_trace` | `GET /internal/ops/projects/{projectId}/connectors/{connectorName}/task-trace` | implemented | `connector`, `traces[{taskId,state,trace}]`, 미연결 시 `note`. Kafka Connect task의 exception trace를 RCA evidence로 노출(#368, query_traces와 분리) |
 | `list_alerts` | `GET /internal/ops/projects/{projectId}/observability/alerts` | implemented | `alerts`, `summary` |
 | `analyze_event_log` | `GET /internal/ops/projects/{projectId}/observability/events/summary` | implemented | event/incident summary |
 | `get_incident_summary` | `GET /internal/ops/projects/{projectId}/incidents/{incidentId}/summary` | implemented | incident summary 또는 fallback stub |
@@ -40,6 +41,8 @@
 | `restart_consumer_group` | `POST /internal/ops/projects/{projectId}/kafka/consumer-groups/{consumerGroup}/restart` | implemented | approval/idempotency-gated mutation |
 
 Health/metadata endpoints(`health`, `ready`, `version`)도 `/internal/ops`에 구현되어 있지만 runtime tool catalog의 Agent read operation에는 포함되지 않는다.
+
+`get_incident_summary`의 정본 경로는 project-scoped `GET /internal/ops/projects/{projectId}/incidents/{incidentId}/summary`다. project scope가 없는 legacy 경로 `GET /internal/ops/incidents/{incidentId}/summary`는 호출 시 HTTP 400 + `OpsEnvelope.error(code=VALIDATION_FAILED, required_action="use_project_scoped_path")`로 거부하며, project-scoped 경로 사용을 강제한다(`InternalOpsObservabilityController.java:476-485`).
 
 ## `list_alerts`
 
