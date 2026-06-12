@@ -15,6 +15,7 @@ from app.schemas.tools import (
     ClusterInfoData,
     ConnectorStatusListData,
     DatasourceListData,
+    SqlReadData,
     ConnectorStatusData,
     ConnectorTaskTraceData,
     ConsumerGroupActionData,
@@ -75,6 +76,11 @@ class ListDatasourcesParams(ToolParams):
 
 class GetClusterInfoParams(ToolParams):
     pass
+
+
+class SqlReadParams(ToolParams):
+    datasource_id: str  # 대상 datasource id (list_datasources 결과에서 확보)
+    sql: str  # SELECT/WITH 단일 statement(read-only)
 
 
 class ConsumerLagParams(ToolParams):
@@ -155,7 +161,9 @@ class ToolDefinition:
     def json_body(self, params: BaseModel) -> dict[str, Any] | None:
         if not self.sends_body:
             return None
-        return params.model_dump(by_alias=True, exclude_none=True)
+        dumped = params.model_dump(by_alias=True, exclude_none=True)
+        # path param(예: datasource_id)은 URL에 들어가므로 body에서 제외한다.
+        return {key: value for key, value in dumped.items() if key not in self.path_params}
 
     def validate_result(self, result: dict[str, Any] | None) -> None:
         self.result_model.model_validate(result or {})
@@ -234,6 +242,19 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
             risk=RiskLevel.READ_ONLY,
             params_model=GetClusterInfoParams,
             result_model=ClusterInfoData,
+            structured_result=True,
+        ),
+        # sql_read — datasource에 read-only SELECT(#633 범용 프리미티브). 'DB 상세' 질의.
+        ToolDefinition(
+            name="sql_read",
+            operation="sql_read",
+            method="POST",
+            path_template="/internal/ops/projects/{project_id}/datasources/{datasource_id}/query",
+            risk=RiskLevel.READ_ONLY,
+            params_model=SqlReadParams,
+            result_model=SqlReadData,
+            path_params=("datasource_id",),
+            sends_body=True,
             structured_result=True,
         ),
         ToolDefinition(

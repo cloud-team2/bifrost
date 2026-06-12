@@ -63,16 +63,17 @@ def test_runbooks_returns_items_with_actions():
     assert connector_runbook["actions"][0]["action_name"] == "restart_connector_task"
 
 
-def test_tools_returns_22_tools():
+def test_tools_returns_23_tools():
     # #491: structured panel read tools. #633: + list_datasources(DB 현황).
     data = _data("/api/v1/tools")
 
-    assert len(data["tools"]) == 22
+    assert len(data["tools"]) == 23
     names = {tool["name"] for tool in data["tools"]}
     assert "search_logs" in names
     assert "get_connector_task_trace" in names
     assert "list_datasources" in names
     assert "get_cluster_info" in names
+    assert "sql_read" in names
     assert {"get_consumer_groups", "list_pipelines", "list_connectors", "analyze_event_log"}.issubset(names)
 
 

@@ -273,6 +273,13 @@ class ClusterInfoData(SpringResponseModel):
     topics: list[dict] = Field(default_factory=list)  # {name, partitionCount, ISR/leader 상세}
 
 
+class SqlReadData(SpringResponseModel):
+    columns: list[str] = Field(default_factory=list)
+    rows: list[list[str | None]] = Field(default_factory=list)
+    row_count: int | None = None
+    truncated: bool | None = None
+
+
 class CriticalIncidentData(SpringResponseModel):
     incident_id: str
     severity: str
