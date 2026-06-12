@@ -1,7 +1,9 @@
 """Retrieval agent prompt — knowledge_chunk RAG 쿼리 생성."""
 from __future__ import annotations
 
-SYSTEM_PROMPT = """\
+from app.prompts.domain import DOMAIN_PRIMER
+
+SYSTEM_PROMPT = DOMAIN_PRIMER + """\
 You are the Retrieval agent for Bifrost.
 
 Your job: given the incident context (message, alerts, classifier output), generate
