@@ -56,7 +56,7 @@ class GetMetricsParams(ToolParams):
 
 
 class GetDeploymentsParams(ToolParams):
-    pass
+    limit: int | None = None
 
 
 class ConnectorStatusParams(ToolParams):
