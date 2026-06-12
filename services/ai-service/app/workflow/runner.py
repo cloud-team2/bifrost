@@ -50,6 +50,7 @@ from app.schemas.state import (
 from app.schemas.tools import ToolContext
 from app.streaming.event_bus import EventBus
 from app.supervisor.graph import get_supervisor
+from app.supervisor.transitions import stages_for_mode
 from app.tools.registry import ToolClientRegistry
 from app.workflow.guards import RunBudgetExceeded
 from app.workflow.stages.approval_gate import run_approval_gate
@@ -378,8 +379,17 @@ async def _run_workflow_impl(
             or _bool_or_false(router_out.route_decision.remediation_requested)
         )
         set_current_run_mode(mode.value)  # router 결정 mode 를 run span 에 기록(#372)
-        await _publish(bus, event_repo, run_id,
-                       _evt(run_id, StreamingEventType.AGENT_COMPLETED, "router", f"mode: {mode.value}"))
+        # #604: 전체 stage 흐름은 이 시점에 확정된다. FE가 진행 단계 분모를
+        # 처음부터 고정할 수 있도록 required_flow를 payload로 노출한다.
+        required_flow = list(stages_for_mode(mode, remediation_requested))
+        await _publish(bus, event_repo, run_id, _evt(
+            run_id, StreamingEventType.AGENT_COMPLETED, "router", f"mode: {mode.value}",
+            {
+                "mode": mode.value,
+                "required_flow": required_flow,
+                "total_stages": len(required_flow),
+            },
+        ))
         if persisted_incident_id:
             await _append_state_patch(
                 state_repo,
