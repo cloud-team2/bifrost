@@ -4,10 +4,12 @@ import com.bifrost.ops.event.EventLevel;
 import com.bifrost.ops.event.EventService;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
+import com.bifrost.ops.incident.dto.IncidentReportResponse;
 import com.bifrost.ops.incident.dto.IncidentResponse;
 import com.bifrost.ops.incident.persistence.entity.IncidentEntity;
 import com.bifrost.ops.incident.persistence.repository.IncidentRepository;
 import com.bifrost.ops.streaming.SsePublisher;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -261,6 +263,52 @@ public class IncidentService {
                 .orElseThrow(() -> new IllegalArgumentException("incident not found: " + incidentId));
         incident.setRca(rca);
         return IncidentResponse.from(incidentRepository.save(incident));
+    }
+
+    /**
+     * 인시던트 rca가 비어 있고 AI 분석 리포트가 있으면 리포트 요약으로 rca를 backfill한다(#595).
+     * ai-service 분석 run은 비동기라 결과 콜백이 없으므로, 리포트를 fetch하는 시점(상세 조회)에 채운다.
+     * 이미 rca가 있거나 리포트가 없으면 현재 값을 그대로 반환한다.
+     */
+    @Transactional
+    public IncidentResponse backfillRcaIfMissing(UUID tenantId, UUID incidentId,
+                                                 IncidentResponse current, List<IncidentReportResponse> reports) {
+        if (current.rca() != null && !current.rca().isBlank()) {
+            return current;
+        }
+        String summary = reportSummary(reports);
+        if (summary == null || summary.isBlank()) {
+            return current;
+        }
+        log.info("[incident] rca backfill(리포트→rca): id={}", incidentId);
+        return updateRca(tenantId, incidentId, summary);
+    }
+
+    /** 가장 최근 리포트 body에서 사람이 읽을 RCA 요약을 추출(없으면 rootCauseId 폴백). */
+    private static String reportSummary(List<IncidentReportResponse> reports) {
+        if (reports == null || reports.isEmpty()) {
+            return null;
+        }
+        IncidentReportResponse best = reports.stream()
+                .max(java.util.Comparator.comparing(
+                        r -> r.createdAt() == null ? Instant.EPOCH : r.createdAt()))
+                .orElse(null);
+        if (best == null) {
+            return null;
+        }
+        JsonNode body = best.body();
+        if (body != null) {
+            for (String field : List.of("summary", "headline", "narrative", "root_cause", "rootCause")) {
+                JsonNode n = body.get(field);
+                if (n != null && n.isTextual() && !n.asText().isBlank()) {
+                    return n.asText();
+                }
+                if (n != null && n.isObject() && n.get("summary") != null && n.get("summary").isTextual()) {
+                    return n.get("summary").asText();
+                }
+            }
+        }
+        return best.rootCauseId();
     }
 
     @Transactional(readOnly = true)

@@ -3,8 +3,12 @@ package com.bifrost.ops.incident;
 import com.bifrost.ops.event.EventLevel;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
+import com.bifrost.ops.incident.dto.IncidentReportResponse;
+import com.bifrost.ops.incident.dto.IncidentResponse;
 import com.bifrost.ops.incident.persistence.entity.IncidentEntity;
 import com.bifrost.ops.incident.persistence.repository.IncidentRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.bifrost.ops.streaming.SsePublisher;
 import com.bifrost.ops.event.EventService;
 import org.mockito.ArgumentCaptor;
@@ -359,6 +363,40 @@ class IncidentServiceTest {
         assertThatThrownBy(() -> service().transitionStatus(tenantId, UUID.randomUUID(), "BOGUS"))
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).code()).isEqualTo(ErrorCode.VALIDATION_FAILED));
+    }
+
+    @Test
+    void backfillRcaFromReportSummaryWhenMissing() {
+        // (#595) rca가 비어 있고 리포트가 있으면 리포트 요약으로 backfill.
+        UUID incidentId = UUID.randomUUID();
+        IncidentEntity incident = incident(incidentId, tenantId, "OPEN"); // rca=null
+        when(incidentRepository.findById(incidentId)).thenReturn(Optional.of(incident));
+        when(incidentRepository.save(incident)).thenReturn(incident);
+
+        ObjectNode body = new ObjectMapper().createObjectNode();
+        body.put("summary", "소스 DB 연결 끊김으로 CDC 중단");
+        IncidentReportResponse report = new IncidentReportResponse(
+                "r1", "run1", incidentId.toString(), "rc1", 0.9, true, body,
+                Instant.parse("2026-06-11T00:00:00Z"));
+
+        IncidentResponse result = service().backfillRcaIfMissing(
+                tenantId, incidentId, com.bifrost.ops.incident.dto.IncidentResponse.from(incident), List.of(report));
+
+        assertThat(incident.getRca()).isEqualTo("소스 DB 연결 끊김으로 CDC 중단");
+        assertThat(result.rca()).isEqualTo("소스 DB 연결 끊김으로 CDC 중단");
+    }
+
+    @Test
+    void backfillRcaNoOpWhenRcaAlreadyPresent() {
+        UUID incidentId = UUID.randomUUID();
+        IncidentEntity incident = incident(incidentId, tenantId, "OPEN");
+        incident.setRca("기존 RCA");
+
+        IncidentResponse result = service().backfillRcaIfMissing(
+                tenantId, incidentId, com.bifrost.ops.incident.dto.IncidentResponse.from(incident), List.of());
+
+        verify(incidentRepository, never()).save(any());
+        assertThat(result.rca()).isEqualTo("기존 RCA");
     }
 
     private static IncidentEntity incident(UUID incidentId, UUID tenantId, String status) {
