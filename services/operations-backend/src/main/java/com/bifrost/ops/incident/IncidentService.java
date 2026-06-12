@@ -298,7 +298,8 @@ public class IncidentService {
         }
         JsonNode body = best.body();
         if (body != null) {
-            for (String field : List.of("summary", "headline", "narrative", "root_cause", "rootCause")) {
+            // "answer" = ai-service incident_analysis 리포트의 사람이 읽는 본문 필드(실 스키마).
+            for (String field : List.of("answer", "summary", "headline", "narrative", "root_cause", "rootCause")) {
                 JsonNode n = body.get(field);
                 if (n != null && n.isTextual() && !n.asText().isBlank()) {
                     return n.asText();
