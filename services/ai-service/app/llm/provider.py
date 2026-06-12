@@ -49,6 +49,25 @@ class LLMProvider:
         resp = await self._client.chat.completions.create(model=model, messages=messages)
         return resp.choices[0].message.content or ""
 
+    def supports_tools(self) -> bool:
+        """tool-calling(function-calling) 사용 가능 여부 — client 미연결이면 False(폴백)."""
+        return self._client is not None
+
+    async def generate_with_tools(
+        self, messages: list[dict], tools: list[dict], model: str | None = None
+    ):
+        """OpenAI function-calling 한 스텝. assistant message(.content, .tool_calls)를 반환한다.
+
+        ReAct 루프(app.agents.agentic)에서 사용. client 미연결이면 None 을 돌려 폴백을 알린다.
+        """
+        if self._client is None:
+            return None
+        model = model or settings.llm_default_model
+        resp = await self._client.chat.completions.create(
+            model=model, messages=messages, tools=tools, tool_choice="auto"
+        )
+        return resp.choices[0].message
+
 
 _provider: LLMProvider | None = None
 
