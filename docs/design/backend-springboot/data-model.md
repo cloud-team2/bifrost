@@ -83,8 +83,8 @@ erDiagram
     incident {
         uuid id PK
         uuid workspace_id FK
-        text severity "WARN/ERROR (entity comment also mentions CRITICAL)"
-        text status "OPEN/RESOLVED"
+        text severity "WARNING/CRITICAL"
+        text status "OPEN/INVESTIGATING/RESOLVED"
         text rca
         text source_type
         uuid source_id
@@ -259,8 +259,8 @@ Workspace settings 화면의 notifications/thresholds/ai-policy 값을 저장한
 | --- | --- | --- |
 | `id` | uuid PK | |
 | `workspace_id` | uuid FK | |
-| `severity` | text | 현재 `IncidentService` 생성/에스컬레이션 값은 `WARN`/`ERROR`. entity comment에는 `CRITICAL`도 남아 있으나 service는 설정하지 않는다. |
-| `status` | text | 현재 `IncidentService` 값은 `OPEN`/`RESOLVED` |
+| `severity` | text | 현재 `IncidentService` 생성/에스컬레이션 값은 `WARNING`/`CRITICAL` |
+| `status` | text | 현재 `IncidentService` 값은 `OPEN`/`INVESTIGATING`/`RESOLVED` |
 | `rca` | text null | RCA 결과. 현재 controller route로 쓰는 PATCH API는 없다. |
 | `grouping_key` | text | source_db/worker/consumer_group 등 |
 | `source_type` | text null | incident source type |
