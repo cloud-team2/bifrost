@@ -232,6 +232,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         # list_datasources — 프로젝트 DB 목록·헬스(#633). 'DB 현황' 질의에 답할 도구.
         ToolDefinition(
             name="list_datasources",
+            description="프로젝트의 데이터베이스(소스/싱크) 목록과 연결·준비 상태를 조회합니다.",
             operation="list_datasources",
             method="GET",
             path_template="/internal/ops/projects/{project_id}/datasources",
@@ -243,6 +244,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         # get_cluster_info — 브로커/컨트롤러 + 토픽 파티션 상세(#633 범용 read 프리미티브).
         ToolDefinition(
             name="get_cluster_info",
+            description="Kafka 클러스터의 브로커·컨트롤러와 토픽 파티션(ISR/leader) 상세를 조회합니다.",
             operation="get_cluster_info",
             method="GET",
             path_template="/internal/ops/projects/{project_id}/kafka/cluster",
@@ -254,6 +256,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         # sql_read — datasource에 read-only SELECT(#633 범용 프리미티브). 'DB 상세' 질의.
         ToolDefinition(
             name="sql_read",
+            description="데이터소스에 read-only SELECT를 실행해 테이블 데이터·집계를 조회합니다.",
             operation="sql_read",
             method="POST",
             path_template="/internal/ops/projects/{project_id}/datasources/{datasource_id}/query",
