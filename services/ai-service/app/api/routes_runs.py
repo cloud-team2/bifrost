@@ -311,5 +311,15 @@ async def list_runs(
     limit: int = Query(default=20, ge=0, le=100),
 ) -> ApiResponse:
     request_id = _request_id()
+    if project_id is not None:
+        # #592: 목록 쿼리도 project_id를 ::uuid로 캐스팅하므로 비 UUID면 500이 됐다.
+        try:
+            uuid.UUID(project_id)
+        except ValueError:
+            return ApiResponse.failure(
+                request_id,
+                ErrorCode.VALIDATION_FAILED,
+                f"project_id must be a UUID: {project_id}",
+            )
     runs = await get_run_repo().list(project_id=project_id, status=status, limit=limit)
     return ApiResponse.success(request_id, {"runs": [run.model_dump(mode="json") for run in runs]})
