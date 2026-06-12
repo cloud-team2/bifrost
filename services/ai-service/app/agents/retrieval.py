@@ -253,9 +253,11 @@ async def run_retrieval(
     # (#633 harness) tool-calling 가능하면 ReAct 루프로 도구를 반복 호출(chaining)해 근거를 모은다.
     # flat plan 과 달리 한 도구 결과(예: topology 의 커넥터 이름)를 다음 도구 입력으로 잇는다.
     # LLM 미연결 등으로 루프가 진전 못 하면 기존 flat plan 으로 폴백한다.
+    # 루프는 planner 의 flat plan 과 무관하게 스스로 도구를 고르므로 _has_operational_tool 게이트로
+    # 막지 않는다(planner 가 search_logs 같은 fallback 만 골라도 루프가 sql_read 등을 선택할 수 있게).
+    # 순수 지식 질의는 위 knowledge 단락(short-circuit)에서 이미 처리된다.
     provider = get_llm_provider()
-    if (mode in (AgentMode.SIMPLE_QUERY, AgentMode.INCIDENT_ANALYSIS)
-            and provider.supports_tools() and _has_operational_tool(plan)):
+    if mode in (AgentMode.SIMPLE_QUERY, AgentMode.INCIDENT_ANALYSIS) and provider.supports_tools():
         loop_result = await run_tool_loop(
             user_message=user_message or "", registry=registry, context=context, provider=provider,
         )
@@ -264,7 +266,10 @@ async def run_retrieval(
                 await _evidence_from_executed(run_id, rec, bus, event_repo, evidence_repo)
                 for rec in loop_result.calls
             ]
-            return RetrievalOutput(evidence_items=[*knowledge_items, *tool_evidence])
+            return RetrievalOutput(
+                evidence_items=[*knowledge_items, *tool_evidence],
+                answer=loop_result.answer or None,
+            )
 
     # depends_on을 해석해 독립 tool은 병렬(fan-out), 의존 tool은 선행 완료 후 순차 실행
     tool_evidence = await _run_plan_steps(plan.retrieval_plan, call_step)

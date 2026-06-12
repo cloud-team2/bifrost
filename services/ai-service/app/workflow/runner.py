@@ -1061,8 +1061,13 @@ async def _run_workflow_impl(
                 case "report":
                     await _publish(bus, event_repo, run_id,
                                    _evt(run_id, StreamingEventType.AGENT_STARTED, "report", "답변을 생성합니다"))
+                    loop_answer = getattr(retrieval_out, "answer", None) if retrieval_out else None
                     if mode in (AgentMode.ACTION_EXECUTION, AgentMode.APPROVAL_DECISION):
                         answer = _action_execution_answer(executor_out, verifier_out)
+                    elif mode == AgentMode.SIMPLE_QUERY and loop_answer:
+                        # (#633) ReAct 루프가 전체 도구 결과로 합성한 답을 그대로 쓴다(sql_read 행값 등
+                        # 실데이터를 살리기 위함). report LLM 재합성은 evidence 요약만 봐서 데이터를 누락한다.
+                        answer = loop_answer
                     else:
                         llm = get_llm_provider()
                         answer = await report_agent.run_report(
