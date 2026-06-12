@@ -8,7 +8,7 @@
 ## Account / Auth
 
 - 지원 경로는 `/api/v1/auth/**`만이다.
-- `/api/auth/**` alias는 v1 controller가 없어 404 `RESOURCE_NOT_FOUND` envelope으로 거부된다. 클라이언트는 사용하면 안 된다.
+- `/api/auth/**` legacy alias는 v1 controller handler가 없다. `SecurityConfig`/`SecurityPaths` 기준 security matcher는 legacy login만 permitAll, legacy refresh/me는 authenticated로 두고 legacy register는 별도 alias 없이 `anyRequest().authenticated()`로 떨어진다. 따라서 `POST /api/auth/login`은 handler가 없어 404, `GET /api/auth/me`·`POST /api/auth/refresh`·`POST /api/auth/register`는 Bearer 없이 401이고 유효 Bearer가 있으면 handler가 없어 404다. 클라이언트는 반드시 `/api/v1/auth/**`를 사용한다.
 - `GET /api/v1/auth/me`는 계정 정보뿐 아니라 현재 workspace context를 함께 반환한다.
 
 `GET /api/v1/auth/me` 필수 응답:
@@ -56,7 +56,7 @@ MVP Settings 화면은 세 개 도메인을 사용한다.
 ## Acceptance Criteria
 
 - 회원가입은 사용자와 최초 워크스페이스를 생성하고 `201`과 token response를 반환한다.
-- 로그인/refresh/me는 `/api/v1/auth/**`에서만 동작하고, `/api/auth/**` alias는 404 envelope으로 거부된다.
+- 로그인/refresh/me는 `/api/v1/auth/**`에서만 동작한다. `/api/auth/**` legacy alias는 handler가 없어 동작하지 않으며, security matcher상 `POST /api/auth/login`만 permitAll 404이고 legacy me/refresh/register는 Bearer 없이 401, 유효 Bearer가 있으면 404다.
 - `/api/v1/auth/me`는 `userId, email, name, role, joinedAt, lastLoginAt, workspaceId, workspaceName, namespace, workspaceStatus`를 반환한다.
 - 워크스페이스 목록/상세는 `WorkspaceResponse(id, name, projectKey, timezone, status, createdAt, pipelineCount, activePipelineCount)` 계약을 지킨다.
 - 멤버 추가는 `201`, 삭제는 `204`를 반환한다. 멤버 목록은 모든 멤버가 조회할 수 있고, 멤버/워크스페이스/settings 관리는 `OWNER`/`ADMIN`만 가능하다.

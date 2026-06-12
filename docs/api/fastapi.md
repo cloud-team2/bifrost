@@ -19,7 +19,7 @@ Spring Boot 내부 운영 API와 governance/mutation 계약은 [Spring Boot API 
 | timestamp | ISO-8601 UTC |
 | 인증 | 현재 FastAPI route에는 JWT/Bearer 검증 dependency가 연결되어 있지 않다. Agent run SSE path는 `access_token` query parameter를 받지만 현재 검증에 쓰지 않는다. |
 | streaming | SSE 우선. WebSocket route는 현재 없음 |
-| raw evidence | 반환하지 않음. State에는 evidence metadata와 `store_ref`만 둠 |
+| raw evidence | State에는 evidence metadata와 `store_ref`만 둔다. raw content는 `store_ref`로 evidence store를 조회하는 `GET .../evidence/{id}`(raw 동봉)·`POST .../evidence/{id}/hydrate`로만 노출한다 |
 
 ### 2.1 구현 상태 기준
 
@@ -87,6 +87,7 @@ Spring Boot 내부 운영 API와 governance/mutation 계약은 [Spring Boot API 
 | `STREAM_UNAVAILABLE` | event stream 생성 실패 |
 | `NOT_IMPLEMENTED` | route는 있으나 v1 구현이 없는 기능 |
 | `EVIDENCE_NOT_FOUND` | evidence id를 찾을 수 없음. `ErrorCode` enum이 아니라 `routes_evidence.py` custom 404 code |
+| `EVIDENCE_RAW_NOT_FOUND` | evidence metadata는 있으나 `store_ref`로 raw evidence를 찾을 수 없음. `routes_evidence.py` hydrate route의 custom 404 code |
 | `TOOL_NOT_FOUND` | tool name을 찾을 수 없음. `ErrorCode` enum이 아니라 `routes_catalogs.py` custom 404 code |
 
 ## 5. Health / Metadata API
@@ -196,10 +197,10 @@ Spring Boot 내부 운영 API와 governance/mutation 계약은 [Spring Boot API 
 | Method | Path | 구현 상태 | 설명 |
 | --- | --- | --- | --- |
 | `GET` | `/api/v1/agent/runs/{run_id}/evidence` | 구현됨 | evidence metadata 목록 |
-| `GET` | `/api/v1/agent/runs/{run_id}/evidence/{evidence_id}` | 구현됨 | matching patch payload 반환. 없으면 HTTP 404 `EVIDENCE_NOT_FOUND` |
-| `POST` | `/api/v1/agent/runs/{run_id}/evidence/{evidence_id}/hydrate` | route만 있음 | HTTP 200 failure envelope `NOT_IMPLEMENTED` |
+| `GET` | `/api/v1/agent/runs/{run_id}/evidence/{evidence_id}` | 구현됨 | matching patch payload 반환. `store_ref`로 raw evidence를 조회할 수 있으면 `raw` 필드를 동봉한다. 없으면 HTTP 404 `EVIDENCE_NOT_FOUND` |
+| `POST` | `/api/v1/agent/runs/{run_id}/evidence/{evidence_id}/hydrate` | 구현됨 | metadata patch의 `store_ref`로 evidence store에서 raw evidence를 조회해 반환. evidence id가 없으면 HTTP 404 `EVIDENCE_NOT_FOUND`, raw record를 찾지 못하면 HTTP 404 `EVIDENCE_RAW_NOT_FOUND` |
 
-목록 item field는 `evidence_id`, `type`, `store_ref`, `summary`, `redaction_status`, `collected_at`이다. Raw content hydrate는 Spring Evidence Store 통합 전까지 제공하지 않는다.
+목록 item field는 `evidence_id`, `type`, `store_ref`, `summary`, `redaction_status`, `collected_at`이다. Raw content는 evidence metadata patch의 `store_ref`로 evidence repository(`get_evidence_repo()`)를 조회해 hydrate한다. hydrate 응답 field는 `store_ref`, `payload`, `redaction_status`, `status`, `tool_name`, `step_id`, `created_at`이다.
 
 ## 10. Approval API
 
@@ -269,6 +270,9 @@ Incident, event, monitoring 목록/상세 조회는 Spring Boot 플랫폼 API가
 | `GET` | `/api/v1/catalogs/runbooks` | 구현됨 | `items[{root_cause_id, disposition, allowed_action_types, basis, actions, forbidden_actions}]`, `version` |
 | `GET` | `/api/v1/tools` | 구현됨 | `tools[{name, operation, risk, method, path_template}]` |
 | `GET` | `/api/v1/tools/{tool_name}` | 구현됨 | summary + `params_schema`, `result_schema`. 없으면 HTTP 404 `TOOL_NOT_FOUND` |
+| `POST` | `/api/v1/tools/{tool_name}/execute` | 구현됨 | read-only tool을 직접 실행(slash command용). body `project_id`, `params`. 응답 data는 `tool_result`, `result` |
+
+`POST /api/v1/tools/{tool_name}/execute`는 read-only slash command 실행 전용이다. tool이 없으면 HTTP 404 `TOOL_NOT_FOUND`, 대상 tool이 `RiskLevel.READ_ONLY`가 아니거나 `requires_approval`이면 HTTP 400 `POLICY_DENIED`로 거부한다. 실행은 `slash_command` agent 컨텍스트(`run_id=slash_...`)로 registry를 호출하고, tool 실패 시 Spring tool error code를 HTTP 400 envelope으로 그대로 전달한다. mutation tool은 이 route로 실행할 수 없다.
 
 FastAPI tool registry는 Agent의 논리 tool 목록이다. Spring Boot `GET /internal/ops/admin/tool-catalog`는 실제 Spring runtime endpoint catalog이며 현재 read operation과 approval-gated mutation operation을 함께 반환한다. 두 catalog의 목적과 범위는 다르다.
 
