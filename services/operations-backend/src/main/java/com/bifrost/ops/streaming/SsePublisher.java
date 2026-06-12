@@ -2,6 +2,7 @@ package com.bifrost.ops.streaming;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -41,6 +42,23 @@ public class SsePublisher {
             remove(wsId, emitter);
         }
         return emitter;
+    }
+
+    /**
+     * idle SSE 연결이 nginx ingress read-timeout(~60s)/버퍼링에 끊기지 않도록 주기 heartbeat(:ping, #630).
+     * 이벤트가 한동안 없어도 연결을 살아있게 유지한다. 전송 실패한 emitter는 정리.
+     */
+    @Scheduled(fixedRate = 20_000)
+    public void heartbeat() {
+        emittersByWorkspace.forEach((wsId, list) -> {
+            for (SseEmitter emitter : list) {
+                try {
+                    emitter.send(SseEmitter.event().comment("ping"));
+                } catch (IOException | IllegalStateException e) {
+                    remove(wsId, emitter);
+                }
+            }
+        });
     }
 
     /** 파이프라인 상태 전이 알림. */
