@@ -20,8 +20,12 @@ public record TraceSummaryResult(
         List<TraceSpan> spans,
         String note) {
 
-    /** 개별 span 요약: 무엇이(name) 어느 서비스에서(service) 얼마나(durationMs) 걸렸고 실패(status/error)했나. */
-    public record TraceSpan(String name, String service, long durationMs, String status, String error) {}
+    /**
+     * 개별 span 요약: 무엇이(name) 어느 서비스에서(service) 얼마나 걸렸고 실패(status/error)했나.
+     * {@code durationMicros}(µs)는 서브 ms 보존용 additive 필드(#632) — Debezium 발행/Sink span처럼
+     * 1ms 미만 구간이 ns→ms 정수절삭으로 0ms가 되던 걸 막는다. {@code durationMs}는 ai-service 계약 유지.
+     */
+    public record TraceSpan(String name, String service, long durationMs, long durationMicros, String status, String error) {}
 
     public static TraceSummaryResult of(String traceId, String pipelineId, String status,
                                         long durationMs, List<TraceSpan> spans) {

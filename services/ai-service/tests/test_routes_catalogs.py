@@ -77,12 +77,23 @@ def test_tools_returns_23_tools():
     assert {"get_consumer_groups", "list_pipelines", "list_connectors", "analyze_event_log"}.issubset(names)
 
 
+def test_tools_expose_descriptions():
+    # #599: 모든 도구에 사용자 노출용 한글 설명이 내려간다(슬래시 드롭다운 소스).
+    data = _data("/api/v1/tools")
+
+    for tool in data["tools"]:
+        assert tool.get("description"), f"missing description: {tool['name']}"
+    by_name = {tool["name"]: tool["description"] for tool in data["tools"]}
+    assert by_name["list_connectors"] == "Kafka Connector 상태 및 Task 정보를 조회합니다."
+
+
 def test_get_tool_by_name():
     data = _data("/api/v1/tools/search_logs")
 
     assert data["name"] == "search_logs"
     assert data["operation"] == "search_logs"
     assert data["risk"] == "read_only"
+    assert data["description"]
     assert "params_schema" in data
     assert "result_schema" in data
 

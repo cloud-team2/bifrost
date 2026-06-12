@@ -51,6 +51,7 @@ from app.schemas.state import (
 from app.schemas.tools import ToolContext
 from app.streaming.event_bus import EventBus
 from app.supervisor.graph import get_supervisor
+from app.supervisor.transitions import stages_for_mode
 from app.tools.registry import ToolClientRegistry
 from app.workflow.guards import RunBudgetExceeded
 from app.workflow.stages.approval_gate import run_approval_gate
@@ -63,6 +64,7 @@ logger = logging.getLogger(__name__)
 _PUBLIC_FAILURE_MESSAGE = "요청 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
 _ACTION_EXECUTION_TOOLS = {
     "pause_connector",
+    "restart_connector",
     "resume_connector",
 }
 
@@ -398,8 +400,17 @@ async def _run_workflow_impl(
             or _bool_or_false(router_out.route_decision.remediation_requested)
         )
         set_current_run_mode(mode.value)  # router 결정 mode 를 run span 에 기록(#372)
-        await _publish(bus, event_repo, run_id,
-                       _evt(run_id, StreamingEventType.AGENT_COMPLETED, "router", f"mode: {mode.value}"))
+        # #604: 전체 stage 흐름은 이 시점에 확정된다. FE가 진행 단계 분모를
+        # 처음부터 고정할 수 있도록 required_flow를 payload로 노출한다.
+        required_flow = list(stages_for_mode(mode, remediation_requested))
+        await _publish(bus, event_repo, run_id, _evt(
+            run_id, StreamingEventType.AGENT_COMPLETED, "router", f"mode: {mode.value}",
+            {
+                "mode": mode.value,
+                "required_flow": required_flow,
+                "total_stages": len(required_flow),
+            },
+        ))
         if persisted_incident_id:
             await _append_state_patch(
                 state_repo,
@@ -611,6 +622,19 @@ async def _run_workflow_impl(
                     this_plan_hashes = {s.plan_hash for s in planner_out.retrieval_plan}
                     no_progress = bool(this_plan_hashes) and this_plan_hashes <= executed_plan_hashes
                     executed_plan_hashes |= this_plan_hashes  # no_progress 계산 후 갱신
+                    if no_progress and remediation_requested and rca_out is None:
+                        # #592: 조치 후보를 요청한 run은 같은 plan 재수집으로 진전이
+                        # 없어도 클린 종료하지 않는다. 재수집을 생략하고 지금까지의
+                        # evidence로 rca→remediation→policy_guard를 이어가 조치 후보를
+                        # 제시한다(FR-022, 실행 전 정지). rca_out이 이미 있으면(verifier
+                        # loopback 재진입) 기존 클린 종료를 유지해 무한 재생성을 막는다.
+                        supervisor.force_next_stage(run_id, "rca")
+                        await _publish(bus, event_repo, run_id, _evt(
+                            run_id, StreamingEventType.PARTIAL_RESULT, "planner",
+                            "추가 수집 없이 기존 근거로 조치 후보 생성을 진행합니다",
+                            {"stage": "planner", "reason": "no_progress_remediation_continue"},
+                        ))
+                        continue
                     if no_progress:
                         answer = _no_incident_answer(retrieval_out)
                         await _append_state_patch(

@@ -246,6 +246,103 @@ async def test_clean_result_completes_via_no_progress_instead_of_budget_failure(
 
 
 @pytest.mark.asyncio
+async def test_remediation_requested_continues_past_no_progress_to_candidates():
+    """#592: 조치 후보를 요청한 run은 no-progress여도 클린 종료하지 않고
+    기존 evidence로 rca→remediation→policy_guard를 이어가 조치 후보를 emit한다."""
+    state_repo = InMemoryStateRepository()
+    report_repo = _CapturingReportRepository()
+    supervisor = Supervisor(store=InMemoryStateStore(), policy=RetryPolicy())
+    bus = EventBus()
+    published: list = []
+    bus.publish = AsyncMock(side_effect=lambda run_id, event: published.append(event))  # type: ignore[method-assign]
+    run_repo = AsyncMock()
+    run_repo.get.return_value = None
+
+    router_out = RouterOutput(
+        route_decision=RouteDecision(
+            mode=AgentMode.INCIDENT_ANALYSIS,
+            remediation_requested=True,
+            reason="remediation candidate request",
+            required_flow=[],
+        )
+    )
+
+    with (
+        patch("app.workflow.runner.router_agent.run_router", new_callable=AsyncMock) as mock_router,
+        patch("app.workflow.runner.run_correlation", new_callable=AsyncMock) as mock_correlation,
+        patch("app.workflow.runner.planner_agent.run_planner", new_callable=AsyncMock) as mock_planner,
+        patch("app.workflow.runner.retrieval_agent.run_retrieval", new_callable=AsyncMock) as mock_retrieval,
+        patch("app.workflow.runner.classifier_agent.run_classifier", new_callable=AsyncMock) as mock_classifier,
+        patch("app.workflow.runner.rca_agent.run_rca", new_callable=AsyncMock) as mock_rca,
+        patch("app.workflow.runner.remediation_agent.run_remediation", new_callable=AsyncMock) as mock_remediation,
+        patch("app.workflow.runner.verifier_agent.run_verifier", new_callable=AsyncMock) as mock_verifier,
+        patch("app.workflow.runner.report_agent.run_report", new_callable=AsyncMock) as mock_report,
+        patch("app.workflow.runner.get_supervisor", return_value=supervisor),
+        patch("app.workflow.runner.get_event_repo", return_value=InMemoryEventRepository()),
+        patch("app.workflow.runner.get_state_repo", return_value=state_repo),
+        patch("app.workflow.runner.get_report_repo", return_value=report_repo),
+        patch("app.workflow.runner.get_llm_provider"),
+    ):
+        from app.schemas.outputs import ActionCandidateOutput, RemediationOutput
+        from app.schemas.state import ActionType, RiskLevel
+
+        mock_router.return_value = router_out
+        mock_correlation.return_value = _correlation_out()
+        # 매 호출 같은 plan_hash → 2번째 planner에서 no-progress 감지.
+        mock_planner.return_value = _planner_out("plan_hash_clean")
+        mock_retrieval.return_value = _clean_retrieval_out()
+        # scope_unclear → classifier가 Planner로 loopback 등록.
+        mock_classifier.return_value = _unclear_classifier_out()
+        mock_rca.return_value = _rca_out()
+        mock_remediation.return_value = RemediationOutput(
+            action_candidates=[
+                ActionCandidateOutput(
+                    action_id="act_592",
+                    action_type=ActionType.RUNTIME_TOOL,
+                    action_name="restart_connector_task",
+                    root_cause_id="rc_001",
+                    risk=RiskLevel.MEDIUM,
+                    reason="runbook: restart_connector_task",
+                    tool_name="restart_connector_task",
+                    tool_params={"connector_name": "orders-source"},
+                )
+            ]
+        )
+        mock_verifier.return_value = _pass_verifier_out()
+        mock_report.return_value = "조치 후보를 제시합니다"
+
+        await run_workflow(
+            run_id="run_remediation_592",
+            user_message="이 인시던트 조치 후보 보여줘",
+            project_id="proj_001",
+            bus=bus,
+            run_repo=run_repo,
+            registry=AsyncMock(),
+        )
+
+    statuses = [call.args for call in run_repo.update_status.await_args_list]
+    assert ("run_remediation_592", "completed", None) in statuses
+    assert not any(args[1] == "failed" for args in statuses)
+
+    # no-progress에서 클린 종료하지 않고 remediation까지 진행했다.
+    assert mock_rca.await_count == 1
+    assert mock_remediation.await_count == 1
+
+    # 우회 안내 이벤트가 있고, 클린 종료 사유는 어디에도 없다.
+    reasons = [e.payload.get("reason") for e in published if e.payload]
+    assert "no_progress_remediation_continue" in reasons
+    assert "no_progress_clean_result" not in reasons
+
+    # 조치 후보가 emit됐다(remediation AGENT_COMPLETED).
+    remediation_events = [
+        e for e in published
+        if e.type == StreamingEventType.AGENT_COMPLETED and e.agent == "remediation"
+    ]
+    assert remediation_events
+    assert "후보 1건" in remediation_events[0].message
+
+
+@pytest.mark.asyncio
 async def test_genuine_new_evidence_does_not_early_exit():
     """(ii) 2번째 plan이 다르면(plan_hash 변경) no-progress로 조기 종료하지 않고
     report까지 정상 진행한다(회귀 안전성)."""
