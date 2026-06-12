@@ -224,6 +224,17 @@ def test_actions_merges_actions_namespace(monkeypatch):
     }]
 
 
+def test_actions_returns_run_not_found_for_unknown_run(monkeypatch):
+    _install(monkeypatch)
+
+    res = client.get("/api/v1/agent/runs/missing_run/actions")
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "RUN_NOT_FOUND"
+
+
 def test_auxiliary_routes_accept_db_record_values_for_closed_runs(monkeypatch):
     ts = _now()
     author_id = UUID("8a686502-fc55-4515-b186-396c19293edb")

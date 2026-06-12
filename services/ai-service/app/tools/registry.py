@@ -12,7 +12,10 @@ from app.schemas.state import RiskLevel
 from app.schemas.tools import (
     AlertsData,
     ConnectorActionData,
+    ClusterInfoData,
     ConnectorStatusListData,
+    DatasourceListData,
+    SqlReadData,
     ConnectorStatusData,
     ConnectorTaskTraceData,
     ConsumerGroupActionData,
@@ -56,7 +59,7 @@ class GetMetricsParams(ToolParams):
 
 
 class GetDeploymentsParams(ToolParams):
-    pass
+    limit: int | None = None
 
 
 class ConnectorStatusParams(ToolParams):
@@ -65,6 +68,19 @@ class ConnectorStatusParams(ToolParams):
 
 class ListConnectorsParams(ToolParams):
     pass
+
+
+class ListDatasourcesParams(ToolParams):
+    pass
+
+
+class GetClusterInfoParams(ToolParams):
+    pass
+
+
+class SqlReadParams(ToolParams):
+    datasource_id: str  # 대상 datasource id (list_datasources 결과에서 확보)
+    sql: str  # SELECT/WITH 단일 statement(read-only)
 
 
 class ConsumerLagParams(ToolParams):
@@ -147,7 +163,9 @@ class ToolDefinition:
     def json_body(self, params: BaseModel) -> dict[str, Any] | None:
         if not self.sends_body:
             return None
-        return params.model_dump(by_alias=True, exclude_none=True)
+        dumped = params.model_dump(by_alias=True, exclude_none=True)
+        # path param(예: datasource_id)은 URL에 들어가므로 body에서 제외한다.
+        return {key: value for key, value in dumped.items() if key not in self.path_params}
 
     def validate_result(self, result: dict[str, Any] | None) -> None:
         self.result_model.model_validate(result or {})
@@ -209,6 +227,44 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
             risk=RiskLevel.READ_ONLY,
             params_model=ListConnectorsParams,
             result_model=ConnectorStatusListData,
+            structured_result=True,
+        ),
+        # list_datasources — 프로젝트 DB 목록·헬스(#633). 'DB 현황' 질의에 답할 도구.
+        ToolDefinition(
+            name="list_datasources",
+            description="프로젝트의 데이터베이스(소스/싱크) 목록과 연결·준비 상태를 조회합니다.",
+            operation="list_datasources",
+            method="GET",
+            path_template="/internal/ops/projects/{project_id}/datasources",
+            risk=RiskLevel.READ_ONLY,
+            params_model=ListDatasourcesParams,
+            result_model=DatasourceListData,
+            structured_result=True,
+        ),
+        # get_cluster_info — 브로커/컨트롤러 + 토픽 파티션 상세(#633 범용 read 프리미티브).
+        ToolDefinition(
+            name="get_cluster_info",
+            description="Kafka 클러스터의 브로커·컨트롤러와 토픽 파티션(ISR/leader) 상세를 조회합니다.",
+            operation="get_cluster_info",
+            method="GET",
+            path_template="/internal/ops/projects/{project_id}/kafka/cluster",
+            risk=RiskLevel.READ_ONLY,
+            params_model=GetClusterInfoParams,
+            result_model=ClusterInfoData,
+            structured_result=True,
+        ),
+        # sql_read — datasource에 read-only SELECT(#633 범용 프리미티브). 'DB 상세' 질의.
+        ToolDefinition(
+            name="sql_read",
+            description="데이터소스에 read-only SELECT를 실행해 테이블 데이터·집계를 조회합니다.",
+            operation="sql_read",
+            method="POST",
+            path_template="/internal/ops/projects/{project_id}/datasources/{datasource_id}/query",
+            risk=RiskLevel.READ_ONLY,
+            params_model=SqlReadParams,
+            result_model=SqlReadData,
+            path_params=("datasource_id",),
+            sends_body=True,
             structured_result=True,
         ),
         ToolDefinition(
@@ -278,13 +334,15 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
             result_model=PipelineTopologyData,
             path_params=("pipeline_id",),
         ),
-        # ── catalog §8.5 Incident summary (Spring PR #157) ───────────────────
+        # ── catalog §8.5 Incident summary ────────────────────────────────────
+        # 백엔드는 project-scoped 경로만 허용한다(비-scoped는 VALIDATION_FAILED).
+        # {project_id}는 ToolContext에서 자동 주입되므로 path_params엔 incident_id만 둔다.
         ToolDefinition(
             name="get_incident_summary",
             description="지정 인시던트의 요약 정보를 조회합니다.",
             operation="get_incident_summary",
             method="GET",
-            path_template="/internal/ops/incidents/{incident_id}/summary",
+            path_template="/internal/ops/projects/{project_id}/incidents/{incident_id}/summary",
             risk=RiskLevel.READ_ONLY,
             params_model=GetIncidentSummaryParams,
             result_model=IncidentSummaryData,

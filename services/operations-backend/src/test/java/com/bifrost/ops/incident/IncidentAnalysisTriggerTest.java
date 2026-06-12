@@ -56,10 +56,32 @@ class IncidentAnalysisTriggerTest {
         context.server.verify();
     }
 
+    @Test
+    void startSkipsWhenAiServiceUrlIsBlank() {
+        TestContext context = context(" ");
+
+        assertThatNoException().isThrownBy(() ->
+                context.trigger.start(UUID.randomUUID(), UUID.randomUUID(), "Pipeline failed", "boom"));
+        context.server.verify();
+    }
+
+    @Test
+    void startSkipsWhenAiServiceUrlPointsToLocalhost() {
+        TestContext context = context("http://localhost:8082");
+
+        assertThatNoException().isThrownBy(() ->
+                context.trigger.start(UUID.randomUUID(), UUID.randomUUID(), "Pipeline failed", "boom"));
+        context.server.verify();
+    }
+
     private static TestContext context() {
+        return context(AI_URL);
+    }
+
+    private static TestContext context(String aiServiceUrl) {
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        return new TestContext(new IncidentAnalysisTrigger(AI_URL, builder), server);
+        return new TestContext(new IncidentAnalysisTrigger(aiServiceUrl, builder), server);
     }
 
     private record TestContext(IncidentAnalysisTrigger trigger, MockRestServiceServer server) {}

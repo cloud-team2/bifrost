@@ -172,7 +172,7 @@ ResourceEvents (FR-024)       GET /api/v1/workspaces/{wsId}/monitoring/resource-
                               (별도 화면 없이 AlertsView 통합 이벤트 로그로 흡수 — #324)
 ```
 
-`MonitoringController`의 `/monitoring/**` 4개 handler는 모두 workspace access를 요구한다. Spring에는 `monitoring/overview`와 incident detail route도 구현되어 있다. Frontend는 프로젝트 전환 시 sidebar 배지를 위해 incidents list만 선로딩하고, Alerts 화면 진입/갱신 때 workspace events와 resource-events를 함께 호출한다. Alerts incident detail은 `api.getIncidentDetail(...)`로 관련 events/reports를 다시 읽고, 이벤트 상세는 이미 로드된 event/resource-event row의 실 API 필드를 표시한다. `/api/v1/clusters/**`는 인증 사용자 대상이지만 workspace path scope는 없다.
+`MonitoringController`의 `/monitoring/**` 8개 handler는 모두 workspace access를 요구한다: `overview`, `resource-events`, `incidents` 목록, incident 상세(`GET`), incident 상태 전이(`PATCH /incidents/{incidentId}`), `detail`·`reports`·`reports/{reportId}` facade. Frontend는 프로젝트 전환 시 sidebar 배지를 위해 incidents list만 선로딩하고, Alerts 화면 진입/갱신 때 workspace events와 resource-events를 함께 호출한다. Alerts incident detail은 `api.getIncidentDetail(...)`로 관련 events/reports를 다시 읽고, 이벤트 상세는 이미 로드된 event/resource-event row의 실 API 필드를 표시한다. `/api/v1/clusters/**`는 인증 사용자 대상이지만 workspace path scope는 없다.
 
 표준 운영 화면에서 event log는 Alerts 데이터로 소비된다. store-level platform SSE는 파이프라인/인시던트 전이를 즉시 반영하고, Alerts 화면에서는 이벤트/리소스 이벤트 목록을 동일 REST API로 주기 재조회해 자동 갱신한다. Broker 화면은 `/clusters/kafka` 응답을 사용하지만 FR-023 정책에 따라 broker별 CPU/디스크/네트워크/heap 같은 인프라 지표는 렌더링하지 않는다.
 
@@ -189,9 +189,14 @@ BifrostAgentPanel — AI는 FastAPI
   GET  /api/v1/agent/runs/{runId}/events?access_token=<jwt>
   GET  /api/v1/agent/runs/{runId}/approvals
   POST /api/v1/approvals/{approvalId}/decision {decision, comment}
+
+  Tools API (slash command) — read-only tool 직접 실행
+  GET  /api/v1/tools
+  GET  /api/v1/tools/{toolName}
+  POST /api/v1/tools/{toolName}/execute {project_id, params?}
 ```
 
-FastAPI `POST /api/v1/agent/runs`의 현재 DTO에는 `alert_ids`가 없다. `AgentRunPanel`은 `incident_id`, `remediation_requested`, `action_candidate`를 보낼 수 있고, FastAPI `create_run()`은 `incident_id`와 `remediation_requested`를 persistence에 저장하며 세 값을 `run_workflow()` 요청 컨텍스트로 넘긴다([FastAPI API §5](../api/fastapi.md#post-apiv1agentruns)). FastAPI에는 state/timeline/evidence/actions/report 조회 route가 있지만 현재 `AgentRunPanel`은 evidence와 report preview를 별도 GET이 아니라 SSE event(`evidence_collected`, `report_preview_available`)로 소비한다.
+FastAPI `POST /api/v1/agent/runs`의 현재 DTO에는 `alert_ids`가 없다. `AgentRunPanel`은 `incident_id`, `remediation_requested`, `action_candidate`를 보낼 수 있고, FastAPI `create_run()`은 `incident_id`와 `remediation_requested`를 persistence에 저장하며 세 값을 `run_workflow()` 요청 컨텍스트로 넘긴다([FastAPI API §5](../api/fastapi.md#post-apiv1agentruns)). FastAPI에는 state/timeline/evidence/actions/report 조회 route가 있지만 현재 `AgentRunPanel`은 evidence와 report preview를 별도 GET이 아니라 SSE event(`evidence_collected`, `report_preview_available`)로 소비한다. 또한 `AgentRunPanel`은 slash command 지원을 위해 `api.listAgentTools()`(`GET /api/v1/tools`)로 read-only tool 목록을 받고 `api.getAgentTool(name)`(`GET /api/v1/tools/{toolName}`)로 params schema를 읽으며, 실행은 `api.executeAgentTool(name, {project_id, params})`(`POST /api/v1/tools/{toolName}/execute`)로 호출한다. 이 execute route는 read-only tool 전용이며 mutation tool은 거부된다([FastAPI API §15](../api/fastapi.md#15-catalog--tool-metadata-api)).
 
 ## 9. Kafka Principal Secret 보안정책
 

@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { Icon, type IconName } from '../../components/Icon'
+import { Markdown } from '../../components/Markdown'
 import { Spinner } from '../../components/ui'
 import { useToast } from '../../components/Toast'
 import { useApp, type AgentTask } from '../../store/AppStore'
@@ -1796,17 +1797,18 @@ export function SlashCommandOptionContent({ command }: { command: SlashToolComma
 }
 
 function TextBubble({ msg, theme }: { msg: TextMsg; theme: (typeof THEMES)[ThemeName] }) {
+  const isUser = msg.role === 'user'
   return (
-    <div className={cn('flex', msg.role === 'user' ? 'justify-end' : 'justify-start')}>
+    <div className={cn('flex', isUser ? 'justify-end' : 'justify-start')}>
       <div
         className={cn(
-          'max-w-[88%] whitespace-pre-wrap break-words rounded-xl px-3 py-2 text-[12.5px] leading-relaxed',
-          msg.role === 'user'
-            ? theme.userBubble
+          'max-w-[88%] break-words rounded-xl px-3 py-2 text-[12.5px] leading-relaxed',
+          isUser
+            ? cn('whitespace-pre-wrap', theme.userBubble)
             : 'rounded-bl-sm border border-gray-200 bg-white text-gray-700',
         )}
       >
-        {msg.text}
+        {isUser ? msg.text : <Markdown>{msg.text}</Markdown>}
       </div>
     </div>
   )

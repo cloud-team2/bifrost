@@ -249,6 +249,37 @@ class ConnectorStatusListData(SpringResponseModel):
     connectors: list[ConnectorStatusSummaryData] = Field(default_factory=list)
 
 
+class DatasourceSummaryData(SpringResponseModel):
+    id: str | None = None
+    name: str | None = None
+    db_type: str | None = None
+    host: str | None = None
+    port: int | None = None
+    role: str | None = None  # source / sink / source+sink / unused (파이프라인 사용 관점)
+    connection_status: str | None = None
+    cdc_readiness_status: str | None = None  # 소스 역할에서만 의미
+    sink_readiness_status: str | None = None  # 싱크 역할에서만 의미
+
+
+class DatasourceListData(SpringResponseModel):
+    datasources: list[DatasourceSummaryData] = Field(default_factory=list)
+
+
+class ClusterInfoData(SpringResponseModel):
+    cluster_id: str | None = None
+    controller_id: int | None = None
+    broker_count: int | None = None
+    brokers: list[dict] = Field(default_factory=list)  # {id, host, port, controller}
+    topics: list[dict] = Field(default_factory=list)  # {name, partitionCount, ISR/leader 상세}
+
+
+class SqlReadData(SpringResponseModel):
+    columns: list[str] = Field(default_factory=list)
+    rows: list[list[str | None]] = Field(default_factory=list)
+    row_count: int | None = None
+    truncated: bool | None = None
+
+
 class CriticalIncidentData(SpringResponseModel):
     incident_id: str
     severity: str

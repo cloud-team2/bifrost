@@ -72,7 +72,7 @@ tempo:
 
 # 외부 서비스 (Agent는 별도 FastAPI)
 ai-service:
-  url: ${AI_SERVICE_URL:http://localhost:8082}
+  url: ${AI_SERVICE_URL:}
   enabled: false   # Sprint 4부터 true
 
 # K8s 설정 (provisioning/watcher in-process)

@@ -123,12 +123,13 @@ OWNER 정책의 현재 코드 사실:
 
 ## Pipeline Runtime Metadata / Kafka Secret
 
-정본 근거: route는 `services/operations-backend/src/main/java/com/bifrost/ops/pipeline/controller/PipelineController.java:130-144`, `services/operations-backend/src/main/java/com/bifrost/ops/workspace/kafka/KafkaPrincipalController.java:64-70`; DTO field는 `services/operations-backend/src/main/java/com/bifrost/ops/pipeline/dto/ConnectionGuideResponse.java:12-41`, `services/operations-backend/src/main/java/com/bifrost/ops/pipeline/dto/TableMappingResponse.java:7-17`, `services/operations-backend/src/main/java/com/bifrost/ops/workspace/kafka/dto/KafkaPrincipalSecretResponse.java:13-23`.
+정본 근거: route는 `services/operations-backend/src/main/java/com/bifrost/ops/pipeline/controller/PipelineController.java:117-170`(`stage-status`는 :117-123, `connection-guide`는 :157-162, `table-mapping`은 :165-170), `services/operations-backend/src/main/java/com/bifrost/ops/workspace/kafka/KafkaPrincipalController.java:64-70`; DTO field는 `services/operations-backend/src/main/java/com/bifrost/ops/pipeline/dto/ConnectionGuideResponse.java:12-41`, `services/operations-backend/src/main/java/com/bifrost/ops/pipeline/dto/TableMappingResponse.java:7-17`, `services/operations-backend/src/main/java/com/bifrost/ops/workspace/kafka/dto/KafkaPrincipalSecretResponse.java:13-23`.
 
 | Method | Path | Auth | 권한 | Status | Query | Response | 설명 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `GET` | `/api/v1/workspaces/{wsId}/pipelines/{id}/connection-guide` | yes | `WorkspaceAccessGuard.requireAccess` | `200` | 없음 | `ConnectionGuideResponse` | Kafka consumer 연결용 bootstrap, group id, 인증 템플릿, topic 목록 |
 | `GET` | `/api/v1/workspaces/{wsId}/pipelines/{id}/table-mapping` | yes | `WorkspaceAccessGuard.requireAccess` | `200` | 없음 | `TableMappingResponse` | KafkaConnector config 기준 source table → topic → sink table 매핑 |
+| `GET` | `/api/v1/workspaces/{wsId}/pipelines/{id}/stage-status` | yes | `WorkspaceAccessGuard.requireAccess` | `200` | 없음 | `PipelineStageStatusResponse` | source/sink 단계별 상태 귀속(#367, 상세 탭 RCA). 어느 단계가 느린지/실패인지 표시 |
 | `GET` | `/api/v1/workspaces/{wsId}/kafka/principals/{id}/secret` | yes | OWNER/ADMIN·owner | `200` | 없음 | `KafkaPrincipalSecretResponse` | Strimzi KafkaUser Secret **레퍼런스/마스킹 조회** (requireManager, 원문 미반환) |
 
 `ConnectionGuideResponse` field:
@@ -162,7 +163,7 @@ OWNER 정책의 현재 코드 사실:
 
 ## Monitoring
 
-정본 근거: `MonitoringController` base path/status/인가 호출은 `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/controller/MonitoringController.java:30-128`(모든 handler가 `accessGuard.requireAccess` 호출), `OverviewResponse` field는 `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/dto/OverviewResponse.java:4-13`, `ResourceEventResponse` field는 `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/dto/ResourceEventResponse.java:6-11`, `IncidentResponse` field는 `services/operations-backend/src/main/java/com/bifrost/ops/incident/dto/IncidentResponse.java:8-20`, 권한 검사는 `WorkspaceAccessGuard.requireAccess`(`services/operations-backend/src/main/java/com/bifrost/ops/workspace/WorkspaceAccessGuard.java:39-54`)다.
+정본 근거: `MonitoringController` base path/status/인가 호출은 `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/controller/MonitoringController.java:32-156`(모든 handler가 `accessGuard.requireAccess` 호출, `PATCH /incidents/{incidentId}` 상태 전이 포함), `OverviewResponse` field는 `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/dto/OverviewResponse.java:4-13`, `ResourceEventResponse` field는 `services/operations-backend/src/main/java/com/bifrost/ops/monitoring/dto/ResourceEventResponse.java:6-11`, `IncidentResponse` field는 `services/operations-backend/src/main/java/com/bifrost/ops/incident/dto/IncidentResponse.java:8-20`, 권한 검사는 `WorkspaceAccessGuard.requireAccess`(`services/operations-backend/src/main/java/com/bifrost/ops/workspace/WorkspaceAccessGuard.java:39-54`)다.
 
 `/monitoring/overview`는 백엔드 집계 API로 유지하지만, v1 프론트 와이어프레임에는 별도 Overview 화면/라우트가 없다.
 
@@ -172,6 +173,7 @@ OWNER 정책의 현재 코드 사실:
 | `GET` | `/api/v1/workspaces/{wsId}/monitoring/resource-events` | yes | `requireAccess` | `200` | 없음 | `ResourceEventResponse[]` | Kafka AdminClient 기반 partition reassignment 등 리소스 이벤트 목록 |
 | `GET` | `/api/v1/workspaces/{wsId}/monitoring/incidents` | yes | `requireAccess` | `200` | query `status`(optional) | `IncidentResponse[]` | incident 목록. `status`가 있으면 repository가 해당 문자열로 필터링 |
 | `GET` | `/api/v1/workspaces/{wsId}/monitoring/incidents/{incidentId}` | yes | `requireAccess` | `200` | path `incidentId` UUID | `IncidentResponse` | incident 상세 |
+| `PATCH` | `/api/v1/workspaces/{wsId}/monitoring/incidents/{incidentId}` | yes | `requireAccess` | `200` | path `incidentId` UUID, body `IncidentStatusUpdateRequest{status}` | `IncidentResponse` | incident 사용자 상태 전이(#558, 스펙 B.7): `OPEN↔INVESTIGATING`, `→RESOLVED` |
 | `GET` | `/api/v1/workspaces/{wsId}/monitoring/incidents/{incidentId}/detail` | yes | `requireAccess` | `200` | path `incidentId` UUID | `IncidentDetailResponse` | incident 기본 정보, 관련 이벤트, 영향 pipeline id, 리포트 목록 facade |
 | `GET` | `/api/v1/workspaces/{wsId}/monitoring/incidents/{incidentId}/reports` | yes | `requireAccess` | `200` | path `incidentId` UUID | `IncidentReportResponse[]` | incident report snapshot 목록 facade |
 | `GET` | `/api/v1/workspaces/{wsId}/monitoring/incidents/{incidentId}/reports/{reportId}` | yes | `requireAccess` | `200` | path `incidentId`, `reportId` | `IncidentReportResponse` | incident report 본문 facade |
@@ -337,6 +339,7 @@ Family catalog 요약:
 | `search_logs` | `POST` | `/internal/ops/projects/{projectId}/observability/logs/search` | `logs`, `total`, `note` |
 | `query_metrics` | `GET` | `/internal/ops/projects/{projectId}/observability/metrics` | metric query result |
 | `query_traces` | `GET` | `/internal/ops/projects/{projectId}/connectors/{connectorName}/traces` | `connector`, `traces`, optional `note` |
+| `get_connector_task_trace` | `GET` | `/internal/ops/projects/{projectId}/connectors/{connectorName}/task-trace` | `connector`, `traces[{taskId,state,trace}]`, 미연결 시 `note` (#368, Kafka Connect task exception trace) |
 | `list_alerts` | `GET` | `/internal/ops/projects/{projectId}/observability/alerts` | `alerts`, `summary` |
 | `analyze_event_log` | `GET` | `/internal/ops/projects/{projectId}/observability/events/summary` | event/incident summary |
 | `get_incident_summary` | `GET` | `/internal/ops/projects/{projectId}/incidents/{incidentId}/summary` | `incidentId`, `status`, `note` |
@@ -350,6 +353,8 @@ Family catalog 요약:
 | `pause_connector` | `POST` | `/internal/ops/projects/{projectId}/connectors/{connectorName}/pause` | mutation result, approval/idempotency required |
 | `resume_connector` | `POST` | `/internal/ops/projects/{projectId}/connectors/{connectorName}/resume` | mutation result, approval/idempotency required |
 | `restart_consumer_group` | `POST` | `/internal/ops/projects/{projectId}/kafka/consumer-groups/{consumerGroup}/restart` | mutation result, approval/idempotency required |
+
+`get_incident_summary`의 정본 경로는 project-scoped `GET /internal/ops/projects/{projectId}/incidents/{incidentId}/summary`다. project scope가 없는 legacy 경로 `GET /internal/ops/incidents/{incidentId}/summary`는 HTTP 400 + `OpsEnvelope.error(code=VALIDATION_FAILED, required_action="use_project_scoped_path")`로 거부한다(`InternalOpsObservabilityController.java:476-485`).
 
 `/internal/ops/projects/{projectId}`의 `{projectId}`는 대부분 controller에서 workspace `namespace` slug로 해석한다. `list_alerts`만 UUID 문자열이면 workspace id로 먼저 조회하고, 실패하거나 UUID가 아니면 namespace slug로 조회한다. `list_alerts`는 별도 alert 테이블이 아니라 Spring `incidents` row를 agent alert view로 투영한다. Query는 `status`, `severity`, `limit`; `limit` 기본 50, 내부 최대 200이며 200 초과 값은 400이 아니라 200으로 cap된다. 프로젝트 없음은 HTTP 404 + `OpsEnvelope.error(code=RESOURCE_NOT_FOUND)`, non-integer 또는 `<= 0` limit은 HTTP 400 + `VALIDATION_FAILED`다.
 

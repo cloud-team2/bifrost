@@ -195,6 +195,31 @@ def test_requested_action_candidate_allows_restart_with_high_risk_approval():
     assert candidate.risk == RiskLevel.HIGH
 
 
+def test_requested_action_candidate_allows_consumer_group_restart():
+    registry = MagicMock()
+    registry.get_definition.return_value = _FakeToolDefinition(
+        name="restart_consumer_group",
+        risk=RiskLevel.HIGH,
+        required_param="consumer_group",
+    )
+
+    candidate = _coerce_requested_action_candidate(
+        {
+            "action_id": "act_restart_group",
+            "action_type": "runtime_tool",
+            "action_name": "restart_consumer_group",
+            "risk": "high",
+            "reason": "user requested consumer group restart",
+            "tool_name": "restart_consumer_group",
+            "tool_params": {"consumer_group": "orders-consumer"},
+        },
+        registry,
+    )
+
+    assert candidate is not None
+    assert candidate.risk == RiskLevel.HIGH
+
+
 def test_requested_action_candidate_escalates_medium_tool_to_human_approval():
     registry = MagicMock()
     registry.get_definition.return_value = _FakeToolDefinition(
@@ -251,6 +276,25 @@ def test_ready_action_candidate_allows_restart_tool():
     ready = _ready_action_candidate("act_restart", remediation, [])
     assert ready is not None
     assert ready.tool_name == "restart_connector"
+    assert ready.status == ActionStatus.READY
+
+
+def test_ready_action_candidate_allows_consumer_group_restart_tool():
+    remediation = RemediationOutput(action_candidates=[
+        ActionCandidateOutput(
+            action_id="act_restart_group",
+            action_type=ActionType.RUNTIME_TOOL,
+            action_name="restart_consumer_group",
+            risk=RiskLevel.HIGH,
+            reason="approved consumer group restart",
+            tool_name="restart_consumer_group",
+            tool_params={"consumer_group": "orders-consumer"},
+        )
+    ])
+
+    ready = _ready_action_candidate("act_restart_group", remediation, [])
+    assert ready is not None
+    assert ready.tool_name == "restart_consumer_group"
     assert ready.status == ActionStatus.READY
 
 

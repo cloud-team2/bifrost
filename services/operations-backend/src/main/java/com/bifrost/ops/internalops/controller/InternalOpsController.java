@@ -74,6 +74,7 @@ public class InternalOpsController {
                 tool("search_logs",            "POST", "/internal/ops/projects/{projectId}/observability/logs/search"),
                 tool("query_metrics",          "GET",  "/internal/ops/projects/{projectId}/observability/metrics"),
                 tool("query_traces",           "GET",  "/internal/ops/projects/{projectId}/connectors/{connectorName}/traces"),
+                tool("get_connector_task_trace","GET", "/internal/ops/projects/{projectId}/connectors/{connectorName}/task-trace"),
                 tool("list_alerts",            "GET",  "/internal/ops/projects/{projectId}/observability/alerts"),
                 tool("analyze_event_log",      "GET",  "/internal/ops/projects/{projectId}/observability/events/summary"),
                 tool("get_incident_summary",   "GET",  "/internal/ops/projects/{projectId}/incidents/{incidentId}/summary"),
@@ -83,6 +84,9 @@ public class InternalOpsController {
                 tool("get_pipeline_topology",  "GET",  "/internal/ops/projects/{projectId}/pipelines/{pipelineId}/topology"),
                 tool("get_connector_status",   "GET",  "/internal/ops/projects/{projectId}/kafka/connectors/{connectorName}/status"),
                 tool("list_connectors",        "GET",  "/internal/ops/projects/{projectId}/kafka/connectors/status"),
+                tool("list_datasources",       "GET",  "/internal/ops/projects/{projectId}/datasources"),
+                tool("get_cluster_info",       "GET",  "/internal/ops/projects/{projectId}/kafka/cluster"),
+                tool("sql_read",               "POST", "/internal/ops/projects/{projectId}/datasources/{datasourceId}/query"),
                 // mutation tool (#395) — InternalOpsMutationController(#308) 실구현과 정합.
                 tool("restart_connector",      "POST", "/internal/ops/projects/{projectId}/connectors/{connectorName}/restart"),
                 tool("pause_connector",        "POST", "/internal/ops/projects/{projectId}/connectors/{connectorName}/pause"),

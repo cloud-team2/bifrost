@@ -10,18 +10,28 @@ import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
 import com.bifrost.ops.workspace.persistence.entity.WorkspaceSettingsEntity;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceSettingsRepository;
 import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.DescribeTopicsResult;
+import org.apache.kafka.clients.admin.TopicDescription;
+import org.apache.kafka.common.KafkaFuture;
+import org.apache.kafka.common.Node;
+import org.apache.kafka.common.TopicPartitionInfo;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -118,6 +128,62 @@ class KafkaAdminPollerTest {
         verify(eventService).record(eq(pipeline.getTenantId()), eq(pipeline.getId()),
                 eq(EventLevel.INFO), eq("CONSUMER_LAG_RECOVERED"),
                 org.mockito.ArgumentMatchers.contains("lag=0"));
+    }
+
+    @Test
+    void underReplicatedPartitionOpensWarningIncidentWithTopicGrouping() {
+        KafkaAdminPoller poller = poller();
+        PipelineEntity p = pipeline();
+        p.setTopicName("cdc.orders");
+        Node n1 = new Node(1, "h1", 9092);
+        Node n2 = new Node(2, "h2", 9092);
+        stubTopic("cdc.orders", new TopicPartitionInfo(0, n1, List.of(n1, n2), List.of(n1))); // ISR<replicas
+
+        ReflectionTestUtils.invokeMethod(poller, "evaluateTopicReplication", p);
+
+        verify(incidentService).onThresholdViolation(
+                eq(p.getTenantId()), eq(IncidentGroupingKeys.topicReplication("cdc.orders")),
+                eq("TOPIC"), eq(null), eq(EventLevel.WARN),
+                eq("Topic 'cdc.orders' under-replicated"),
+                eq("TOPIC_UNDER_REPLICATED"), contains("under-replicated"), eq(p.getId()));
+    }
+
+    @Test
+    void offlinePartitionOpensErrorIncident() {
+        KafkaAdminPoller poller = poller();
+        PipelineEntity p = pipeline();
+        p.setTopicName("cdc.orders");
+        Node n1 = new Node(1, "h1", 9092);
+        stubTopic("cdc.orders", new TopicPartitionInfo(0, null, List.of(n1), List.of())); // leader 없음
+
+        ReflectionTestUtils.invokeMethod(poller, "evaluateTopicReplication", p);
+
+        verify(incidentService).onThresholdViolation(
+                eq(p.getTenantId()), eq(IncidentGroupingKeys.topicReplication("cdc.orders")),
+                eq("TOPIC"), eq(null), eq(EventLevel.ERROR),
+                eq("Topic 'cdc.orders' offline partitions"),
+                eq("TOPIC_OFFLINE_PARTITIONS"), contains("offline"), eq(p.getId()));
+    }
+
+    @Test
+    void healthyTopicOpensNoIncident() {
+        KafkaAdminPoller poller = poller();
+        PipelineEntity p = pipeline();
+        p.setTopicName("cdc.orders");
+        Node n1 = new Node(1, "h1", 9092);
+        stubTopic("cdc.orders", new TopicPartitionInfo(0, n1, List.of(n1), List.of(n1))); // 정상
+
+        ReflectionTestUtils.invokeMethod(poller, "evaluateTopicReplication", p);
+
+        verify(incidentService, never()).onThresholdViolation(
+                any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    private void stubTopic(String topic, TopicPartitionInfo... parts) {
+        DescribeTopicsResult dtr = mock(DescribeTopicsResult.class);
+        TopicDescription desc = new TopicDescription(topic, false, List.of(parts));
+        when(adminClient.describeTopics(anyCollection())).thenReturn(dtr);
+        when(dtr.allTopicNames()).thenReturn(KafkaFuture.completedFuture(Map.of(topic, desc)));
     }
 
     private KafkaAdminPoller poller() {

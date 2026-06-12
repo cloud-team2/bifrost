@@ -44,6 +44,7 @@ class InternalOpsToolCatalogTest {
                         "search_logs",
                         "query_metrics",
                         "query_traces",
+                        "get_connector_task_trace",
                         "list_alerts",
                         "analyze_event_log",
                         "get_incident_summary",
@@ -53,6 +54,9 @@ class InternalOpsToolCatalogTest {
                         "get_pipeline_topology",
                         "get_connector_status",
                         "list_connectors",
+                        "list_datasources",
+                        "get_cluster_info",
+                        "sql_read",
                         "restart_connector",
                         "pause_connector",
                         "resume_connector",
@@ -64,6 +68,7 @@ class InternalOpsToolCatalogTest {
                 tool("search_logs", "POST", "/internal/ops/projects/{projectId}/observability/logs/search"),
                 tool("query_metrics", "GET", "/internal/ops/projects/{projectId}/observability/metrics"),
                 tool("query_traces", "GET", "/internal/ops/projects/{projectId}/connectors/{connectorName}/traces"),
+                tool("get_connector_task_trace", "GET", "/internal/ops/projects/{projectId}/connectors/{connectorName}/task-trace"),
                 tool("list_alerts", "GET", "/internal/ops/projects/{projectId}/observability/alerts"),
                 tool("analyze_event_log", "GET", "/internal/ops/projects/{projectId}/observability/events/summary"),
                 tool("get_incident_summary", "GET", "/internal/ops/projects/{projectId}/incidents/{incidentId}/summary"),
@@ -73,6 +78,9 @@ class InternalOpsToolCatalogTest {
                 tool("get_pipeline_topology", "GET", "/internal/ops/projects/{projectId}/pipelines/{pipelineId}/topology"),
                 tool("get_connector_status", "GET", "/internal/ops/projects/{projectId}/kafka/connectors/{connectorName}/status"),
                 tool("list_connectors", "GET", "/internal/ops/projects/{projectId}/kafka/connectors/status"),
+                tool("list_datasources", "GET", "/internal/ops/projects/{projectId}/datasources"),
+                tool("get_cluster_info", "GET", "/internal/ops/projects/{projectId}/kafka/cluster"),
+                tool("sql_read", "POST", "/internal/ops/projects/{projectId}/datasources/{datasourceId}/query"),
                 tool("restart_connector", "POST", "/internal/ops/projects/{projectId}/connectors/{connectorName}/restart"),
                 tool("pause_connector", "POST", "/internal/ops/projects/{projectId}/connectors/{connectorName}/pause"),
                 tool("resume_connector", "POST", "/internal/ops/projects/{projectId}/connectors/{connectorName}/resume"),
@@ -104,6 +112,9 @@ class InternalOpsToolCatalogTest {
         context.getBeanFactory().registerSingleton("internalOpsController", controller);
         context.getBeanFactory().registerSingleton("internalOpsObservabilityController", observabilityController());
         context.getBeanFactory().registerSingleton("internalOpsPipelineController", pipelineController());
+        context.getBeanFactory().registerSingleton("internalOpsDatasourceController", datasourceController());
+        context.getBeanFactory().registerSingleton("internalOpsKafkaController", kafkaController());
+        context.getBeanFactory().registerSingleton("internalOpsSqlController", sqlController());
         context.getBeanFactory().registerSingleton("internalOpsMutationController", mutationController());
         context.getBeanFactory().registerSingleton("internalController", internalController());
         context.refresh();
@@ -147,6 +158,27 @@ class InternalOpsToolCatalogTest {
                 mock(PipelineRepository.class),
                 mock(ConnectorRepository.class),
                 mock(AdminClient.class));
+    }
+
+    private InternalOpsDatasourceController datasourceController() {
+        return new InternalOpsDatasourceController(
+                mock(WorkspaceRepository.class),
+                mock(com.bifrost.ops.database.persistence.repository.DatasourceRepository.class));
+    }
+
+    private InternalOpsKafkaController kafkaController() {
+        return new InternalOpsKafkaController(
+                mock(AdminClient.class),
+                mock(WorkspaceRepository.class),
+                mock(PipelineRepository.class));
+    }
+
+    private InternalOpsSqlController sqlController() {
+        return new InternalOpsSqlController(
+                mock(WorkspaceRepository.class),
+                mock(com.bifrost.ops.database.persistence.repository.DatasourceRepository.class),
+                mock(com.bifrost.ops.secret.SecretStore.class),
+                mock(com.bifrost.ops.database.connection.DynamicDataSourceFactory.class));
     }
 
     private InternalOpsMutationController mutationController() {

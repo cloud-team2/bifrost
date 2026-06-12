@@ -12,8 +12,10 @@ import com.bifrost.ops.workspace.persistence.repository.WorkspaceSettingsReposit
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.OffsetSpec;
+import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.TopicPartitionInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -45,6 +47,8 @@ public class KafkaAdminPoller {
 
     // consumer group → 직전 알람 레벨 ("NONE" | "WARN" | "ERROR")
     private final ConcurrentHashMap<String, String> lagAlarmState = new ConcurrentHashMap<>();
+    // topic → 직전 복제 알람 레벨 ("NONE" | "WARN" | "ERROR") — under-replicated/offline 파티션(#633 Phase 2)
+    private final ConcurrentHashMap<String, String> topicAlarmState = new ConcurrentHashMap<>();
 
     public KafkaAdminPoller(AdminClient adminClient,
                              PipelineRepository pipelineRepository,
@@ -64,6 +68,11 @@ public class KafkaAdminPoller {
     public void poll() {
         List<PipelineEntity> pipelines = pipelineRepository.findAll();
         for (PipelineEntity p : pipelines) {
+            try {
+                evaluateTopicReplication(p);  // (#633 Phase 2) under-replicated/offline 파티션
+            } catch (Exception e) {
+                log.debug("토픽 복제 헬스 수집 실패(무시): topic={} cause={}", p.getTopicName(), e.getMessage());
+            }
             if (p.getSinkConnectorName() == null) continue;
             String group = "connect-" + p.getSinkConnectorName();
             try {
@@ -73,6 +82,64 @@ public class KafkaAdminPoller {
             } catch (Exception e) {
                 log.debug("consumer lag 수집 실패(무시): group={} cause={}", group, e.getMessage());
             }
+        }
+    }
+
+    /**
+     * 파이프라인 토픽의 파티션 복제 헬스를 점검해 인시던트화한다(#633 Phase 2).
+     * offline(리더 없음) → ERROR 즉시, under-replicated(ISR &lt; replicas) → WARN(2건/30분 게이팅).
+     * edge-trigger: 직전 상태와 다를 때만 발행.
+     */
+    private void evaluateTopicReplication(PipelineEntity p) throws Exception {
+        String topic = p.getTopicName();
+        if (topic == null || topic.isBlank()) return;
+
+        Map<String, TopicDescription> described = adminClient
+                .describeTopics(List.of(topic))
+                .allTopicNames()
+                .get(TIMEOUT_SEC, TimeUnit.SECONDS);
+        TopicDescription desc = described.get(topic);
+        if (desc == null) return;
+
+        int offline = 0;
+        int underReplicated = 0;
+        for (TopicPartitionInfo part : desc.partitions()) {
+            if (part.leader() == null) {
+                offline++;
+            } else if (part.isr().size() < part.replicas().size()) {
+                underReplicated++;
+            }
+        }
+
+        String key = IncidentGroupingKeys.topicReplication(topic);
+        String prev = topicAlarmState.getOrDefault(topic, NONE);
+
+        if (offline > 0) {
+            if (!"ERROR".equals(prev)) {
+                String msg = "토픽 '" + topic + "' offline 파티션 " + offline + "개 (리더 없음 — 브로커 장애 가능)";
+                incidentService.onThresholdViolation(p.getTenantId(), key, "TOPIC", null, EventLevel.ERROR,
+                        "Topic '" + topic + "' offline partitions",
+                        "TOPIC_OFFLINE_PARTITIONS", msg, p.getId());
+            }
+            topicAlarmState.put(topic, "ERROR");
+        } else if (underReplicated > 0) {
+            if (!"WARN".equals(prev) && !"ERROR".equals(prev)) {
+                String msg = "토픽 '" + topic + "' under-replicated 파티션 " + underReplicated + "개 (ISR < replicas)";
+                incidentService.onThresholdViolation(p.getTenantId(), key, "TOPIC", null, EventLevel.WARN,
+                        "Topic '" + topic + "' under-replicated",
+                        "TOPIC_UNDER_REPLICATED", msg, p.getId());
+            }
+            topicAlarmState.put(topic, "WARN");
+        } else {
+            if (!NONE.equals(prev)) {
+                String msg = "토픽 '" + topic + "' 복제 정상화";
+                if (!incidentService.onRecovery(p.getTenantId(), key,
+                        "TOPIC_REPLICATION_RECOVERED", msg, p.getId())) {
+                    eventService.record(p.getTenantId(), p.getId(), EventLevel.INFO,
+                            "TOPIC_REPLICATION_RECOVERED", msg);
+                }
+            }
+            topicAlarmState.put(topic, NONE);
         }
     }
 
