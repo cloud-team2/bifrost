@@ -25,17 +25,19 @@
 ### 2.1 산정 규칙 (`PipelineStatusServiceImpl.recompute`)
 
 ```text
-connectorNext = computeStatus(pattern, connectors)     # 부록 B.1/B.2
+connectorNext = computeStatus(pattern, connectors)     # error/paused/active/creating (lag는 consumer lag 경로)
 dbReason      = (current == creating) ? null : dbUnreachableReason(p)   # source/sink UNREACHABLE 사유
 next    = (dbReason != null) ? error : connectorNext
-message = (next == error)      ? (dbReason ?? firstConnectorError)
-        : (next == lag)        ? firstConnectorError
+message = (next == error) ? (dbReason ?? firstConnectorError)
         : null                                          # 정상이면 사유 클리어
+
+consumerLagNext = applyConsumerLag(current, cdcSinkConsumerGroupLag)
+# lag 상태는 CDC sink consumer group lag 경로에서만 산정한다.
 ```
 
 - **DB 우선**: source/sink 중 하나라도 `UNREACHABLE`이면 connector가 `RUNNING`이어도 파이프라인은 `error`다. 이유: Debezium source는 source DB가 끊겨도 한동안 `RUNNING`을 유지하지만(트래픽이 없으면 실패를 늦게 감지) 파이프라인은 이미 비정상이기 때문(#179 검증: source DB kill → connector RUNNING인데 파이프라인 error).
 - **creating 중에는 DB 사유를 보지 않는다**: 프로비저닝 진행 중 race를 피하기 위해.
-- **connector 규칙**(`computeStatus`): 하나라도 `FAILED`→`error`, 일부 task만 실패(`PARTIALLY_FAILED`)→`lag`, `PAUSED`→`paused`, 기대 수(CDC 2·EDA 1)만큼 모두 `RUNNING`→`active`, 그 외→`creating`.
+- **connector 규칙**(`computeStatus`): 하나라도 `FAILED`이거나 일부 task만 실패(`PARTIALLY_FAILED`)하면 `error`, `PAUSED`→`paused`, 기대 수(CDC 2·EDA 1)만큼 모두 `RUNNING`→`active`, 그 외→`creating`.
 - **EDA(fan-out)**: sink consumer가 없으므로 lag을 보지 않고 source connector state로만 산정.
 
 ### 2.2 상태 머신
@@ -44,10 +46,10 @@ message = (next == error)      ? (dbReason ?? firstConnectorError)
 | --- | --- | --- |
 | (없음) → `creating` | 생성 요청 | pipeline.service |
 | `creating` → `active` | 기대 connector 모두 RUNNING | ConnectorWatcher |
-| `creating` → `error` | connector FAILED / 프로비저닝 부분 실패 | Watcher · provisioning result |
-| `creating` → `error` | **프로비저닝 타임아웃**(기본 N분 내 미전이) | `ProvisioningTimeoutJob`(60초 주기) → `failTimedOutCreating` |
-| `active` ↔ `lag` | 일부 task FAILED(`PARTIALLY_FAILED`) | Watcher |
-| `active`/`lag` → `error` | connector FAILED | Watcher |
+| `creating` → `error` | connector FAILED/PARTIALLY_FAILED / 프로비저닝 부분 실패 | Watcher · provisioning result |
+| `creating` → `error` | **프로비저닝 타임아웃**(기본 5분, `pipeline.provisioning-timeout=PT5M`) | `ProvisioningTimeoutJob`(60초 주기) → `failTimedOutCreating` |
+| `active` ↔ `lag` | CDC sink consumer group lag 임계값 초과/복구 | lag poller |
+| `active`/`lag` → `error` | connector FAILED/PARTIALLY_FAILED | Watcher |
 | `active`/`lag`/`creating(아님)` → `error` | **source/sink DB UNREACHABLE** | `DatabaseHealthProbeJob` → `reevaluateForDatasource`(#179) |
 | `error` → `active` | DB·connector 회복 | 프로브·Watcher 재계산 |
 | `*` → `paused` / `paused` → `active` | 사용자 pause/resume | pipeline.service |

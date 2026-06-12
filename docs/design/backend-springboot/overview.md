@@ -60,7 +60,7 @@ erDiagram
     pipeline   ||--o{ event          : "관련"
 ```
 
-- `workspace`(`namespace`/`projectKey`) · `app_user`·`project_member`(멤버십과 `OWNER`/`ADMIN`/`MEMBER` 역할) · `workspace_settings` · `database`(`secret_ref`·`connection_status`) · `pipeline`(API status creating/active/lag/error/paused, DB enum upper-case) · `connector`(kind SOURCE/SINK, state RUNNING/PARTIALLY_FAILED/FAILED/PAUSED/UNASSIGNED/UNKNOWN) · `event`(INFO/WARN/ERROR) · `incident`(현재 service 생성 severity WARN/ERROR, status OPEN/RESOLVED, RCA field `rca`) · `audit_event`·`evidence_ref`(append-only). 거버넌스용 `approval`·`change_ticket`·`idempotency_key`의 현재 구현 범위는 [governance.md](./governance.md)를 따른다.
+- `workspace`(`namespace`/`projectKey`) · `app_user`·`project_member`(멤버십과 `OWNER`/`ADMIN`/`MEMBER` 역할) · `workspace_settings` · `database`(`secret_ref`·`connection_status`) · `pipeline`(API status creating/active/lag/error/paused, DB enum upper-case) · `connector`(kind SOURCE/SINK, state RUNNING/PARTIALLY_FAILED/FAILED/PAUSED/UNASSIGNED/UNKNOWN) · `event`(INFO/WARN/ERROR) · `incident`(현재 service 생성 severity WARNING/CRITICAL, status OPEN/INVESTIGATING/RESOLVED, RCA field `rca`) · `audit_event`·`evidence_ref`(append-only). 거버넌스용 `approval`·`change_ticket`·`idempotency_key`의 현재 구현 범위는 [governance.md](./governance.md)를 따른다.
 - 전체 컬럼·제약·DDL은 [data-model.md §4](./data-model.md#4-data-model). enum·임계값은 [부록 B](../../spec.md#부록-b--리소스-상태값-정의-및-자동-기준-단일-출처) 단일 출처.
 
 ## 핵심 결정

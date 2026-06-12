@@ -178,7 +178,7 @@ kubernetesClient.resource(source).inNamespace("platform-kafka").create();
 
 ### 6. Connector 상태 감지 — Fabric8 Watch (FR-008)
 
-`KafkaConnector` CR의 `.status.connectorStatus.connector.state`(RUNNING / FAILED / PAUSED / UNASSIGNED)와 task별 상태가 바뀔 때마다 pipeline 테이블을 갱신하고 SSE(`connector_state_changed`, `pipeline_status_changed`)로 push한다. 일부 task만 FAILED면 connector를 `PARTIALLY_FAILED`(Bifrost 합성 상태)로 보고 pipeline은 `lag`으로 둔다([부록 B.2](../../spec.md#b2-connector-인스턴스-상태값)).
+`KafkaConnector` CR의 `.status.connectorStatus.connector.state`(RUNNING / FAILED / PAUSED / UNASSIGNED)와 task별 상태가 바뀔 때마다 pipeline 테이블을 갱신하고 SSE(`connector_state_changed`, `pipeline_status_changed`)로 push한다. 일부 task만 FAILED면 connector를 `PARTIALLY_FAILED`(Bifrost 합성 상태)로 보고 pipeline은 `error`로 둔다([부록 B.2](../../spec.md#b2-connector-인스턴스-상태값)).
 
 ```java
 kubernetesClient.resources(KafkaConnector.class)
