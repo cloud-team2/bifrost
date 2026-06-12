@@ -62,6 +62,7 @@ logger = logging.getLogger(__name__)
 _PUBLIC_FAILURE_MESSAGE = "요청 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
 _ACTION_EXECUTION_TOOLS = {
     "pause_connector",
+    "restart_connector",
     "resume_connector",
 }
 

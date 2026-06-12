@@ -122,7 +122,7 @@ describe('incident report actions', () => {
     }))
   })
 
-  it('does not run approval-backed restart actions without the Spring approval bridge', () => {
+  it('builds an approval-gated restart candidate mapped to restart_connector (#593)', () => {
     const [action] = reportActions([
       report({
         action_candidates: [
@@ -139,7 +139,11 @@ describe('incident report actions', () => {
       }),
     ])
 
-    expect(buildRunCandidate(action, [pipeline()])).toBeNull()
+    expect(buildRunCandidate(action, [pipeline()])).toEqual(expect.objectContaining({
+      action_id: 'act-3',
+      tool_name: 'restart_connector',
+      tool_params: { connector_name: 'orders-source' },
+    }))
   })
 
   it('does not infer a connector target from topology when report params are absent', () => {
