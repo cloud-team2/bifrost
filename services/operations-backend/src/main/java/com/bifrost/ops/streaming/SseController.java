@@ -2,6 +2,7 @@ package com.bifrost.ops.streaming;
 
 import com.bifrost.ops.auth.jwt.AuthenticatedUser;
 import com.bifrost.ops.workspace.WorkspaceAccessGuard;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -33,8 +34,12 @@ public class SseController {
 
     @GetMapping(path = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter stream(@PathVariable UUID wsId,
-                             @AuthenticationPrincipal AuthenticatedUser principal) {
+                             @AuthenticationPrincipal AuthenticatedUser principal,
+                             HttpServletResponse response) {
         accessGuard.requireAccess(wsId, principal);
+        // nginx ingress가 SSE 응답을 버퍼링하지 않도록(HTTP/2 스트림 끊김 방지, #630).
+        response.setHeader("X-Accel-Buffering", "no");
+        response.setHeader("Cache-Control", "no-cache");
         return ssePublisher.subscribe(wsId);
     }
 }
