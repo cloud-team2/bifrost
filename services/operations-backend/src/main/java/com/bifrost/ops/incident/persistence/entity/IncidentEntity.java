@@ -20,10 +20,10 @@ public class IncidentEntity {
     private String groupingKey;
 
     @Column(nullable = false, length = 10)
-    private String severity; // WARN / ERROR / CRITICAL
+    private String severity; // WARNING / CRITICAL (스펙 B.7, #558)
 
     @Column(nullable = false, length = 20)
-    private String status = "OPEN"; // OPEN / RESOLVED
+    private String status = "OPEN"; // OPEN / INVESTIGATING / RESOLVED (스펙 B.7, #558)
 
     @Column(nullable = false, columnDefinition = "text")
     private String title;

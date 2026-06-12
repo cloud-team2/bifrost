@@ -236,7 +236,7 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
                 <Icon name="share" size={20} className="text-violet-500" />
                 <GlossaryTooltip term="EDA">
                   <span className="rounded bg-violet-100 px-1.5 py-0.5 text-[9.5px] font-bold text-violet-700 cursor-help">
-                    EDA ？
+                    EDA
                   </span>
                 </GlossaryTooltip>
               </div>
@@ -267,7 +267,7 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
                 <Icon name="route" size={20} className="text-sky-500" />
                 <GlossaryTooltip term="CDC">
                   <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[9.5px] font-bold text-sky-700 cursor-help">
-                    CDC ？
+                    CDC
                   </span>
                 </GlossaryTooltip>
               </div>

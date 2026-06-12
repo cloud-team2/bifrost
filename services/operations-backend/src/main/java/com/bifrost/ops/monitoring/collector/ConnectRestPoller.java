@@ -32,7 +32,6 @@ import java.util.concurrent.ConcurrentHashMap;
 public class ConnectRestPoller {
 
     private static final Logger log = LoggerFactory.getLogger(ConnectRestPoller.class);
-    private static final int MSG_MAX = 200;
 
     private final RestClient restClient;
     private final PipelineRepository pipelineRepository;
@@ -140,10 +139,14 @@ public class ConnectRestPoller {
                 currentlyFailed.add(key);
                 currentFailuresByConnector.computeIfAbsent(name, ignored -> new HashSet<>()).add(key);
                 if (!Boolean.TRUE.equals(failedTaskState.get(key))) {
-                    String trace = task.containsKey("trace") ? truncate(String.valueOf(task.get("trace"))) : "";
                     PipelineEntity p = byConnector.get(name);
                     if (p != null) {
-                        String message = "connector task 실패: " + key + " trace=" + trace;
+                        // (#596) UUID·raw trace 대신 파이프라인명 + 역할 + 정제 요약.
+                        String role = name.equals(p.getSinkConnectorName()) ? "싱크" : "소스";
+                        String summary = com.bifrost.ops.pipeline.status.ConnectorErrorMessages
+                                .summarize(task.containsKey("trace") ? String.valueOf(task.get("trace")) : null);
+                        String message = "'" + p.getName() + "' " + role + " 커넥터 task#"
+                                + task.get("id") + " 실패: " + summary;
                         incidentService.onThresholdViolation(p.getTenantId(),
                                 IncidentGroupingKeys.connectorWorker(name),
                                 "CONNECTOR", null, EventLevel.ERROR,
@@ -167,8 +170,4 @@ public class ConnectRestPoller {
         return map;
     }
 
-    private static String truncate(String s) {
-        if (s == null || s.length() <= MSG_MAX) return s;
-        return s.substring(0, MSG_MAX) + "...";
-    }
 }

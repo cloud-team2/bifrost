@@ -3,8 +3,12 @@ package com.bifrost.ops.incident;
 import com.bifrost.ops.event.EventLevel;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
+import com.bifrost.ops.incident.dto.IncidentReportResponse;
+import com.bifrost.ops.incident.dto.IncidentResponse;
 import com.bifrost.ops.incident.persistence.entity.IncidentEntity;
 import com.bifrost.ops.incident.persistence.repository.IncidentRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.bifrost.ops.streaming.SsePublisher;
 import com.bifrost.ops.event.EventService;
 import org.mockito.ArgumentCaptor;
@@ -103,8 +107,8 @@ class IncidentServiceTest {
     void thresholdViolationCreatesIncidentAndLinksEvent() {
         UUID pipelineId = UUID.randomUUID();
         String groupingKey = IncidentGroupingKeys.pipelineAvailability(pipelineId);
-        when(incidentRepository.findByTenantIdAndGroupingKeyAndStatusOrderByOpenedAtAsc(
-                tenantId, groupingKey, "OPEN")).thenReturn(List.of());
+        when(incidentRepository.findByTenantIdAndGroupingKeyAndStatusInOrderByOpenedAtAsc(
+                tenantId, groupingKey, List.of("OPEN", "INVESTIGATING"))).thenReturn(List.of());
         when(incidentRepository.save(any())).thenAnswer(inv -> {
             IncidentEntity incident = inv.getArgument(0);
             incident.setId(UUID.randomUUID());
@@ -118,7 +122,7 @@ class IncidentServiceTest {
         verify(incidentRepository).save(captor.capture());
         IncidentEntity incident = captor.getValue();
         assertThat(incident.getGroupingKey()).isEqualTo(groupingKey);
-        assertThat(incident.getSeverity()).isEqualTo("ERROR");
+        assertThat(incident.getSeverity()).isEqualTo("CRITICAL");
         assertThat(incident.getSourceType()).isEqualTo("PIPELINE");
         assertThat(incident.getSourceId()).isEqualTo(pipelineId);
         verify(eventService).recordWithIncident(tenantId, pipelineId, EventLevel.ERROR,
@@ -131,8 +135,8 @@ class IncidentServiceTest {
     void thresholdViolationLocksGroupBeforeLookup() {
         UUID pipelineId = UUID.randomUUID();
         String groupingKey = IncidentGroupingKeys.pipelineAvailability(pipelineId);
-        when(incidentRepository.findByTenantIdAndGroupingKeyAndStatusOrderByOpenedAtAsc(
-                tenantId, groupingKey, "OPEN")).thenReturn(List.of());
+        when(incidentRepository.findByTenantIdAndGroupingKeyAndStatusInOrderByOpenedAtAsc(
+                tenantId, groupingKey, List.of("OPEN", "INVESTIGATING"))).thenReturn(List.of());
         when(incidentRepository.save(any())).thenAnswer(inv -> {
             IncidentEntity incident = inv.getArgument(0);
             incident.setId(UUID.randomUUID());
@@ -144,16 +148,16 @@ class IncidentServiceTest {
 
         InOrder inOrder = inOrder(incidentRepository);
         inOrder.verify(incidentRepository).lockIncidentGroup(tenantId + ":" + groupingKey);
-        inOrder.verify(incidentRepository).findByTenantIdAndGroupingKeyAndStatusOrderByOpenedAtAsc(
-                tenantId, groupingKey, "OPEN");
+        inOrder.verify(incidentRepository).findByTenantIdAndGroupingKeyAndStatusInOrderByOpenedAtAsc(
+                tenantId, groupingKey, List.of("OPEN", "INVESTIGATING"));
     }
 
     @Test
     void thresholdViolationPublishesSseAfterCommitWhenTransactionSynchronizationIsActive() {
         UUID pipelineId = UUID.randomUUID();
         String groupingKey = IncidentGroupingKeys.pipelineAvailability(pipelineId);
-        when(incidentRepository.findByTenantIdAndGroupingKeyAndStatusOrderByOpenedAtAsc(
-                tenantId, groupingKey, "OPEN")).thenReturn(List.of());
+        when(incidentRepository.findByTenantIdAndGroupingKeyAndStatusInOrderByOpenedAtAsc(
+                tenantId, groupingKey, List.of("OPEN", "INVESTIGATING"))).thenReturn(List.of());
         when(incidentRepository.save(any())).thenAnswer(inv -> {
             IncidentEntity incident = inv.getArgument(0);
             incident.setId(UUID.randomUUID());
@@ -181,17 +185,17 @@ class IncidentServiceTest {
         String groupingKey = IncidentGroupingKeys.pipelineAvailability(pipelineId);
         IncidentEntity incident = incident(incidentId, tenantId, "OPEN");
         incident.setGroupingKey(groupingKey);
-        incident.setSeverity("WARN");
-        when(incidentRepository.findByTenantIdAndGroupingKeyAndStatusOrderByOpenedAtAsc(
-                tenantId, groupingKey, "OPEN")).thenReturn(List.of(incident));
+        incident.setSeverity("WARNING");
+        when(incidentRepository.findByTenantIdAndGroupingKeyAndStatusInOrderByOpenedAtAsc(
+                tenantId, groupingKey, List.of("OPEN", "INVESTIGATING"))).thenReturn(List.of(incident));
         when(incidentRepository.save(incident)).thenReturn(incident);
 
         service().onThresholdViolation(tenantId, groupingKey, "PIPELINE", pipelineId,
                 EventLevel.ERROR, "Pipeline failed", "PIPELINE_STATUS_CHANGED", "boom", pipelineId);
 
-        assertThat(incident.getSeverity()).isEqualTo("ERROR");
-        verify(incidentRepository).findByTenantIdAndGroupingKeyAndStatusOrderByOpenedAtAsc(
-                tenantId, groupingKey, "OPEN");
+        assertThat(incident.getSeverity()).isEqualTo("CRITICAL");
+        verify(incidentRepository).findByTenantIdAndGroupingKeyAndStatusInOrderByOpenedAtAsc(
+                tenantId, groupingKey, List.of("OPEN", "INVESTIGATING"));
         verify(incidentRepository).save(incident);
         verify(eventService).recordWithIncident(tenantId, pipelineId, EventLevel.ERROR,
                 "PIPELINE_STATUS_CHANGED", "boom", incidentId, "PIPELINE");
@@ -207,8 +211,8 @@ class IncidentServiceTest {
         primary.setGroupingKey(groupingKey);
         IncidentEntity duplicate = incident(UUID.randomUUID(), tenantId, "OPEN");
         duplicate.setGroupingKey(groupingKey);
-        when(incidentRepository.findByTenantIdAndGroupingKeyAndStatusOrderByOpenedAtAsc(
-                tenantId, groupingKey, "OPEN")).thenReturn(List.of(primary, duplicate));
+        when(incidentRepository.findByTenantIdAndGroupingKeyAndStatusInOrderByOpenedAtAsc(
+                tenantId, groupingKey, List.of("OPEN", "INVESTIGATING"))).thenReturn(List.of(primary, duplicate));
         when(incidentRepository.save(duplicate)).thenReturn(duplicate);
 
         service().onThresholdViolation(tenantId, groupingKey, "PIPELINE", pipelineId,
@@ -222,24 +226,46 @@ class IncidentServiceTest {
     }
 
     @Test
-    void recoveryResolvesOpenIncidentAndReturnsTrue() {
+    void recoveryOnCriticalKeepsOpenAndReturnsTrue() {
+        // 스펙 B.7: CRITICAL은 복구돼도 자동 닫기 없음(사용자 확인 필요).
+        UUID pipelineId = UUID.randomUUID();
+        String groupingKey = IncidentGroupingKeys.pipelineAvailability(pipelineId);
+        UUID incidentId = UUID.randomUUID();
+        IncidentEntity incident = incident(incidentId, tenantId, "OPEN"); // severity=CRITICAL
+        incident.setGroupingKey(groupingKey);
+        when(incidentRepository.findByTenantIdAndGroupingKeyAndStatusInOrderByOpenedAtAsc(
+                tenantId, groupingKey, List.of("OPEN", "INVESTIGATING"))).thenReturn(List.of(incident));
+
+        boolean handled = service().onRecovery(tenantId, groupingKey,
+                "PIPELINE_STATUS_CHANGED", "recovered", pipelineId);
+
+        assertThat(handled).isTrue();
+        assertThat(incident.getStatus()).isEqualTo("OPEN");          // 자동 닫기 안 함
+        verify(incidentRepository, never()).save(any());             // 상태 변경 없음
+        verify(eventService).recordWithIncident(eq(tenantId), eq(pipelineId), eq(EventLevel.INFO),
+                eq("PIPELINE_STATUS_CHANGED"),
+                org.mockito.ArgumentMatchers.contains("확인 후 직접 해소"), eq(incidentId), eq(null));
+        verify(ssePublisher, never()).incidentEvent(any(), any(), any());
+    }
+
+    @Test
+    void recoveryOnWarningTransitionsToInvestigating() {
+        // 스펙 B.7: WARNING은 복구 시 OPEN→INVESTIGATING + 사용자 복구 알림.
         UUID pipelineId = UUID.randomUUID();
         String groupingKey = IncidentGroupingKeys.pipelineAvailability(pipelineId);
         UUID incidentId = UUID.randomUUID();
         IncidentEntity incident = incident(incidentId, tenantId, "OPEN");
         incident.setGroupingKey(groupingKey);
-        when(incidentRepository.findByTenantIdAndGroupingKeyAndStatusOrderByOpenedAtAsc(
-                tenantId, groupingKey, "OPEN")).thenReturn(List.of(incident));
+        incident.setSeverity("WARNING");
+        when(incidentRepository.findByTenantIdAndGroupingKeyAndStatusInOrderByOpenedAtAsc(
+                tenantId, groupingKey, List.of("OPEN", "INVESTIGATING"))).thenReturn(List.of(incident));
         when(incidentRepository.save(incident)).thenReturn(incident);
 
-        boolean resolved = service().onRecovery(tenantId, groupingKey,
+        boolean handled = service().onRecovery(tenantId, groupingKey,
                 "PIPELINE_STATUS_CHANGED", "recovered", pipelineId);
 
-        assertThat(resolved).isTrue();
-        assertThat(incident.getStatus()).isEqualTo("RESOLVED");
-        assertThat(incident.getResolvedAt()).isNotNull();
-        verify(eventService).recordWithIncident(tenantId, pipelineId, EventLevel.INFO,
-                "PIPELINE_STATUS_CHANGED", "recovered", incidentId, null);
+        assertThat(handled).isTrue();
+        assertThat(incident.getStatus()).isEqualTo("INVESTIGATING");
         verify(ssePublisher).incidentEvent(eq(tenantId), eq("incident_updated"), any());
     }
 
@@ -247,8 +273,8 @@ class IncidentServiceTest {
     void recoveryReturnsFalseWhenNoOpenIncidentExists() {
         UUID pipelineId = UUID.randomUUID();
         String groupingKey = IncidentGroupingKeys.pipelineAvailability(pipelineId);
-        when(incidentRepository.findByTenantIdAndGroupingKeyAndStatusOrderByOpenedAtAsc(
-                tenantId, groupingKey, "OPEN")).thenReturn(List.of());
+        when(incidentRepository.findByTenantIdAndGroupingKeyAndStatusInOrderByOpenedAtAsc(
+                tenantId, groupingKey, List.of("OPEN", "INVESTIGATING"))).thenReturn(List.of());
 
         boolean resolved = service().onRecovery(tenantId, groupingKey,
                 "PIPELINE_STATUS_CHANGED", "recovered", pipelineId);
@@ -258,12 +284,127 @@ class IncidentServiceTest {
         verify(eventService, never()).recordWithIncident(any(), any(), any(), any(), any(), any(), any());
     }
 
+    @Test
+    void singleWarnDoesNotCreateIncidentButLogsEvent() {
+        // 스펙 B.7: WARN 단건은 이벤트 로그만, 인시던트 미생성(30분 2건 게이팅).
+        UUID pipelineId = UUID.randomUUID();
+        String groupingKey = IncidentGroupingKeys.pipelineAvailability(pipelineId);
+        when(incidentRepository.findByTenantIdAndGroupingKeyAndStatusInOrderByOpenedAtAsc(
+                tenantId, groupingKey, List.of("OPEN", "INVESTIGATING"))).thenReturn(List.of());
+
+        service().onThresholdViolation(tenantId, groupingKey, "CONSUMER_GROUP", pipelineId,
+                EventLevel.WARN, "lag", "CONSUMER_LAG_WARNING", "lag high", pipelineId);
+
+        verify(incidentRepository, never()).save(any());
+        verify(eventService).record(tenantId, pipelineId, EventLevel.WARN, "CONSUMER_LAG_WARNING", "lag high");
+        verify(incidentAnalysisTrigger, never()).startAfterCommit(any(), any(), any(), any());
+    }
+
+    @Test
+    void secondWarnWithin30MinCreatesWarningIncident() {
+        UUID pipelineId = UUID.randomUUID();
+        String groupingKey = IncidentGroupingKeys.pipelineAvailability(pipelineId);
+        when(incidentRepository.findByTenantIdAndGroupingKeyAndStatusInOrderByOpenedAtAsc(
+                tenantId, groupingKey, List.of("OPEN", "INVESTIGATING"))).thenReturn(List.of());
+        when(incidentRepository.save(any())).thenAnswer(inv -> {
+            IncidentEntity i = inv.getArgument(0);
+            i.setId(UUID.randomUUID());
+            return i;
+        });
+
+        IncidentService svc = service();
+        svc.onThresholdViolation(tenantId, groupingKey, "CONSUMER_GROUP", pipelineId,
+                EventLevel.WARN, "lag", "CONSUMER_LAG_WARNING", "lag high", pipelineId);
+        svc.onThresholdViolation(tenantId, groupingKey, "CONSUMER_GROUP", pipelineId,
+                EventLevel.WARN, "lag", "CONSUMER_LAG_WARNING", "lag high", pipelineId);
+
+        ArgumentCaptor<IncidentEntity> captor = ArgumentCaptor.forClass(IncidentEntity.class);
+        verify(incidentRepository).save(captor.capture()); // 2번째에만 생성
+        assertThat(captor.getValue().getSeverity()).isEqualTo("WARNING");
+    }
+
+    @Test
+    void transitionStatusToInvestigating() {
+        UUID incidentId = UUID.randomUUID();
+        IncidentEntity incident = incident(incidentId, tenantId, "OPEN");
+        when(incidentRepository.findByIdAndTenantId(incidentId, tenantId)).thenReturn(Optional.of(incident));
+        when(incidentRepository.save(incident)).thenReturn(incident);
+
+        assertThat(service().transitionStatus(tenantId, incidentId, "investigating").status())
+                .isEqualTo("INVESTIGATING");
+        assertThat(incident.getStatus()).isEqualTo("INVESTIGATING");
+    }
+
+    @Test
+    void transitionStatusResolvedSetsResolvedAt() {
+        UUID incidentId = UUID.randomUUID();
+        IncidentEntity incident = incident(incidentId, tenantId, "INVESTIGATING");
+        when(incidentRepository.findByIdAndTenantId(incidentId, tenantId)).thenReturn(Optional.of(incident));
+        when(incidentRepository.save(incident)).thenReturn(incident);
+
+        service().transitionStatus(tenantId, incidentId, "RESOLVED");
+        assertThat(incident.getStatus()).isEqualTo("RESOLVED");
+        assertThat(incident.getResolvedAt()).isNotNull();
+    }
+
+    @Test
+    void transitionRejectsAlreadyResolved() {
+        UUID incidentId = UUID.randomUUID();
+        IncidentEntity incident = incident(incidentId, tenantId, "RESOLVED");
+        when(incidentRepository.findByIdAndTenantId(incidentId, tenantId)).thenReturn(Optional.of(incident));
+
+        assertThatThrownBy(() -> service().transitionStatus(tenantId, incidentId, "OPEN"))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).code()).isEqualTo(ErrorCode.VALIDATION_FAILED));
+    }
+
+    @Test
+    void transitionRejectsInvalidStatus() {
+        assertThatThrownBy(() -> service().transitionStatus(tenantId, UUID.randomUUID(), "BOGUS"))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).code()).isEqualTo(ErrorCode.VALIDATION_FAILED));
+    }
+
+    @Test
+    void backfillRcaFromReportSummaryWhenMissing() {
+        // (#595) rca가 비어 있고 리포트가 있으면 리포트 요약으로 backfill.
+        UUID incidentId = UUID.randomUUID();
+        IncidentEntity incident = incident(incidentId, tenantId, "OPEN"); // rca=null
+        when(incidentRepository.findById(incidentId)).thenReturn(Optional.of(incident));
+        when(incidentRepository.save(incident)).thenReturn(incident);
+
+        ObjectNode body = new ObjectMapper().createObjectNode();
+        body.put("summary", "소스 DB 연결 끊김으로 CDC 중단");
+        IncidentReportResponse report = new IncidentReportResponse(
+                "r1", "run1", incidentId.toString(), "rc1", 0.9, true, body,
+                Instant.parse("2026-06-11T00:00:00Z"));
+
+        IncidentResponse result = service().backfillRcaIfMissing(
+                tenantId, incidentId, com.bifrost.ops.incident.dto.IncidentResponse.from(incident), List.of(report));
+
+        assertThat(incident.getRca()).isEqualTo("소스 DB 연결 끊김으로 CDC 중단");
+        assertThat(result.rca()).isEqualTo("소스 DB 연결 끊김으로 CDC 중단");
+    }
+
+    @Test
+    void backfillRcaNoOpWhenRcaAlreadyPresent() {
+        UUID incidentId = UUID.randomUUID();
+        IncidentEntity incident = incident(incidentId, tenantId, "OPEN");
+        incident.setRca("기존 RCA");
+
+        IncidentResponse result = service().backfillRcaIfMissing(
+                tenantId, incidentId, com.bifrost.ops.incident.dto.IncidentResponse.from(incident), List.of());
+
+        verify(incidentRepository, never()).save(any());
+        assertThat(result.rca()).isEqualTo("기존 RCA");
+    }
+
     private static IncidentEntity incident(UUID incidentId, UUID tenantId, String status) {
         IncidentEntity incident = new IncidentEntity();
         incident.setId(incidentId);
         incident.setTenantId(tenantId);
         incident.setGroupingKey("connector:orders");
-        incident.setSeverity("ERROR");
+        incident.setSeverity("CRITICAL");
         incident.setStatus(status);
         incident.setTitle("Orders connector failed");
         incident.setSourceType("CONNECTOR");

@@ -1,29 +1,45 @@
-import { Fragment } from 'react'
 import type { TraceSummaryResponse } from '../lib/api'
-import { buildFlowStages, type FlowStage } from '../lib/traceFlow'
+import { buildLatencyBreakdown, type LatencySegment } from '../lib/traceFlow'
+import { cn } from '../lib/format'
 
-/** 분산 trace를 source→Debezium→topic→sink flow 단계로 렌더(#565). 직관적 흐름뷰. */
+const HATCH = 'repeating-linear-gradient(45deg,#f3f4f6,#f3f4f6 5px,#e9eaed 5px,#e9eaed 10px)'
+
+/** 데이터플레인 trace를 "지연 분해" 막대로 렌더(#614). 어디서 시간이 걸리는지 한눈에. */
 export function TraceFlow({ trace }: { trace: TraceSummaryResponse }) {
-  const stages = buildFlowStages(trace.spans)
+  const { segments, totalMs, hasSink } = buildLatencyBreakdown(trace)
   const isError = trace.status === 'error'
   const errored = trace.spans.filter((s) => s.status === 'error' && s.error)
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4">
-      <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px]">
+      <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px]">
         {trace.traceId && <span className="font-mono text-gray-500">{trace.traceId.slice(0, 16)}</span>}
-        <span className={isError ? 'text-rose-500' : 'text-emerald-600'}>
-          {isError ? '오류' : '정상'}
-        </span>
-        <span className="text-gray-400">· 총 {trace.durationMs}ms</span>
+        <span className={isError ? 'text-rose-500' : 'text-emerald-600'}>{isError ? '오류' : '정상'}</span>
+        <span className="text-gray-400">· 총 {totalMs}ms</span>
       </div>
 
-      <div className="flex items-center gap-1 overflow-x-auto pb-1">
-        {stages.map((s, i) => (
-          <Fragment key={s.id}>
-            {i > 0 && <FlowArrow />}
-            <StageCard stage={s} />
-          </Fragment>
+      <div className="mb-1.5 flex items-center justify-between text-[10.5px] text-gray-400">
+        <span>Source DB</span>
+        <span>{hasSink ? 'Sink DB' : 'Topic'}</span>
+      </div>
+
+      <div className="flex h-7 w-full overflow-hidden rounded-md">
+        {segments.map((s) => (
+          <div
+            key={s.key}
+            style={{ flexGrow: s.ms, flexBasis: 0, minWidth: 46, backgroundImage: s.measured || s.status === 'error' ? undefined : HATCH }}
+            className={cn('flex items-center justify-center px-1 text-[10px] font-medium', segClass(s))}
+          >
+            <span className="truncate">{s.label}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-1 flex w-full">
+        {segments.map((s) => (
+          <div key={s.key} style={{ flexGrow: s.ms, flexBasis: 0, minWidth: 46 }} className="px-1 text-center text-[10px] text-gray-400">
+            <span className="truncate">{s.measured ? `${s.ms}ms` : '미측정'}</span>
+          </div>
         ))}
       </div>
 
@@ -36,32 +52,8 @@ export function TraceFlow({ trace }: { trace: TraceSummaryResponse }) {
   )
 }
 
-function StageCard({ stage }: { stage: FlowStage }) {
-  const tone =
-    stage.status === 'error'
-      ? 'border-rose-200 bg-rose-50'
-      : stage.kind === 'span'
-        ? 'border-gray-200 bg-white'
-        : 'border-gray-100 bg-gray-50'
-  return (
-    <div className={`flex min-w-[84px] flex-col items-center gap-1 rounded-lg border px-3 py-2.5 ${tone}`}>
-      <span className="text-[11px] font-medium text-gray-600">{stage.label}</span>
-      {stage.durationMs !== null ? (
-        <span className="text-[12px] tabular-nums text-gray-500">{stage.durationMs}ms</span>
-      ) : (
-        <span className="text-[11px] text-gray-300">—</span>
-      )}
-      <StatusDot status={stage.status} />
-    </div>
-  )
-}
-
-function StatusDot({ status }: { status: FlowStage['status'] }) {
-  const color =
-    status === 'error' ? 'bg-rose-400' : status === 'ok' ? 'bg-emerald-400' : 'bg-gray-300'
-  return <span className={`h-1.5 w-1.5 rounded-full ${color}`} />
-}
-
-function FlowArrow() {
-  return <span className="shrink-0 px-0.5 text-gray-300">→</span>
+function segClass(s: LatencySegment): string {
+  if (s.status === 'error') return 'bg-rose-500 text-white'
+  if (!s.measured) return 'text-gray-400'
+  return 'bg-gray-500 text-white'
 }

@@ -15,7 +15,9 @@ import com.bifrost.ops.workspace.WorkspaceAccessGuard;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -87,6 +89,17 @@ public class MonitoringController {
         return ResponseEntity.ok(incidentService.get(wsId, incidentId));
     }
 
+    /** incident 사용자 상태 전이(#558, 스펙 B.7): OPEN↔INVESTIGATING, →RESOLVED. */
+    @PatchMapping("/incidents/{incidentId}")
+    public ResponseEntity<IncidentResponse> transitionIncident(
+            @PathVariable UUID wsId,
+            @PathVariable UUID incidentId,
+            @RequestBody com.bifrost.ops.incident.dto.IncidentStatusUpdateRequest request,
+            @AuthenticationPrincipal AuthenticatedUser principal) {
+        accessGuard.requireAccess(wsId, principal);
+        return ResponseEntity.ok(incidentService.transitionStatus(wsId, incidentId, request.status()));
+    }
+
     /** incident 상세 facade: 기본 정보·관련 이벤트·영향 pipeline id·리포트 목록. */
     @GetMapping("/incidents/{incidentId}/detail")
     public ResponseEntity<IncidentDetailResponse> incidentDetail(
@@ -97,6 +110,8 @@ public class MonitoringController {
         IncidentResponse incident = incidentService.get(wsId, incidentId);
         List<EventResponse> events = eventService.list(wsId, null, null, incidentId);
         List<IncidentReportResponse> reports = incidentReportService.list(incidentId);
+        // (#595) AI 분석 리포트가 있으면 비어 있던 rca를 채운다(분석 run 비동기·콜백 없음).
+        incident = incidentService.backfillRcaIfMissing(wsId, incidentId, incident, reports);
         return ResponseEntity.ok(new IncidentDetailResponse(
                 incident,
                 events,
