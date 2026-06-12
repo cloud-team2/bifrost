@@ -30,7 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * event 임계 위반을 grouping_key로 묶어 incident를 생성·관리한다(S2).
  *
  * <p>규칙: WARN 2건/30분 → incident 생성, ERROR 즉시 생성.
- * 복구 event 수신 시 OPEN 상태의 incident를 auto-resolve.
+ * 복구 event 수신 시 자동 닫기 없음: CRITICAL은 OPEN 유지, WARNING은 OPEN→INVESTIGATING 전이.
  */
 @Service
 public class IncidentService {
@@ -150,7 +150,7 @@ public class IncidentService {
     }
 
     /**
-     * 복구 event 수신 시 OPEN incident를 auto-resolve한다.
+     * 복구 event 수신 시 자동 닫기 없이 CRITICAL은 유지하고 WARNING은 INVESTIGATING으로 전이한다.
      */
     @Transactional
     public boolean onRecovery(UUID tenantId, String groupingKey, String eventType,

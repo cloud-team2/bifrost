@@ -2,7 +2,6 @@ package com.bifrost.ops.incident;
 
 import com.bifrost.ops.event.EventLevel;
 import com.bifrost.ops.event.EventService;
-import com.bifrost.ops.event.persistence.entity.EventEntity;
 import com.bifrost.ops.event.persistence.repository.EventRepository;
 import com.bifrost.ops.incident.persistence.entity.IncidentEntity;
 import com.bifrost.ops.incident.persistence.repository.IncidentRepository;
@@ -50,7 +49,7 @@ class IncidentServicePersistenceTest {
     TestEntityManager em;
 
     @Test
-    void thresholdAndRecoveryEventsArePersistedWithIncidentId() {
+    void criticalThresholdAndRecoveryEventsArePersistedWithIncidentIdWithoutAutoResolve() {
         UUID tenantId = UUID.randomUUID();
         UUID pipelineId = UUID.randomUUID();
         String groupingKey = IncidentGroupingKeys.pipelineAvailability(pipelineId);
@@ -69,6 +68,7 @@ class IncidentServicePersistenceTest {
         assertThat(eventRepository.findByTenantIdAndIncidentIdOrderByCreatedAtDesc(tenantId, incident.getId()))
                 .singleElement()
                 .satisfies(event -> {
+                    assertThat(event.getLevel()).isEqualTo(EventLevel.ERROR);
                     assertThat(event.getType()).isEqualTo("PIPELINE_STATUS_CHANGED");
                     assertThat(event.getIncidentId()).isEqualTo(incident.getId());
                     assertThat(event.getCategory()).isEqualTo("PIPELINE");
@@ -77,11 +77,19 @@ class IncidentServicePersistenceTest {
         assertThat(service.onRecovery(tenantId, groupingKey,
                 "PIPELINE_STATUS_CHANGED", "recovered", pipelineId)).isTrue();
 
-        IncidentEntity resolved = incidentRepository.findById(incident.getId()).orElseThrow();
-        assertThat(resolved.getStatus()).isEqualTo("RESOLVED");
-        assertThat(eventRepository.findByTenantIdAndIncidentIdOrderByCreatedAtDesc(tenantId, incident.getId()))
-                .extracting(EventEntity::getType)
-                .containsExactly("PIPELINE_STATUS_CHANGED", "PIPELINE_STATUS_CHANGED");
+        IncidentEntity recovered = incidentRepository.findById(incident.getId()).orElseThrow();
+        assertThat(recovered.getStatus()).isEqualTo("OPEN");
+        var events = eventRepository.findByTenantIdAndIncidentIdOrderByCreatedAtDesc(tenantId, incident.getId());
+        assertThat(events).hasSize(2);
+        assertThat(events)
+                .filteredOn(event -> event.getLevel() == EventLevel.INFO)
+                .singleElement()
+                .satisfies(event -> {
+                    assertThat(event.getLevel()).isEqualTo(EventLevel.INFO);
+                    assertThat(event.getType()).isEqualTo("PIPELINE_STATUS_CHANGED");
+                    assertThat(event.getMessage()).contains("recovered");
+                    assertThat(event.getIncidentId()).isEqualTo(incident.getId());
+                });
     }
 
     private void insertTenant(UUID id) {
