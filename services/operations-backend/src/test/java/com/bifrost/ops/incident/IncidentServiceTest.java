@@ -387,6 +387,27 @@ class IncidentServiceTest {
     }
 
     @Test
+    void backfillRcaFromAnswerFieldWhenMissing() {
+        // (#595) 실제 ai-service incident_analysis 리포트는 본문 필드가 "answer"다.
+        UUID incidentId = UUID.randomUUID();
+        IncidentEntity incident = incident(incidentId, tenantId, "OPEN"); // rca=null
+        when(incidentRepository.findById(incidentId)).thenReturn(Optional.of(incident));
+        when(incidentRepository.save(incident)).thenReturn(incident);
+
+        ObjectNode body = new ObjectMapper().createObjectNode();
+        body.put("mode", "incident_analysis");
+        body.put("answer", "싱크 DB 연결 실패로 커넥터 task 중단 — DB 가용성 확인 필요");
+        IncidentReportResponse report = new IncidentReportResponse(
+                "r1", "run1", incidentId.toString(), null, null, true, body,
+                Instant.parse("2026-06-12T00:00:00Z"));
+
+        IncidentResponse result = service().backfillRcaIfMissing(
+                tenantId, incidentId, com.bifrost.ops.incident.dto.IncidentResponse.from(incident), List.of(report));
+
+        assertThat(result.rca()).isEqualTo("싱크 DB 연결 실패로 커넥터 task 중단 — DB 가용성 확인 필요");
+    }
+
+    @Test
     void backfillRcaNoOpWhenRcaAlreadyPresent() {
         UUID incidentId = UUID.randomUUID();
         IncidentEntity incident = incident(incidentId, tenantId, "OPEN");
