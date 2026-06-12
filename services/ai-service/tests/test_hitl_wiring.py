@@ -169,7 +169,9 @@ def test_requested_action_candidate_rejects_unknown_tool():
     assert candidate.risk == RiskLevel.FORBIDDEN
 
 
-def test_requested_action_candidate_rejects_registered_tool_without_spring_bridge():
+def test_requested_action_candidate_allows_restart_with_high_risk_approval():
+    # #593: restart_connector는 allowlist에 포함되어 FORBIDDEN 강등 없이
+    # HIGH risk 그대로 approval gate를 거친다.
     registry = MagicMock()
     registry.get_definition.return_value = _FakeToolDefinition(
         name="restart_connector",
@@ -182,7 +184,7 @@ def test_requested_action_candidate_rejects_registered_tool_without_spring_bridg
             "action_type": "runtime_tool",
             "action_name": "restart_connector_task",
             "risk": "high",
-            "reason": "spring approval bridge unavailable",
+            "reason": "user requested connector restart",
             "tool_name": "restart_connector",
             "tool_params": {"connector_name": "orders-source-connector"},
         },
@@ -190,7 +192,7 @@ def test_requested_action_candidate_rejects_registered_tool_without_spring_bridg
     )
 
     assert candidate is not None
-    assert candidate.risk == RiskLevel.FORBIDDEN
+    assert candidate.risk == RiskLevel.HIGH
 
 
 def test_requested_action_candidate_escalates_medium_tool_to_human_approval():
@@ -232,20 +234,24 @@ def test_ready_action_candidate_rejects_runtime_candidate_without_tool_params():
     assert _ready_action_candidate("act_no_params", remediation, []) is None
 
 
-def test_ready_action_candidate_rejects_approval_backed_tool_without_spring_bridge():
+def test_ready_action_candidate_allows_restart_tool():
+    # #593: restart_connector가 allowlist에 포함되어 executor-ready 후보가 된다.
     remediation = RemediationOutput(action_candidates=[
         ActionCandidateOutput(
             action_id="act_restart",
             action_type=ActionType.RUNTIME_TOOL,
             action_name="restart_connector_task",
             risk=RiskLevel.HIGH,
-            reason="spring approval bridge unavailable",
+            reason="approved connector restart",
             tool_name="restart_connector",
             tool_params={"connector_name": "orders-source-connector"},
         )
     ])
 
-    assert _ready_action_candidate("act_restart", remediation, []) is None
+    ready = _ready_action_candidate("act_restart", remediation, [])
+    assert ready is not None
+    assert ready.tool_name == "restart_connector"
+    assert ready.status == ActionStatus.READY
 
 
 # ── State 재사용 end-to-end ────────────────────────────────────────────────────

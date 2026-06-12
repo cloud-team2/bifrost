@@ -149,6 +149,8 @@ interface ProgressMsg {
   terminalState: Extract<ProgressState, 'done' | 'failed'> | null
   terminalText: string | null
   items: ProgressItem[]
+  // #604: run 시작 시 확정된 전체 stage 흐름 — 진행 분모를 처음부터 고정한다.
+  requiredFlow: string[] | null
 }
 interface ToolPanelMsg {
   id: number
@@ -408,6 +410,7 @@ export function AgentRunPanel({
           loading: false,
           commands: buildSlashCommands(details.map((tool) => ({
             name: tool.name,
+            description: tool.description,
             method: tool.method,
             path: tool.path_template,
             risk: tool.risk,
@@ -1282,7 +1285,7 @@ export function AgentRunPanel({
       text: event.message,
       state,
       summary: null,
-    })
+    }, payloadRequiredFlow(event))
   }
 
   function upsertTool(event: AgentRunEvent, state: ProgressState) {
@@ -1355,21 +1358,32 @@ export function AgentRunPanel({
     })
   }
 
-  function upsertProgress(runId: string, item: ProgressItem) {
+  function upsertProgress(runId: string, item: ProgressItem, requiredFlow?: string[] | null) {
     updateMsgs((prev) => {
       const progressIndex = prev.findIndex((msg): msg is ProgressMsg => msg.kind === 'progress' && msg.runId === runId)
       if (progressIndex < 0) {
         return [
           ...prev,
-          { id: ++seq.current, kind: 'progress', runId, expanded: false, terminalState: null, terminalText: null, items: [item] },
+          {
+            id: ++seq.current,
+            kind: 'progress',
+            runId,
+            expanded: false,
+            terminalState: null,
+            terminalText: null,
+            items: [item],
+            requiredFlow: requiredFlow ?? null,
+          },
         ]
       }
       return prev.map((msg, index) => {
         if (index !== progressIndex || msg.kind !== 'progress') return msg
+        const nextRequiredFlow = requiredFlow ?? msg.requiredFlow
         const itemIndex = msg.items.findIndex((existing) => existing.key === item.key)
-        if (itemIndex < 0) return { ...msg, items: [...msg.items, item] }
+        if (itemIndex < 0) return { ...msg, requiredFlow: nextRequiredFlow, items: [...msg.items, item] }
         return {
           ...msg,
+          requiredFlow: nextRequiredFlow,
           items: msg.items.map((existing, existingIndex) =>
             existingIndex === itemIndex
               ? {
@@ -2484,7 +2498,7 @@ function ProgressCard({
   const failed = msg.items.find((item) => item.state === 'failed')
   const running = msg.items.find((item) => item.state === 'running')
   const waiting = msg.items.find((item) => item.state === 'waiting')
-  const completedCount = msg.items.filter((item) => item.state === 'done').length
+  const counts = progressCounts(msg)
   const latest = msg.items[msg.items.length - 1]
   const visualState = progressVisualState({ terminalState: msg.terminalState, failed, running, waiting })
   const headline = progressHeadline({
@@ -2515,7 +2529,7 @@ function ProgressCard({
           )}
           <span className="shrink-0 font-semibold text-gray-800">진행 단계</span>
           <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[10.5px] text-gray-500">
-            {completedCount}/{msg.items.length}
+            {counts.done}/{counts.total}
           </span>
           <span className={cn('truncate', visualState === 'running' ? theme.statusText : 'text-gray-500')}>{headline}</span>
         </div>
@@ -3000,6 +3014,25 @@ function agentRunStatusFromEvent(event: AgentRunEvent) {
   }
   if (event.type === 'approval_required' || event.type === 'change_management_required') return 'waiting_for_approval'
   return 'running'
+}
+
+function payloadRequiredFlow(event: AgentRunEvent): string[] | null {
+  const value = event.payload?.required_flow
+  if (!Array.isArray(value)) return null
+  const stages = value.filter((entry): entry is string => typeof entry === 'string')
+  return stages.length > 0 ? stages : null
+}
+
+// #604: required_flow가 있으면 분모를 전체 stage 수로 고정하고 분자도 그 stage들의
+// 완료 수만 센다(run/router 등 부가 항목 제외). 없으면(구버전 백엔드) 기존 동작 유지.
+export function progressCounts(msg: { items: ProgressItem[]; requiredFlow: string[] | null }) {
+  if (msg.requiredFlow && msg.requiredFlow.length > 0) {
+    const done = msg.requiredFlow.filter((stage) =>
+      msg.items.some((item) => item.key.endsWith(`:stage:${stage}`) && item.state === 'done'),
+    ).length
+    return { done, total: msg.requiredFlow.length }
+  }
+  return { done: msg.items.filter((item) => item.state === 'done').length, total: msg.items.length }
 }
 
 function progressKey(event: AgentRunEvent) {

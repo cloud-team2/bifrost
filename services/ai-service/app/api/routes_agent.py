@@ -40,6 +40,17 @@ async def create_run(req: CreateRunRequest, background_tasks: BackgroundTasks) -
     request_id = _request_id()
     user_message = req.message or ""
 
+    # #592: agent_run.project_id는 uuid 컬럼이라 비 UUID 문자열(예: "demo-team")이
+    # INSERT 시점에 asyncpg 예외 → 500이 됐다. 검증 실패 envelope으로 거른다.
+    try:
+        uuid.UUID(req.project_id)
+    except ValueError:
+        return ApiResponse.failure(
+            request_id,
+            ErrorCode.VALIDATION_FAILED,
+            f"project_id must be a UUID: {req.project_id}",
+        )
+
     run_repo = get_run_repo()
     await run_repo.create(
         run_id,

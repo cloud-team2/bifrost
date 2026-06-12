@@ -119,6 +119,8 @@ public class TempoClient {
                     long startNs = s.path("startTimeUnixNano").asLong(0L);
                     long endNs = s.path("endTimeUnixNano").asLong(0L);
                     long durMs = endNs > startNs ? (endNs - startNs) / 1_000_000L : 0L;
+                    // 서브 ms 보존(#632): ms 정수절삭이면 Debezium/Sink span이 전부 0ms가 됨 → µs도 함께 보냄.
+                    long durMicros = endNs > startNs ? (endNs - startNs) / 1_000L : 0L;
                     JsonNode status = s.path("status");
                     boolean isError = isErrorStatus(status);
                     String error = isError ? status.path("message").asText("") : null;
@@ -126,6 +128,7 @@ public class TempoClient {
                             s.path("name").asText("unknown"),
                             service == null ? "unknown" : service,
                             durMs,
+                            durMicros,
                             isError ? "error" : "ok",
                             (error == null || error.isBlank()) ? null : error));
                 }

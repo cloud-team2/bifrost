@@ -420,6 +420,7 @@ export interface TraceSpanResponse {
   name: string
   service: string
   durationMs: number
+  durationMicros: number  // 서브 ms 보존(#632): 1ms 미만 구간 표시용
   status: string          // 'ok' | 'error'
   error: string | null
 }
@@ -599,6 +600,7 @@ export interface ApprovalDecisionResponse {
 }
 export interface AgentToolCatalogItem {
   name: string
+  description?: string
   operation: string
   risk: string
   method: string

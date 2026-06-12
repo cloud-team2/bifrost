@@ -38,7 +38,7 @@ class TraceQueryTest {
     @Test
     void enabledNarrowsByTopicAndReturnsTraceSummary() {
         TempoClient client = mock(TempoClient.class);
-        TraceSpan sink = new TraceSpan("sink-put", "platform-connect", 4L, "error", "type mismatch");
+        TraceSpan sink = new TraceSpan("sink-put", "platform-connect", 4L, 4000L, "error", "type mismatch");
         when(client.recentTrace(contains("messaging.destination.name=\"cdc.orders\""), anyLong(), anyLong()))
                 .thenReturn(Optional.of(new TempoTrace("abc123", 9L, true, List.of(sink))));
         TraceQuery q = new TraceQuery(true, client);
@@ -84,7 +84,7 @@ class TraceQueryTest {
     @Test
     void queryByIdReturnsTraceSummary() {
         TempoClient client = mock(TempoClient.class);
-        TraceSpan span = new TraceSpan("sink-put", "platform-connect", 4L, "error", "type mismatch");
+        TraceSpan span = new TraceSpan("sink-put", "platform-connect", 4L, 4000L, "error", "type mismatch");
         when(client.traceById("abc123"))
                 .thenReturn(Optional.of(new TempoTrace("abc123", 9L, true, List.of(span))));
         TraceQuery q = new TraceQuery(true, client);

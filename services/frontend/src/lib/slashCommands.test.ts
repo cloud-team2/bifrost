@@ -108,4 +108,42 @@ describe('slashCommands', () => {
 
     expect(missingSlashArgs(command, [])).toEqual(['connector_name'])
   })
+
+  it('prefers catalog description, then fallback map, then humanized name (#599)', () => {
+    const commands = buildSlashCommands(
+      [
+        {
+          name: 'get_traces',
+          description: '지정 Connector의 최근 trace 이벤트를 조회합니다.',
+          method: 'GET',
+          risk: 'read_only',
+          path: '/internal/ops/projects/{project_id}/connectors/{connector_name}/traces',
+          params_schema: {},
+        },
+        {
+          name: 'list_connectors',
+          description: '',
+          method: 'GET',
+          risk: 'read_only',
+          path: '/internal/ops/projects/{project_id}/kafka/connectors/status',
+          params_schema: {},
+        },
+        {
+          name: 'get_alerts',
+          method: 'GET',
+          risk: 'read_only',
+          path: '/internal/ops/projects/{project_id}/observability/alerts',
+          params_schema: {},
+        },
+      ],
+      { list_connectors: 'Kafka Connector 상태 및 Task 정보를 조회합니다.' },
+    )
+
+    expect(commands.find((c) => c.toolName === 'get_traces')?.description)
+      .toBe('지정 Connector의 최근 trace 이벤트를 조회합니다.')
+    expect(commands.find((c) => c.toolName === 'list_connectors')?.description)
+      .toBe('Kafka Connector 상태 및 Task 정보를 조회합니다.')
+    expect(commands.find((c) => c.toolName === 'get_alerts')?.description)
+      .toBe('alerts')
+  })
 })

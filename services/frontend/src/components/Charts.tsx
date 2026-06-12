@@ -59,6 +59,8 @@ export function TrendChart({
   height = 200,
   refLine,
   timeAxis = false,
+  xDomain,
+  showDots = false,
 }: {
   data: Point[]
   series: SeriesDef[]
@@ -67,13 +69,17 @@ export function TrendChart({
   refLine?: { y: number; label: string }
   /** t를 epoch ms로 보고 실제 시간 간격으로 배치(Grafana식). false면 t를 카테고리로 취급. */
   timeAxis?: boolean
+  /** 시간축 도메인 [start, end] (epoch ms). 주면 데이터가 sparse해도 창 전체를 고정 표시(Grafana식). */
+  xDomain?: [number, number]
+  /** 데이터 점에 dot 표시(끊긴 시리즈의 고립 점이 보이도록). */
+  showDots?: boolean
 }) {
   const axis = { fontSize: 10, fill: '#94a3b8' }
 
   // 시간축이면 t(ms)를 숫자 시간 스케일로, 아니면 기존 카테고리 라벨로.
   const xAxis = timeAxis ? (
-    <XAxis dataKey="t" type="number" scale="time" domain={['dataMin', 'dataMax']}
-      tickFormatter={fmtClock} tick={axis} tickLine={false} axisLine={false}
+    <XAxis dataKey="t" type="number" scale="time" domain={xDomain ?? ['dataMin', 'dataMax']}
+      allowDataOverflow tickFormatter={fmtClock} tick={axis} tickLine={false} axisLine={false}
       interval="preserveStartEnd" minTickGap={44} />
   ) : (
     <XAxis dataKey="t" tick={axis} tickLine={false} axisLine={false}
@@ -134,7 +140,7 @@ export function TrendChart({
                 name={s.label}
                 stroke={s.color}
                 strokeWidth={2}
-                dot={false}
+                dot={showDots ? { r: 2, fill: s.color } : false}
                 isAnimationActive={false}
                 connectNulls={false}
               />
