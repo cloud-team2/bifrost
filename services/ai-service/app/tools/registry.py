@@ -12,6 +12,7 @@ from app.schemas.state import RiskLevel
 from app.schemas.tools import (
     AlertsData,
     ConnectorActionData,
+    ClusterInfoData,
     ConnectorStatusListData,
     DatasourceListData,
     ConnectorStatusData,
@@ -69,6 +70,10 @@ class ListConnectorsParams(ToolParams):
 
 
 class ListDatasourcesParams(ToolParams):
+    pass
+
+
+class GetClusterInfoParams(ToolParams):
     pass
 
 
@@ -218,6 +223,17 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
             risk=RiskLevel.READ_ONLY,
             params_model=ListDatasourcesParams,
             result_model=DatasourceListData,
+            structured_result=True,
+        ),
+        # get_cluster_info — 브로커/컨트롤러 + 토픽 파티션 상세(#633 범용 read 프리미티브).
+        ToolDefinition(
+            name="get_cluster_info",
+            operation="get_cluster_info",
+            method="GET",
+            path_template="/internal/ops/projects/{project_id}/kafka/cluster",
+            risk=RiskLevel.READ_ONLY,
+            params_model=GetClusterInfoParams,
+            result_model=ClusterInfoData,
             structured_result=True,
         ),
         ToolDefinition(

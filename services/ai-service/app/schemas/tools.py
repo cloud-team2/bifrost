@@ -265,6 +265,14 @@ class DatasourceListData(SpringResponseModel):
     datasources: list[DatasourceSummaryData] = Field(default_factory=list)
 
 
+class ClusterInfoData(SpringResponseModel):
+    cluster_id: str | None = None
+    controller_id: int | None = None
+    broker_count: int | None = None
+    brokers: list[dict] = Field(default_factory=list)  # {id, host, port, controller}
+    topics: list[dict] = Field(default_factory=list)  # {name, partitionCount, ISR/leader 상세}
+
+
 class CriticalIncidentData(SpringResponseModel):
     incident_id: str
     severity: str

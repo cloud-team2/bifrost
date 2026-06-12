@@ -35,6 +35,7 @@ BACKEND_CATALOG: set[tuple[str, str]] = {
     ("GET", "/internal/ops/projects/{}/kafka/connectors/{}/status"),
     ("GET", "/internal/ops/projects/{}/kafka/connectors/status"),
     ("GET", "/internal/ops/projects/{}/datasources"),
+    ("GET", "/internal/ops/projects/{}/kafka/cluster"),
     ("POST", "/internal/ops/projects/{}/connectors/{}/restart"),
     ("POST", "/internal/ops/projects/{}/connectors/{}/pause"),
     ("POST", "/internal/ops/projects/{}/connectors/{}/resume"),
