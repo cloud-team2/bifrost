@@ -33,6 +33,8 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -176,6 +178,7 @@ class MonitoringControllerTest {
         when(incidentService.get(wsId, incidentId)).thenReturn(incident);
         when(eventService.list(wsId, null, null, incidentId)).thenReturn(List.of(event));
         when(incidentReportService.list(incidentId)).thenReturn(List.of(report));
+        when(incidentService.backfillRcaIfMissing(eq(wsId), eq(incidentId), any(), any())).thenReturn(incident);
 
         var body = controller.incidentDetail(wsId, incidentId, principal).getBody();
 

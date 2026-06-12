@@ -110,6 +110,8 @@ public class MonitoringController {
         IncidentResponse incident = incidentService.get(wsId, incidentId);
         List<EventResponse> events = eventService.list(wsId, null, null, incidentId);
         List<IncidentReportResponse> reports = incidentReportService.list(incidentId);
+        // (#595) AI 분석 리포트가 있으면 비어 있던 rca를 채운다(분석 run 비동기·콜백 없음).
+        incident = incidentService.backfillRcaIfMissing(wsId, incidentId, incident, reports);
         return ResponseEntity.ok(new IncidentDetailResponse(
                 incident,
                 events,
