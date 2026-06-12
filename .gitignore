@@ -79,6 +79,7 @@ coverage/
 **/Chart.lock
 
 # ─── Claude Plugin ───
+.claude/
 .understand-anything/
 
 # superpowers brainstorm visual companion (local only)
