@@ -265,12 +265,14 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
             result_model=PipelineTopologyData,
             path_params=("pipeline_id",),
         ),
-        # ── catalog §8.5 Incident summary (Spring PR #157) ───────────────────
+        # ── catalog §8.5 Incident summary ────────────────────────────────────
+        # 백엔드는 project-scoped 경로만 허용한다(비-scoped는 VALIDATION_FAILED).
+        # {project_id}는 ToolContext에서 자동 주입되므로 path_params엔 incident_id만 둔다.
         ToolDefinition(
             name="get_incident_summary",
             operation="get_incident_summary",
             method="GET",
-            path_template="/internal/ops/incidents/{incident_id}/summary",
+            path_template="/internal/ops/projects/{project_id}/incidents/{incident_id}/summary",
             risk=RiskLevel.READ_ONLY,
             params_model=GetIncidentSummaryParams,
             result_model=IncidentSummaryData,

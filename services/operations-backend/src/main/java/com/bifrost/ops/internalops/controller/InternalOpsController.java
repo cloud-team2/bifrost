@@ -74,6 +74,7 @@ public class InternalOpsController {
                 tool("search_logs",            "POST", "/internal/ops/projects/{projectId}/observability/logs/search"),
                 tool("query_metrics",          "GET",  "/internal/ops/projects/{projectId}/observability/metrics"),
                 tool("query_traces",           "GET",  "/internal/ops/projects/{projectId}/connectors/{connectorName}/traces"),
+                tool("get_connector_task_trace","GET", "/internal/ops/projects/{projectId}/connectors/{connectorName}/task-trace"),
                 tool("list_alerts",            "GET",  "/internal/ops/projects/{projectId}/observability/alerts"),
                 tool("analyze_event_log",      "GET",  "/internal/ops/projects/{projectId}/observability/events/summary"),
                 tool("get_incident_summary",   "GET",  "/internal/ops/projects/{projectId}/incidents/{incidentId}/summary"),
