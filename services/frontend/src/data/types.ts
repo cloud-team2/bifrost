@@ -98,50 +98,6 @@ export interface ActivityEvent {
 }
 
 
-/* --------------------------------------------------------------- cluster */
-
-export interface Broker {
-  id: number
-  name: string
-  status: NodeStatus
-  leaderPartitions: number
-  cpu: number
-  disk: number
-  netIn: number
-  netOut: number
-}
-
-export interface ClusterTopic {
-  name: string
-  type: 'EDA' | 'CDC'
-  project: string
-  status: 'active' | 'lag' | 'error'
-  partitions: number
-  produceRate: number
-  consumeRate: number
-  replicaPct: number
-}
-
-export interface ConsumerGroupRow {
-  name: string
-  state: GroupState
-  members: number
-  totalLag: number
-  lastCommit: string
-  partitionStrategy: string
-  instances: { id: string; host: string; partitions: number; lag: number }[]
-}
-
-export interface ClusterConnector {
-  name: string
-  kind: 'Source' | 'Sink'
-  status: 'RUNNING' | 'PARTIALLY_FAILED' | 'FAILED' | 'PAUSED' | 'UNASSIGNED'
-  project: string
-  pipeline: string
-  tasks: number
-  recordsPerSec: number
-}
-
 /* --------------------------------------------------------------- settings */
 
 export interface Member {
