@@ -278,3 +278,53 @@ async def test_analyze_event_log_sends_window_and_level_query_params():
     assert captured_request.url.params["level"] == "warn+"
     assert result.status == ToolStatus.SUCCESS
     assert result.result is not None
+
+
+def _deployments_response(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={
+            "ok": True,
+            "request_id": "req_001",
+            "operation": "get_recent_changes",
+            "result": {"changes": []},
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_deployments_forwards_limit_as_query_param():
+    captured_request: httpx.Request | None = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal captured_request
+        captured_request = request
+        return _deployments_response(request)
+
+    registry = ToolClientRegistry(transport=httpx.MockTransport(handler))
+
+    result = await registry.call_tool("get_deployments", {"limit": 5}, _context())
+
+    assert captured_request is not None
+    assert captured_request.method == "GET"
+    assert captured_request.url.path == "/internal/ops/projects/proj_001/pipelines/changes"
+    assert captured_request.url.params["limit"] == "5"
+    assert result.status == ToolStatus.SUCCESS
+
+
+@pytest.mark.asyncio
+async def test_get_deployments_without_limit_omits_query_param():
+    captured_request: httpx.Request | None = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal captured_request
+        captured_request = request
+        return _deployments_response(request)
+
+    registry = ToolClientRegistry(transport=httpx.MockTransport(handler))
+
+    result = await registry.call_tool("get_deployments", {}, _context())
+
+    assert captured_request is not None
+    assert "limit" not in captured_request.url.params
+    assert result.status == ToolStatus.SUCCESS
