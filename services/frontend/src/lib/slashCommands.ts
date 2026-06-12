@@ -1,5 +1,6 @@
 export interface ToolCatalogLike {
   name: string
+  description?: string
   method: string
   path: string
   risk?: string
@@ -49,7 +50,8 @@ export function buildSlashCommands(
         label: `/${slug}`,
         toolName: tool.name,
         path: tool.path,
-        description: descriptions[tool.name] ?? humanizeToolName(tool.name),
+        // #599: 카탈로그가 내려준 설명 → 프론트 폴백 맵 → 도구명 변환 순.
+        description: tool.description || descriptions[tool.name] || humanizeToolName(tool.name),
         pathParams,
         argParams,
         usage: `/${slug}${argParams.map((param) => ` <${param}>`).join('')}`,

@@ -53,6 +53,7 @@ def _failure(
 def _tool_summary(definition: ToolDefinition) -> dict[str, Any]:
     return {
         "name": definition.name,
+        "description": definition.description,
         "operation": definition.operation,
         "risk": definition.risk.value,
         "method": definition.method,
