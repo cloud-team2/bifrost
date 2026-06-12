@@ -5,6 +5,7 @@ import {
   RcaPreviewCard,
   RemediationCard,
   SlashCommandOptionContent,
+  progressCounts,
   remediationCandidatesFromPayload,
   type RcaPreviewMsg,
   type RemediationMsg,
@@ -130,5 +131,48 @@ describe('incident analysis cards', () => {
     expect(html).toContain('권장 조치')
     expect(html).toContain('Connector 재시작')
     expect(html).toContain('restart_connector')
+  })
+})
+
+describe('progressCounts (#604)', () => {
+  const stageItem = (runId: string, stage: string, state: 'done' | 'running' | 'waiting') => ({
+    key: `${runId}:stage:${stage}`,
+    kind: 'stage' as const,
+    eventType: 'agent_completed',
+    agent: stage,
+    label: stage,
+    text: '',
+    state,
+    summary: null,
+  })
+  const requiredFlow = ['correlation', 'planner', 'retrieval', 'classifier', 'rca', 'verifier', 'report']
+
+  it('fixes the denominator to required_flow length from the start', () => {
+    // 초반: stage 2개만 도착해도 분모는 7로 고정된다.
+    const counts = progressCounts({
+      requiredFlow,
+      items: [stageItem('run-1', 'correlation', 'done'), stageItem('run-1', 'planner', 'running')],
+    })
+    expect(counts).toEqual({ done: 1, total: 7 })
+  })
+
+  it('excludes non-stage items (run/router) from the count', () => {
+    const counts = progressCounts({
+      requiredFlow,
+      items: [
+        { ...stageItem('run-1', 'run', 'done'), key: 'run-1:run' },
+        stageItem('run-1', 'router', 'done'),
+        stageItem('run-1', 'correlation', 'done'),
+      ],
+    })
+    expect(counts).toEqual({ done: 1, total: 7 })
+  })
+
+  it('falls back to arrived-item counting when required_flow is absent (legacy backend)', () => {
+    const counts = progressCounts({
+      requiredFlow: null,
+      items: [stageItem('run-1', 'correlation', 'done'), stageItem('run-1', 'planner', 'running')],
+    })
+    expect(counts).toEqual({ done: 1, total: 2 })
   })
 })

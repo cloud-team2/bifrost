@@ -251,6 +251,16 @@ async def test_incident_analysis_run_emits_expected_event_sequence() -> None:
     assert "classifier" in pr_stages
     assert "rca" in pr_stages
 
+    # #604: router 완료 payload에 전체 stage 흐름이 실린다(FE 진행 분모 고정용).
+    router_completed = next(
+        e for e in published
+        if e.type == StreamingEventType.AGENT_COMPLETED and e.agent == "router"
+    )
+    assert router_completed.payload["required_flow"] == [
+        "correlation", "planner", "retrieval", "classifier", "rca", "verifier", "report",
+    ]
+    assert router_completed.payload["total_stages"] == 7
+
     # REPORT_PREVIEW_AVAILABLE: verified=False이고 VERIFICATION_COMPLETED 전에 발행
     rpa_events = [e for e in published if e.type == StreamingEventType.REPORT_PREVIEW_AVAILABLE]
     assert len(rpa_events) == 1
@@ -314,6 +324,15 @@ async def test_incident_analysis_remediation_emits_approval_required() -> None:
     started_agents = [e.agent for e in published if e.type == StreamingEventType.AGENT_STARTED]
     assert "remediation" in started_agents
     assert "policy_guard" in started_agents
+
+    # #604: remediation 요청 run은 required_flow에 remediation/policy_guard 포함.
+    router_completed = next(
+        e for e in published
+        if e.type == StreamingEventType.AGENT_COMPLETED and e.agent == "router"
+    )
+    assert "remediation" in router_completed.payload["required_flow"]
+    assert "policy_guard" in router_completed.payload["required_flow"]
+    assert router_completed.payload["total_stages"] == 9
 
     # APPROVAL_REQUIRED 발행
     approval_events = [e for e in published if e.type == StreamingEventType.APPROVAL_REQUIRED]
