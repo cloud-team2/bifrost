@@ -237,6 +237,14 @@ public class StrimziKafkaPipelineProvisioner implements KafkaPipelineProvisioner
         // k8s.resource(HasMetadata) 는 resource의 apiVersion 필드를 URL 결정에 사용하므로
         // genericKubernetesResources 와 달리 Fabric8 mock 서버에서도 동작한다.
         generic.setApiVersion("kafka.strimzi.io/v1");
+        // 토글(setSourceTracing)은 기존 CR을 GET해 재적용하는데, 그 CR엔 metadata.resourceVersion이 실려 있다.
+        // createOr는 먼저 CREATE(POST)를 시도하므로 API 서버가 "resourceVersion should not be set on objects
+        // to be created"(500)로 거부 → createOr가 409로 폴백하지 못하고 throw → 추적 토글 500 (#625).
+        // 재적용 전 resourceVersion을 비우면 CREATE가 깨끗이 수행되고(미존재 시 생성, 존재 시 409→update 폴백)
+        // 토글이 성공한다. 신규 프로비저닝 경로의 CR엔 resourceVersion이 없으므로 영향 없음.
+        if (generic.getMetadata() != null) {
+            generic.getMetadata().setResourceVersion(null);
+        }
         k8s.resource(generic).inNamespace(namespace).createOr(NonDeletingOperation::update);
     }
 
