@@ -8,6 +8,7 @@ approval_decision 경로: approval_gate → executor → verifier → report
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -216,17 +217,36 @@ def _classifier_scope_unclear(classifier_out) -> bool:
 
 
 def _no_incident_answer(retrieval_out) -> str:
-    """클린/정상 결과(인시던트 0건)일 때의 결정적 종결 답변(#532).
+    """no-progress 게이트의 결정적 종결 답변(#532).
 
-    no-progress 게이트가 같은 plan을 재수집해도 진전이 없다고 판단했을 때,
-    추가 LLM 호출 없이 곧장 내보낼 사용자 답변이다. 수집 근거 건수만 반영한다.
-    retrieval_out이 None이어도 안전하다.
+    단, 수집 근거에 명확한 장애 신호(status=error/FAILED/연결 불가/offline/
+    under-replicated/critical>0 등)가 있으면 '정상'으로 끝내지 않고 발견 내용을
+    그대로 보고한다(#633). classifier UNKNOWN/verifier loopback 때문에 진짜 장애를
+    '이상 없음'으로 결론내던 문제를 폴백 레벨에서 차단한다. 추가 LLM 호출은 없다.
     """
-    n = len(retrieval_out.evidence_items) if retrieval_out else 0
-    if n > 0:
+    items = retrieval_out.evidence_items if retrieval_out else []
+    summaries = [s for s in (getattr(it, "summary", None) for it in items) if s]
+    blob = " ".join(summaries).lower()
+    has_error = any(
+        sig in blob
+        for sig in ("status=error", "failed", "연결 불가", "offline", "under-replicated")
+    )
+    m = re.search(r"critical:\s*([1-9]\d*)", blob)
+    if m:
+        has_error = True
+
+    if has_error and summaries:
+        lines = "\n".join(f"- {s}" for s in summaries)
+        return (
+            "수집한 근거에서 장애 신호가 확인되었습니다:\n"
+            f"{lines}\n\n"
+            "→ 위 신호(상태 error·task 실패·연결 불가·복제 이상·critical 인시던트 등)를 근거로 "
+            "원인 조사가 필요합니다."
+        )
+    if summaries:
         return (
             f"조회한 데이터에서 인시던트나 이상 징후가 발견되지 않았습니다. "
-            f"(수집 근거 {n}건 검토 결과 정상)"
+            f"(수집 근거 {len(summaries)}건 검토 결과 정상)"
         )
     return "조회한 데이터에서 인시던트나 이상 징후가 발견되지 않았습니다. (정상)"
 

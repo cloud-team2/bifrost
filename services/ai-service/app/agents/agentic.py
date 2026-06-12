@@ -95,9 +95,17 @@ async def run_tool_loop(
     caller 가 기존 flat retrieval 로 폴백한다.
     """
     tools = build_tool_schemas(registry)
+    user_content = user_message
+    incident_id = getattr(context, "incident_id", None)
+    if incident_id:
+        # 인시던트 분석: 먼저 get_incident_summary(incident_id)로 맥락을 잡도록 유도(체이닝 시작점).
+        user_content = (
+            f"분석 대상 incident_id={incident_id}. 먼저 get_incident_summary 로 인시던트 맥락을 확인한 뒤,\n"
+            f"관련 파이프라인/커넥터/토픽을 이어서 조사하라.\n\n{user_message}"
+        )
     messages: list[dict] = [
         {"role": "system", "content": LOOP_SYSTEM_PROMPT},
-        {"role": "user", "content": user_message},
+        {"role": "user", "content": user_content},
     ]
     calls: list[ToolCallRecord] = []
 
