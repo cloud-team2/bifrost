@@ -146,6 +146,30 @@ describe('incident report actions', () => {
     }))
   })
 
+  it('builds an approval-gated consumer group restart candidate (#648)', () => {
+    const [action] = reportActions([
+      report({
+        action_candidates: [
+          {
+            action_id: 'act-consumer-group',
+            action_type: 'runtime_tool',
+            action_name: 'restart_consumer_group',
+            risk: 'high',
+            reason: 'consumer group is stalled',
+            tool_name: 'restart_consumer_group',
+            tool_params: { consumer_group: 'orders-consumer' },
+          },
+        ],
+      }),
+    ])
+
+    expect(buildRunCandidate(action, [pipeline()])).toEqual(expect.objectContaining({
+      action_id: 'act-consumer-group',
+      tool_name: 'restart_consumer_group',
+      tool_params: { consumer_group: 'orders-consumer' },
+    }))
+  })
+
   it('does not infer a connector target from topology when report params are absent', () => {
     const [action] = reportActions([
       report({

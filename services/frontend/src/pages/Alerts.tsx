@@ -357,6 +357,7 @@ const CONNECTOR_TOOL_ALIASES: Record<string, 'restart_connector' | 'pause_connec
 const ACTION_EXECUTION_TOOLS = new Set([
   'pause_connector',
   'restart_connector',
+  'restart_consumer_group',
   'resume_connector',
 ])
 
