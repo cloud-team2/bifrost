@@ -408,6 +408,7 @@ export function AgentRunPanel({
           loading: false,
           commands: buildSlashCommands(details.map((tool) => ({
             name: tool.name,
+            description: tool.description,
             method: tool.method,
             path: tool.path_template,
             risk: tool.risk,

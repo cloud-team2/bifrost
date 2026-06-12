@@ -599,6 +599,7 @@ export interface ApprovalDecisionResponse {
 }
 export interface AgentToolCatalogItem {
   name: string
+  description?: string
   operation: string
   risk: string
   method: string
