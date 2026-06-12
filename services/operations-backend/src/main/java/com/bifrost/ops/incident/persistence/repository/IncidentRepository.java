@@ -23,6 +23,9 @@ public interface IncidentRepository extends JpaRepository<IncidentEntity, UUID> 
     Optional<IncidentEntity> findByIdAndTenantId(UUID id, UUID tenantId);
     List<IncidentEntity> findByTenantIdAndGroupingKeyAndStatusOrderByOpenedAtAsc(
             UUID tenantId, String groupingKey, String status);
+    /** 활성(OPEN·INVESTIGATING) 인시던트 — 생성/에스컬레이션/복구 처리에 사용(#558). */
+    List<IncidentEntity> findByTenantIdAndGroupingKeyAndStatusInOrderByOpenedAtAsc(
+            UUID tenantId, String groupingKey, List<String> statuses);
     @Query(value = "SELECT pg_advisory_xact_lock(hashtextextended(:lockKey, 0))", nativeQuery = true)
     Object lockIncidentGroup(@Param("lockKey") String lockKey);
     List<IncidentEntity> findByTenantIdAndStatusAndSeverityInAndOpenedAtGreaterThanEqualOrderByOpenedAtDesc(
