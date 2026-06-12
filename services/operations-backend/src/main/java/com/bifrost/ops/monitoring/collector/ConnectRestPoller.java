@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Kafka Connect REST API를 10초마다 폴링해 connector/task 실패를 event로 발행한다(S1).
@@ -37,44 +38,78 @@ public class ConnectRestPoller {
     private final PipelineRepository pipelineRepository;
     private final EventService eventService;
     private final IncidentService incidentService;
+    private final boolean connectRestUrlConfigured;
+    private final AtomicBoolean missingRestUrlWarned = new AtomicBoolean(false);
+    private final AtomicBoolean invalidRestUrlWarned = new AtomicBoolean(false);
 
     // "connectorName:taskId" → 직전 실패 여부
     private final ConcurrentHashMap<String, Boolean> failedTaskState = new ConcurrentHashMap<>();
 
     @Autowired
     public ConnectRestPoller(
-            @Value("${kafka-connect.rest-url:http://platform-connect-connect-api.platform-kafka.svc:8083}")
+            @Value("${kafka-connect.rest-url:}")
             String connectRestUrl,
             PipelineRepository pipelineRepository,
             EventService eventService,
             IncidentService incidentService) {
-        this(restClient(connectRestUrl), pipelineRepository, eventService, incidentService);
+        this(restClient(connectRestUrl), pipelineRepository, eventService, incidentService,
+                hasText(connectRestUrl));
     }
 
     ConnectRestPoller(RestClient restClient, PipelineRepository pipelineRepository,
                       EventService eventService, IncidentService incidentService) {
+        this(restClient, pipelineRepository, eventService, incidentService, true);
+    }
+
+    private ConnectRestPoller(RestClient restClient, PipelineRepository pipelineRepository,
+                              EventService eventService, IncidentService incidentService,
+                              boolean connectRestUrlConfigured) {
         this.restClient = restClient;
         this.pipelineRepository = pipelineRepository;
         this.eventService = eventService;
         this.incidentService = incidentService;
+        this.connectRestUrlConfigured = connectRestUrlConfigured;
     }
 
     private static RestClient restClient(String connectRestUrl) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(2000);
         factory.setReadTimeout(3000);
-        return RestClient.builder()
-                .baseUrl(connectRestUrl)
-                .requestFactory(factory)
-                .build();
+        RestClient.Builder builder = RestClient.builder()
+                .requestFactory(factory);
+        if (!hasText(connectRestUrl)) {
+            return builder.build();
+        }
+        try {
+            return builder
+                    .baseUrl(connectRestUrl.strip())
+                    .build();
+        } catch (IllegalArgumentException e) {
+            return RestClient.builder()
+                    .requestFactory(factory)
+                    .build();
+        }
     }
 
     @Observed(name = "pipeline.connect.poll")
     @Scheduled(fixedRate = 10_000, initialDelay = 20_000)
     public void poll() {
+        if (!connectRestUrlConfigured) {
+            if (missingRestUrlWarned.compareAndSet(false, true)) {
+                log.warn("kafka-connect.rest-url is blank; skipping Connect REST polling. "
+                        + "Set KAFKA_CONNECT_REST_URL in the deployment environment.");
+            }
+            return;
+        }
         List<?> connectors;
         try {
             connectors = restClient.get().uri("/connectors").retrieve().body(List.class);
+        } catch (IllegalArgumentException e) {
+            if (invalidRestUrlWarned.compareAndSet(false, true)) {
+                log.warn("kafka-connect.rest-url is invalid; skipping Connect REST polling. "
+                        + "Set KAFKA_CONNECT_REST_URL to an absolute URL. cause={}", e.getMessage());
+            }
+            return;
         } catch (RestClientException e) {
             log.debug("Connect REST 접근 실패(무시): {}", e.getMessage());
             return;
@@ -168,6 +203,10 @@ public class ConnectRestPoller {
             if (p.getSinkConnectorName() != null) map.put(p.getSinkConnectorName(), p);
         }
         return map;
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
 }

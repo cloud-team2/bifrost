@@ -17,11 +17,13 @@ import org.springframework.web.client.RestClient;
 import java.util.List;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
@@ -138,6 +140,36 @@ class ConnectRestPollerTest {
                 eq(EventLevel.INFO), eq("CONNECTOR_TASK_RECOVERED"),
                 org.mockito.ArgumentMatchers.contains("orders-source:0"));
         context.server.verify();
+    }
+
+    @Test
+    void blankRestUrlSkipsPollingWithoutRepositoryLookup() {
+        ConnectRestPoller poller = new ConnectRestPoller(" ", pipelineRepository, eventService, incidentService);
+
+        poller.poll();
+        poller.poll();
+
+        verifyNoInteractions(pipelineRepository, eventService, incidentService);
+    }
+
+    @Test
+    void illegalArgumentFromRestClientDoesNotEscapeScheduler() {
+        RestClient restClient = RestClient.builder().build();
+        ConnectRestPoller poller = new ConnectRestPoller(restClient, pipelineRepository, eventService, incidentService);
+
+        poller.poll();
+
+        verifyNoInteractions(pipelineRepository, eventService, incidentService);
+    }
+
+    @Test
+    void malformedRestUrlDoesNotFailConstructionOrScheduler() {
+        assertThatNoException().isThrownBy(() -> {
+            ConnectRestPoller poller = new ConnectRestPoller("http://", pipelineRepository, eventService, incidentService);
+            poller.poll();
+        });
+
+        verifyNoInteractions(pipelineRepository, eventService, incidentService);
     }
 
     private TestContext newContext() {
