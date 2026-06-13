@@ -83,7 +83,7 @@
 - **액터**: 사용자
 - **기능 설명**: 단계별 마법사로 EDA(이벤트 스트림) 또는 CDC(데이터 동기화) Pipeline을 생성한다. Kafka Topic 이름·파티션·오프셋 등 인프라 설정은 시스템이 자동 처리하여 노출하지 않는다.
 - **사전 조건**: 하나 이상의 Source DB 등록. CDC는 Sink DB도 등록.
-- **기본 흐름**: 1) Step1 연결 방식(EDA fan-out / CDC direct) → 2) Step2 Source DB 선택 → 3) Step3 대상 테이블 선택(ok/warning/blocked 즉시 표시) → 4) Step4 (CDC만) Sink DB 선택 → 5) Step5 이름 입력 → "생성" → `creating` → `active`로 전이(와이어프레임 mock은 약 3초, 실제는 Connector RUNNING까지 최대 30초 — 부록 B.1).
+- **기본 흐름**: 1) Step1 연결 방식(EDA fan-out / CDC direct) → 2) Step2 Source DB 선택 → 3) Step3 대상 테이블 선택(ok/warning/blocked 즉시 표시) → 4) Step4 (CDC만) Sink DB 선택 → 5) Step5 이름 입력 → "생성" → `creating` → `active`로 전이(와이어프레임 mock은 약 3초, 실제는 일반적으로 Connector RUNNING까지 최대 30초 — 부록 B.1).
 - **예외 흐름**: ① 등록 Source DB 없음 → 등록 안내 ② 테이블 `blocked` → 생성 비활성화 + 준비도 안내 ③ 이름 미입력·중복 → 오류 ④ 생성 중 오류 → `error` + 재시도 안내.
 - **사후 조건**: 워크스페이스 pipeline에 추가, Kafka Topic 자동 생성, 상태 `active` 전이.
 - **비고**: EDA `pattern='fan-out'` sink=null / CDC `pattern='direct'` sink=DB id. 백엔드는 `fan_out`도 하위 호환으로 파싱하지만 API 응답과 프론트 정본 표기는 `fan-out`이다. FR-015 점검 권장.
@@ -183,14 +183,14 @@
 
 ### FR-021 — 인시던트 목록 및 상세 조회
 - **기능 설명**: 미해결 인시던트를 배너로 인지, 통합 이벤트 스트림에서 이벤트-인시던트 연결 확인. 인시던트 클릭 시 우측 슬라이드 패널에서 근본 원인·영향 파이프라인·관련 이벤트 타임라인·추천 조치.
-- **기본 흐름**: 1) AlertsView 상단 open/investigating 배너(심각도 색) → 2) 이벤트 스트림(최신순, 인시던트 연결 이벤트에 `[inc-N ↗]` 배지) → 3) 레벨 필터 → 4) 배너/배지 클릭 → 우측 패널 슬라이드인 → 5) 패널(상태·영향 Pipeline·영향 행·근본 원인·관련 이벤트 타임라인(trigger 강조)·추천 조치 Run) → 6) 해결된 인시던트는 하단 텍스트 링크.
+- **기본 흐름**: 1) AlertsView 상단 `OPEN`/`INVESTIGATING` 배너(심각도 색) → 2) 이벤트 스트림(최신순, 인시던트 연결 이벤트에 `[inc-N ↗]` 배지) → 3) 레벨 필터 → 4) 배너/배지 클릭 → 우측 패널 슬라이드인 → 5) 패널(상태·영향 Pipeline·영향 행·근본 원인·관련 이벤트 타임라인(trigger 강조)·추천 조치 Run) → 6) 해결된 인시던트는 하단 텍스트 링크.
 - **비고**: FR-022 연계. 부록 B.7 이벤트-인시던트 연결 모델 참조. 패널의 **영향 행**은 sync gap/consumer lag 기반 **추정치**다(정밀 카운트 아님).
 
 ### FR-022 — AI 추천 조치 실행 (HITL)
 - **액터**: 사용자, AI 에이전트
 - **기능 설명**: AI 추천 조치를 위험도(low/medium/high)·예상 소요시간과 함께 검토 후 "Run"으로 승인 실행. 모든 조치는 actor·시각과 함께 타임라인 기록.
-- **기본 흐름**: 1) 추천 조치 목록 확인 → 2) 검토 → 3) "Run" → 실행 → 4) 타임라인에 actor(사용자)·시각·내용 기록 → 5) 인시던트 상태 `investigating` 또는 `resolved` 갱신.
-- **예외 흐름**: ① `high` 조치 → 추가 확인 ② 실행 실패 → 실패 기록 + 재검토 ③ 이미 `resolved` → 차단 ④ AI 요약 실패 → 수동 로그 경로.
+- **기본 흐름**: 1) 추천 조치 목록 확인 → 2) 검토 → 3) "Run" → 실행 → 4) 타임라인에 actor(사용자)·시각·내용 기록 → 5) 인시던트 상태 `INVESTIGATING` 또는 `RESOLVED` 갱신.
+- **예외 흐름**: ① `high` 조치 → 추가 확인 ② 실행 실패 → 실패 기록 + 재검토 ③ 이미 `RESOLVED` → 차단 ④ AI 요약 실패 → 수동 로그 경로.
 - **비고**: AI는 의사결정 지원만. 실행은 반드시 사용자 승인 후(HITL).
 
 ### FR-023 — 클러스터 현황
@@ -256,9 +256,9 @@
 |---|---|---|
 | `active` | Connector RUNNING + CDC sink consumer group lag < 경고 임계값(기본 5,000) | emerald |
 | `lag` | Connector RUNNING이지만 CDC sink consumer group lag ≥ 경고 임계값(기본 5,000) | amber |
-| `error` | Connector FAILED 상태이거나 Error Rate > 2% | red |
+| `error` | Connector FAILED/PARTIALLY_FAILED 상태이거나 Error Rate > 2% | red |
 | `paused` | 사용자가 명시적으로 일시정지 | gray |
-| `creating` | 생성 후 Connector RUNNING 전이 대기(최대 30초) | blue |
+| `creating` | 생성 후 Connector RUNNING 전이 대기(일반적으로 최대 30초, 기본 5분 초과 시 `error`) | blue |
 
 **자동 생성 기준**
 
@@ -266,12 +266,12 @@
 |---|---|---|---|
 | CDC sink consumer group lag ≥ 5,000 | WARNING | WARN | Pipeline `lag` 전이 |
 | CDC sink consumer group lag ≥ 50,000 | CRITICAL | ERROR | 사실상 정지 수준 |
-| Connector Task FAILED | CRITICAL | ERROR | Pipeline `error` 전이 |
+| Connector Task FAILED 또는 PARTIALLY_FAILED | CRITICAL | ERROR | Pipeline `error` 전이 |
 | Error Rate > 0.5% | WARNING | WARN | |
 | Error Rate > 2% | CRITICAL | ERROR | Pipeline `error` 전이 |
-| Pipeline `creating` 30초 초과 | WARNING | WARN | Connector 배포 지연 |
+| Pipeline `creating` 5분 초과 | CRITICAL | ERROR | Pipeline `error` 전이. 기본값 `pipeline.provisioning-timeout=PT5M` |
 
-**구현**: Consumer lag = `ListOffsets endOffset − OffsetFetch committedOffset` · Connector 상태 = Connect REST `GET /connectors/{name}/status` `tasks[].state` · Error Rate = 처리량 대비 실패/누락 비율(예: Source `(poll-write)/poll`). 정확한 JMX 지표·산식은 구현 시 확정한다(현 `poll/write` 단순 비율 표기는 정의가 모호해 보정 대상).
+**구현**: Consumer lag = `ListOffsets endOffset − OffsetFetch committedOffset` · Connector 상태 = Connect REST `GET /connectors/{name}/status` `tasks[].state` · Error Rate = 처리량 대비 실패/누락 비율(예: Source `(poll-write)/poll`) · `creating` hard timeout = `pipeline.provisioning-timeout` 기본 `PT5M`. 정확한 JMX 지표·산식은 구현 시 확정한다(현 `poll/write` 단순 비율 표기는 정의가 모호해 보정 대상).
 
 > **EDA(fan-out) vs CDC(direct)의 lag 적용 범위**: lag 기반 상태(`lag`)와 lag 인시던트는 Bifrost가 컨슈머를 소유하는 **CDC(JDBC Sink consumer group)** 에만 적용한다. EDA는 Sink가 없어 토픽을 외부 구독자만 소비하므로, EDA 파이프라인 상태는 **Source Connector state로만** 산정하고(`creating`/`active`/`error`/`paused`), 외부 consumer group lag으로 `lag` 전이나 인시던트를 만들지 않는다(외부 컨슈머는 Bifrost 직접 복구 대상이 아님). EDA 토픽의 외부 구독자 lag은 참고 지표로만 노출한다.
 
@@ -345,13 +345,12 @@
 |---|---|---|---|
 | Pipeline 생성 | INFO | → `creating` | 없음 |
 | 활성화 (`creating`→`active`) | INFO | → `active` | 없음 |
-| `creating` 30초 초과 | WARN | `creating` 유지 | WARNING |
+| `creating` 5분 초과 | ERROR | → `error` | CRITICAL |
 | Pause / Resume / 삭제 (사용자) | INFO | → `paused` / `active` / (삭제) | 없음 |
 | Consumer lag ≥ 5,000 (최초) | WARN | → `lag` | WARNING |
 | Consumer lag ≥ 50,000 | ERROR | `lag` 유지 | CRITICAL |
-| Consumer lag < 5,000 복구 | INFO | → `active` | 없음(이른 인시던트 닫기 권고) |
-| Connector Task ≥ 1 FAILED | ERROR | → `error` | CRITICAL |
-| Connector PARTIALLY_FAILED | WARN | → `lag` | WARNING |
+| Consumer lag < 5,000 복구 | INFO | → `active` | 없음(복구 확인 권고) |
+| Connector Task ≥ 1 FAILED 또는 PARTIALLY_FAILED | ERROR | → `error` | CRITICAL |
 | Error Rate > 0.5% / > 2% | WARN / ERROR | – / → `error` | WARNING / CRITICAL |
 | Connector 자동 재시작 1회 / 1시간 3회 | WARN / ERROR | – / → `error` | 없음 / CRITICAL |
 
@@ -409,13 +408,13 @@
 
 **그룹화 키**: 동일 Source DB의 여러 Pipeline FAILED → Source DB ID · 동일 Worker의 여러 Connector 문제 → Worker ID · 동일 Consumer Group lag+REBALANCING → Consumer Group ID · 연쇄 Replication lag→Pipeline lag → Source DB ID.
 
-**자동 닫기(auto-resolve)**: 트리거 조건이 정상 복구되면 권고 메시지 표시(사용자가 직접 `resolved`) · ERROR 인시던트는 자동 닫기 없음(사용자 확인 필수) · WARNING이고 복구 이벤트 발생 시 자동 `investigating` + 사용자 복구 알림.
+**복구 처리(recovery)**: 트리거 조건이 정상 복구되면 권고 메시지 표시(사용자가 직접 `RESOLVED`) · CRITICAL 인시던트는 자동 닫기 없음(사용자 확인 필수) · WARNING이고 복구 이벤트 발생 시 자동 `INVESTIGATING` + 사용자 복구 알림.
 
 **인시던트 상태값**
 | 상태값 | 정의 |
 |---|---|
-| `open` | 자동 감지됨, 사용자 미확인 |
-| `investigating` | 사용자 확인·조치 중 |
-| `resolved` | 원인 해소 확인됨(사용자 수동 전이) |
+| `OPEN` | 자동 감지됨, 사용자 미확인 |
+| `INVESTIGATING` | 사용자 확인·조치 중 |
+| `RESOLVED` | 원인 해소 확인됨(사용자 수동 전이) |
 
 **인시던트 심각도**: `WARNING` / `CRITICAL` 2단계. (에이전트 내부 분석은 동일 2단계를 사용하며, 정책 에스컬레이션 시에만 가산한다 — [catalog-policy-matrix.md §6 Severity 보정](./design/backend-fastapi/catalog/catalog-policy-matrix.md#6-severity-보정) 참조.)

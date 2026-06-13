@@ -81,6 +81,15 @@ public class WorkspaceController {
         return workspaceService.update(wsId, principal, req);
     }
 
+    @Operation(summary = "워크스페이스 삭제", description = "OWNER/ADMIN이 비어 있는 워크스페이스를 삭제한다.")
+    @DeleteMapping("/{wsId}")
+    public ResponseEntity<Void> delete(@PathVariable UUID wsId,
+                                       @AuthenticationPrincipal AuthenticatedUser principal) {
+        requireAuth(principal);
+        workspaceService.delete(wsId, principal);
+        return ResponseEntity.noContent().build();
+    }
+
     @Operation(summary = "멤버 목록", description = "워크스페이스 멤버가 멤버 목록을 조회한다.")
     @GetMapping("/{wsId}/members")
     public List<ProjectMemberResponse> listMembers(@PathVariable UUID wsId,

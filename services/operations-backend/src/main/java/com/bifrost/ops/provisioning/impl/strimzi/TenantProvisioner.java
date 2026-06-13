@@ -104,6 +104,7 @@ public class TenantProvisioner implements TenantProvisionerPort {
         }
     }
 
+    @Override
     public void deprovision(UUID tenantId) {
         String selector = tenantId.toString();
         k8s.genericKubernetesResources(KAFKA_USER)

@@ -107,5 +107,6 @@ class TenantProvisionerTest {
         provisioner().deprovision(tenantId);
 
         assertThat(kafkaUser("proj-team9-user")).isNull();
+        assertThat(client.namespaces().withName("team9").get()).isNull();
     }
 }
