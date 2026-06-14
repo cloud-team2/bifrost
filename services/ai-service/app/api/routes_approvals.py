@@ -70,17 +70,57 @@ def decide_approval(
     return ApiResponse.success("", {"approval_id": approval_id, "status": link.status})
 
 
+async def _create_spring_preapproval(link: "ApprovalLink", project_id: str) -> None:
+    """사용자 승인 후 Spring MutationGate용 pre-approved 레코드를 생성하고 spring_approval_id를 저장.
+
+    실패 시 경고만 남기고 무시(best-effort) — Spring 레코드 없이도 ai-service 내부 HITL은 동작.
+    """
+    if not link.spring_params_hash:
+        return
+    try:
+        from app.tools.spring_client import SpringOpsClient
+        client = SpringOpsClient()
+        spring_id = await client.create_preapproved(
+            tenant_id=project_id,
+            tool_name=_link_tool_name(link),
+            params_hash=link.spring_params_hash,
+        )
+        if spring_id:
+            get_approval_repo().set_spring_approval_id(link.approval_id, spring_id)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning(
+            "Spring preapproval 생성 실패(무시): approval_id=%s", link.approval_id
+        )
+
+
+def _link_tool_name(link: "ApprovalLink") -> str:
+    return link.tool_name or "restart_connector"
+
+
 async def _resume_run_after_approval_decision(run_id: str, user_message: str) -> None:
     run_repo = get_run_repo()
     run = await run_repo.get(run_id)
     if run is None:
         return
 
+    project_id = getattr(run, "project_id", None)
+
+    # 이 run에 연결된 approved 링크들에 Spring pre-approved 레코드 생성
+    if project_id:
+        repo = get_approval_repo()
+        for link in repo.list_pending(run_id):
+            pass  # list_pending은 pending만 반환하므로, 승인된 링크는 직접 검색 필요
+        # 방금 approved된 링크를 찾아 Spring 레코드 생성
+        for link in repo.list_all(run_id=run_id, status="approved"):
+            if not link.spring_approval_id and link.spring_params_hash:
+                await _create_spring_preapproval(link, project_id)
+
     await run_repo.update_status(run_id, "running", "approval_gate")
     await run_workflow(
         run_id=run_id,
         user_message=user_message,
-        project_id=getattr(run, "project_id", None),
+        project_id=project_id,
         bus=get_event_bus(),
         run_repo=run_repo,
         registry=get_tool_registry(),

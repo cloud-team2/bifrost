@@ -887,7 +887,7 @@ async def _run_workflow_impl(
                     await _publish(bus, event_repo, run_id,
                                    _evt(run_id, StreamingEventType.AGENT_STARTED, "approval_gate", "승인 상태를 확인합니다"))
                     decisions = policy_out.policy_decisions if policy_out else []
-                    approval_out = await run_approval_gate(decisions, run_id)
+                    approval_out = await run_approval_gate(decisions, run_id, project_id=project_id)
                     if approval_out.run_status == "waiting_for_approval":
                         await run_repo.update_status(run_id, "waiting_for_approval", "approval_gate")
                     await _publish(bus, event_repo, run_id, _evt(
