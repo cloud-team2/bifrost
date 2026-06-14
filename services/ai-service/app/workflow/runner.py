@@ -796,13 +796,7 @@ async def _run_workflow_impl(
                         path="/analysis/root_cause_candidates",
                         patch={"root_cause_candidates": _jsonable(rca_out.root_cause_candidates)},
                     )
-                    if rca_out.root_cause_candidates:
-                        top = rca_out.root_cause_candidates[0]
-                        await _publish(bus, event_repo, run_id, _evt(
-                            run_id, StreamingEventType.REPORT_PREVIEW_AVAILABLE, "rca",
-                            f"[검증 전 preview] 원인 후보: {top.root_cause_id} (confidence: {top.confidence:.0%})",
-                            {"root_cause_id": top.root_cause_id, "confidence": top.confidence, "verified": False},
-                        ))
+                    # #670: 검증 전 preview를 사전 노출하지 않는다 — verifier 통과 후에만 공개.
 
                 case "remediation":
                     await _publish(bus, event_repo, run_id,
@@ -1077,6 +1071,18 @@ async def _run_workflow_impl(
                         path="/verification/verification_results",
                         patch={"verification_results": _jsonable(verifier_out.verification_results)},
                     )
+                    # #670: verifier 통과 시에만 검증된 preview를 emit한다.
+                    from app.schemas.state import VerificationStatus as _VS
+                    if (first_result is not None
+                            and first_result.status == _VS.PASS
+                            and rca_out is not None
+                            and rca_out.root_cause_candidates):
+                        top = rca_out.root_cause_candidates[0]
+                        await _publish(bus, event_repo, run_id, _evt(
+                            run_id, StreamingEventType.REPORT_PREVIEW_AVAILABLE, "verifier",
+                            f"원인 후보: {top.root_cause_id} (confidence: {top.confidence:.0%})",
+                            {"root_cause_id": top.root_cause_id, "confidence": top.confidence, "verified": True},
+                        ))
                     # #453: Verifier fail/needs_revision이면 책임 Agent로 loopback을
                     # 등록한다. 예산 초과 시 다음 advance에서 RunBudgetExceeded로 종료.
                     record_verifier = getattr(supervisor, "record_verifier_result", None)
