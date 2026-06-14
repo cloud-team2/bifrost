@@ -107,8 +107,24 @@ public class TenantProvisioner implements TenantProvisionerPort {
     @Override
     public void deprovision(UUID tenantId) {
         String selector = tenantId.toString();
+
+        // KafkaUser 삭제 전에 이름 목록을 수집해 Secret을 명시적으로 삭제한다.
+        // Strimzi OwnerReference GC가 늦거나 누락되는 경우에도 잔여 Secret이 남지 않도록 보장한다.
+        var kafkaUsers = k8s.genericKubernetesResources(KAFKA_USER)
+                .inNamespace(kafkaNamespace).withLabel(TENANT_LABEL, selector).list().getItems();
         k8s.genericKubernetesResources(KAFKA_USER)
                 .inNamespace(kafkaNamespace).withLabel(TENANT_LABEL, selector).delete();
+        for (var ku : kafkaUsers) {
+            String secretName = ku.getMetadata().getName();
+            try {
+                k8s.secrets().inNamespace(kafkaNamespace).withName(secretName).delete();
+                log.info("KafkaUser Secret 삭제: namespace={}, name={}", kafkaNamespace, secretName);
+            } catch (Exception e) {
+                log.warn("KafkaUser Secret 삭제 실패(무시): namespace={}, name={}, cause={}",
+                        kafkaNamespace, secretName, e.getMessage());
+            }
+        }
+
         k8s.namespaces().withLabel(TENANT_LABEL, selector).delete();
         log.info("테넌트 디프로비저닝 요청: tenant={}", tenantId);
     }
