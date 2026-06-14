@@ -85,6 +85,37 @@ class SpringOpsClient:
         except httpx.HTTPError:
             return False
 
+    async def create_preapproved(
+        self,
+        *,
+        tenant_id: str,
+        tool_name: str,
+        params_hash: str,
+    ) -> str | None:
+        """ai-service HITL 승인 후 Spring MutationGate용 pre-approved approval 레코드를 생성.
+
+        Returns Spring-generated approval UUID string, or None on failure (best-effort).
+        """
+        try:
+            async with self._client() as client:
+                response = await client.post(
+                    "/internal/ops/approvals/preapproved",
+                    json={
+                        "tenantId": tenant_id,
+                        "toolName": tool_name,
+                        "paramsHash": params_hash,
+                        "requiredApprover": "00000000-0000-0000-0000-000000000000",
+                        "expiresInMinutes": 30,
+                    },
+                )
+            if response.status_code in (200, 201):
+                data = response.json()
+                result = data.get("result", {})
+                return result.get("approvalId")
+        except Exception:
+            pass
+        return None
+
     async def request(
         self,
         *,

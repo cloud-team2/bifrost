@@ -96,6 +96,39 @@ public class ApprovalController {
                 .body(OpsEnvelope.ok(requestId, "create_approval", ApprovalCreatedResult.from(saved)));
     }
 
+    /**
+     * agent_preapprove — ai-service가 자체 HITL 게이트를 통과한 뒤 Spring MutationGate용
+     * approval을 직접 생성+승인 처리한다. /internal/ops/**는 permitAll이므로 ai-service가
+     * 사용자 JWT 없이 내부에서 호출한다.
+     */
+    @PostMapping("/preapproved")
+    @Transactional
+    public ResponseEntity<OpsEnvelope<ApprovalCreatedResult>> createPreapprovedApproval(
+            HttpServletRequest servletRequest,
+            @Valid @RequestBody CreateApprovalRequest request) {
+        String requestId = AgentHeaders.requestId(servletRequest);
+
+        ApprovalEntity approval = new ApprovalEntity();
+        approval.setId(UUID.randomUUID());
+        approval.setTenantId(request.tenantId());
+        approval.setActor(AuditService.ACTOR_SYSTEM);
+        approval.setOperation(request.toolName());
+        approval.setParamsHash(request.paramsHash());
+        approval.setDecision("APPROVED");
+        approval.setExpiresAt(Instant.now().plus(request.expiresInMinutes(), ChronoUnit.MINUTES));
+
+        ApprovalEntity saved = approvalRepository.save(approval);
+        auditService.record(
+                saved.getTenantId(),
+                AuditService.ACTOR_SYSTEM,
+                "agent_preapprove",
+                "approval",
+                saved.getId(),
+                "operation=" + saved.getOperation() + " (ai-service HITL pre-approved)");
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(OpsEnvelope.ok(requestId, "agent_preapprove", ApprovalCreatedResult.from(saved)));
+    }
+
     /** decide_approval — record a human approve/reject decision. */
     @PostMapping("/{approvalId}/decision")
     @Transactional

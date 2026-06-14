@@ -388,7 +388,7 @@ public class InternalOpsObservabilityController {
                 return String.valueOf(list.get(0));
             }
             return null;
-        } catch (RestClientException e) {
+        } catch (RestClientException | IllegalArgumentException e) {
             log.debug("connector topics Connect REST 실패(무시): connector={} cause={}", connectorName, e.getMessage());
             return null;
         }
@@ -433,7 +433,7 @@ public class InternalOpsObservabilityController {
                     .collect(Collectors.toList());
 
             return Map.of("connector", connectorName, "traces", traces);
-        } catch (RestClientException e) {
+        } catch (RestClientException | IllegalArgumentException e) {
             log.debug("connector task trace Connect REST 실패(무시): connector={} cause={}", connectorName, e.getMessage());
             return Map.of("connector", connectorName, "traces", List.of(), "note", "Connect REST unavailable");
         }

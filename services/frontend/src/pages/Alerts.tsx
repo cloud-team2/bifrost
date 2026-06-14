@@ -397,7 +397,10 @@ function stringParam(params: Record<string, unknown> | null, key: string): strin
 function connectorTargetFor(action: ReportAction, pipelines: Edge[]): string | null {
   const explicit = stringParam(action.toolParams, 'connector_name')
   if (explicit) return explicit
-  void pipelines
+  // tool_params에 connector_name이 없으면 영향 파이프라인의 소스 커넥터로 폴백
+  for (const pipeline of pipelines) {
+    if (pipeline.sourceConnector) return pipeline.sourceConnector
+  }
   return null
 }
 

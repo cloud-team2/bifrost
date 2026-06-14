@@ -28,10 +28,33 @@ class ApprovalLink(BaseModel):
     approved_by: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     resolved_at: datetime | None = None
+    # Spring MutationGate 연동용: preapproved 엔드포인트로 생성된 Spring approval UUID
+    spring_approval_id: str | None = None
+    # Spring params_hash (64-char SHA256, Spring 실행 시 검증용)
+    spring_params_hash: str | None = None
+    # 실행할 도구 이름 (Spring preapproved 엔드포인트 toolName 필드용)
+    tool_name: str | None = None
 
 
 def _hash_params(params: dict) -> str:
     return hashlib.sha256(json.dumps(params, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def spring_params_hash(tool_name: str, project_id: str, tool_params: dict | None) -> str:
+    """Spring InternalOpsMutationController.paramsHash와 동일한 형식의 64-char SHA256 해시.
+
+    Spring은 TreeMap(정렬된 키) + objectMapper JSON → SHA-256 으로 계산한다.
+    Python sort_keys=True JSON은 동일 결과를 보장한다(단순 문자열 값 한정).
+    """
+    params = tool_params or {}
+    if "connector" in tool_name:
+        target_key, target_value = "connector_name", str(params.get("connector_name", ""))
+    elif "consumer_group" in tool_name:
+        target_key, target_value = "consumer_group", str(params.get("consumer_group", ""))
+    else:
+        target_key, target_value = "target", ""
+    body = {"project_id": project_id, target_key: target_value, "tool_name": tool_name}
+    return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
 
 
 class InMemoryApprovalLinkRepository:
@@ -64,6 +87,11 @@ class InMemoryApprovalLinkRepository:
             link.approved_by = approved_by
             link.resolved_at = datetime.utcnow()
         return link
+
+    def set_spring_approval_id(self, approval_id: str, spring_approval_id: str) -> None:
+        link = self._store.get(approval_id)
+        if link:
+            link.spring_approval_id = spring_approval_id
 
     def reject(self, approval_id: str) -> ApprovalLink | None:
         link = self._store.get(approval_id)
