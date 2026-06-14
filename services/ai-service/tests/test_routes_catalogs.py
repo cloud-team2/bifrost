@@ -60,7 +60,7 @@ def test_runbooks_returns_items_with_actions():
 
     connector_runbook = next(item for item in data["items"] if item["root_cause_id"] == "CONNECTOR_TASK_FAILED")
     assert connector_runbook["actions"]
-    assert connector_runbook["actions"][0]["action_name"] == "restart_connector_task"
+    assert connector_runbook["actions"][0]["action_name"] == "restart_connector"
 
 
 def test_tools_returns_23_tools():

@@ -266,6 +266,12 @@ async def run_retrieval(
                 await _evidence_from_executed(run_id, rec, bus, event_repo, evidence_repo)
                 for rec in loop_result.calls
             ]
+            called_tools = {rec.tool_name for rec in loop_result.calls}
+            remaining_steps = [
+                step for step in plan.retrieval_plan if step.tool_name not in called_tools
+            ]
+            if remaining_steps:
+                tool_evidence.extend(await _run_plan_steps(remaining_steps, call_step))
             return RetrievalOutput(
                 evidence_items=[*knowledge_items, *tool_evidence],
                 answer=loop_result.answer or None,

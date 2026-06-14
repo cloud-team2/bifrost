@@ -134,14 +134,16 @@ async def _verify_incident_analysis(
 
     evidence_items = retrieval_out.evidence_items if retrieval_out else []
     evidence_texts = await _observed_evidence_texts(evidence_items, evidence_repo=evidence_repo)
+    missing_by_candidate: list[tuple[RootCauseCandidate, list[str]]] = []
     for candidate in actionable_candidates:
         missing = _missing_required_evidence(candidate, evidence_texts)
-        if missing:
-            return _needs_revision(
-                "root_cause",
-                f"{candidate.root_cause_id} required evidence 부족: {', '.join(missing)}",
-                "planner",
+        if not missing:
+            return _result(
+                target="root_cause",
+                status=VerificationStatus.PASS,
+                reason="RCA 후보의 required evidence가 evidence_matrix 기준을 충족",
             )
+        missing_by_candidate.append((candidate, missing))
 
     if any(candidate.root_cause_id in UNKNOWN_ROOT_CAUSES for candidate in candidates):
         return _needs_revision(
@@ -150,10 +152,18 @@ async def _verify_incident_analysis(
             "planner",
         )
 
-    return _result(
-        target="root_cause",
-        status=VerificationStatus.PASS,
-        reason="RCA 후보의 required evidence가 evidence_matrix 기준을 충족",
+    if missing_by_candidate:
+        candidate, missing = missing_by_candidate[0]
+        return _needs_revision(
+            "root_cause",
+            f"{candidate.root_cause_id} required evidence 부족: {', '.join(missing)}",
+            "planner",
+        )
+
+    return _needs_revision(
+        "root_cause",
+        "검증 가능한 actionable RCA 후보가 없어 추가 evidence 필요",
+        "planner",
     )
 
 
@@ -316,6 +326,38 @@ def _rule_satisfied(rule_text: str, example: str | None, evidence_texts: tuple[s
     for haystack in (_normalize(text) for text in evidence_texts):
         if any(needle and needle in haystack for needle in needles):
             return True
+        if _semantic_rule_satisfied(needles, haystack):
+            return True
+    return False
+
+
+def _semantic_rule_satisfied(needles: list[str], haystack: str) -> bool:
+    """Accept structured runtime-tool payloads that don't repeat catalog prose verbatim."""
+    rule = " ".join(needles)
+    words = set(haystack.split())
+
+    if "connector task status failed" in rule:
+        has_connector_context = bool({"connector", "connectorname", "connectorstate"} & words)
+        has_task_context = bool({"task", "tasks", "taskid"} & words)
+        return "failed" in words and has_connector_context and has_task_context
+
+    if "task trace" in rule or "worker log" in rule:
+        has_trace_context = bool(
+            {
+                "trace",
+                "exception",
+                "error",
+                "log",
+                "logs",
+                "worker",
+                "debeziumexception",
+                "psqlexception",
+            }
+            & words
+        )
+        has_task_context = bool({"task", "tasks", "connector", "connectorname"} & words)
+        return has_trace_context and has_task_context
+
     return False
 
 
