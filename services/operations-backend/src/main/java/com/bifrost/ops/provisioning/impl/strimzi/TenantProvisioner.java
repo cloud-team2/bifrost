@@ -108,24 +108,39 @@ public class TenantProvisioner implements TenantProvisionerPort {
     public void deprovision(UUID tenantId) {
         String selector = tenantId.toString();
 
-        // KafkaUser 삭제 전에 이름 목록을 수집해 Secret을 명시적으로 삭제한다.
-        // Strimzi OwnerReference GC가 늦거나 누락되는 경우에도 잔여 Secret이 남지 않도록 보장한다.
+        // label 기반 bulk delete(deletecollection)는 SA에 별도 RBAC이 필요하므로
+        // 목록 조회 후 각 리소스를 이름으로 개별 삭제한다.
         var kafkaUsers = k8s.genericKubernetesResources(KAFKA_USER)
                 .inNamespace(kafkaNamespace).withLabel(TENANT_LABEL, selector).list().getItems();
-        k8s.genericKubernetesResources(KAFKA_USER)
-                .inNamespace(kafkaNamespace).withLabel(TENANT_LABEL, selector).delete();
         for (var ku : kafkaUsers) {
-            String secretName = ku.getMetadata().getName();
+            String kuName = ku.getMetadata().getName();
             try {
-                k8s.secrets().inNamespace(kafkaNamespace).withName(secretName).delete();
-                log.info("KafkaUser Secret 삭제: namespace={}, name={}", kafkaNamespace, secretName);
+                k8s.genericKubernetesResources(KAFKA_USER)
+                        .inNamespace(kafkaNamespace).withName(kuName).delete();
+                log.info("KafkaUser 삭제: namespace={}, name={}", kafkaNamespace, kuName);
+            } catch (Exception e) {
+                log.warn("KafkaUser 삭제 실패(무시): namespace={}, name={}, cause={}",
+                        kafkaNamespace, kuName, e.getMessage());
+            }
+            try {
+                k8s.secrets().inNamespace(kafkaNamespace).withName(kuName).delete();
+                log.info("KafkaUser Secret 삭제: namespace={}, name={}", kafkaNamespace, kuName);
             } catch (Exception e) {
                 log.warn("KafkaUser Secret 삭제 실패(무시): namespace={}, name={}, cause={}",
-                        kafkaNamespace, secretName, e.getMessage());
+                        kafkaNamespace, kuName, e.getMessage());
             }
         }
 
-        k8s.namespaces().withLabel(TENANT_LABEL, selector).delete();
+        var namespaces = k8s.namespaces().withLabel(TENANT_LABEL, selector).list().getItems();
+        for (var ns : namespaces) {
+            String nsName = ns.getMetadata().getName();
+            try {
+                k8s.namespaces().withName(nsName).delete();
+                log.info("Namespace 삭제: name={}", nsName);
+            } catch (Exception e) {
+                log.warn("Namespace 삭제 실패(무시): name={}, cause={}", nsName, e.getMessage());
+            }
+        }
         log.info("테넌트 디프로비저닝 요청: tenant={}", tenantId);
     }
 
