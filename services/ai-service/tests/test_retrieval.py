@@ -5,6 +5,7 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock
 
+from app.agents.agentic import AgenticResult, ToolCallRecord
 from app.agents.retrieval import run_retrieval
 from app.persistence.evidence_repository import InMemoryEvidenceRepository
 from app.persistence.event_repository import InMemoryEventRepository
@@ -416,6 +417,77 @@ def _ok(tool_name: str) -> ToolResult:
         summary=f"{tool_name} ok",
         evidence_ids=[],
     )
+
+
+@pytest.mark.asyncio
+async def test_retrieval_runs_planned_tools_missing_from_agentic_loop(monkeypatch) -> None:
+    """Planner evidence tools are preserved when the ReAct loop only calls a subset."""
+    loop_result = AgenticResult(
+        answer="event evidence only",
+        calls=[
+            ToolCallRecord(
+                tool_name="analyze_event_log",
+                params={"window": "2h", "level": "warn+"},
+                result=_ok("analyze_event_log"),
+            )
+        ],
+        used_llm=True,
+    )
+
+    async def fake_loop(*args, **kwargs):
+        return loop_result
+
+    class SupportsToolsProvider:
+        def supports_tools(self) -> bool:
+            return True
+
+    monkeypatch.setattr("app.agents.retrieval.run_tool_loop", fake_loop)
+    monkeypatch.setattr(
+        "app.agents.retrieval.get_llm_provider",
+        lambda: SupportsToolsProvider(),
+    )
+
+    registry = AsyncMock()
+    registry.call_tool.return_value = _ok("get_connector_status")
+    bus = EventBus()
+    bus.publish = AsyncMock()
+    plan = PlannerOutput(
+        retrieval_plan=[
+            RetrievalPlanStep(
+                step_id="events",
+                tool_name="analyze_event_log",
+                params={"window": "2h", "level": "warn+"},
+                purpose="events",
+                depends_on=[],
+                plan_hash="h1",
+            ),
+            RetrievalPlanStep(
+                step_id="status",
+                tool_name="get_connector_status",
+                params={"connector_name": "orders-source"},
+                purpose="connector status evidence",
+                depends_on=[],
+                plan_hash="h2",
+            ),
+        ]
+    )
+
+    out = await run_retrieval(
+        "r1",
+        plan,
+        _context(),
+        registry,
+        bus,
+        InMemoryEventRepository(),
+        mode=AgentMode.INCIDENT_ANALYSIS,
+    )
+
+    assert [item.summary for item in out.evidence_items] == [
+        "analyze_event_log ok",
+        "get_connector_status ok",
+    ]
+    registry.call_tool.assert_awaited_once()
+    assert registry.call_tool.call_args.args[0] == "get_connector_status"
 
 
 @pytest.mark.asyncio
