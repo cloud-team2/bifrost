@@ -261,15 +261,15 @@ async def test_incident_analysis_run_emits_expected_event_sequence() -> None:
     ]
     assert router_completed.payload["total_stages"] == 7
 
-    # REPORT_PREVIEW_AVAILABLE: verified=False이고 VERIFICATION_COMPLETED 전에 발행
+    # #670: REPORT_PREVIEW_AVAILABLE은 verifier PASS 이후 검증된 preview만 발행
     rpa_events = [e for e in published if e.type == StreamingEventType.REPORT_PREVIEW_AVAILABLE]
     assert len(rpa_events) == 1
-    assert rpa_events[0].payload["verified"] is False
+    assert rpa_events[0].payload["verified"] is True
     assert rpa_events[0].payload["root_cause_id"] == "rc_001"
 
     rpa_idx = types.index(StreamingEventType.REPORT_PREVIEW_AVAILABLE)
     vc_idx = types.index(StreamingEventType.VERIFICATION_COMPLETED)
-    assert rpa_idx < vc_idx
+    assert vc_idx < rpa_idx
 
 
 @pytest.mark.asyncio

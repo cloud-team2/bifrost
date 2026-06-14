@@ -39,19 +39,19 @@ async def test_connector_task_failed_runbook() -> None:
     restart = next(
         candidate
         for candidate in output.action_candidates
-        if candidate.action_name == "restart_connector_task"
+        if candidate.action_name == "restart_connector"
     )
     catalog_restart = next(
         action
         for action in get_actions_for_root_cause("CONNECTOR_TASK_FAILED")
-        if action.action_name == "restart_connector_task"
+        if action.action_name == "restart_connector"
     )
 
     assert restart.action_type == ActionType.RUNTIME_TOOL
     assert restart.risk == RiskLevel(catalog_restart.risk)
     assert restart.tool_name == catalog_restart.tool_name
     assert restart.root_cause_id == "CONNECTOR_TASK_FAILED"
-    assert "runbook: restart_connector_task" in restart.reason
+    assert "runbook: restart_connector" in restart.reason
 
 
 @pytest.mark.asyncio
@@ -138,7 +138,7 @@ async def test_llm_unavailable_rule_only() -> None:
     output = await remediation.run_remediation(_rca_out("CONNECTOR_TASK_FAILED"))
 
     assert output.action_candidates
-    assert any(candidate.action_name == "restart_connector_task" for candidate in output.action_candidates)
+    assert any(candidate.action_name == "restart_connector" for candidate in output.action_candidates)
 
 
 @pytest.mark.asyncio

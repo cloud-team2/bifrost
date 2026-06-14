@@ -8,10 +8,10 @@ from app.catalogs.runbooks import list_runbooks
 
 
 CONNECTOR_RESTART_EXPECTED = {
-    "action_name": "restart_connector_task",
+    "action_name": "restart_connector",
     "action_type": "runtime_tool",
     "risk": "medium",
-    "tool_name": "restart_connector_task",
+    "tool_name": "restart_connector",
 }
 
 
@@ -28,15 +28,15 @@ def _policy_matrix_risks() -> dict[str, str]:
     return risks
 
 
-def test_restart_connector_task_matches_docs() -> None:
-    """restart_connector_task risk/tool_name matches docs."""
+def test_restart_connector_matches_docs() -> None:
+    """restart_connector risk/tool_name matches docs."""
     found = []
     for runbook in list_runbooks():
         for action in runbook.actions:
-            if action.action_name == "restart_connector_task":
+            if action.action_name == "restart_connector":
                 found.append(action)
 
-    assert len(found) >= 1, "restart_connector_task action not found in any runbook"
+    assert len(found) >= 1, "restart_connector action not found in any runbook"
     for action in found:
         assert action.action_type == CONNECTOR_RESTART_EXPECTED["action_type"]
         assert action.risk == CONNECTOR_RESTART_EXPECTED["risk"], (
