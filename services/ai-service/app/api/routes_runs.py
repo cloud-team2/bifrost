@@ -101,6 +101,9 @@ def _merge_timeline(patches: list[StatePatchRecord], events: list[Any]) -> list[
     return [item.model_dump(mode="json") for item in sorted(items, key=_timeline_sort_value)]
 
 
+_ACTION_BUCKET_KEYS = frozenset({"candidates", "policy_decisions", "approval_requests", "approved_actions"})
+
+
 def _patch_payloads(value: Any) -> list[dict[str, Any]]:
     if isinstance(value, list):
         return [item for item in value if isinstance(item, dict)]
@@ -108,6 +111,10 @@ def _patch_payloads(value: Any) -> list[dict[str, Any]]:
         return []
     if isinstance(value.get("actions"), list):
         return [item for item in value["actions"] if isinstance(item, dict)]
+    # runner이 {"candidates": [...], "policy_decisions": [...]} 등 버킷 래퍼로 적재하는 경우
+    for key in _ACTION_BUCKET_KEYS:
+        if isinstance(value.get(key), list):
+            return [item for item in value[key] if isinstance(item, dict)]
     if isinstance(value.get("value"), list):
         return [item for item in value["value"] if isinstance(item, dict)]
     if isinstance(value.get("value"), dict):
@@ -126,7 +133,8 @@ def _action_id_from_patch(path: str, payload: dict[str, Any]) -> str | None:
     if payload.get("action_id"):
         return str(payload["action_id"])
     parts = [part for part in path.split("/") if part]
-    if len(parts) >= 2 and parts[0] == "actions":
+    # 버킷명(/actions/candidates 등)을 action_id로 오인하지 않도록 제외
+    if len(parts) >= 2 and parts[0] == "actions" and parts[1] not in _ACTION_BUCKET_KEYS:
         return parts[1]
     return None
 
