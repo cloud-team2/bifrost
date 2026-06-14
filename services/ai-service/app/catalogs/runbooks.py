@@ -17,7 +17,7 @@ ROOT_CAUSE_RUNBOOKS: tuple[Runbook, ...] = (
             RunbookActionTemplate(action_name='collect_source_timeout_evidence', action_type='workflow_action', risk='read_only', description='source timeout log/metric 추가 수집', policy='read_only', tool_name=None),
             RunbookActionTemplate(action_name='escalate_to_customer_owner', action_type='escalation', risk='low', description='고객사 담당자에게 evidence 전달', policy='allow', tool_name=None),
             RunbookActionTemplate(action_name='pause_non_critical_pipeline', action_type='workflow_action', risk='medium', description='downstream 압박 완화를 위해 비긴급 pipeline 일시 중지', policy='approval', tool_name=None),
-            RunbookActionTemplate(action_name='restart_connector_task', action_type='runtime_tool', risk='medium', description='timeout이 transient이고 task가 failed일 때 재시작', policy='approval', tool_name='restart_connector_task'),
+            RunbookActionTemplate(action_name='restart_connector', action_type='runtime_tool', risk='medium', description='timeout이 transient이고 task가 failed일 때 재시작', policy='approval', tool_name='restart_connector'),
         ),
         forbidden_actions=('source DB connection limit 직접 변경', 'source DB query 실행', '고객사 DB restart'),
     ),
@@ -63,7 +63,7 @@ ROOT_CAUSE_RUNBOOKS: tuple[Runbook, ...] = (
         allowed_action_types=('workflow_action', 'runtime_tool'),
         basis='Bifrost 소유 connector task 조치 가능',
         actions=(
-            RunbookActionTemplate(action_name='restart_connector_task', action_type='runtime_tool', risk='medium', description='실패 task 재시작', policy='approval', tool_name='restart_connector_task'),
+            RunbookActionTemplate(action_name='restart_connector', action_type='runtime_tool', risk='medium', description='실패 task 재시작', policy='approval', tool_name='restart_connector'),
             RunbookActionTemplate(action_name='pause_connector', action_type='runtime_tool', risk='medium', description='반복 실패로 영향이 커질 때 일시 중지', policy='approval', tool_name='pause_connector'),
             RunbookActionTemplate(action_name='resume_connector', action_type='runtime_tool', risk='medium', description='원인 해소 후 재개', policy='approval', tool_name='resume_connector'),
             RunbookActionTemplate(action_name='collect_connector_trace', action_type='workflow_action', risk='read_only', description='task trace와 worker log 수집', policy='read_only', tool_name=None),
