@@ -43,8 +43,8 @@ def _hash_params(params: dict) -> str:
 def spring_params_hash(tool_name: str, project_id: str, tool_params: dict | None) -> str:
     """Spring InternalOpsMutationController.paramsHash와 동일한 형식의 64-char SHA256 해시.
 
-    Spring은 TreeMap(정렬된 키) + objectMapper JSON → SHA-256 으로 계산한다.
-    Python sort_keys=True JSON은 동일 결과를 보장한다(단순 문자열 값 한정).
+    Spring은 TreeMap(정렬된 키) + Jackson objectMapper(공백 없음) → SHA-256 으로 계산한다.
+    separators=(',', ':')로 공백을 제거해야 Jackson 기본 직렬화와 동일한 해시가 나온다.
     """
     params = tool_params or {}
     if "connector" in tool_name:
@@ -54,7 +54,7 @@ def spring_params_hash(tool_name: str, project_id: str, tool_params: dict | None
     else:
         target_key, target_value = "target", ""
     body = {"project_id": project_id, target_key: target_value, "tool_name": tool_name}
-    return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+    return hashlib.sha256(json.dumps(body, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
 class InMemoryApprovalLinkRepository:
