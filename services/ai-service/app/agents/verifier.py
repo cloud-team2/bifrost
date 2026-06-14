@@ -316,6 +316,38 @@ def _rule_satisfied(rule_text: str, example: str | None, evidence_texts: tuple[s
     for haystack in (_normalize(text) for text in evidence_texts):
         if any(needle and needle in haystack for needle in needles):
             return True
+        if _semantic_rule_satisfied(needles, haystack):
+            return True
+    return False
+
+
+def _semantic_rule_satisfied(needles: list[str], haystack: str) -> bool:
+    """Accept structured runtime-tool payloads that don't repeat catalog prose verbatim."""
+    rule = " ".join(needles)
+    words = set(haystack.split())
+
+    if "connector task status failed" in rule:
+        has_connector_context = bool({"connector", "connectorname", "connectorstate"} & words)
+        has_task_context = bool({"task", "tasks", "taskid"} & words)
+        return "failed" in words and has_connector_context and has_task_context
+
+    if "task trace" in rule or "worker log" in rule:
+        has_trace_context = bool(
+            {
+                "trace",
+                "exception",
+                "error",
+                "log",
+                "logs",
+                "worker",
+                "debeziumexception",
+                "psqlexception",
+            }
+            & words
+        )
+        has_task_context = bool({"task", "tasks", "connector", "connectorname"} & words)
+        return has_trace_context and has_task_context
+
     return False
 
 

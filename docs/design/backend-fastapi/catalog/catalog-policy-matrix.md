@@ -62,7 +62,7 @@
 | `pause_low_priority_pipeline` | medium | require_approval |
 | `reduce_pipeline_pressure` | medium | require_approval |
 | `restart_connector_task` | medium | require_approval |
-| `restart_connector` | high | require_approval |
+| `restart_connector` | medium | require_approval |
 | `pause_connector` | medium | require_approval |
 | `resume_connector` | medium | require_approval |
 | `scale_consumer_deployment` | medium | require_approval |
