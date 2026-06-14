@@ -63,7 +63,7 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
     EvidenceProfile(
         root_cause_id='SOURCE_NETWORK_REACHABILITY',
         required=(
-            EvidenceRule(root_cause_id='SOURCE_NETWORK_REACHABILITY', kind='required', evidence='Bifrost에서 source endpoint reachability 실패', example='DNS/TCP connect failure summary'),
+            EvidenceRule(root_cause_id='SOURCE_NETWORK_REACHABILITY', kind='required', evidence='Bifrost에서 source endpoint reachability 실패', example='소스 커넥터 오류'),
         ),
         supporting=(
             EvidenceRule(root_cause_id='SOURCE_NETWORK_REACHABILITY', kind='supporting', evidence='여러 pipeline에서 같은 source endpoint 연결 실패', example='shared dependency timeout'),
@@ -77,7 +77,7 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
         root_cause_id='CONNECTOR_TASK_FAILED',
         required=(
             EvidenceRule(root_cause_id='CONNECTOR_TASK_FAILED', kind='required', evidence='connector task status `FAILED`', example='Kafka Connect task 상태'),
-            EvidenceRule(root_cause_id='CONNECTOR_TASK_FAILED', kind='required', evidence='task trace 또는 worker log', example='exception stack summary'),
+            EvidenceRule(root_cause_id='CONNECTOR_TASK_FAILED', kind='required', evidence='task trace 또는 worker log', example='소스 커넥터 오류'),
         ),
         supporting=(
             EvidenceRule(root_cause_id='CONNECTOR_TASK_FAILED', kind='supporting', evidence='최근 connector config/schema 변경', example='변경 이후 실패'),
