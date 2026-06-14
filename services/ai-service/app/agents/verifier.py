@@ -134,14 +134,16 @@ async def _verify_incident_analysis(
 
     evidence_items = retrieval_out.evidence_items if retrieval_out else []
     evidence_texts = await _observed_evidence_texts(evidence_items, evidence_repo=evidence_repo)
+    missing_by_candidate: list[tuple[RootCauseCandidate, list[str]]] = []
     for candidate in actionable_candidates:
         missing = _missing_required_evidence(candidate, evidence_texts)
-        if missing:
-            return _needs_revision(
-                "root_cause",
-                f"{candidate.root_cause_id} required evidence 부족: {', '.join(missing)}",
-                "planner",
+        if not missing:
+            return _result(
+                target="root_cause",
+                status=VerificationStatus.PASS,
+                reason="RCA 후보의 required evidence가 evidence_matrix 기준을 충족",
             )
+        missing_by_candidate.append((candidate, missing))
 
     if any(candidate.root_cause_id in UNKNOWN_ROOT_CAUSES for candidate in candidates):
         return _needs_revision(
@@ -150,10 +152,18 @@ async def _verify_incident_analysis(
             "planner",
         )
 
-    return _result(
-        target="root_cause",
-        status=VerificationStatus.PASS,
-        reason="RCA 후보의 required evidence가 evidence_matrix 기준을 충족",
+    if missing_by_candidate:
+        candidate, missing = missing_by_candidate[0]
+        return _needs_revision(
+            "root_cause",
+            f"{candidate.root_cause_id} required evidence 부족: {', '.join(missing)}",
+            "planner",
+        )
+
+    return _needs_revision(
+        "root_cause",
+        "검증 가능한 actionable RCA 후보가 없어 추가 evidence 필요",
+        "planner",
     )
 
 

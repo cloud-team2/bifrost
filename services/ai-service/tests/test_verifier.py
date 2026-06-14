@@ -176,6 +176,61 @@ async def test_incident_connector_task_failed_accepts_structured_status_payload(
 
 
 @pytest.mark.asyncio
+async def test_incident_passes_when_one_actionable_candidate_is_evidence_backed() -> None:
+    evidence_repo = InMemoryEvidenceRepository()
+    store_ref = await evidence_repo.put(
+        run_id="test",
+        evidence_id="ev-connector-status",
+        tool_name="get_connector_status",
+        step_id="s1",
+        status="success",
+        payload={
+            "connectorName": "orders-source",
+            "connectorState": "RUNNING",
+            "tasks": [
+                {
+                    "id": 0,
+                    "state": "FAILED",
+                    "trace": "org.postgresql.util.PSQLException: ERROR: all replication slots are in use",
+                }
+            ],
+        },
+    )
+
+    output = await run_verifier(
+        AgentMode.INCIDENT_ANALYSIS,
+        rca_out=RcaOutput(
+            root_cause_candidates=[
+                _candidate("CONNECTOR_TASK_FAILED"),
+                _candidate(
+                    "SOURCE_AUTH_EXPIRED",
+                    confidence=0.61,
+                    required_evidence_satisfied=False,
+                ),
+            ]
+        ),
+        retrieval_out=RetrievalOutput(
+            evidence_items=[
+                EvidenceItem(
+                    evidence_id="ev-connector-status",
+                    type=EvidenceType.TOOL_RESULT,
+                    store_ref=store_ref,
+                    summary="get_connector_status completed (tasks: 1)",
+                    redaction_status=RedactionStatus.REDACTED,
+                    collected_by="retrieval",
+                    collected_at=datetime.now(timezone.utc),
+                )
+            ]
+        ),
+        evidence_repo=evidence_repo,
+    )
+
+    result = output.verification_results[0]
+    assert result.status == VerificationStatus.PASS
+    assert result.approved_for_final_response is True
+
+
+@pytest.mark.asyncio
 async def test_incident_required_missing_needs_revision() -> None:
     output = await run_verifier(
         AgentMode.INCIDENT_ANALYSIS,
