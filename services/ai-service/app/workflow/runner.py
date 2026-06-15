@@ -566,7 +566,10 @@ async def _run_workflow_impl(
                         registry=registry,
                         tool_context=planner_context,
                     )
-                    if planner_out.clarification_message:
+                    # (#692) ReAct 루프가 있으면 커넥터 이름을 list_connectors/topology 체이닝으로
+                    # 알아낼 수 있으므로, '이름을 알려달라'며 단축하지 않고 retrieval(루프)로 넘긴다.
+                    # 루프 불가(LLM 미연결)일 때만 clarification 으로 종료한다.
+                    if planner_out.clarification_message and not get_llm_provider().supports_tools():
                         answer = planner_out.clarification_message
                         retrieval_out = RetrievalOutput(
                             evidence_items=[
