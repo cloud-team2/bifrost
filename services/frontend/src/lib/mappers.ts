@@ -55,9 +55,17 @@ function cdcToNodeStatus(status: string | null): NodeStatus {
   return 'warning'
 }
 
-/** DB 노드 상태(#179): 라이브 연결이 끊기면(UNREACHABLE) error 우선, 아니면 CDC readiness 기준. */
+/**
+ * DB 노드 상태(#179): 라이브 연결이 끊기면(UNREACHABLE) error 우선, 아니면 CDC readiness 기준.
+ *
+ * (#734) 단, CDC(소스) 준비 미충족(BLOCKED)은 '고장'이 아니라 '소스로는 못 씀'이다 — 이 DB가
+ * sink 전용이면 멀쩡하다. 따라서 DB 목록 배지에선 BLOCKED를 error가 아닌 warning으로 낮춰
+ * sink 전용 DB가 거짓 'error'로 뜨지 않게 한다. (파이프라인 생성 시 소스 선택 차단은
+ * cdcReadinessStatus로 별도 처리되므로 영향 없음.)
+ */
 function dbNodeStatus(db: DatabaseResponse): NodeStatus {
   if (db.connectionStatus === 'UNREACHABLE') return 'error'
+  if (db.cdcReadinessStatus === 'BLOCKED') return 'warning'
   return cdcToNodeStatus(db.cdcReadinessStatus)
 }
 
