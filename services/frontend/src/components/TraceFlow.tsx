@@ -27,8 +27,8 @@ export function TraceFlow({ trace }: { trace: TraceSummaryResponse }) {
         {segments.map((s) => (
           <div
             key={s.key}
-            style={{ flexGrow: Math.max(s.micros, 1), flexBasis: 0, minWidth: 54, backgroundImage: s.measured || s.status === 'error' ? undefined : HATCH }}
-            className={cn('flex items-center justify-center px-1 text-[10px] font-medium', segClass(s))}
+            style={{ flexGrow: Math.max(s.micros, 1), flexBasis: 0, minWidth: 84, backgroundImage: s.measured || s.status === 'error' ? undefined : HATCH }}
+            className={cn('flex items-center justify-center px-1.5 text-[10px] font-medium', segClass(s))}
           >
             <span className="truncate">{s.label}</span>
           </div>
@@ -37,11 +37,17 @@ export function TraceFlow({ trace }: { trace: TraceSummaryResponse }) {
 
       <div className="mt-1 flex w-full">
         {segments.map((s) => (
-          <div key={s.key} style={{ flexGrow: Math.max(s.micros, 1), flexBasis: 0, minWidth: 54 }} className="px-1 text-center text-[10px] text-gray-400">
+          <div key={s.key} style={{ flexGrow: Math.max(s.micros, 1), flexBasis: 0, minWidth: 84 }} className="px-1.5 text-center text-[10px] text-gray-400">
             <span className="truncate">{s.measured ? fmtDuration(s.micros) : `~${fmtDuration(s.micros)}`}</span>
           </div>
         ))}
       </div>
+
+      {/* 막대 설명(#705): 무엇을 보여주는지 + topic·전파가 추정값임을 명시 */}
+      <p className="mt-2.5 text-[10.5px] leading-relaxed text-gray-400">
+        하나의 분산 trace를 소스→싱크 <b className="font-medium text-gray-500">구간별 소요시간</b>으로 분해한 막대입니다(폭 = 소요시간 비례).
+        {' '}<b className="font-medium text-gray-500">topic·전파</b>(빗금)는 직접 측정값이 아니라 end-to-end에서 측정 구간(Debezium·Sink)을 뺀 <b className="font-medium text-gray-500">추정값</b>입니다.
+      </p>
 
       {errored.map((s, i) => (
         <p key={i} className="mt-3 text-[12px] text-rose-500">
