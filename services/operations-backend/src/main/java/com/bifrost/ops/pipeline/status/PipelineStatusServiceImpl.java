@@ -387,8 +387,16 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
      * 역할 키워드("소스/싱크 커넥터")는 {@link #incidentCauseFromStoredMessage}의 회복 매칭에도 쓰인다.
      */
     private static String connectorFailureMessage(PipelineEntity p, ConnectorEntity connector) {
-        String who = connectorRoleKo(connector);
         String summary = sanitizeConnectorError(connector.getLastError());
+        // (#692) DB 연결 실패가 원인인 커넥터 실패는 datasource 장애로 귀속(아래 connectorIncidentCause와 동일 조건).
+        // 메시지에 "source/sink DB" 키워드를 넣어 회복 매칭(incidentCauseFromStoredMessage)이 datasource로
+        // 역산하도록 한다 — 그래야 OPEN(datasource grouping)과 회복 resolve 대상이 일치한다.
+        if (connectorDatasourceId(p, connector) != null
+                && ConnectorErrorMessages.isDbConnectionFailure(connector.getLastError())) {
+            String role = connector.getKind() == com.bifrost.ops.provisioning.dto.ConnectorKind.SINK ? "sink" : "source";
+            return "'" + p.getName() + "' " + role + " DB 연결 불가: " + summary;
+        }
+        String who = connectorRoleKo(connector);
         return "'" + p.getName() + "' " + who + " 오류: " + summary;
     }
 
@@ -400,8 +408,26 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
     }
 
     private static IncidentCause connectorIncidentCause(PipelineEntity p, ConnectorEntity connector) {
+        // (#692) DB 연결 실패가 원인인 커넥터 실패는 datasource 장애의 증상이므로 datasource cause로 귀속해
+        // DB 헬스 프로브의 datasource 인시던트와 dedup한다. 커넥터는 즉시 FAILED를 감지하지만 DB 프로브는
+        // 최대 60s 늦게 UNREACHABLE을 마킹하므로, 그 레이스 윈도에서 커넥터 grouping으로 중복 생성되던 것을 막는다.
+        UUID dsId = connectorDatasourceId(p, connector);
+        if (dsId != null && ConnectorErrorMessages.isDbConnectionFailure(connector.getLastError())) {
+            return IncidentCause.datasource(dsId);
+        }
         String connectorName = connectorName(p, connector);
         return connectorName == null ? IncidentCause.pipeline(p) : IncidentCause.connector(connectorName);
+    }
+
+    /** 커넥터 역할(source/sink)에 대응하는 datasource id. 그 외(null kind)는 null. */
+    private static UUID connectorDatasourceId(PipelineEntity p, ConnectorEntity connector) {
+        if (connector.getKind() == com.bifrost.ops.provisioning.dto.ConnectorKind.SINK) {
+            return p.getSinkDatasourceId();
+        }
+        if (connector.getKind() == com.bifrost.ops.provisioning.dto.ConnectorKind.SOURCE) {
+            return p.getSourceDatasourceId();
+        }
+        return null;
     }
 
     private static String connectorName(PipelineEntity p, ConnectorEntity connector) {
