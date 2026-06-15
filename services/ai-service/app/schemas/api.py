@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
@@ -45,6 +46,7 @@ class ActionSummary(StrictModel):
     action_id: str
     action_type: str
     tool_name: str | None = None
+    tool_params: dict[str, Any] | None = None
     risk: str
     policy_decision: str | None = None
     approval_id: str | None = None

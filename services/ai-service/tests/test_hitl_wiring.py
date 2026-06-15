@@ -416,19 +416,30 @@ async def test_approval_decision_reuses_prior_candidates_and_executes():
 
 @pytest.mark.asyncio
 async def test_action_execution_reuses_candidates_for_policy_guard():
-    """action_execution turn이 빈 list 대신 복원된 후보로 Policy Guard를 호출한다."""
+    """action_execution turn이 null-tool 후보 대신 실행 가능한 복원 후보만 Policy Guard에 넘긴다."""
     run_id = "run_hitl_action"
     state_repo = InMemoryStateRepository()
     await state_repo.append(
         run_id, "actions", "Remediation", "append", "/actions/candidates",
-        {"candidates": [{
-            "action_id": "act_low",
-            "action_type": "runtime_tool",
-            "action_name": "orders-source-connector",
-            "risk": "low",
-            "reason": "restart",
-            "tool_name": "get_connector_status",
-        }]},
+        {"candidates": [
+            {
+                "action_id": "act_restart",
+                "action_type": "runtime_tool",
+                "action_name": "restart_connector",
+                "risk": "medium",
+                "reason": "restart",
+                "tool_name": "restart_connector",
+                "tool_params": {"connector_name": "orders-source-connector"},
+            },
+            {
+                "action_id": "act_escalate",
+                "action_type": "escalation",
+                "action_name": "escalate_to_operator",
+                "risk": "low",
+                "reason": "manual review",
+                "tool_name": None,
+            },
+        ]},
     )
 
     bus = EventBus()
@@ -477,8 +488,8 @@ async def test_action_execution_reuses_candidates_for_policy_guard():
 
     # Policy Guard가 빈 list가 아닌 복원된 후보를 받았는지 검증.
     assert len(seen) == 1
-    assert seen[0].action_id == "act_low"
-    assert seen[0].tool_name == "get_connector_status"
+    assert seen[0].action_id == "act_restart"
+    assert seen[0].tool_name == "restart_connector"
 
 
 @pytest.mark.asyncio

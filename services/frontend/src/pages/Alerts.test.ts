@@ -198,6 +198,32 @@ describe('incident report actions', () => {
       tool_params: { connector_name: 'orders-source' },
     }))
   })
+
+  it('enables an incident Run candidate for remediation report actions without explicit params (#671)', () => {
+    const [action] = reportActions([
+      report({
+        mode: 'incident_analysis',
+        action_candidates: [
+          {
+            action_id: 'act-run-visible',
+            action_type: 'runtime_tool',
+            action_name: 'restart_connector',
+            root_cause_id: 'CONNECTOR_TASK_FAILED',
+            risk: 'medium',
+            reason: 'failed task can be restarted',
+            tool_name: 'restart_connector',
+          },
+        ],
+      }),
+    ])
+
+    expect(buildRunCandidate(action, [pipeline()])).toEqual(expect.objectContaining({
+      action_id: 'act-run-visible',
+      action_type: 'runtime_tool',
+      tool_name: 'restart_connector',
+      tool_params: { connector_name: 'orders-source' },
+    }))
+  })
 })
 
 describe('alert event stream', () => {
