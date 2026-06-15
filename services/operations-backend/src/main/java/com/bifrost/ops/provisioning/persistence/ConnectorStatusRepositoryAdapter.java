@@ -38,12 +38,16 @@ public class ConnectorStatusRepositoryAdapter implements ConnectorStatusSink {
     }
 
     private void apply(ConnectorEntity entity, ConnectorStatusUpdate update) {
-        entity.setState(update.connectorState().name());
+        entity.setState(stateFor(entity, update));
         entity.setLastError(update.lastError());
         entity.setUpdatedAt(Instant.now());
         connectorRepository.save(entity);
         log.debug("connector 상태 반영: name={}, state={}, failedTasks={}/{}",
                 update.connectorName(), update.connectorState(),
                 update.failedTasks(), update.totalTasks());
+    }
+
+    private String stateFor(ConnectorEntity entity, ConnectorStatusUpdate update) {
+        return update.effectiveConnectorState(entity.getTasksMax()).name();
     }
 }
