@@ -1,5 +1,6 @@
 package com.bifrost.ops.adapters.connect;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -16,6 +17,7 @@ public class ConnectRestClient {
     private final RestClient restClient;
     private final boolean configured;
 
+    @Autowired
     public ConnectRestClient(@Value("${kafka-connect.rest-url}") String connectRestUrl,
                              @Value("${kafka-connect.connect-timeout-ms}") int connectTimeoutMs,
                              @Value("${kafka-connect.read-timeout-ms}") int readTimeoutMs) {
