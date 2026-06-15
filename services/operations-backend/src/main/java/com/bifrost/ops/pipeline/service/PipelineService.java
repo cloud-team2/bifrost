@@ -126,6 +126,24 @@ public class PipelineService {
         if ("BLOCKED".equalsIgnoreCase(source.getCdcReadinessStatus())) {
             throw validation("source DB의 CDC 준비도가 BLOCKED입니다");
         }
+        // #685: 파이프라인 생성 직전 source DB 준비도를 실시간 점검한다.
+        // 저장된 cdcReadinessStatus는 이전 점검 결과일 수 있어 replication slot 고갈 같은
+        // 순간적 상태 변화를 반영하지 못한다. 점검 실패(일시적 연결 오류 등)는 무시한다.
+        try {
+            com.bifrost.ops.database.dto.CdcReadinessResponse live =
+                    cdcReadinessService.check(wsId, source.getId());
+            if (live.overallStatus() == com.bifrost.ops.database.cdc.CdcReadinessStatus.BLOCKED) {
+                throw validation("source DB의 CDC 준비도가 BLOCKED입니다 — " +
+                        live.checks().stream()
+                            .filter(c -> c.status() == com.bifrost.ops.database.cdc.CdcReadinessStatus.BLOCKED)
+                            .map(com.bifrost.ops.database.dto.CdcReadinessResponse.CdcCheck::name)
+                            .findFirst().orElse("준비도 점검 실패"));
+            }
+        } catch (ApiException e) {
+            throw e;
+        } catch (Exception e) {
+            log.debug("CDC 준비도 실시간 점검 실패(저장값으로 대체): dbId={}, cause={}", source.getId(), e.getMessage());
+        }
         DatasourceEntity sink = null;
         if (pattern == PipelinePattern.DIRECT) {
             if (req.sinkDbId().equals(req.sourceDbId())) {
