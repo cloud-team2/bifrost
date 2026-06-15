@@ -214,6 +214,7 @@ export interface DatabaseSchemaResponse {
 export interface DatabaseMetricsResponse {
   tps: number
   queryResponseMs: number
+  queryResponseP95Ms: number | null
   activeConnections: number
   stub: boolean
 }

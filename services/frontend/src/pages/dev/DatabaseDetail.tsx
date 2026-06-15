@@ -751,13 +751,19 @@ function MetricsTab({ state }: { state: ResourceState<DatabaseMetricsResponse> }
   }
 
   return (
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
       <MetricCard label="TPS" value={formatMetric(metrics.tps)} sub="transactions/sec" />
       <MetricCard
-        label="Query response"
+        label="Avg response"
         value={formatMetric(metrics.queryResponseMs)}
         sub="ms avg"
         tone={metrics.queryResponseMs > 1000 ? 'warn' : 'good'}
+      />
+      <MetricCard
+        label="P95 response"
+        value={metrics.queryResponseP95Ms == null ? '—' : formatMetric(metrics.queryResponseP95Ms)}
+        sub={metrics.queryResponseP95Ms == null ? 'stat source 없음' : 'ms p95'}
+        tone={metrics.queryResponseP95Ms != null && metrics.queryResponseP95Ms > 1000 ? 'warn' : 'default'}
       />
       <MetricCard label="Active connections" value={formatMetric(metrics.activeConnections)} />
     </div>

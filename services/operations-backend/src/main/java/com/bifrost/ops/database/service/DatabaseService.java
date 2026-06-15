@@ -6,6 +6,8 @@ import com.bifrost.ops.database.dto.DatabaseMetricsResponse;
 import com.bifrost.ops.database.dto.DatabasePipelineSummary;
 import com.bifrost.ops.database.dto.DatabaseRegisterRequest;
 import com.bifrost.ops.database.dto.DatabaseResponse;
+import com.bifrost.ops.database.inspector.DatabaseInspector;
+import com.bifrost.ops.database.inspector.DatabaseInspectorFactory;
 import com.bifrost.ops.database.persistence.entity.DatasourceEntity;
 import com.bifrost.ops.database.persistence.repository.DatasourceRepository;
 import com.bifrost.ops.global.common.datasource.DbType;
@@ -37,12 +39,15 @@ public class DatabaseService {
     private final DatasourceRepository repo;
     private final SecretStore secretStore;
     private final DatabaseConnectionTester connectionTester;
+    private final DatabaseInspectorFactory inspectorFactory;
 
     public DatabaseService(DatasourceRepository repo, SecretStore secretStore,
-                           DatabaseConnectionTester connectionTester) {
+                           DatabaseConnectionTester connectionTester,
+                           DatabaseInspectorFactory inspectorFactory) {
         this.repo = repo;
         this.secretStore = secretStore;
         this.connectionTester = connectionTester;
+        this.inspectorFactory = inspectorFactory;
     }
 
     /** 연결 테스트(FR-014). 실패도 200 본문으로 분류 반환. */
@@ -130,11 +135,22 @@ public class DatabaseService {
         return DatabaseResponse.of(e, rolesOf(e, sourceIds, sinkIds));
     }
 
-    /** 지표(FR-017). 이번 주는 계약용 stub — 실수집은 monitoring.collector 연동(후속). */
+    /** 지표(FR-017). 등록 DB에 직접 연결해 엔진 stat과 probe query로 산출한다. */
     @Transactional(readOnly = true)
     public DatabaseMetricsResponse getMetrics(UUID tenantId, UUID dbId) {
-        requireExists(tenantId, dbId);
-        return DatabaseMetricsResponse.placeholder();
+        DatasourceEntity e = repo.findByIdAndTenantId(dbId, tenantId)
+                .orElseThrow(() -> new ApiException(ErrorCode.DATABASE_NOT_FOUND,
+                        "데이터베이스를 찾을 수 없습니다"));
+        DbCredential cred = secretStore.resolve(e.getSecretRef());
+        try (DatabaseInspector inspector = inspectorFactory.create(e, cred.password())) {
+            DatabaseInspector.MetricsSnapshot metrics = inspector.collectMetrics();
+            return DatabaseMetricsResponse.live(metrics.tps(), metrics.queryResponseMs(),
+                    metrics.queryResponseP95Ms(), metrics.activeConnections());
+        } catch (ApiException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new ApiException(ErrorCode.DATABASE_CONNECTION_FAILED, "DB metrics 조회 실패");
+        }
     }
 
     /** DB 삭제. 파이프라인에서 사용 중이면 거부. */

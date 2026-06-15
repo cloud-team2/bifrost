@@ -59,6 +59,26 @@ public class PostgresInspector implements DatabaseInspector {
     }
 
     @Override
+    public MetricsSnapshot collectMetrics() {
+        try (Connection conn = dataSource.getConnection()) {
+            double queryMs = measureSelectOneMs(conn);
+            double tps = queryDouble(conn, """
+                    SELECT (xact_commit + xact_rollback)::double precision
+                           / GREATEST(EXTRACT(EPOCH FROM now() - COALESCE(stats_reset, pg_postmaster_start_time())), 1)
+                    FROM pg_stat_database
+                    WHERE datname = current_database()
+                    """);
+            int activeConnections = (int) queryLong(conn,
+                    "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()");
+            Double p95Ms = queryP95FromPgStatStatements(conn);
+            return new MetricsSnapshot(round(tps), round(queryMs), p95Ms == null ? null : round(p95Ms),
+                    Math.max(0, activeConnections));
+        } catch (SQLException e) {
+            throw new RuntimeException("DB metrics 조회 실패: " + e.getMessage(), e);
+        }
+    }
+
+    @Override
     public CdcReadinessResponse checkSourceReadiness() {
         try (Connection conn = dataSource.getConnection()) {
             List<CdcCheck> checks = new ArrayList<>();
@@ -273,6 +293,45 @@ public class PostgresInspector implements DatabaseInspector {
         try (Statement st = conn.createStatement(); ResultSet rs = st.executeQuery(sql)) {
             return rs.next() && rs.getBoolean(1);
         }
+    }
+
+    private static double queryDouble(Connection conn, String sql) throws SQLException {
+        try (Statement st = conn.createStatement(); ResultSet rs = st.executeQuery(sql)) {
+            return rs.next() ? Math.max(0.0, rs.getDouble(1)) : 0.0;
+        }
+    }
+
+    private static double measureSelectOneMs(Connection conn) throws SQLException {
+        long start = System.nanoTime();
+        try (Statement st = conn.createStatement()) {
+            st.execute("SELECT 1");
+        }
+        return (System.nanoTime() - start) / 1_000_000.0;
+    }
+
+    private static Double queryP95FromPgStatStatements(Connection conn) {
+        String sql = """
+                SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY mean_exec_time)
+                FROM pg_stat_statements
+                WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
+                  AND calls > 0
+                """;
+        try (Statement st = conn.createStatement(); ResultSet rs = st.executeQuery(sql)) {
+            if (rs.next()) {
+                double value = rs.getDouble(1);
+                return rs.wasNull() ? null : Math.max(0.0, value);
+            }
+        } catch (SQLException ignored) {
+            // pg_stat_statements is optional; leave p95 null when not installed or not readable.
+        }
+        return null;
+    }
+
+    private static double round(double value) {
+        if (!Double.isFinite(value)) {
+            return 0.0;
+        }
+        return Math.round(value * 100.0) / 100.0;
     }
 
     private static int parseInt(String s) {

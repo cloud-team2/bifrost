@@ -61,6 +61,23 @@ public class MariaDBInspector implements DatabaseInspector {
     }
 
     @Override
+    public MetricsSnapshot collectMetrics() {
+        try (Connection conn = dataSource.getConnection()) {
+            double queryMs = measureSelectOneMs(conn);
+            Map<String, Long> status = globalStatus(conn);
+            long commits = status.getOrDefault("Com_commit", 0L);
+            long rollbacks = status.getOrDefault("Com_rollback", 0L);
+            long uptime = Math.max(1L, status.getOrDefault("Uptime", 1L));
+            double tps = (double) (commits + rollbacks) / uptime;
+            int activeConnections = Math.toIntExact(Math.min(Integer.MAX_VALUE,
+                    Math.max(0L, status.getOrDefault("Threads_connected", 0L))));
+            return new MetricsSnapshot(round(tps), round(queryMs), null, activeConnections);
+        } catch (SQLException e) {
+            throw new RuntimeException("DB metrics 조회 실패: " + e.getMessage(), e);
+        }
+    }
+
+    @Override
     public CdcReadinessResponse checkSourceReadiness() {
         try (Connection conn = dataSource.getConnection()) {
             List<CdcCheck> checks = new ArrayList<>();
@@ -297,6 +314,44 @@ public class MariaDBInspector implements DatabaseInspector {
         } catch (NumberFormatException e) {
             return 0;
         }
+    }
+
+    private static double measureSelectOneMs(Connection conn) throws SQLException {
+        long start = System.nanoTime();
+        try (Statement st = conn.createStatement()) {
+            st.execute("SELECT 1");
+        }
+        return (System.nanoTime() - start) / 1_000_000.0;
+    }
+
+    private static Map<String, Long> globalStatus(Connection conn) throws SQLException {
+        Map<String, Long> values = new HashMap<>();
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery("SHOW GLOBAL STATUS")) {
+            while (rs.next()) {
+                String name = rs.getString(1);
+                String raw = rs.getString(2);
+                if (name == null || raw == null) {
+                    continue;
+                }
+                if (!List.of("Com_commit", "Com_rollback", "Threads_connected", "Uptime").contains(name)) {
+                    continue;
+                }
+                try {
+                    values.put(name, Long.parseLong(raw));
+                } catch (NumberFormatException ignored) {
+                    values.put(name, 0L);
+                }
+            }
+        }
+        return values;
+    }
+
+    private static double round(double value) {
+        if (!Double.isFinite(value)) {
+            return 0.0;
+        }
+        return Math.round(value * 100.0) / 100.0;
     }
 
     private static boolean isSystemSchema(String schema) {
