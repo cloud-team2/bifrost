@@ -14,7 +14,7 @@
 | 설계 | [design/frontend.md](./design/frontend.md) | 프론트엔드 화면(FR)별 백엔드 연동 |
 | 설계 | [design/backend-springboot/](./design/backend-springboot/overview.md) | Spring Boot Operations Backend(플랫폼 본체·운영 집행) |
 | 설계 | [design/backend-fastapi/](./design/backend-fastapi/overview.md) | FastAPI Agent Server(AI 장애대응 workflow) |
-| API | [api/springboot.md](./api/springboot.md) | 플랫폼 `/api/v1` + 내부 운영 `/internal/ops` |
+| API | [api/springboot.md](./api/springboot.md) | 플랫폼 `/api/v1` + 내부 전용 운영 `/internal/ops` |
 | API | [api/fastapi.md](./api/fastapi.md) | Agent `/api/v1/agent…` |
 | 결정 | [adr/](./adr/) | 아키텍처 결정 기록(ADR) |
 | 가이드 | [guides/getting-started-infra.md](./guides/getting-started-infra.md) | 인프라 환경 셋업 |
@@ -26,7 +26,7 @@
 Frontend (운영 콘솔)
   ├─ 플랫폼·모니터링 ───► Spring Boot Operations Backend  (/api/v1)
   └─ AI 장애대응 ───────► FastAPI Agent Server            (/api/v1/agent)
-                            └─► Spring Boot (/internal/ops)
+                            └─► Spring Boot (/internal/ops, internal only)
 Spring Boot Operations Backend
   -> Fabric8 / Strimzi / Kafka AdminClient / Kafka Connect REST
   -> Prometheus / Loki / Tempo
@@ -34,7 +34,7 @@ Spring Boot Operations Backend
 ```
 
 - **Spring Boot Operations Backend**가 플랫폼 본체다. 워크스페이스·DB·파이프라인 CRUD, Kafka 프로비저닝(Fabric8/Strimzi), DB 등록·CDC 점검, 모니터링, 메타데이터, 그리고 에이전트 조치의 정책·승인·감사·실행을 담당한다.
-- **FastAPI Agent Server**는 AI 장애 대응만 맡는다. Supervisor가 8개 LLM agent와 결정론적 단계로 구성된 workflow를 제어하며, 운영 조회·조치는 Spring Boot로 위임한다. (MCP는 v1 미사용)
+- **FastAPI Agent Server**는 AI 장애 대응만 맡는다. Supervisor가 8개 LLM agent와 결정론적 단계로 구성된 workflow를 제어하며, 운영 조회·조치는 내부 서비스 경로로 Spring Boot `/internal/ops/**`에 위임한다. public frontend ingress는 `/internal/ops/**`를 프록시하지 않고, 브라우저/외부 클라이언트는 `/api/**` 계열만 호출한다. (MCP는 v1 미사용)
 
 ## 식별자
 

@@ -250,9 +250,9 @@ Family catalog 요약:
 | Monitoring | overview/resource-events/incidents list/detail/detail facade/report list/report body 200 | `WorkspaceAccessGuard.requireAccess` |
 | Cluster | Kafka/connect/throughput 조회 200 | 인증 사용자, workspace scope 없음 |
 | Internal `/internal` | tenant provision 200, tenant delete 202, pipeline provision 202 또는 422, status 200, delete 202 | internal control-plane surface |
-| Internal `/internal/ops` read | health/version/tool-catalog 200, ready 200 또는 503, connector status/list/topology/lag/log search/list_alerts/traces/incident summary 200 | `SecurityConfig`상 `/internal/ops/**` permitAll, caller identity 보강은 별도 코드 범위 |
-| Internal `/internal/ops` mutation | connector restart/pause/resume, Kafka Connect consumer group restart: 성공 200, gate 실패 400/403/409, Connect 실패 502/504 | controller가 `X-Agent-Run-Id`·`X-Agent-Step-Id`·`X-Idempotency-Key`·`X-Approval-Id`를 검증하고 `OpsEnvelope`로 응답 |
-| Internal governance | approvals create 201/list/get/decision/validate 200, change-ticket create 201/approve 200/get/validate 200 | approval decision과 change-ticket create/approve는 Spring Security principal이 필요하다. 그 외 create/list/get/validate facade는 `/internal/ops/**` permitAll 경로에 있다 |
+| Internal `/internal/ops` read | health/version/tool-catalog 200, ready 200 또는 503, connector status/list/topology/lag/log search/list_alerts/traces/incident summary 200 | agent-facing 내부 API. `internal.ops.token` 설정 시 `X-Internal-Token` service identity header가 필요하며, public frontend ingress는 이 경로를 프록시하지 않는다 |
+| Internal `/internal/ops` mutation | connector restart/pause/resume, Kafka Connect consumer group restart: 성공 200, gate 실패 400/403/409, Connect 실패 502/504 | service identity gate 통과 후 controller가 `X-Agent-Run-Id`·`X-Agent-Step-Id`·`X-Idempotency-Key`·`X-Approval-Id`를 검증하고 `OpsEnvelope`로 응답 |
+| Internal governance | approvals create 201/list/get/decision/validate 200, change-ticket create 201/approve 200/get/validate 200 | service identity gate 대상이다. approval decision과 change-ticket create/approve는 추가로 Spring Security principal이 필요하다 |
 | PoC | connector list/get/sample 200, get/delete not found 404, delete accepted 202 | 임시 PoC surface, 제거 또는 내부망 제한 필요 |
 
 ## 권한 매트릭스
@@ -270,8 +270,8 @@ Family catalog 요약:
 | `/api/v1/workspaces/{wsId}/kafka/principals` list | authenticated | workspace access |
 | `/api/v1/workspaces/{wsId}/kafka/principals` create/deactivate/revoke/rotate/secret | authenticated | OWNER/ADMIN 또는 workspace owner. Secret 조회는 principal `ACTIVE`와 Secret 네이밍/키 무결성까지 확인 |
 | `/api/v1/clusters/**` | authenticated | workspace scope 없음 |
-| `/internal/ops/**` | permitAll | 대부분 controller-level contract만 적용. mutation은 agent headers/idempotency/approval/ownership을 코드에서 검증 |
-| `/internal/ops/approvals/{id}/decision` | permitAll path + method-level principal check | `SecurityContext`의 `AuthenticatedUser`가 `tenantId`/`decidedBy`와 일치하고 approval actor와 같아야 함 |
+| `/internal/ops/**` | optional service identity gate | `internal.ops.token` 설정 시 `X-Internal-Token`과 정확히 일치해야 한다. 토큰이 비어 있으면 로컬/기존 배포 호환을 위해 게이트가 비활성화된다. mutation은 추가로 agent headers/idempotency/approval/ownership을 코드에서 검증 |
+| `/internal/ops/approvals/{id}/decision` | service identity gate + method-level principal check | `SecurityContext`의 `AuthenticatedUser`가 `tenantId`/`decidedBy`와 일치하고 approval actor와 같아야 함 |
 
 ## Alias 제거
 
@@ -279,8 +279,9 @@ Family catalog 요약:
 
 ## 3. Common Headers
 
-내부 운영 API(`/internal/ops/**`)는 agent 호출 추적을 위해 다음 헤더를 사용한다. `AgentHeaders`가 request id로 인정하는 이름은 `X-Agent-Request-Id`와 `X-Request-Id`이고, 둘 다 없거나 unsafe하면 서버가 UUID를 생성한다.
+내부 운영 API(`/internal/ops/**`)는 public frontend ingress에 노출하지 않는 agent-facing API다. FastAPI가 내부 서비스 경로로 호출하며, `internal.ops.token`이 설정된 환경에서는 모든 `/internal/ops/**` 요청에 `X-Internal-Token` service identity header가 필요하다. agent 호출 추적에는 다음 헤더를 사용한다. `AgentHeaders`가 request id로 인정하는 이름은 `X-Agent-Request-Id`와 `X-Request-Id`이고, 둘 다 없거나 unsafe하면 서버가 UUID를 생성한다.
 
+- service identity: `X-Internal-Token` (설정된 경우 필수)
 - request id: `X-Agent-Request-Id` 또는 `X-Request-Id`
 - `X-Agent-Run-Id`
 - `X-Agent-Step-Id`

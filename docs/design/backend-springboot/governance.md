@@ -14,7 +14,7 @@
 | governance facade | `/internal/ops/approvals/**`, `/internal/ops/change-tickets/**` |
 | mutation subset | connector restart/pause/resume, Kafka Connect-managed consumer group restart |
 
-`SecurityConfig`상 `/internal/ops/**`는 현재 permitAll path다. 따라서 service identity 인증은 설계 목표이지 현재 코드 gate가 아니다. Mutation controller가 실제로 적용하는 gate는 agent header, workspace/resource ownership, approval, idempotency, Kafka Connect REST 결과 mapping이다.
+`/internal/ops/**`는 agent-facing 내부 API이며 public frontend ingress에 노출하지 않는다. `SecurityConfig`는 `internal.ops.token`이 설정된 경우 `X-Internal-Token` service identity header 일치를 요구한다. 토큰이 비어 있으면 로컬/기존 배포 호환을 위해 게이트를 비활성화한다. Mutation controller가 추가로 적용하는 gate는 agent header, workspace/resource ownership, approval, idempotency, Kafka Connect REST 결과 mapping이다.
 
 ### 2. Mutation 처리 순서
 
@@ -114,7 +114,8 @@ Kafka Connect REST timeout은 504 `TIMEOUT`, 그 외 상류 실패는 502 `UPSTR
 
 | 항목 | 현재 상태 |
 | --- | --- |
-| `/internal/ops/**` service identity 인증 | Security path는 permitAll. 별도 service account gate 미구현 |
+| `/internal/ops/**` public ingress 노출 | 미노출. frontend nginx는 `/internal/ops/**`를 프록시하지 않고, FastAPI가 내부 서비스 경로로 호출 |
+| service identity secret rotation/JWKS화 | 현재는 단일 shared secret(`internal.ops.token`/`AI_INTERNAL_OPS_TOKEN`) 일치 검사 |
 | policy matrix lookup으로 allow/approval/change/deny 결정 | mutation endpoint가 제한되어 있어 별도 policy engine lookup 없음 |
 | before/after evidence writer | mutation 응답 evidence는 빈 배열 |
 | audit_event append-only 기록 | `auditEventId` 값이 null이라 JSON 응답에서 `audit_event_id` field 생략 |

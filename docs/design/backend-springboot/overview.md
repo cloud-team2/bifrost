@@ -84,4 +84,4 @@ erDiagram
 - [data-model.md](./data-model.md) — metadb 스키마(전체 ERD·테이블)
 - [monitoring.md](./monitoring.md) — 수집기·상태 산정·이벤트/인시던트 엔진·Sync/Messages/Metrics·SSE
 - [governance.md](./governance.md) — 운영 조치 집행 현재 구현(approval·change-ticket·idempotency·mutation subset)과 보강 대상
-- [api/springboot.md](../../api/springboot.md) — 플랫폼 `/api/v1` + 내부 운영 `/internal/ops`
+- [api/springboot.md](../../api/springboot.md) — 플랫폼 `/api/v1` + 내부 전용 운영 `/internal/ops`

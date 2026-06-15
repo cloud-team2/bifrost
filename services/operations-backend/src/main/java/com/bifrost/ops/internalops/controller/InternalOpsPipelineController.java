@@ -40,7 +40,7 @@ import java.util.stream.Collectors;
  * Agent read tool — pipeline 목록 및 topology.
  *
  * <p>project_id = workspace.namespace 로 workspace를 조회한 뒤 pipeline 데이터를 읽는다.
- * JWT 없이 접근 가능(/internal/ops/** permitAll).
+ * 사용자 JWT 대상은 아니며, internal.ops.token 설정 시 X-Internal-Token service identity가 필요하다.
  */
 @RestController
 @RequestMapping("/internal/ops/projects/{projectId}/pipelines")

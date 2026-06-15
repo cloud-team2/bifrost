@@ -66,7 +66,7 @@ MVP Settings 화면은 세 개 도메인을 사용한다.
 
 - OWNER 이관 차단/승인 흐름을 새로 구현하지 않는다. 현재 코드의 non-owner -> OWNER 승격 허용 동작은 docs-only로 기록한다.
 - 모든 Spring controller의 full schema를 이 파일에 중복하지 않는다. 상세 schema/status는 [Spring Boot API](../api/springboot.md)와 `/v3/api-docs`를 따른다.
-- 내부 `/internal/ops/**` service identity 강화와 FastAPI strict schema mismatch 수정은 별도 코드 작업이다.
+- FastAPI strict schema mismatch 수정과 내부 `/internal/ops/**` service identity 정책 변경은 이 Settings MVP 문서의 범위가 아니다. 현재 `/internal/ops/**` service identity는 `internal.ops.token`/`AI_INTERNAL_OPS_TOKEN` shared secret 설정 시 활성화되고, public frontend ingress에는 노출하지 않는다.
 
 ## Success Criteria
 
