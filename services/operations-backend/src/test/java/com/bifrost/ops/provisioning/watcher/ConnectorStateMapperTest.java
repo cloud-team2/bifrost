@@ -60,6 +60,25 @@ class ConnectorStateMapperTest {
     }
 
     @Test
+    void longTracePreservesRootCauseWhenTruncated() {
+        // (#692) head-cut만 하면 root cause('Caused by: ... Connection refused')가 잘려나가
+        // DB 연결 실패 dedup 판별이 실패한다. 잘려도 root cause 라인은 보존되어야 한다.
+        String head = "org.apache.kafka.connect.errors.ConnectException: "
+                + "Exiting WorkerSinkTask due to unrecoverable exception.\n"
+                + "\tat org.apache.kafka.connect.runtime.WorkerSinkTask.deliverMessages(WorkerSinkTask.java:658)\n".repeat(8);
+        String trace = head
+                + "Caused by: java.sql.SQLNonTransientConnectionException: "
+                + "Socket fail to connect to address=(host=host.docker.internal)(port=3307). Connection refused\n"
+                + "\tat org.mariadb.jdbc.client.impl.ConnectionHelper.connectSocket(ConnectionHelper.java:120)\n";
+
+        ConnectorStatusUpdate u = mapper.map(connector("FAILED",
+                List.of(Map.of("id", 0, "state", "FAILED", "trace", trace))));
+
+        assertThat(u.lastError()).contains("Connection refused");
+        assertThat(com.bifrost.ops.pipeline.status.ConnectorErrorMessages.isDbConnectionFailure(u.lastError())).isTrue();
+    }
+
+    @Test
     void pausedConnectorMapsToPaused() {
         ConnectorStatusUpdate u = mapper.map(connector("PAUSED", List.of()));
         assertThat(u.connectorState()).isEqualTo(ConnectorRuntimeState.PAUSED);

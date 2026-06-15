@@ -1,0 +1,33 @@
+# operations-backend → Kafka Connect REST API(8083) 허용 (#692)
+#
+# Strimzi가 KafkaConnect용으로 자동 생성하는 NetworkPolicy(platform-connect-connect)는
+# REST API 8083 ingress를 cluster-operator와 Connect 파드 자신에게만 허용한다. 그 결과
+# ops-backend의 ConnectRestPoller가 커넥터/태스크 상태를 폴링하지 못해 커넥터 장애 인시던트가
+# 생성되지 않는다(파드↔파드 Connect timed out).
+#
+# NetworkPolicy는 가산적(ingress는 어느 정책이든 허용하면 통과)이므로, Strimzi 생성 정책을
+# 건드리지 않고 ops-backend 출처만 추가 허용하는 보충 정책을 둔다. Strimzi 오퍼레이터는 자신이
+# 만든 정책만 reconcile하므로 이 별도 정책은 덮어쓰이지 않는다.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ops-backend-to-connect-rest
+  namespace: platform-kafka
+  labels:
+    app.kubernetes.io/part-of: bifrost
+spec:
+  podSelector:
+    matchLabels:
+      strimzi.io/cluster: platform-connect
+      strimzi.io/kind: KafkaConnect
+      strimzi.io/name: platform-connect-connect
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: operations-backend
+      ports:
+        - port: 8083
+          protocol: TCP

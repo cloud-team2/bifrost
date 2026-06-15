@@ -63,6 +63,54 @@ class ConnectRestPollerTest {
     }
 
     @Test
+    void dbConnectionFailureAttributesIncidentToDatasourceGroupingForDedup() {
+        TestContext context = newContext();
+        PipelineEntity pipeline = pipeline("ACTIVE");
+        UUID datasourceId = UUID.randomUUID();
+        pipeline.setSourceDatasourceId(datasourceId);
+        when(pipelineRepository.findAll()).thenReturn(List.of(pipeline));
+        expectConnectors(context.server);
+        expectStatus(context.server, "FAILED", "org.postgresql.util.PSQLException: Connection refused");
+
+        context.poller.poll();
+
+        verify(incidentService).onThresholdViolation(
+                eq(pipeline.getTenantId()),
+                eq(IncidentGroupingKeys.datasource(datasourceId)),
+                eq("DATABASE"),
+                eq(datasourceId),
+                eq(EventLevel.ERROR),
+                eq("Pipeline 'orders-eda' status ERROR"),
+                eq("CONNECTOR_TASK_FAILED"),
+                org.mockito.ArgumentMatchers.contains("DB 연결 실패"),
+                eq(pipeline.getId()));
+        context.server.verify();
+    }
+
+    @Test
+    void dbConnectionFailureWithoutDatasourceIdKeepsConnectorGrouping() {
+        TestContext context = newContext();
+        PipelineEntity pipeline = pipeline("ACTIVE"); // sourceDatasourceId 미설정
+        when(pipelineRepository.findAll()).thenReturn(List.of(pipeline));
+        expectConnectors(context.server);
+        expectStatus(context.server, "FAILED", "Connection refused");
+
+        context.poller.poll();
+
+        verify(incidentService).onThresholdViolation(
+                eq(pipeline.getTenantId()),
+                eq(IncidentGroupingKeys.connectorWorker("orders-source")),
+                eq("CONNECTOR"),
+                isNull(),
+                eq(EventLevel.ERROR),
+                eq("Pipeline 'orders-eda' connector task failed"),
+                eq("CONNECTOR_TASK_FAILED"),
+                any(),
+                eq(pipeline.getId()));
+        context.server.verify();
+    }
+
+    @Test
     void recoveredTaskFallsBackToPlainEventWhenNoIncidentWasOpen() {
         TestContext context = newContext();
         PipelineEntity pipeline = pipeline("ACTIVE");

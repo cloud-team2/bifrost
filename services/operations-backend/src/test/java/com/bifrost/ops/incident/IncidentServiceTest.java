@@ -420,6 +420,30 @@ class IncidentServiceTest {
         assertThat(result.rca()).isEqualTo("기존 RCA");
     }
 
+    @Test
+    void resolveForDeletedPipelineResolvesPipelineScopedActiveIncidents() {
+        // (#692) 파이프라인 삭제 시 그 파이프라인 한정 grouping_key의 활성 인시던트를 RESOLVED 처리.
+        UUID pipelineId = UUID.randomUUID();
+        IncidentEntity inc = incident(UUID.randomUUID(), tenantId, "OPEN");
+        inc.setGroupingKey(IncidentGroupingKeys.connectorWorker("orders-source"));
+        String sourceKey = IncidentGroupingKeys.connectorWorker("orders-source");
+        when(incidentRepository.findByTenantIdAndGroupingKeyAndStatusInOrderByOpenedAtAsc(
+                eq(tenantId), any(), any()))
+                .thenAnswer(invocation ->
+                        sourceKey.equals(invocation.getArgument(1)) ? List.of(inc) : List.of());
+
+        int n = service().resolveForDeletedPipeline(
+                tenantId, pipelineId, "topic.orders",
+                List.of("orders-source", "orders-sink"), "connect-orders-sink");
+
+        assertThat(n).isEqualTo(1);
+        assertThat(inc.getStatus()).isEqualTo("RESOLVED");
+        assertThat(inc.getResolvedAt()).isNotNull();
+        // 공유 자원(datasource:{id})은 grouping_key 조회 대상에서 제외된다.
+        verify(incidentRepository, never()).findByTenantIdAndGroupingKeyAndStatusInOrderByOpenedAtAsc(
+                eq(tenantId), org.mockito.ArgumentMatchers.startsWith("datasource:"), any());
+    }
+
     private static IncidentEntity incident(UUID incidentId, UUID tenantId, String status) {
         IncidentEntity incident = new IncidentEntity();
         incident.setId(incidentId);

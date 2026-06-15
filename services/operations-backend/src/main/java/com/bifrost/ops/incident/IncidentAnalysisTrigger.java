@@ -72,7 +72,9 @@ public class IncidentAnalysisTrigger {
         body.put("mode", "incident_analysis");
         body.put("incident_id", incidentId.toString());
         body.put("message", analysisMessage(title, eventMessage));
-        body.put("remediation_requested", false);
+        // 자동 인시던트 분석에도 조치 추천을 포함한다(#692 평가). remediation_requested=true면
+        // no_progress 게이트에서 얕은 폴백 대신 rca→remediation으로 진행해 RCA 깊이도 함께 개선된다.
+        body.put("remediation_requested", true);
         body.put("stream", false);
         return body;
     }

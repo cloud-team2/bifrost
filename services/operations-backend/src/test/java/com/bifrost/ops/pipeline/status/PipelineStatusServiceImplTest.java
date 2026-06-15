@@ -265,6 +265,51 @@ class PipelineStatusServiceImplTest {
     }
 
     @Test
+    void sinkConnectorDbConnectionFailureGroupsIncidentByDatasourceForDedup() {
+        // (#692) 싱크 커넥터가 DB 연결 실패로 FAILED면, DB 프로브가 UNREACHABLE을 마킹하기 전이라도
+        // datasource grouping으로 귀속해 datasource 인시던트와 dedup한다(레이스 윈도 중복 방지).
+        UUID pid = UUID.randomUUID();
+        UUID tenant = UUID.randomUUID();
+        UUID sinkDsId = UUID.randomUUID();
+        PipelineEntity p = new PipelineEntity();
+        p.setId(pid);
+        p.setTenantId(tenant);
+        p.setName("orders-sync");
+        p.setPattern(PipelinePattern.DIRECT);
+        p.setStatus(PipelineLifecycle.ACTIVE);
+        p.setSourceConnectorName(pid + "-source");
+        p.setSinkConnectorName(pid + "-sink");
+        p.setSinkDatasourceId(sinkDsId);
+
+        ConnectorEntity source = connector(ConnectorKind.SOURCE, "RUNNING");
+        source.setPipelineId(pid);
+        source.setCrName(pid + "-source");
+        ConnectorEntity sink = connector(ConnectorKind.SINK, "FAILED");
+        sink.setPipelineId(pid);
+        sink.setCrName(pid + "-sink");
+        sink.setLastError("java.sql.SQLNonTransientConnectionException: Socket fail to connect. Connection refused");
+
+        when(connectorRepository.findByCrName(pid + "-sink")).thenReturn(Optional.of(sink));
+        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(pid)).thenReturn(List.of(source, sink));
+
+        service().applyConnectorStatus(new ConnectorStatusUpdate(
+                pid + "-sink", ConnectorRuntimeState.FAILED, PipelineLifecycle.ERROR, 1, 1,
+                "Connection refused"));
+
+        verify(incidentService).onThresholdViolation(
+                eq(tenant),
+                eq(IncidentGroupingKeys.datasource(sinkDsId)),
+                eq("DATABASE"),
+                eq(sinkDsId),
+                eq(EventLevel.ERROR),
+                eq("Pipeline 'orders-sync' status ERROR"),
+                eq("PIPELINE_STATUS_CHANGED"),
+                org.mockito.ArgumentMatchers.contains("sink DB"),  // 회복 매칭이 datasource로 역산하도록
+                eq(pid));
+    }
+
+    @Test
     void connectorFailureMessageIsSanitized() {
         // (#596) raw Strimzi 예외 → 사람이 읽는 요약, 커넥터 UUID·스택·엔드포인트 제거
         UUID pid = UUID.randomUUID();
