@@ -528,6 +528,17 @@ export interface KafkaPrincipalCreateRequest {
   username: string
   secretRef?: string | null
 }
+export interface KafkaPrincipalSecretResponse {
+  principalId: string
+  username: string
+  status: KafkaPrincipalStatus
+  namespace: string
+  secretName: string
+  availableKeys: string[]
+  passwordMasked: string
+  retrievedAt: string
+  exposurePolicy: string
+}
 
 
 /* ── Agent Run API(#252) ───────────────────────────────────────────── */
@@ -879,6 +890,8 @@ export const api = {
     request<KafkaPrincipalResponse>('POST', `/api/v1/workspaces/${wsId}/kafka/principals/${id}/revoke`),
   rotateKafkaPrincipal: (wsId: string, id: string) =>
     request<KafkaPrincipalResponse>('POST', `/api/v1/workspaces/${wsId}/kafka/principals/${id}/rotate`),
+  kafkaPrincipalSecret: (wsId: string, id: string) =>
+    request<KafkaPrincipalSecretResponse>('GET', `/api/v1/workspaces/${wsId}/kafka/principals/${id}/secret`),
 }
 
 export interface ConnectionTestInput {
