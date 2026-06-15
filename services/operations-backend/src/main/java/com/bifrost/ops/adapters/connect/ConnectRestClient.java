@@ -2,7 +2,7 @@ package com.bifrost.ops.adapters.connect;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
@@ -13,6 +13,8 @@ import org.springframework.web.client.RestClientResponseException;
 /** Kafka Connect REST API 최소 mutation client. */
 @Component
 public class ConnectRestClient {
+
+    private static final String EMPTY_JSON_BODY = "{}";
 
     private final RestClient restClient;
     private final boolean configured;
@@ -33,12 +35,6 @@ public class ConnectRestClient {
         this.configured = true;
         this.restClient = restClientBuilder
                 .baseUrl(connectRestUrl)
-                .requestInterceptor((request, body, execution) -> {
-                    if (body.length == 0) {
-                        request.getHeaders().remove(HttpHeaders.CONTENT_TYPE);
-                    }
-                    return execution.execute(request, body);
-                })
                 .build();
     }
 
@@ -57,6 +53,9 @@ public class ConnectRestClient {
                         .queryParam("includeTasks", "true")
                         .queryParam("onlyFailed", "false")
                         .build(connectorName))
+                .accept(MediaType.APPLICATION_JSON)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(EMPTY_JSON_BODY)
                 .retrieve()
                 .toBodilessEntity());
     }
@@ -66,6 +65,9 @@ public class ConnectRestClient {
         requireConfigured("pause_connector");
         invoke("pause_connector", () -> restClient.put()
                 .uri("/connectors/{name}/pause", connectorName)
+                .accept(MediaType.APPLICATION_JSON)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(EMPTY_JSON_BODY)
                 .retrieve()
                 .toBodilessEntity());
     }
@@ -75,6 +77,9 @@ public class ConnectRestClient {
         requireConfigured("resume_connector");
         invoke("resume_connector", () -> restClient.put()
                 .uri("/connectors/{name}/resume", connectorName)
+                .accept(MediaType.APPLICATION_JSON)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(EMPTY_JSON_BODY)
                 .retrieve()
                 .toBodilessEntity());
     }
