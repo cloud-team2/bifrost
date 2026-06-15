@@ -1,6 +1,7 @@
 package com.bifrost.ops.adapters.connect;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
@@ -18,19 +19,32 @@ public class ConnectRestClient {
     public ConnectRestClient(@Value("${kafka-connect.rest-url}") String connectRestUrl,
                              @Value("${kafka-connect.connect-timeout-ms}") int connectTimeoutMs,
                              @Value("${kafka-connect.read-timeout-ms}") int readTimeoutMs) {
+        this(connectRestUrl, restClientBuilder(connectTimeoutMs, readTimeoutMs));
+    }
+
+    ConnectRestClient(String connectRestUrl, RestClient.Builder restClientBuilder) {
         if (connectRestUrl == null || connectRestUrl.isBlank()) {
             this.restClient = null;
             this.configured = false;
             return;
         }
         this.configured = true;
+        this.restClient = restClientBuilder
+                .baseUrl(connectRestUrl)
+                .requestInterceptor((request, body, execution) -> {
+                    if (body.length == 0) {
+                        request.getHeaders().remove(HttpHeaders.CONTENT_TYPE);
+                    }
+                    return execution.execute(request, body);
+                })
+                .build();
+    }
+
+    private static RestClient.Builder restClientBuilder(int connectTimeoutMs, int readTimeoutMs) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(connectTimeoutMs);
         factory.setReadTimeout(readTimeoutMs);
-        this.restClient = RestClient.builder()
-                .baseUrl(connectRestUrl)
-                .requestFactory(factory)
-                .build();
+        return RestClient.builder().requestFactory(factory);
     }
 
     /** POST /connectors/{name}/restart?includeTasks=true&onlyFailed=false */
