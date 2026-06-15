@@ -49,16 +49,17 @@ public class TempoClient {
                         .queryParam("q", "{q}")
                         .queryParam("start", startSec)
                         .queryParam("end", endSec)
-                        .queryParam("limit", 1)
+                        // (#708) limit=1은 Tempo가 최신순을 보장하지 않아 매번 같은 trace를 고정 반환했다.
+                        // 배치로 받아 startTimeUnixNano가 가장 큰(최신) 1건을 직접 고른다.
+                        .queryParam("limit", 20)
                         .build(traceql))
                 .retrieve()
                 .body(JsonNode.class);
 
-        JsonNode traces = search == null ? null : search.get("traces");
-        if (traces == null || !traces.isArray() || traces.isEmpty()) {
+        JsonNode head = newestTrace(search);
+        if (head == null) {
             return Optional.empty();
         }
-        JsonNode head = traces.get(0);
         String traceId = head.path("traceID").asText(null);
         if (traceId == null || traceId.isBlank()) {
             return Optional.empty();
@@ -68,6 +69,28 @@ public class TempoClient {
 
         return traceById(traceId)
                 .map(t -> new TempoTrace(t.traceId(), Math.max(durationMs, t.durationMs()), t.error(), t.spans()));
+    }
+
+    /**
+     * /api/search 응답의 traces 중 {@code startTimeUnixNano}가 가장 큰(최신) trace를 고른다(#708).
+     * Tempo 검색은 limit&gt;1이어도 최신순 정렬을 보장하지 않으므로 직접 max를 취해 "가장 최근"을 보장한다.
+     * traces가 없으면 null.
+     */
+    static JsonNode newestTrace(JsonNode search) {
+        JsonNode traces = search == null ? null : search.get("traces");
+        if (traces == null || !traces.isArray() || traces.isEmpty()) {
+            return null;
+        }
+        JsonNode newest = null;
+        long newestStart = Long.MIN_VALUE;
+        for (JsonNode t : traces) {
+            long st = t.path("startTimeUnixNano").asLong(0L);
+            if (newest == null || st > newestStart) {
+                newestStart = st;
+                newest = t;
+            }
+        }
+        return newest;
     }
 
     /**
