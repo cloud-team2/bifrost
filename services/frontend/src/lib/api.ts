@@ -544,6 +544,19 @@ export type AgentStreamingEventType =
   | 'run_completed'
   | 'debug_trace'
 
+export interface ThreadMessage {
+  id: string
+  thread_id: string
+  project_id?: string | null
+  role: 'user' | 'assistant'
+  content: string
+  run_id?: string | null
+  created_at?: string | null
+}
+export interface ThreadMessagesResponse {
+  thread_id: string
+  messages: ThreadMessage[]
+}
 export interface AgentRunCreateInput {
   project_id: string
   mode?: AgentRunMode | null
@@ -800,6 +813,12 @@ export const api = {
     const q = token ? `?access_token=${encodeURIComponent(token)}` : ''
     return `${BASE}/api/v1/agent/runs/${runId}/events${q}`
   },
+  // #712 대화 메모리: thread(인시던트는 incident_id)의 이전 대화 복원
+  listThreadMessages: (threadId: string, limit = 50) =>
+    agentRequest<ThreadMessagesResponse>(
+      'GET',
+      `/api/v1/agent/threads/${encodeURIComponent(threadId)}/messages?limit=${limit}`,
+    ),
   listAgentRunApprovals: (runId: string) =>
     agentRequest<AgentRunApprovalsResponse>('GET', `/api/v1/agent/runs/${runId}/approvals`),
   approvalDecision: (approvalId: string, body: ApprovalDecisionInput) =>
