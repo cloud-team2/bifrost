@@ -126,8 +126,30 @@ public class ConnectorStateMapper {
     }
 
     private String truncate(String s) {
-        // 비밀값/장문 stacktrace가 그대로 흐르지 않도록 길이 제한
-        return s.length() <= LAST_ERROR_MAX ? s : s.substring(0, LAST_ERROR_MAX) + "...";
+        // 비밀값/장문 stacktrace가 그대로 흐르지 않도록 길이 제한.
+        if (s.length() <= LAST_ERROR_MAX) {
+            return s;
+        }
+        // (#692) 단순 head-cut은 root cause('Caused by: ...')를 버린다. 그 결과 사용자 메시지가
+        // 'Exiting WorkerSinkTask' 같은 상단 일반 예외만 남고, DB 연결 실패 dedup 판별
+        // (ConnectorErrorMessages.isDbConnectionFailure)도 실패한다. head(상단 예외)와 가장 깊은
+        // 'Caused by:' 라인(실제 원인)을 함께 보존한다.
+        String rootCause = deepestCauseLine(s);
+        if (rootCause != null && rootCause.length() < LAST_ERROR_MAX) {
+            int headBudget = Math.max(0, LAST_ERROR_MAX - rootCause.length() - 5);
+            return s.substring(0, headBudget) + " ... " + rootCause;
+        }
+        return s.substring(0, LAST_ERROR_MAX) + "...";
+    }
+
+    /** 스택트레이스에서 가장 깊은(=root) 'Caused by:' 한 줄을 추출한다. 없으면 null. */
+    private static String deepestCauseLine(String s) {
+        int idx = s.lastIndexOf("Caused by:");
+        if (idx < 0) {
+            return null;
+        }
+        int end = s.indexOf('\n', idx);
+        return (end < 0 ? s.substring(idx) : s.substring(idx, end)).strip();
     }
 
     private String readConnectorState(KafkaConnector cr) {
