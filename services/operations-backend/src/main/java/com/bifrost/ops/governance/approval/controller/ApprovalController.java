@@ -98,8 +98,8 @@ public class ApprovalController {
 
     /**
      * agent_preapprove — ai-service가 자체 HITL 게이트를 통과한 뒤 Spring MutationGate용
-     * approval을 직접 생성+승인 처리한다. /internal/ops/**는 permitAll이므로 ai-service가
-     * 사용자 JWT 없이 내부에서 호출한다.
+     * approval을 직접 생성+승인 처리한다. ai-service가 사용자 JWT 없이 내부에서 호출하며,
+     * internal.ops.token 설정 시 X-Internal-Token service identity가 필요하다.
      */
     @PostMapping("/preapproved")
     @Transactional

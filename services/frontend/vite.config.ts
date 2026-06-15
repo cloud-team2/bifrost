@@ -35,7 +35,8 @@ export default defineConfig({
         target: ai,
         changeOrigin: true,
       },
-      // internal-ops(#377) — Spring InternalOpsController. 운영 nginx와 동일하게 operations-backend로 보낸다.
+      // internal-ops(#377) — 로컬 개발 편의용 Spring InternalOpsController 프록시.
+      // 운영 nginx는 public ingress에서 /internal/ops/**를 의도적으로 노출하지 않는다.
       '^/internal/ops(?:[/?]|$)': {
         target: backend,
         changeOrigin: true,
