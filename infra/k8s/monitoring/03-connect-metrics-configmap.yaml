@@ -27,6 +27,13 @@ data:
           connector: "$1"
           task: "$2"
         type: GAUGE
+      # ── Task error/retry 누적 지표 (Connector 상세 탭) ────────────────
+      - pattern: "kafka.connect<type=task-error-metrics, connector=([^,]+), task=([^>]+)><>([^:]+)"
+        name: "kafka_connect_task_error_$3"
+        labels:
+          connector: "$1"
+          task: "$2"
+        type: GAUGE
       # ── Source/Sink 태스크 처리율 (Connectors 표 records/s, #213) ──────
       - pattern: "kafka.connect<type=source-task-metrics, connector=([^,]+), task=([^>]+)><>([^:]+)"
         name: "kafka_connect_source_task_$3"

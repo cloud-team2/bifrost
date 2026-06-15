@@ -396,7 +396,14 @@ export interface ConnectorInfo {
   state: string | null
   tasksMax: number
   lastError: string | null
+  lastErrorAt: string | null
   updatedAt: string | null
+  errorRatePct: number | null
+  pollBatchAvg: number | null
+  pollBatchMax: number | null
+  retriesTotal: number | null
+  recordsPerSec: number | null
+  recordsPerSecSeries: MetricPoint[]
 }
 /** 파이프라인 동기화 상태(#107). source/sink 실제 행수. 미존재/실패 시 -1. */
 export interface SyncStatusResponse {
