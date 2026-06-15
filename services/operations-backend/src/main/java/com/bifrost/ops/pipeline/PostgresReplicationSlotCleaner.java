@@ -13,15 +13,20 @@ import org.springframework.stereotype.Component;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.util.Optional;
 import java.util.UUID;
 
 /**
- * 파이프라인 삭제 시 PostgreSQL replication slot을 자동 drop한다(#684).
+ * 파이프라인 삭제 시 PostgreSQL replication slot을 자동 drop한다(#684, #696).
  *
  * <p>Debezium은 KafkaConnector CR이 삭제되어도 connector가 생성한 replication slot을 drop하지 않는다.
  * slot이 누적되면 PostgreSQL의 {@code max_replication_slots} 한도(기본값 10)를 소진하여
  * 이후 파이프라인 생성 시 커넥터 task가 {@code PSQLException: all replication slots are in use}로 실패한다.
+ *
+ * <p>KafkaConnector CR 삭제 직후에는 Debezium 연결이 아직 살아있어 slot이 {@code active=true} 상태다.
+ * {@code active} slot은 drop 불가이므로 {@link com.bifrost.ops.pipeline.kafka.KafkaResourceCleaner}의
+ * sink group 삭제와 동일하게 inactive 전환까지 재시도한다(#696).
  *
  * <p>slot 이름은 {@link #slotName(String, UUID)}로 결정론적으로 계산한다 — {@code PostgresInspector}와 동일한 규칙.
  * <p>best-effort: 실패해도 예외를 던지지 않고 경고만 남긴다.
@@ -30,6 +35,10 @@ import java.util.UUID;
 public class PostgresReplicationSlotCleaner {
 
     private static final Logger log = LoggerFactory.getLogger(PostgresReplicationSlotCleaner.class);
+
+    /** Debezium 연결이 종료되어 slot이 inactive로 전환될 때까지 기다리는 재시도 횟수·간격. */
+    private static final int DROP_ATTEMPTS = 6;
+    private static final long DROP_BACKOFF_MS = 1_200L;
 
     private final DatasourceRepository datasourceRepository;
     private final SecretStore secretStore;
@@ -72,15 +81,33 @@ public class PostgresReplicationSlotCleaner {
         HikariDataSource ds = null;
         try {
             ds = dataSourceFactory.create(entity, cred.password(), false);
-            // slot이 없으면 아무것도 하지 않는다(WHERE 조건).
-            // active slot은 drop 불가 → PSQLException이 발생하면 warn만 남긴다.
-            String sql = "SELECT pg_drop_replication_slot(slot_name) " +
-                         "FROM pg_replication_slots WHERE slot_name = ? AND active = false";
-            try (Connection conn = ds.getConnection();
-                 PreparedStatement ps = conn.prepareStatement(sql)) {
-                ps.setString(1, slotName);
-                ps.execute();
-                log.info("replication slot 삭제 완료: {}", slotName);
+            for (int attempt = 1; attempt <= DROP_ATTEMPTS; attempt++) {
+                try (Connection conn = ds.getConnection()) {
+                    SlotState state = querySlotState(conn, slotName);
+                    if (state == SlotState.GONE) {
+                        log.debug("replication slot 없음(이미 삭제됨): {}", slotName);
+                        return;
+                    }
+                    if (state == SlotState.ACTIVE) {
+                        // Debezium 연결이 아직 살아있음 — inactive 전환까지 대기 후 재시도.
+                        if (attempt < DROP_ATTEMPTS) {
+                            log.debug("replication slot active 상태, {}ms 후 재시도 (attempt {}/{})",
+                                    DROP_BACKOFF_MS, attempt, DROP_ATTEMPTS);
+                            sleep(DROP_BACKOFF_MS);
+                            continue;
+                        }
+                        log.warn("replication slot 삭제 포기(active 지속): slotName={}", slotName);
+                        return;
+                    }
+                    // SlotState.INACTIVE — drop 실행
+                    try (PreparedStatement ps = conn.prepareStatement(
+                            "SELECT pg_drop_replication_slot(?)")) {
+                        ps.setString(1, slotName);
+                        ps.execute();
+                        log.info("replication slot 삭제 완료: {} (attempt {})", slotName, attempt);
+                        return;
+                    }
+                }
             }
         } catch (Exception e) {
             log.warn("replication slot 삭제 실패(무시): slotName={}, cause={}", slotName, e.getMessage());
@@ -88,6 +115,27 @@ public class PostgresReplicationSlotCleaner {
             if (ds != null && !ds.isClosed()) {
                 ds.close();
             }
+        }
+    }
+
+    private static SlotState querySlotState(Connection conn, String slotName) throws java.sql.SQLException {
+        String sql = "SELECT active FROM pg_replication_slots WHERE slot_name = ?";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, slotName);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) return SlotState.GONE;
+                return rs.getBoolean("active") ? SlotState.ACTIVE : SlotState.INACTIVE;
+            }
+        }
+    }
+
+    private enum SlotState { GONE, ACTIVE, INACTIVE }
+
+    private static void sleep(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 
