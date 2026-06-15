@@ -637,7 +637,10 @@ async def _run_workflow_impl(
                         ))
                         continue
                     if no_progress:
-                        answer = _no_incident_answer(retrieval_out)
+                        # (#692) ReAct 루프가 전체 도구결과로 합성한 답이 있으면 그걸 최종답으로 쓴다.
+                        # generic 폴백("장애 신호 확인...")보다 실제 근본원인 서사가 담긴다.
+                        loop_answer = getattr(retrieval_out, "answer", None) if retrieval_out else None
+                        answer = loop_answer or _no_incident_answer(retrieval_out)
                         await _append_state_patch(
                             state_repo,
                             run_id,
