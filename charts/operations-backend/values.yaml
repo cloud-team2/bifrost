@@ -5,7 +5,7 @@ replicaCount: 1
 image:
   repository: harbor.harbor.svc.cluster.local/library/bifrost-operations-backend
   pullPolicy: IfNotPresent
-  tag: "29087f0c"
+  tag: "6940589e"
 
 # Harbor pull 인증 (harbor-push-secret을 bifrost-system에 복제)
 imagePullSecrets:
