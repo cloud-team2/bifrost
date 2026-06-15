@@ -69,7 +69,8 @@ public class KafkaConnectorProbe {
     /**
      * 샘플 Debezium PostgreSQL Source KafkaConnector CR을 apply(create-or-update, 멱등)한다.
      *
-     * <p>설계 토픽 네이밍 규칙을 따른다: {@code topic.prefix = cdc.table.{projectKey}.{dbName}}.
+     * <p>POC용 단순 토픽 prefix를 사용한다. 실제 파이프라인 토픽 정본은
+     * {@link com.bifrost.ops.provisioning.naming.ConnectorNaming#topicName}이다.
      * 자격증명(password)은 PoC라 주입하지 않는다 — real 구현(#12)에서 SecretStore.resolve 결과를 사용한다.
      *
      * @param name       CR 이름(예: {@code <pipelineId>-source})

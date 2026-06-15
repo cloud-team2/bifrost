@@ -203,7 +203,7 @@ kubectl -n platform-kafka logs platform-connect-connect-0 -f
 
 - **파이프라인 생성엔 kind 필수**: provisioner가 Strimzi 단일 경로라, K8s 없이 파이프라인을 만들면 실패한다(트랙 A는 그 외 흐름).
 - **secret-store=mock 은 재시작 시 휘발**: 백엔드를 재기동하면 등록한 DB 자격증명이 사라진다(메타DB의 `secret_ref`만 남음) → 재기동 시 **DB 재등록 후** 파이프라인 생성.
-- **토픽 재사용 주의**: 토픽명은 `cdc.table.{projectKey}.{db}.{schema}.{table}`로 파이프라인 id와 무관하다. 같은 source·테이블로 파이프라인을 지웠다 다시 만들면 이전 토픽이 남아있을 수 있다 — 깨끗이 보려면 `kubectl -n platform-kafka exec platform-kafka-kafka-0 -- bin/kafka-topics.sh --bootstrap-server localhost:9092 --delete --topic <토픽명>`.
+- **토픽 재사용 주의**: 토픽명은 `{root}.{projectKey}.{dbSlug}.{schema}.{table}`(`root=cdc.table|eda.table`, `dbSlug={dbName}-{datasourceId 앞 8 hex}`)로 파이프라인 id와 무관하다. 같은 source·테이블로 파이프라인을 지웠다 다시 만들면 이전 토픽이 남아있을 수 있다 — 깨끗이 보려면 `kubectl -n platform-kafka exec platform-kafka-kafka-0 -- bin/kafka-topics.sh --bootstrap-server localhost:9092 --delete --topic <토픽명>`.
 - 백엔드를 Docker로 띄울 경우 user DB 호스트는 LAN IP 또는 `host.docker.internal`을 쓴다(본 가이드는 호스트에서 `gradlew bootRun`).
 
 ## 정리

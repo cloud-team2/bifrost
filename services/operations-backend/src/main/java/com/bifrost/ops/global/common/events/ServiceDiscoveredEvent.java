@@ -5,7 +5,8 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * orchestrator → Kafka 토픽 `platform.internal.service-discovered`
+ * orchestrator → runtime Kafka 토픽 `platform.internal.service-discovered`
+ * (KafkaTopic CR 객체명과 별개)
  * 새 Consumer Group이 발견되면 발행.
  */
 public record ServiceDiscoveredEvent(

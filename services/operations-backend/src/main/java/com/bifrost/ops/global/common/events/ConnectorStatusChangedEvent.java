@@ -7,7 +7,8 @@ import java.util.UUID;
 import com.bifrost.ops.global.common.pipeline.PipelineStatus;
 
 /**
- * orchestrator → Kafka 토픽 `platform.internal.connector-status`
+ * orchestrator → runtime Kafka 토픽 `platform.internal.connector-status`
+ * (KafkaTopic CR 객체명과 별개)
  * core가 구독해서 MetaDB 업데이트 + WebSocket push.
  */
 public record ConnectorStatusChangedEvent(

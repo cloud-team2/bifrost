@@ -15,7 +15,8 @@ import java.util.UUID;
  * @param success    전체 성공 여부
  * @param stage      성공 시 {@code COMPLETED}, 실패 시 실패 단계
  * @param connectors 생성(apply)된 connector 참조 목록(성공한 것까지)
- * @param topicPrefix Debezium topic.prefix(생성될 토픽 추적용)
+ * @param topicPrefix 토픽 base prefix(프로젝트·datasource 범위 추적용). Source Debezium {@code topic.prefix}는
+ *                    최종 토픽명({@code {base}.{schema}.{table}})을 사용한다(#365).
  * @param errorCode  실패 시 에러 코드(없으면 null)
  * @param message    사람이 읽는 요약(성공/실패 공통, 비밀값 미포함)
  */
