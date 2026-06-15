@@ -98,6 +98,92 @@ class PipelineStatusServiceImplTest {
                 List.of(connector(ConnectorKind.SOURCE, "UNASSIGNED")))).isEqualTo(PipelineLifecycle.CREATING);
     }
 
+    @Test
+    void runningConnectorWithoutTasksDoesNotActivatePipeline() {
+        UUID pid = UUID.randomUUID();
+        UUID tenant = UUID.randomUUID();
+        PipelineEntity p = new PipelineEntity();
+        p.setId(pid);
+        p.setTenantId(tenant);
+        p.setName("orders-eda");
+        p.setPattern(PipelinePattern.FAN_OUT);
+        p.setStatus(PipelineLifecycle.CREATING);
+        p.setSourceConnectorName(pid + "-source");
+
+        ConnectorEntity source = connector(ConnectorKind.SOURCE, "RUNNING");
+        source.setPipelineId(pid);
+        source.setCrName(pid + "-source");
+        when(connectorRepository.findByCrName(pid + "-source")).thenReturn(Optional.of(source));
+        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(pid)).thenReturn(List.of(source));
+
+        service().applyConnectorStatus(new ConnectorStatusUpdate(
+                pid + "-source", ConnectorRuntimeState.RUNNING, PipelineLifecycle.ACTIVE, 0, 0, null));
+
+        assertThat(p.getStatus()).isEqualTo(PipelineLifecycle.CREATING);
+        verify(pipelineRepository, never()).save(any());
+        verify(eventService, never()).record(any(), any(), any(), any(), any());
+        verify(ssePublisher).connectorStateChanged(tenant, pid + "-source", "UNKNOWN");
+    }
+
+    @Test
+    void runningConnectorBelowTasksMaxDoesNotActivatePipeline() {
+        UUID pid = UUID.randomUUID();
+        UUID tenant = UUID.randomUUID();
+        PipelineEntity p = new PipelineEntity();
+        p.setId(pid);
+        p.setTenantId(tenant);
+        p.setName("orders-sync");
+        p.setPattern(PipelinePattern.DIRECT);
+        p.setStatus(PipelineLifecycle.CREATING);
+        p.setSourceConnectorName(pid + "-source");
+        p.setSinkConnectorName(pid + "-sink");
+
+        ConnectorEntity source = connector(ConnectorKind.SOURCE, "RUNNING");
+        source.setPipelineId(pid);
+        source.setCrName(pid + "-source");
+        ConnectorEntity sink = connector(ConnectorKind.SINK, "RUNNING");
+        sink.setPipelineId(pid);
+        sink.setCrName(pid + "-sink");
+        when(connectorRepository.findByCrName(pid + "-sink")).thenReturn(Optional.of(sink));
+        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(pid)).thenReturn(List.of(source, sink));
+
+        service().applyConnectorStatus(new ConnectorStatusUpdate(
+                pid + "-sink", ConnectorRuntimeState.RUNNING, PipelineLifecycle.ACTIVE, 1, 0, null));
+
+        assertThat(p.getStatus()).isEqualTo(PipelineLifecycle.CREATING);
+        verify(pipelineRepository, never()).save(any());
+        verify(eventService, never()).record(any(), any(), any(), any(), any());
+        verify(ssePublisher).connectorStateChanged(tenant, pid + "-sink", "UNKNOWN");
+    }
+
+    @Test
+    void laterLagRecomputeDoesNotActivatePersistedTaskDeficit() {
+        UUID pid = UUID.randomUUID();
+        PipelineEntity p = new PipelineEntity();
+        p.setId(pid);
+        p.setTenantId(UUID.randomUUID());
+        p.setName("orders-sync");
+        p.setPattern(PipelinePattern.DIRECT);
+        p.setStatus(PipelineLifecycle.CREATING);
+
+        ConnectorEntity source = connector(ConnectorKind.SOURCE, "RUNNING");
+        source.setPipelineId(pid);
+        source.setCrName(pid + "-source");
+        ConnectorEntity sink = connector(ConnectorKind.SINK, "UNKNOWN");
+        sink.setPipelineId(pid);
+        sink.setCrName(pid + "-sink");
+        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(pid)).thenReturn(List.of(source, sink));
+
+        service().applyConsumerLag(pid, 100L);
+
+        assertThat(p.getStatus()).isEqualTo(PipelineLifecycle.CREATING);
+        verify(pipelineRepository, never()).save(any());
+        verify(eventService, never()).record(any(), any(), any(), any(), any());
+    }
+
     // ---------- applyConnectorStatus 단일 writer ----------
 
     @Test
@@ -445,6 +531,88 @@ class PipelineStatusServiceImplTest {
     }
 
     @Test
+    void errorRateWarningRecordsThresholdInputWithoutChangingPipelineStatus() {
+        UUID pid = UUID.randomUUID();
+        UUID tenant = UUID.randomUUID();
+        PipelineEntity p = new PipelineEntity();
+        p.setId(pid);
+        p.setTenantId(tenant);
+        p.setName("orders-eda");
+        p.setPattern(PipelinePattern.FAN_OUT);
+        p.setStatus(PipelineLifecycle.ACTIVE);
+
+        ConnectorEntity src = connector(ConnectorKind.SOURCE, "RUNNING");
+        src.setPipelineId(pid);
+        src.setCrName(pid + "-source");
+        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(pid)).thenReturn(List.of(src));
+
+        service().applyErrorRate(pid, 0.75);
+
+        assertThat(p.getStatus()).isEqualTo(PipelineLifecycle.ACTIVE);
+        verify(incidentService).onThresholdViolation(eq(tenant), eq(IncidentGroupingKeys.pipelineErrorRate(pid)),
+                eq("PIPELINE"), eq(pid), eq(EventLevel.WARN),
+                org.mockito.ArgumentMatchers.contains("error rate 0.75%"),
+                eq("PIPELINE_ERROR_RATE_WARNING"),
+                org.mockito.ArgumentMatchers.contains("error rate 0.75%"), eq(pid));
+        verify(pipelineRepository, never()).save(any());
+    }
+
+    @Test
+    void errorRateCriticalTransitionsActivePipelineToError() {
+        UUID pid = UUID.randomUUID();
+        UUID tenant = UUID.randomUUID();
+        PipelineEntity p = new PipelineEntity();
+        p.setId(pid);
+        p.setTenantId(tenant);
+        p.setName("orders-eda");
+        p.setPattern(PipelinePattern.FAN_OUT);
+        p.setStatus(PipelineLifecycle.ACTIVE);
+
+        ConnectorEntity src = connector(ConnectorKind.SOURCE, "RUNNING");
+        src.setPipelineId(pid);
+        src.setCrName(pid + "-source");
+        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(pid)).thenReturn(List.of(src));
+
+        service().applyErrorRate(pid, 2.5);
+
+        assertThat(p.getStatus()).isEqualTo(PipelineLifecycle.ERROR);
+        assertThat(p.getStatusMessage()).contains("error rate 2.50% > 2.00%");
+        verify(incidentService).onThresholdViolation(eq(tenant), eq(IncidentGroupingKeys.pipelineErrorRate(pid)),
+                eq("PIPELINE"), eq(pid), eq(EventLevel.ERROR),
+                org.mockito.ArgumentMatchers.contains("error rate 2.50%"),
+                eq("PIPELINE_STATUS_CHANGED"),
+                org.mockito.ArgumentMatchers.contains("ACTIVE → ERROR"), eq(pid));
+    }
+
+    @Test
+    void clearErrorRateRemovesStaleCriticalInput() {
+        UUID pid = UUID.randomUUID();
+        UUID tenant = UUID.randomUUID();
+        PipelineEntity p = new PipelineEntity();
+        p.setId(pid);
+        p.setTenantId(tenant);
+        p.setName("orders-eda");
+        p.setPattern(PipelinePattern.FAN_OUT);
+        p.setStatus(PipelineLifecycle.ACTIVE);
+
+        ConnectorEntity src = connector(ConnectorKind.SOURCE, "RUNNING");
+        src.setPipelineId(pid);
+        src.setCrName(pid + "-source");
+        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(pid)).thenReturn(List.of(src));
+
+        PipelineStatusServiceImpl service = service();
+        service.applyErrorRate(pid, 2.5);
+        assertThat(p.getStatus()).isEqualTo(PipelineLifecycle.ERROR);
+
+        service.clearErrorRate(pid);
+
+        assertThat(p.getStatus()).isEqualTo(PipelineLifecycle.ACTIVE);
+    }
+
+    @Test
     void consumerLagRecoveryTransitionsLagToActive() {
         UUID pid = UUID.randomUUID();
         UUID tenant = UUID.randomUUID();
@@ -557,7 +725,7 @@ class PipelineStatusServiceImplTest {
                 eq("PIPELINE_STATUS_CHANGED"), any(), eq(pid))).thenReturn(true);
 
         service().applyConnectorStatus(new ConnectorStatusUpdate(
-                sinkName, ConnectorRuntimeState.RUNNING, PipelineLifecycle.ACTIVE, 1, 0, null));
+                sinkName, ConnectorRuntimeState.RUNNING, PipelineLifecycle.ACTIVE, 3, 0, null));
 
         assertThat(p.getStatus()).isEqualTo(PipelineLifecycle.ACTIVE);
         verify(incidentService).onRecovery(eq(tenant), eq(IncidentGroupingKeys.connectorWorker(sinkName)),

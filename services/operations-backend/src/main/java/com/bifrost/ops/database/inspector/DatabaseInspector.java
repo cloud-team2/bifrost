@@ -28,6 +28,9 @@ public interface DatabaseInspector extends AutoCloseable {
     /** 모든 사용자 스키마의 테이블·컬럼 정보. */
     List<TableInfo> listTables();
 
+    /** 엔진 통계 뷰와 실제 probe query 기반 DB 지표. */
+    MetricsSnapshot collectMetrics();
+
     /** CDC Source 준비도 점검 (wal_level, binlog 등). */
     CdcReadinessResponse checkSourceReadiness();
 
@@ -46,10 +49,18 @@ public interface DatabaseInspector extends AutoCloseable {
 
     record ConnectionTestResult(boolean success, String message, Duration latency) {}
 
+    record MetricsSnapshot(
+            double tps,
+            double queryResponseMs,
+            Double queryResponseP95Ms,
+            int activeConnections
+    ) {}
+
     record TableInfo(
             String schema,
             String name,
-            long approximateRowCount,
+            Long approximateRowCount,
+            Long totalSizeBytes,
             boolean hasPrimaryKey,
             List<ColumnInfo> columns,
             List<String> primaryKeyColumns

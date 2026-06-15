@@ -18,7 +18,7 @@
 
 격리 메커니즘:
 - 공유 Kafka 클러스터 `platform-kafka` (KRaft), 네임스페이스 `platform-kafka`
-- Topic prefix 강제: `cdc.table.{projectKey}.{dbName}.{schema}.{table}` (Debezium `topic.prefix = cdc.table.{projectKey}.{dbName}`)
+- Topic prefix 강제: `{root}.{projectKey}.{dbSlug}.{schema}.{table}` (`root=cdc.table|eda.table`, `dbSlug={dbName}-{datasourceId 앞 8 hex}`; Source Debezium `topic.prefix`는 최종 토픽명을 사용하고 route SMT로 중복 suffix를 제거)
 - 워크스페이스 단위 KafkaUser `proj-{projectKey}-user`: ACL은 `cdc.table.{projectKey}.*` prefix에 대해서만 read/write
 - Strimzi가 KafkaUser의 SCRAM 자격증명 Secret을 자동 생성 (워크스페이스의 모든 Connector가 참조)
 - source/sink DB 자격증명은 별개로 `secret_ref`(K8s Secret/Secrets Manager)로 보관 — 메타DB에 평문·암호문 저장 금지

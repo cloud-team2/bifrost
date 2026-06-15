@@ -40,6 +40,15 @@ class ConnectorStateMapperTest {
     }
 
     @Test
+    void runningWithoutTasksStaysCreating() {
+        ConnectorStatusUpdate u = mapper.map(connector("RUNNING", List.of()));
+        assertThat(u.connectorState()).isEqualTo(ConnectorRuntimeState.UNKNOWN);
+        assertThat(u.pipelineStatus()).isEqualTo(PipelineLifecycle.CREATING);
+        assertThat(u.totalTasks()).isZero();
+        assertThat(u.failedTasks()).isZero();
+    }
+
+    @Test
     void runningWithFailedTaskMapsToPartiallyFailedLag() {
         ConnectorStatusUpdate u = mapper.map(connector("RUNNING", List.of(
                 Map.of("id", 0, "state", "RUNNING"),

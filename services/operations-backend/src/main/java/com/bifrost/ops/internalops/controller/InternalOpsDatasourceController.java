@@ -26,7 +26,7 @@ import java.util.UUID;
  * Agent read tool — datasource(DB) 목록과 헬스(#633). project_id = workspace 로 스코프.
  *
  * <p>'데이터베이스 현황' 질의에 답할 도구가 없어 에이전트가 파이프라인/커넥터로 대체하던 공백을 메운다.
- * JWT 없이 접근(/internal/ops/** permitAll).
+ * 사용자 JWT 대상은 아니며, internal.ops.token 설정 시 X-Internal-Token service identity가 필요하다.
  */
 @RestController
 @RequestMapping("/internal/ops/projects/{projectId}/datasources")

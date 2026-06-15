@@ -122,7 +122,7 @@ PGPASSWORD=<password> psql -h <src_host> -U <user> -d shop \
 kubectl -n platform-kafka exec platform-connect-connect-0 -- \
   bin/kafka-console-consumer.sh \
   --bootstrap-server platform-kafka-kafka-bootstrap:9092 \
-  --topic cdc.table.smoke.shop.public.orders --from-beginning --max-messages 1
+  --topic eda.table.smoke.shop-11111111.public.orders --from-beginning --max-messages 1
 
 # CDC: sink MariaDB에서 upsert 반영 확인
 mysql -h <sink_host> -u <user> -p<password> warehouse \

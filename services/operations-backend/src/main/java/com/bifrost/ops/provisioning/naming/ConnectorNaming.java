@@ -14,10 +14,11 @@ import java.util.UUID;
  *
  * <h2>규칙 요약 (설계 §2.1, §3.2, §4.1)</h2>
  * <ul>
- *   <li><b>토픽 prefix</b>: {@code cdc.table.{projectKey}.{dbName}}
- *       — Debezium {@code topic.prefix}. Debezium이 {@code .{schema}.{table}}을 자동 부여.</li>
- *   <li><b>토픽 이름(table 중심)</b>: {@code cdc.table.{projectKey}.{dbName}.{schema}.{table}}
- *       — Sink connector {@code topics} 지정·조회에 사용.</li>
+ *   <li><b>토픽 base prefix</b>: {@code {root}.{projectKey}.{dbSlug}}
+ *       — {@code dbSlug = dbName-datasourceIdPrefix}. project 범위 조회·ACL prefix의 기준.</li>
+ *   <li><b>토픽 이름(table 중심)</b>: {@code {root}.{projectKey}.{dbSlug}.{schema}.{table}}
+ *       — Source의 Debezium {@code topic.prefix}와 Sink connector {@code topics} 지정·조회에 사용.
+ *       Source mapper는 Debezium이 덧붙이는 {@code .{schema}.{table}} suffix를 route SMT로 제거한다(#365).</li>
  *   <li><b>토픽 ACL prefix</b>: {@code cdc.table.{projectKey}.}
  *       — KafkaUser ACL이 이 prefix로 프로젝트 토픽 전체를 격리.</li>
  *   <li><b>KafkaUser</b>: {@code proj-{projectKey}-user} — 워크스페이스 단위 SCRAM principal.</li>
@@ -47,7 +48,8 @@ public final class ConnectorNaming {
     }
 
     /**
-     * Debezium {@code topic.prefix}: {@code {root}.{projectKey}.{dbSlug}} ({@code root}는 패턴별, #447).
+     * 토픽 base prefix: {@code {root}.{projectKey}.{dbSlug}} ({@code root}는 패턴별, #447).
+     * Source connector의 Debezium {@code topic.prefix}는 최종 토픽명인 {@link #topicName}을 사용한다(#365).
      *
      * <p>{@code dbSlug = {dbName}-{datasourceId 앞 8 hex}}. 표시 이름({@code dbName})은
      * datasource 등록 시 사용자가 지은 이름이라 서로 다른 물리 DB라도 같을 수 있어, 같은 프로젝트·

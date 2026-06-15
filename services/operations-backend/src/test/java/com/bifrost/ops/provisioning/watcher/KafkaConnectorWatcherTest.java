@@ -46,6 +46,8 @@ class KafkaConnectorWatcherTest {
             @Override public int failTimedOutCreating(java.time.Duration t) { return 0; }
             @Override public void reevaluateForDatasource(java.util.UUID id) { }
             @Override public void applyConsumerLag(java.util.UUID pipelineId, long lag) { }
+            @Override public void applyErrorRate(java.util.UUID pipelineId, double errorRatePct) { }
+            @Override public void clearErrorRate(java.util.UUID pipelineId) { }
         };
     }
 

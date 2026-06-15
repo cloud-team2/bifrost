@@ -139,7 +139,7 @@ class DatabaseControllerTest {
     void schemaDelegates() {
         UUID dbId = UUID.randomUUID();
         DatabaseSchemaResponse body = new DatabaseSchemaResponse(List.of(
-                new DatabaseSchemaResponse.TableSchema("public", "orders", List.of(
+                new DatabaseSchemaResponse.TableSchema("public", "orders", 12L, 8192L, List.of(
                         new DatabaseSchemaResponse.ColumnSchema("id", "int8", false, true, true)))));
         when(schemaService.getSchema(wsId, dbId)).thenReturn(body);
 

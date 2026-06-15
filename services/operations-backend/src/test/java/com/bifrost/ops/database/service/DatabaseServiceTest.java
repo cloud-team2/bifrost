@@ -7,6 +7,8 @@ import com.bifrost.ops.database.dto.DatabaseMetricsResponse;
 import com.bifrost.ops.database.dto.DatabasePipelineSummary;
 import com.bifrost.ops.database.dto.DatabaseRegisterRequest;
 import com.bifrost.ops.database.dto.DatabaseResponse;
+import com.bifrost.ops.database.inspector.DatabaseInspector;
+import com.bifrost.ops.database.inspector.DatabaseInspectorFactory;
 import com.bifrost.ops.database.persistence.entity.DatasourceEntity;
 import com.bifrost.ops.database.persistence.repository.DatasourceRepository;
 import com.bifrost.ops.database.persistence.repository.PipelineSummaryRow;
@@ -41,7 +43,8 @@ class DatabaseServiceTest {
     private final DatasourceRepository repo = mock(DatasourceRepository.class);
     private final SecretStore secretStore = mock(SecretStore.class);
     private final DatabaseConnectionTester tester = mock(DatabaseConnectionTester.class);
-    private final DatabaseService service = new DatabaseService(repo, secretStore, tester);
+    private final DatabaseInspectorFactory inspectorFactory = mock(DatabaseInspectorFactory.class);
+    private final DatabaseService service = new DatabaseService(repo, secretStore, tester, inspectorFactory);
 
     private final UUID ws = UUID.randomUUID();
 
@@ -145,11 +148,24 @@ class DatabaseServiceTest {
     }
 
     @Test
-    void metricsReturnsStubAndChecksExistence() {
+    void metricsResolvesSecretAndDelegatesToInspector() throws Exception {
         DatasourceEntity e = entity("orders", DbType.POSTGRESQL);
         when(repo.findByIdAndTenantId(e.getId(), ws)).thenReturn(Optional.of(e));
+        when(secretStore.resolve("ref")).thenReturn(new DbCredential("user", "pw"));
+        DatabaseInspector inspector = mock(DatabaseInspector.class);
+        when(inspectorFactory.create(e, "pw")).thenReturn(inspector);
+        when(inspector.collectMetrics()).thenReturn(
+                new DatabaseInspector.MetricsSnapshot(4.5, 2.0, 6.0, 3));
+
         DatabaseMetricsResponse m = service.getMetrics(ws, e.getId());
-        assertThat(m.stub()).isTrue();
+        assertThat(m.stub()).isFalse();
+        assertThat(m.tps()).isEqualTo(4.5);
+        assertThat(m.queryResponseMs()).isEqualTo(2.0);
+        assertThat(m.queryResponseP95Ms()).isEqualTo(6.0);
+        assertThat(m.activeConnections()).isEqualTo(3);
+        verify(secretStore).resolve("ref");
+        verify(inspector).collectMetrics();
+        verify(inspector).close();
 
         UUID missing = UUID.randomUUID();
         when(repo.findByIdAndTenantId(missing, ws)).thenReturn(Optional.empty());

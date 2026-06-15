@@ -40,7 +40,7 @@ class DatabaseSchemaServiceTest {
         when(inspectorFactory.create(any(), any())).thenReturn(inspector);
 
         DatabaseInspector.TableInfo tableInfo = new DatabaseInspector.TableInfo(
-                "public", "orders", 0L, true,
+                "public", "orders", 128L, 4096L, true,
                 List.of(new DatabaseInspector.ColumnInfo("id", "int4", false, true, true)),
                 List.of("id"));
         when(inspector.listTables()).thenReturn(List.of(tableInfo));
@@ -49,6 +49,8 @@ class DatabaseSchemaServiceTest {
 
         assertThat(out.tables()).hasSize(1);
         assertThat(out.tables().get(0).name()).isEqualTo("orders");
+        assertThat(out.tables().get(0).approximateRowCount()).isEqualTo(128L);
+        assertThat(out.tables().get(0).totalSizeBytes()).isEqualTo(4096L);
         assertThat(out.tables().get(0).columns()).hasSize(1);
         assertThat(out.tables().get(0).columns().get(0).primaryKey()).isTrue();
 

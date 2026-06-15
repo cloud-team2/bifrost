@@ -53,6 +53,7 @@ from app.streaming.event_bus import EventBus
 from app.supervisor.graph import get_supervisor
 from app.supervisor.transitions import stages_for_mode
 from app.tools.registry import ToolClientRegistry
+from app.workflow.action_tools import ACTION_EXECUTION_TOOLS, is_executable_runtime_action_payload
 from app.workflow.guards import RunBudgetExceeded
 from app.workflow.stages.approval_gate import run_approval_gate
 from app.workflow.stages.change_gate import run_change_gate
@@ -62,12 +63,7 @@ from app.workflow.stages.policy_guard import run_policy_guard
 
 logger = logging.getLogger(__name__)
 _PUBLIC_FAILURE_MESSAGE = "요청 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
-_ACTION_EXECUTION_TOOLS = {
-    "pause_connector",
-    "restart_connector",
-    "restart_consumer_group",
-    "resume_connector",
-}
+_ACTION_EXECUTION_TOOLS = ACTION_EXECUTION_TOOLS
 
 
 def _evt(run_id: str, type_: StreamingEventType, agent: str | None, message: str, payload: dict | None = None) -> StreamingEvent:
@@ -1310,21 +1306,15 @@ async def _restore_action_state_from_run(
 
     remediation_out: RemediationOutput | None = None
     if candidates_raw:
-        try:
-            remediation_out = RemediationOutput(
-                action_candidates=[ActionCandidateOutput(**c) for c in candidates_raw]
-            )
-        except Exception as exc:
-            logger.warning("state restore: candidate rebuild failed run=%s error=%s", run_id, exc)
+        candidates = _restore_executable_candidates(candidates_raw)
+        if candidates:
+            remediation_out = RemediationOutput(action_candidates=candidates)
 
     policy_out: PolicyGuardOutput | None = None
     if policy_raw:
-        try:
-            policy_out = PolicyGuardOutput(
-                policy_decisions=[PolicyDecisionOutput(**d) for d in policy_raw]
-            )
-        except Exception as exc:
-            logger.warning("state restore: policy rebuild failed run=%s error=%s", run_id, exc)
+        decisions = _restore_executable_policy_decisions(policy_raw)
+        if decisions:
+            policy_out = PolicyGuardOutput(policy_decisions=decisions)
 
     return remediation_out, policy_out
 
@@ -1399,6 +1389,30 @@ def _find_tool_name(action_id: str, remediation_out) -> str | None:
         if c.action_id == action_id:
             return c.tool_name
     return None
+
+
+def _restore_executable_candidates(raw: list) -> list[ActionCandidateOutput]:
+    candidates: list[ActionCandidateOutput] = []
+    for item in raw:
+        if not isinstance(item, dict) or not is_executable_runtime_action_payload(item):
+            continue
+        try:
+            candidates.append(ActionCandidateOutput(**item))
+        except Exception as exc:
+            logger.warning("state restore: candidate skipped action=%s error=%s", item.get("action_id"), exc)
+    return candidates
+
+
+def _restore_executable_policy_decisions(raw: list) -> list[PolicyDecisionOutput]:
+    decisions: list[PolicyDecisionOutput] = []
+    for item in raw:
+        if not isinstance(item, dict) or not is_executable_runtime_action_payload(item):
+            continue
+        try:
+            decisions.append(PolicyDecisionOutput(**item))
+        except Exception as exc:
+            logger.warning("state restore: policy decision skipped action=%s error=%s", item.get("action_id"), exc)
+    return decisions
 
 
 def _dedupe_action_ids(action_ids: list[str]) -> list[str]:

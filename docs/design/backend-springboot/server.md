@@ -33,7 +33,6 @@ Spring Boot Operations Backend는 Bifrost의 **플랫폼 본체이자 실제 운
 
 설계상 보강 대상이지만 현재 코드 계약으로 쓰면 안 되는 항목:
 
-- `/internal/ops/**` FastAPI service identity 인증. 현재 `SecurityConfig`는 `/internal/ops/**`를 permitAll로 둔다.
 - change ticket execution window, rollback plan, impact analysis, operation scope 검증.
 - mutation before/after evidence writer와 audit event append-only 기록.
 - Kubernetes/Prometheus/Schema Registry mutation 또는 KafkaRebalance approve/refresh endpoint.
@@ -57,7 +56,7 @@ Spring Boot는 FastAPI Agent의 판단을 신뢰하지 않는다. FastAPI가 이
 
 | 항목 | 설명 |
 | --- | --- |
-| service identity | 설계 목표. 현재 `/internal/ops/**` path는 permitAll이며 별도 service account gate가 없다 |
+| service identity | `internal.ops.token` 설정 시 `X-Internal-Token` 일치를 요구한다. 토큰이 비어 있으면 로컬/기존 배포 호환을 위해 게이트가 비활성화된다 |
 | user/project scope | 요청 사용자가 project 권한을 갖는가 |
 | resource ownership | resource가 해당 project 소유 또는 허용 범위인가 |
 | operation allowlist | 현재는 controller endpoint 자체가 allowlist. runtime catalog는 read 8개만 노출 |
@@ -310,7 +309,7 @@ Mutation timeout이 발생해도 Spring은 자동 재시도하지 않는다. Kaf
 ### 12. 보안 원칙
 
 1. internal API는 외부 공개하지 않는다.
-2. `/internal/ops/**` service account 인증은 보강 대상이다. 현재 path security는 permitAll이므로 네트워크 경계와 controller gate에 의존한다.
+2. `/internal/ops/**`는 public frontend ingress에서 프록시하지 않고, FastAPI가 내부 서비스 경로로 호출한다. `internal.ops.token`이 설정된 환경에서는 `X-Internal-Token` service identity header가 필수다.
 3. 사용자 권한은 FastAPI 전달값을 믿지 않고 backend에서 재확인한다.
 4. Secret 원문을 반환하지 않는다.
 5. Kubernetes RBAC은 namespace/resource 단위 최소 권한으로 둔다.
@@ -326,7 +325,7 @@ Mutation timeout이 발생해도 Spring은 자동 재시도하지 않는다. Kaf
 - idempotency replay가 중복 실행을 만들지 않아야 한다.
 - before/after evidence reference 생성은 구현 보강 대상이다. 현재 regression 기준에서는 envelope field가 비어 있음을 확인한다.
 - forbidden operation은 endpoint가 없거나 policy deny되어야 한다.
-- FastAPI service identity가 없으면 실패해야 한다는 항목은 보안 목표다. 현재 코드 기준 regression으로는 적용되지 않는다.
+- `internal.ops.token`이 설정된 환경에서는 FastAPI service identity header가 없거나 다르면 실패해야 한다. 토큰 미설정 로컬/기존 환경은 호환을 위해 허용된다.
 
 ### 14. 결론
 

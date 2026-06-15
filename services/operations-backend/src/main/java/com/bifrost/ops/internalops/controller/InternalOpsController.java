@@ -19,7 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
  * FastAPI agent용 /internal/ops 공통 표면.
  *
  * <p>모든 응답은 OpsEnvelope로 감싸고, X-Agent-Request-Id 헤더를 request_id로 반영한다.
- * Security 제외(JWT 없음) — SecurityConfig에서 /internal/ops/** permitAll 처리.
+ * 사용자 JWT 대상은 아니며, internal.ops.token 설정 시 X-Internal-Token service identity로 보호한다.
  */
 @RestController
 @RequestMapping("/internal/ops")

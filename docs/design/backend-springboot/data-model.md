@@ -116,12 +116,12 @@ erDiagram
 | --- | --- | --- |
 | `id` | uuid PK | = `workspace_id`(프론트). FastAPI agentdb `project_id`도 이 UUID를 저장할 수 있다. Spring `/internal/ops/projects/{projectId}` path는 현재 대부분 이 id가 아니라 `namespace` slug를 조회한다 |
 | `name` | text | 표시 이름 |
-| `namespace` | text unique | DB/Entity 컬럼명. API와 문서의 표시명은 `projectKey`이며, 토픽 `cdc.table.{projectKey}...`·ACL·KafkaUser 이름의 기준 |
+| `namespace` | text unique | DB/Entity 컬럼명. API와 문서의 표시명은 `projectKey`이며, 토픽 `{root}.{projectKey}...`·ACL·KafkaUser 이름의 기준 |
 | `timezone` | text null | Settings 일반 영역의 표시 timezone |
 | `owner_user_id` | uuid FK | 최초 생성자. `project_member` OWNER와 함께 관리자 판정에 사용 |
 | `created_at` | timestamptz | |
 
-> `id`(uuid)는 scope·ownership 검증용 내부 키이고 `namespace` 컬럼은 API의 `projectKey` field로 노출되는 DNS-safe 슬러그다. 실제 매핑은 `WorkspaceResponse.from()`이 `w.getNamespace()`를 `projectKey`로 넣는다(`services/operations-backend/src/main/java/com/bifrost/ops/workspace/dto/WorkspaceResponse.java:14-31`). 토픽 이름 정본은 `ConnectorNaming.topicName()`의 `cdc.table.{projectKey}.{dbSlug}.{schema}.{table}` 규칙이다(`dbSlug={dbName}-{datasourceId 앞 8 hex}`).
+> `id`(uuid)는 scope·ownership 검증용 내부 키이고 `namespace` 컬럼은 API의 `projectKey` field로 노출되는 DNS-safe 슬러그다. 실제 매핑은 `WorkspaceResponse.from()`이 `w.getNamespace()`를 `projectKey`로 넣는다(`services/operations-backend/src/main/java/com/bifrost/ops/workspace/dto/WorkspaceResponse.java:14-31`). 토픽 이름 정본은 `ConnectorNaming.topicName()`의 `{root}.{projectKey}.{dbSlug}.{schema}.{table}` 규칙이다(`root=cdc.table|eda.table`, `dbSlug={dbName}-{datasourceId 앞 8 hex}`).
 
 #### 3.1.1 `project_member` (워크스페이스 멤버십, FR-002)
 
@@ -158,7 +158,7 @@ PK는 (`workspace_id`, `user_id`). 워크스페이스 생성 시 생성자를 `O
 | Kafka principals | `POST /api/v1/workspaces/{wsId}/kafka/principals`, `POST .../{id}/deactivate|revoke|rotate` | 허용 | 허용 | 403 | 403/401 | `services/operations-backend/src/main/java/com/bifrost/ops/workspace/kafka/KafkaPrincipalService.java:49-99`, `services/operations-backend/src/main/java/com/bifrost/ops/workspace/kafka/KafkaPrincipalService.java:115-128` |
 | Event/SSE | `GET /api/v1/workspaces/{wsId}/events`, `GET /events/stream` | 허용 | 허용 | 허용 | 403/401 | `services/operations-backend/src/main/java/com/bifrost/ops/event/controller/EventController.java:35-41`, `services/operations-backend/src/main/java/com/bifrost/ops/streaming/SseController.java:34-38` |
 | Cluster | `GET /api/v1/clusters/**` | 인증 사용자 허용 | 인증 사용자 허용 | 인증 사용자 허용 | 401 | `services/operations-backend/src/main/java/com/bifrost/ops/cluster/ClusterController.java:13-42`, `services/operations-backend/src/main/java/com/bifrost/ops/auth/security/SecurityConfig.java:37-49` |
-| Internal ops | `/internal/ops/**` | 사용자 role 행렬 밖 | 사용자 role 행렬 밖 | 사용자 role 행렬 밖 | 현재 permitAll | `services/operations-backend/src/main/java/com/bifrost/ops/auth/security/SecurityConfig.java:47-49` |
+| Internal ops | `/internal/ops/**` | 사용자 role 행렬 밖 | 사용자 role 행렬 밖 | 사용자 role 행렬 밖 | `internal.ops.token` 설정 시 `X-Internal-Token` service identity gate | `services/operations-backend/src/main/java/com/bifrost/ops/auth/security/SecurityConfig.java:44-51` |
 | Internal PoC | `/internal/poc/kafka-connectors/**` | 사용자 role 행렬 밖 | 사용자 role 행렬 밖 | 사용자 role 행렬 밖 | 인증 필요(`anyRequest`) | `services/operations-backend/src/main/java/com/bifrost/ops/internalops/poc/KafkaConnectorPocController.java:23-55`, `services/operations-backend/src/main/java/com/bifrost/ops/auth/security/SecurityConfig.java:37-49` |
 
 #### 3.2 `app_user`
@@ -219,7 +219,7 @@ Workspace settings 화면의 notifications/thresholds/ai-policy 값을 저장한
 | `source_db_id` | uuid FK | |
 | `sink_db_id` | uuid FK null | CDC만 |
 | `schema_name` `table_name` | text | 단일 테이블 |
-| `topic_name` | text | `cdc.table.{projectKey}.{dbSlug}.{schema}.{table}` |
+| `topic_name` | text | `{root}.{projectKey}.{dbSlug}.{schema}.{table}` |
 | `status` | text | DB에는 `PipelineLifecycle` enum name(`CREATING`/`ACTIVE`/`LAG`/`ERROR`/`PAUSED`)으로 저장된다. API 응답은 lower-case로 변환한다 |
 | `created_at` | timestamptz | |
 

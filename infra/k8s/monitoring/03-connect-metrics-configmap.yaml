@@ -12,7 +12,7 @@ data:
     lowercaseOutputLabelNames: true
     rules:
       # ── Debezium 커넥터 메트릭: server 라벨을 살린 정제 룰 (키 순서 무관하게 매칭) ──
-      - pattern: "debezium.([^:]+)<.*server=([^,>]+).*><>(MilliSecondsBehindSource|MilliSecondsSinceLastEvent|NumberOfEventsFiltered|TotalNumberOfEventsSeen|TotalNumberOfCreateEventsSeen|TotalNumberOfUpdateEventsSeen|TotalNumberOfDeleteEventsSeen|QueueRemainingCapacity|QueueTotalCapacity)"
+      - pattern: "debezium.([^:]+)<.*server=([^,>]+).*><>(MilliSecondsBehindSource|MilliSecondsSinceLastEvent|NumberOfEventsFiltered|NumberOfErroneousEvents|TotalNumberOfEventsSeen|TotalNumberOfCreateEventsSeen|TotalNumberOfUpdateEventsSeen|TotalNumberOfDeleteEventsSeen|QueueRemainingCapacity|QueueTotalCapacity)"
         name: "debezium_metrics_$3"
         labels:
           plugin: "$1"
@@ -23,6 +23,13 @@ data:
       # ── Kafka Connect 태스크 메트릭 ───────────────────────────────────
       - pattern: "kafka.connect<type=connector-task-metrics, connector=([^,]+), task=([^>]+)><>([^:]+)"
         name: "kafka_connect_connector_task_$3"
+        labels:
+          connector: "$1"
+          task: "$2"
+        type: GAUGE
+      # ── Task error/retry 누적 지표 (Connector 상세 탭) ────────────────
+      - pattern: "kafka.connect<type=task-error-metrics, connector=([^,]+), task=([^>]+)><>([^:]+)"
+        name: "kafka_connect_task_error_$3"
         labels:
           connector: "$1"
           task: "$2"

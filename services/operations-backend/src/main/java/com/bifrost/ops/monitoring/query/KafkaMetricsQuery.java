@@ -1,6 +1,7 @@
 package com.bifrost.ops.monitoring.query;
 
 import com.bifrost.ops.adapters.prometheus.PrometheusClient;
+import com.bifrost.ops.provisioning.dto.ConnectorKind;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -9,7 +10,7 @@ import org.springframework.stereotype.Service;
 /**
  * Kafka 토픽 메트릭 PromQL 조회 서비스.
  *
- * <p>prometheus.enabled=false(기본)면 모든 메서드가 즉시 0을 반환한다.
+ * <p>prometheus.enabled=false(기본)면 비율/상세 지표는 null, 기존 처리량/lag 지표는 0을 반환한다.
  * true면 Prometheus HTTP API를 호출하고, 실패 시 예외를 던져 호출부 fallback을 트리거한다.
  *
  * <p>세 메트릭 모두 Kafka Exporter의 offset 계열을 쓴다(JMX MessagesOutPerSec는
@@ -97,6 +98,107 @@ public class KafkaMetricsQuery {
     }
 
     /**
+     * Debezium source error rate(%), 5분 증가분 기준.
+     * 지표 series가 없으면 null을 반환해 임계 처리와 UI가 "소스 없음"을 0%로 오해하지 않게 한다.
+     */
+    public Double sourceErrorRatePct(String server) {
+        if (!enabled) return null;
+        String selector = "{server=\"" + labelValue(server) + "\"}";
+        Double events = client.queryScalarOrNull(
+                "sum(increase(debezium_metrics_totalnumberofeventsseen" + selector + "[5m]))");
+        if (events == null) return null;
+        if (events <= 0.0) return 0.0;
+        Double failures = client.queryScalarOrNull(
+                "sum(increase(debezium_metrics_numberoferroneousevents" + selector + "[5m]))");
+        if (failures == null) return null;
+        return Math.min(100.0, Math.max(0.0, failures) / events * 100.0);
+    }
+
+    /** Connector 상세 카드용 현재 records/sec. Source는 Debezium counter, sink는 Connect sink-task gauge. */
+    public Double connectorRecordsPerSec(ConnectorKind kind, String connectorName, String server) {
+        if (!enabled) return null;
+        if (kind == ConnectorKind.SOURCE && server != null && !server.isBlank()) {
+            return client.queryScalarOrNull("sum(rate(debezium_metrics_totalnumberofeventsseen{server=\""
+                    + labelValue(server) + "\"}[2m]))");
+        }
+        String metric = kind == ConnectorKind.SINK
+                ? "kafka_connect_sink_task_sink_record_read_rate"
+                : "kafka_connect_source_task_source_record_write_rate";
+        return client.queryScalarOrNull("sum(" + metric + "{connector=\""
+                + labelValue(connectorName) + "\"})");
+    }
+
+    /** Connector 상세 카드용 records/sec 추이. 값이 없으면 빈 Map을 반환한다. */
+    public java.util.Map<Long, Double> connectorRecordsSeries(ConnectorKind kind,
+                                                              String connectorName,
+                                                              String server,
+                                                              long startSec,
+                                                              long endSec,
+                                                              long stepSec) {
+        if (!enabled) return java.util.Map.of();
+        if (kind == ConnectorKind.SOURCE && server != null && !server.isBlank()) {
+            return client.queryRange("sum(rate(debezium_metrics_totalnumberofeventsseen{server=\""
+                    + labelValue(server) + "\"}[1m]))", startSec, endSec, stepSec);
+        }
+        String metric = kind == ConnectorKind.SINK
+                ? "kafka_connect_sink_task_sink_record_read_rate"
+                : "kafka_connect_source_task_source_record_write_rate";
+        return client.queryRange("sum(" + metric + "{connector=\""
+                + labelValue(connectorName) + "\"})", startSec, endSec, stepSec);
+    }
+
+    /** Connector error rate(%), 5분 기준. Source는 Debezium 실패율, sink는 Connect task failure/record 비율. */
+    public Double connectorErrorRatePct(ConnectorKind kind, String connectorName, String server) {
+        if (kind == ConnectorKind.SOURCE && server != null && !server.isBlank()) {
+            return sourceErrorRatePct(server);
+        }
+        if (!enabled) return null;
+        String connectorSelector = "{connector=\"" + labelValue(connectorName) + "\"}";
+        Double records = client.queryScalarOrNull(
+                "sum(increase(kafka_connect_sink_task_sink_record_read_total" + connectorSelector + "[5m]))");
+        if (records == null) return null;
+        if (records <= 0.0) return 0.0;
+        Double failures = client.queryScalarOrNull(
+                "sum(increase(kafka_connect_task_error_total_record_failures" + connectorSelector + "[5m]))");
+        if (failures == null) return null;
+        return Math.min(100.0, Math.max(0.0, failures) / records * 100.0);
+    }
+
+    /** Poll batch 평균. Source poll latency가 있으면 ms, 없으면 Connect connector-task batch size 평균으로 fallback. */
+    public Double connectorPollBatchAvg(String connectorName, ConnectorKind kind) {
+        if (!enabled) return null;
+        String selector = "{connector=\"" + labelValue(connectorName) + "\"}";
+        Double sourcePoll = null;
+        if (kind == ConnectorKind.SOURCE) {
+            sourcePoll = client.queryScalarOrNull(
+                    "avg(kafka_connect_source_task_poll_batch_avg_time_ms" + selector + ")");
+        }
+        if (sourcePoll != null) return sourcePoll;
+        return client.queryScalarOrNull("avg(kafka_connect_connector_task_batch_size_avg" + selector + ")");
+    }
+
+    /** Poll batch 최대. Source poll latency가 있으면 ms, 없으면 Connect connector-task batch size 최대값으로 fallback. */
+    public Double connectorPollBatchMax(String connectorName, ConnectorKind kind) {
+        if (!enabled) return null;
+        String selector = "{connector=\"" + labelValue(connectorName) + "\"}";
+        Double sourcePoll = null;
+        if (kind == ConnectorKind.SOURCE) {
+            sourcePoll = client.queryScalarOrNull(
+                    "max(kafka_connect_source_task_poll_batch_max_time_ms" + selector + ")");
+        }
+        if (sourcePoll != null) return sourcePoll;
+        return client.queryScalarOrNull("max(kafka_connect_connector_task_batch_size_max" + selector + ")");
+    }
+
+    /** Kafka Connect task-error-metrics total-retries 합. ConfigMap이 expose하지 않은 환경이면 null. */
+    public Long connectorRetriesTotal(String connectorName) {
+        if (!enabled) return null;
+        Double value = client.queryScalarOrNull("sum(kafka_connect_task_error_total_retries{connector=\""
+                + labelValue(connectorName) + "\"})");
+        return value == null ? null : Math.max(0L, Math.round(value));
+    }
+
+    /**
      * 미동기화 row 추이 — sink consumer group의 lag(미소비 메시지 ≈ 미동기화 row).
      * topic이 아닌 consumergroup으로 필터 — orphan group 합산 방지({@link #totalLag}).
      */
@@ -128,5 +230,9 @@ public class KafkaMetricsQuery {
             prev = e.getValue();
         }
         return diff;
+    }
+
+    private static String labelValue(String raw) {
+        return raw.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 }

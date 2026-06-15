@@ -52,6 +52,39 @@ class ConnectorStatusRepositoryAdapterTest {
     }
 
     @Test
+    void runningBelowTasksMaxPersistsUnknown() {
+        ConnectorEntity entity = existing("pipe-sink");
+        entity.setKind(ConnectorKind.SINK);
+        entity.setTasksMax(3);
+        when(repo.findByCrName("pipe-sink")).thenReturn(Optional.of(entity));
+
+        adapter.record(new ConnectorStatusUpdate(
+                "pipe-sink", ConnectorRuntimeState.RUNNING, PipelineLifecycle.ACTIVE,
+                1, 0, null));
+
+        ArgumentCaptor<ConnectorEntity> saved = ArgumentCaptor.forClass(ConnectorEntity.class);
+        verify(repo).save(saved.capture());
+        assertThat(saved.getValue().getState()).isEqualTo("UNKNOWN");
+        assertThat(saved.getValue().getUpdatedAt()).isNotNull();
+    }
+
+    @Test
+    void runningWithExpectedTasksPersistsRunning() {
+        ConnectorEntity entity = existing("pipe-sink");
+        entity.setKind(ConnectorKind.SINK);
+        entity.setTasksMax(3);
+        when(repo.findByCrName("pipe-sink")).thenReturn(Optional.of(entity));
+
+        adapter.record(new ConnectorStatusUpdate(
+                "pipe-sink", ConnectorRuntimeState.RUNNING, PipelineLifecycle.ACTIVE,
+                3, 0, null));
+
+        ArgumentCaptor<ConnectorEntity> saved = ArgumentCaptor.forClass(ConnectorEntity.class);
+        verify(repo).save(saved.capture());
+        assertThat(saved.getValue().getState()).isEqualTo("RUNNING");
+    }
+
+    @Test
     void skipsWhenRowMissing() {
         when(repo.findByCrName("ghost")).thenReturn(Optional.empty());
 
