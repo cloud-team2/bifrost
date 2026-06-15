@@ -144,18 +144,18 @@ function BrokersTab({ onSelectBroker }: { onSelectBroker: (b: BrokerInfo) => voi
   return (
     <div className="space-y-4">
       {clusterStatus !== 'healthy' && (
-        <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">
+        <div className="flex items-center gap-2 rounded-lg border border-[#ececec] bg-[#ededed] px-3 py-2 text-[12.5px] text-[#6b6b73]">
           <StatusBadge status={clusterStatus} label={clusterStatus === 'error' ? 'error' : 'partial'} />
           <span>{data.message ?? 'Cluster metadata is partially unavailable.'}</span>
         </div>
       )}
       {error && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">
+        <div className="rounded-lg border border-[#ececec] bg-[#ededed] px-3 py-2 text-[12.5px] text-[#6b6b73]">
           {error} · 기존 클러스터 데이터로 표시합니다
         </div>
       )}
       {throughputError && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">
+        <div className="rounded-lg border border-[#ececec] bg-[#ededed] px-3 py-2 text-[12.5px] text-[#6b6b73]">
           {throughputError} · 기존 처리량 데이터로 표시합니다
         </div>
       )}
@@ -286,7 +286,7 @@ function KafkaConnectTab() {
   return (
     <div className="space-y-4">
       {error && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">
+        <div className="rounded-lg border border-[#ececec] bg-[#ededed] px-3 py-2 text-[12.5px] text-[#6b6b73]">
           {error} · 기존 Connect 데이터로 표시합니다
         </div>
       )}
@@ -312,7 +312,7 @@ function KafkaConnectTab() {
           <tbody>
             {data.workers.map((w) => {
               const heapPct = w.heapUsedBytes && w.heapMaxBytes ? w.heapUsedBytes / w.heapMaxBytes : 0
-              const heapBar = heapPct >= 0.95 ? 'bg-rose-400' : heapPct >= 0.85 ? 'bg-amber-400' : 'bg-emerald-400'
+              const heapBar = heapPct >= 0.95 ? 'bg-[#c0392b]' : heapPct >= 0.85 ? 'bg-[#c8c8c8]' : 'bg-[#c8c8c8]'
               return (
                 <tr key={w.name} className="border-b border-gray-50">
                   <td className="px-4 py-3">
@@ -321,7 +321,7 @@ function KafkaConnectTab() {
                   </td>
                   <td className="px-4 py-3">
                     <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase',
-                      w.state === 'Running' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700')}>
+                      w.state === 'Running' ? 'bg-[#ededed] text-[#6b6b73]' : 'bg-[#ededed] text-[#6b6b73]')}>
                       {w.state}
                     </span>
                   </td>
@@ -367,12 +367,12 @@ function KafkaConnectTab() {
                 <td className="px-4 py-2.5 font-mono font-medium text-gray-800">{c.name}</td>
                 <td className="px-4 py-2.5">
                   <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
-                    c.kind === 'SOURCE' ? 'bg-sky-50 text-sky-700' : 'bg-violet-50 text-violet-700')}>{c.kind}</span>
+                    c.kind === 'SOURCE' ? 'bg-[#ededed] text-[#6b6b73]' : 'bg-[#ededed] text-[#6b6b73]')}>{c.kind}</span>
                 </td>
                 <td className="px-4 py-2.5">
                   <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase',
-                    c.status === 'RUNNING' ? 'bg-emerald-50 text-emerald-700'
-                      : c.status === 'PAUSED' ? 'bg-gray-100 text-gray-600' : 'bg-rose-50 text-rose-700')}>{c.status}</span>
+                    c.status === 'RUNNING' ? 'bg-[#ededed] text-[#6b6b73]'
+                      : c.status === 'PAUSED' ? 'bg-gray-100 text-gray-600' : 'bg-[#fcf3f2] text-[#c0392b]')}>{c.status}</span>
                 </td>
                 <td className="px-4 py-2.5 text-gray-500 text-[11.5px]">{c.pipeline}</td>
                 <td className="px-4 py-2.5 text-gray-600">{c.tasks}</td>
@@ -400,7 +400,7 @@ function KafkaConnectTab() {
                 <td className="px-4 py-2.5 font-mono text-[11px] text-gray-700">{p.className}</td>
                 <td className="px-4 py-2.5">
                   <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
-                    p.type === 'source' ? 'bg-sky-50 text-sky-700' : 'bg-violet-50 text-violet-700')}>{p.type}</span>
+                    p.type === 'source' ? 'bg-[#ededed] text-[#6b6b73]' : 'bg-[#ededed] text-[#6b6b73]')}>{p.type}</span>
                 </td>
                 <td className="px-4 py-2.5 font-mono text-[11.5px] text-gray-500">{p.version}</td>
               </tr>

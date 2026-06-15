@@ -95,7 +95,7 @@ const GENERIC_BADGE_KEYS = new Set(['severity', 'status', 'state', 'level', 'typ
 
 const THEMES = {
   brand: {
-    avatar: 'bg-gradient-to-br from-brand-500 to-violet-600',
+    avatar: 'bg-[#0d0d0d]',
     userBubble: 'rounded-br-sm bg-brand-600 text-white',
     icon: 'text-brand-500',
     statusText: 'text-brand-700',
@@ -105,14 +105,14 @@ const THEMES = {
     approve: 'bg-brand-600 hover:bg-brand-700 disabled:bg-brand-300',
   },
   violet: {
-    avatar: 'bg-gradient-to-br from-violet-400 to-violet-600',
-    userBubble: 'rounded-br-sm bg-violet-600 text-white',
-    icon: 'text-violet-500',
-    statusText: 'text-violet-700',
-    quick: 'border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 disabled:opacity-50',
-    inputFocus: 'focus:border-violet-400',
-    send: 'bg-violet-600 hover:bg-violet-700 disabled:bg-violet-300',
-    approve: 'bg-violet-600 hover:bg-violet-700 disabled:bg-violet-300',
+    avatar: 'bg-[#0d0d0d]',
+    userBubble: 'rounded-br-sm bg-[#0d0d0d] text-white',
+    icon: 'text-[#8a8a8a]',
+    statusText: 'text-[#6b6b73]',
+    quick: 'border-[#ececec] bg-[#ededed] text-[#6b6b73] hover:bg-[#ededed] disabled:opacity-50',
+    inputFocus: 'focus:border-[#d9d9d9]',
+    send: 'bg-[#0d0d0d] hover:bg-[#0d0d0d] disabled:bg-[#d9d9d9]',
+    approve: 'bg-[#0d0d0d] hover:bg-[#0d0d0d] disabled:bg-[#d9d9d9]',
   },
 } as const
 
@@ -1656,7 +1656,7 @@ export function AgentRunPanel({
           <div className="text-[13px] font-semibold text-gray-900">{title}</div>
           <div className="truncate text-[11px] text-gray-400">{subtitle}</div>
         </div>
-        {hitlLabel && <div className="text-[10.5px] font-semibold uppercase tracking-wide text-amber-600">{hitlLabel}</div>}
+        {hitlLabel && <div className="text-[10.5px] font-semibold uppercase tracking-wide text-[#6b6b73]">{hitlLabel}</div>}
       </div>
 
       <div ref={scroll} className="flex-1 space-y-3 overflow-y-auto scroll-thin bg-gray-50 px-4 py-4">
@@ -1734,7 +1734,7 @@ export function AgentRunPanel({
                 <span>tool catalog loading</span>
               </div>
             ) : slashState.error ? (
-              <div className="break-words px-3 py-2 text-rose-600">{slashState.error}</div>
+              <div className="break-words px-3 py-2 text-[#c0392b]">{slashState.error}</div>
             ) : (
               slashOptions.map((command, index) => (
                 <div
@@ -2094,12 +2094,12 @@ function PipelineWizardCard({
                   className="h-9 w-full rounded-md border border-gray-200 px-2.5 text-[12.5px] outline-none focus:border-brand-500 disabled:opacity-60"
                 />
                 {blocked && (
-                  <div className="break-words rounded border border-rose-100 bg-rose-50 px-2 py-1.5 text-[11.5px] text-rose-700">
+                  <div className="break-words rounded border border-[#c0392b] bg-[#fcf3f2] px-2 py-1.5 text-[11.5px] text-[#c0392b]">
                     BLOCKED readiness 항목이 있어 생성할 수 없습니다.
                   </div>
                 )}
                 {msg.error && msg.readiness.source && (
-                  <div className="break-words rounded border border-rose-100 bg-rose-50 px-2 py-1.5 text-[11.5px] text-rose-700">
+                  <div className="break-words rounded border border-[#c0392b] bg-[#fcf3f2] px-2 py-1.5 text-[11.5px] text-[#c0392b]">
                     {msg.error}
                   </div>
                 )}
@@ -2124,14 +2124,14 @@ function PipelineWizardCard({
               className={cn(
                 'rounded-md border px-3 py-2.5',
                 msg.created.status === 'error'
-                  ? 'border-rose-100 bg-rose-50'
-                  : 'border-emerald-100 bg-emerald-50',
+                  ? 'border-[#c0392b] bg-[#fcf3f2]'
+                  : 'border-[#ececec] bg-[#ededed]',
               )}
             >
               <div
                 className={cn(
                   'mb-1 flex items-center gap-1.5 font-semibold',
-                  msg.created.status === 'error' ? 'text-rose-800' : 'text-emerald-800',
+                  msg.created.status === 'error' ? 'text-[#c0392b]' : 'text-[#6b6b73]',
                 )}
               >
                 <Icon name={msg.created.status === 'error' ? 'alert' : 'check'} size={13} strokeWidth={3} />
@@ -2140,7 +2140,7 @@ function PipelineWizardCard({
               <div
                 className={cn(
                   'space-y-1 font-mono text-[11px]',
-                  msg.created.status === 'error' ? 'text-rose-900' : 'text-emerald-900',
+                  msg.created.status === 'error' ? 'text-[#c0392b]' : 'text-[#6b6b73]',
                 )}
               >
                 <div className="break-all">id={msg.created.id}</div>
@@ -2167,7 +2167,7 @@ function PipelineWizardProgress({ msg }: { msg: PipelineWizardMsg }) {
           className={cn(
             'h-1.5 rounded-full',
             index < activeIndex || msg.step === 'created'
-              ? 'bg-emerald-400'
+              ? 'bg-[#c8c8c8]'
               : index === activeIndex
                 ? 'bg-brand-500'
                 : 'bg-gray-200',
@@ -2207,7 +2207,7 @@ function DatabaseChoiceButton({
         choiceDisabled && 'cursor-not-allowed opacity-60',
       )}
     >
-      <Icon name="database" size={14} className={blocked ? 'text-rose-500' : selected ? 'text-brand-600' : 'text-gray-400'} />
+      <Icon name="database" size={14} className={blocked ? 'text-[#c0392b]' : selected ? 'text-brand-600' : 'text-gray-400'} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[12.5px] font-medium text-gray-800">{databaseLabel(db)}</span>
         <span className="block truncate font-mono text-[10.5px] text-gray-400">{databaseEndpoint(db)}</span>
@@ -2226,7 +2226,7 @@ function DatabaseChoiceButton({
         </span>
       )}
       {blockOnKnownStatus && blocked && (
-        <span className="shrink-0 rounded bg-rose-50 px-1.5 py-0.5 text-[10.5px] font-semibold text-rose-700">
+        <span className="shrink-0 rounded bg-[#fcf3f2] px-1.5 py-0.5 text-[10.5px] font-semibold text-[#c0392b]">
           선택 불가
         </span>
       )}
@@ -2343,12 +2343,12 @@ function WizardLoading({ text }: { text: string }) {
 
 function WizardError({ text, onRetry }: { text: string; onRetry: () => void }) {
   return (
-    <div className="space-y-2 rounded-md border border-rose-100 bg-rose-50 px-2.5 py-2 text-[11.5px] text-rose-700">
+    <div className="space-y-2 rounded-md border border-[#c0392b] bg-[#fcf3f2] px-2.5 py-2 text-[11.5px] text-[#c0392b]">
       <div className="break-words">{text}</div>
       <button
         type="button"
         onClick={onRetry}
-        className="rounded border border-rose-200 bg-white px-2 py-1 text-[11.5px] font-medium text-rose-700 hover:bg-rose-50"
+        className="rounded border border-[#c0392b] bg-white px-2 py-1 text-[11.5px] font-medium text-[#c0392b] hover:bg-[#fcf3f2]"
       >
         다시 시도
       </button>
@@ -2392,9 +2392,9 @@ function databaseReadinessStatus(db: DatabaseResponse, kind: 'source' | 'sink'):
 }
 
 function readinessChipClass(status: CdcReadinessResponse['overallStatus']) {
-  if (status === 'OK') return 'bg-emerald-50 text-emerald-700'
-  if (status === 'WARNING') return 'bg-amber-50 text-amber-700'
-  return 'bg-rose-50 text-rose-700'
+  if (status === 'OK') return 'bg-[#ededed] text-[#6b6b73]'
+  if (status === 'WARNING') return 'bg-[#ededed] text-[#6b6b73]'
+  return 'bg-[#fcf3f2] text-[#c0392b]'
 }
 
 function StatusCard({ msg, theme }: { msg: StatusMsg; theme: (typeof THEMES)[ThemeName] }) {
@@ -2405,11 +2405,11 @@ function StatusCard({ msg, theme }: { msg: StatusMsg; theme: (typeof THEMES)[The
         {msg.state === 'running' ? (
           <Spinner size={13} />
         ) : msg.state === 'failed' ? (
-          <Icon name="alert" size={13} className="text-rose-500" />
+          <Icon name="alert" size={13} className="text-[#c0392b]" />
         ) : msg.state === 'waiting' ? (
-          <Icon name="clock" size={13} className="text-amber-500" />
+          <Icon name="clock" size={13} className="text-[#8a8a8a]" />
         ) : (
-          <Icon name="check" size={13} strokeWidth={3} className="text-emerald-500" />
+          <Icon name="check" size={13} strokeWidth={3} className="text-[#8a8a8a]" />
         )}
         <span className={msg.state === 'running' ? theme.statusText : undefined}>{label}</span>
       </div>
@@ -2429,7 +2429,7 @@ function EvidenceCard({
   return (
     <div className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-[12px] text-gray-700">
       <div className="mb-1 flex items-center gap-1.5 font-semibold text-gray-800">
-        <Icon name="check" size={13} strokeWidth={3} className="text-emerald-500" />
+        <Icon name="check" size={13} strokeWidth={3} className="text-[#8a8a8a]" />
         <span>Evidence · {msg.evidenceType ?? '증거 수집'}</span>
       </div>
       {msg.summary && <div className="break-words leading-relaxed text-gray-600">{msg.summary}</div>}
@@ -2448,12 +2448,12 @@ function EvidenceCard({
 
 export function RcaPreviewCard({ msg }: { msg: RcaPreviewMsg }) {
   return (
-    <div className="rounded-xl border border-sky-200 bg-white px-3 py-2.5 text-[12px] text-gray-700">
+    <div className="rounded-xl border border-[#ececec] bg-white px-3 py-2.5 text-[12px] text-gray-700">
       <div className="mb-2 flex min-w-0 items-center gap-1.5">
-        <Icon name="search" size={13} className="shrink-0 text-sky-600" />
+        <Icon name="search" size={13} className="shrink-0 text-[#6b6b73]" />
         <span className="shrink-0 font-semibold text-gray-900">RCA</span>
         {msg.rootCauseId && (
-          <span className="min-w-0 truncate rounded bg-sky-50 px-1.5 py-0.5 font-mono text-[10.5px] font-semibold text-sky-700">
+          <span className="min-w-0 truncate rounded bg-[#ededed] px-1.5 py-0.5 font-mono text-[10.5px] font-semibold text-[#6b6b73]">
             {msg.rootCauseId}
           </span>
         )}
@@ -2463,7 +2463,7 @@ export function RcaPreviewCard({ msg }: { msg: RcaPreviewMsg }) {
           </span>
         )}
         {msg.verified && (
-          <span className="shrink-0 rounded bg-emerald-50 px-1.5 py-0.5 text-[10.5px] font-semibold text-emerald-700">
+          <span className="shrink-0 rounded bg-[#ededed] px-1.5 py-0.5 text-[10.5px] font-semibold text-[#6b6b73]">
             verified
           </span>
         )}
@@ -2477,14 +2477,14 @@ export function RcaPreviewCard({ msg }: { msg: RcaPreviewMsg }) {
 
 export function RemediationCard({ msg }: { msg: RemediationMsg }) {
   return (
-    <div className="rounded-xl border border-amber-200 bg-white text-[12px] text-gray-700">
-      <div className="flex min-w-0 items-center gap-1.5 border-b border-amber-100 bg-amber-50 px-3 py-2">
-        <Icon name="shield" size={13} className="shrink-0 text-amber-700" />
-        <span className="shrink-0 font-semibold text-amber-950">권장 조치</span>
-        <span className="shrink-0 rounded bg-white px-1.5 py-0.5 font-mono text-[10.5px] font-semibold text-amber-700">
+    <div className="rounded-xl border border-[#ececec] bg-white text-[12px] text-gray-700">
+      <div className="flex min-w-0 items-center gap-1.5 border-b border-[#ececec] bg-[#ededed] px-3 py-2">
+        <Icon name="shield" size={13} className="shrink-0 text-[#6b6b73]" />
+        <span className="shrink-0 font-semibold text-[#6b6b73]">권장 조치</span>
+        <span className="shrink-0 rounded bg-white px-1.5 py-0.5 font-mono text-[10.5px] font-semibold text-[#6b6b73]">
           {msg.candidates.length}
         </span>
-        {msg.message && <span className="min-w-0 truncate text-[11.5px] text-amber-800">{msg.message}</span>}
+        {msg.message && <span className="min-w-0 truncate text-[11.5px] text-[#6b6b73]">{msg.message}</span>}
       </div>
       <div className="space-y-2 px-3 py-2.5">
         {msg.candidates.length === 0 ? (
@@ -2583,11 +2583,11 @@ function ProgressCard({
           {visualState === 'running' ? (
             <Spinner size={12} />
           ) : visualState === 'failed' ? (
-            <Icon name="alert" size={12} className="text-rose-500" />
+            <Icon name="alert" size={12} className="text-[#c0392b]" />
           ) : visualState === 'waiting' ? (
-            <Icon name="clock" size={12} className="text-amber-500" />
+            <Icon name="clock" size={12} className="text-[#8a8a8a]" />
           ) : (
-            <Icon name="check" size={12} strokeWidth={3} className="text-emerald-500" />
+            <Icon name="check" size={12} strokeWidth={3} className="text-[#8a8a8a]" />
           )}
           <span className="shrink-0 font-semibold text-gray-800">진행 단계</span>
           <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[10.5px] text-gray-500">
@@ -2626,9 +2626,9 @@ function ProgressCard({
 
 function ProgressDot({ state }: { state: ProgressState }) {
   if (state === 'running') return <Spinner size={12} />
-  if (state === 'failed') return <Icon name="alert" size={12} className="mt-0.5 text-rose-500" />
-  if (state === 'waiting') return <Icon name="clock" size={12} className="mt-0.5 text-amber-500" />
-  return <Icon name="check" size={12} strokeWidth={3} className="mt-0.5 text-emerald-500" />
+  if (state === 'failed') return <Icon name="alert" size={12} className="mt-0.5 text-[#c0392b]" />
+  if (state === 'waiting') return <Icon name="clock" size={12} className="mt-0.5 text-[#8a8a8a]" />
+  return <Icon name="check" size={12} strokeWidth={3} className="mt-0.5 text-[#8a8a8a]" />
 }
 
 function ToolPanelCard({ msg }: { msg: ToolPanelMsg }) {
@@ -2644,7 +2644,7 @@ function ToolPanelCard({ msg }: { msg: ToolPanelMsg }) {
           {msg.state === 'running' ? (
             <Spinner size={13} />
           ) : msg.state === 'failed' ? (
-            <Icon name="alert" size={13} className="mt-0.5 text-rose-500" />
+            <Icon name="alert" size={13} className="mt-0.5 text-[#c0392b]" />
           ) : (
             <Icon name="table" size={13} className="mt-0.5 text-gray-500" />
           )}
@@ -2661,12 +2661,12 @@ function ToolPanelCard({ msg }: { msg: ToolPanelMsg }) {
           </div>
         </div>
         {error && (
-          <div className="break-words rounded border border-rose-100 bg-rose-50 px-2 py-1.5 text-[11.5px] text-rose-700">
+          <div className="break-words rounded border border-[#c0392b] bg-[#fcf3f2] px-2 py-1.5 text-[11.5px] text-[#c0392b]">
             {error}
           </div>
         )}
         {notice && (
-          <div className="break-words rounded border border-amber-100 bg-amber-50 px-2 py-1.5 text-[11.5px] text-amber-700">
+          <div className="break-words rounded border border-[#ececec] bg-[#ededed] px-2 py-1.5 text-[11.5px] text-[#6b6b73]">
             {notice}
           </div>
         )}
@@ -2856,7 +2856,7 @@ function ConsumerGroupsPanel({ result }: { result: Record<string, unknown> | nul
                 <td className="py-1.5 pr-3 text-right text-gray-700">{lag == null ? '-' : lag.toLocaleString()}</td>
                 <td className="break-words py-1.5 text-gray-500">
                   {recordString(row, 'owner') ?? '-'}
-                  {rowError && <div className="mt-0.5 text-[10px] text-rose-600">{rowError}</div>}
+                  {rowError && <div className="mt-0.5 text-[10px] text-[#c0392b]">{rowError}</div>}
                 </td>
               </tr>
             )
@@ -2896,7 +2896,7 @@ function PipelineStatusPanel({ result }: { result: Record<string, unknown> | nul
                 <td className="break-words py-1.5 pr-3 text-gray-600">{status}</td>
                 <td className="py-1.5 text-right text-gray-700">
                   {lag == null ? '-' : lag.toLocaleString()}
-                  {rowError && <div className="mt-0.5 text-[10px] text-rose-600">{rowError}</div>}
+                  {rowError && <div className="mt-0.5 text-[10px] text-[#c0392b]">{rowError}</div>}
                 </td>
               </tr>
             )
@@ -2941,7 +2941,7 @@ function ConnectorStatusPanel({ result }: { result: Record<string, unknown> | nu
                 <td className="py-1.5 pr-3 text-right text-gray-700">{running == null || total == null ? '-/-' : `${running}/${total}`}</td>
                 <td className="py-1.5 text-right text-gray-700">
                   {throughput == null ? '-' : throughput.toLocaleString()}
-                  {rowError && <div className="mt-0.5 text-[10px] text-rose-600">{rowError}</div>}
+                  {rowError && <div className="mt-0.5 text-[10px] text-[#c0392b]">{rowError}</div>}
                 </td>
               </tr>
             )
@@ -3032,8 +3032,8 @@ function ApprovalCard({
           : `현재 권한: ${roleLabel}`
 
   return (
-    <div className="min-w-0 rounded-xl border border-amber-200 bg-white">
-      <div className="flex min-w-0 items-center gap-1.5 border-b border-amber-100 bg-amber-50 px-3 py-2 text-[12px] font-semibold text-amber-900">
+    <div className="min-w-0 rounded-xl border border-[#ececec] bg-white">
+      <div className="flex min-w-0 items-center gap-1.5 border-b border-[#ececec] bg-[#ededed] px-3 py-2 text-[12px] font-semibold text-[#6b6b73]">
         <Icon name="shield" size={13} className="shrink-0" />
         <span className="min-w-0 break-words">승인 필요 · {msg.actionId}</span>
       </div>
@@ -3041,10 +3041,10 @@ function ApprovalCard({
         <div className="break-words leading-relaxed">{msg.message}</div>
         <div className="break-words text-[11.5px] text-gray-500">{msg.reason}</div>
         <div className="break-all font-mono text-[10.5px] text-gray-400">{msg.approvalId ?? 'approval id pending'}</div>
-        {(msg.error || help) && <div className={cn('break-words text-[11.5px]', msg.error || roleError ? 'text-rose-600' : 'text-gray-400')}>{msg.error ?? help}</div>}
+        {(msg.error || help) && <div className={cn('break-words text-[11.5px]', msg.error || roleError ? 'text-[#c0392b]' : 'text-gray-400')}>{msg.error ?? help}</div>}
       </div>
       {resolved ? (
-        <div className={cn('border-t border-gray-100 px-3 py-2 text-[11.5px] font-medium', msg.state === 'approved' ? 'text-emerald-600' : 'text-rose-600')}>
+        <div className={cn('border-t border-gray-100 px-3 py-2 text-[11.5px] font-medium', msg.state === 'approved' ? 'text-[#6b6b73]' : 'text-[#c0392b]')}>
           {msg.state === 'approved' ? '✓ 승인 반영됨' : '거절 반영됨'}
         </div>
       ) : (
@@ -3344,17 +3344,17 @@ function formatGenericScalar(value: unknown) {
 
 function genericBadgeClass(label: string, value: unknown) {
   const normalized = formatGenericScalar(value).toLowerCase()
-  if (typeof value === 'boolean') return value ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-600'
+  if (typeof value === 'boolean') return value ? 'bg-[#ededed] text-[#6b6b73]' : 'bg-gray-100 text-gray-600'
   if (['critical', 'error', 'failed', 'failure', 'blocked', 'down', 'high'].some((token) => normalized.includes(token))) {
-    return 'bg-rose-50 text-rose-700'
+    return 'bg-[#fcf3f2] text-[#c0392b]'
   }
   if (['warning', 'warn', 'degraded', 'pending', 'rebalancing', 'medium'].some((token) => normalized.includes(token))) {
-    return 'bg-amber-50 text-amber-700'
+    return 'bg-[#ededed] text-[#6b6b73]'
   }
   if (['ok', 'healthy', 'running', 'success', 'succeeded', 'active', 'resolved', 'closed', 'low'].some((token) => normalized.includes(token))) {
-    return 'bg-emerald-50 text-emerald-700'
+    return 'bg-[#ededed] text-[#6b6b73]'
   }
-  return isGenericBadgeKey(label) ? 'bg-sky-50 text-sky-700' : 'bg-gray-100 text-gray-600'
+  return isGenericBadgeKey(label) ? 'bg-[#ededed] text-[#6b6b73]' : 'bg-gray-100 text-gray-600'
 }
 export function remediationCandidatesFromPayload(payload: unknown): RemediationCandidate[] {
   const seen = new Set<string>()
@@ -3413,9 +3413,9 @@ function mergeRemediationCandidates(current: RemediationCandidate[], next: Remed
 
 function riskChipClass(risk: string) {
   const normalized = risk.toLowerCase()
-  if (normalized === 'read_only' || normalized === 'low') return 'bg-emerald-50 text-emerald-700'
-  if (normalized === 'medium') return 'bg-amber-100 text-amber-800'
-  if (normalized === 'high' || normalized === 'forbidden') return 'bg-rose-50 text-rose-700'
+  if (normalized === 'read_only' || normalized === 'low') return 'bg-[#ededed] text-[#6b6b73]'
+  if (normalized === 'medium') return 'bg-[#ededed] text-[#6b6b73]'
+  if (normalized === 'high' || normalized === 'forbidden') return 'bg-[#fcf3f2] text-[#c0392b]'
   return 'bg-gray-100 text-gray-600'
 }
 

@@ -31,7 +31,7 @@ import { Modal } from '../../components/Modal'
 import { cn, formatNum } from '../../lib/format'
 
 const tooltipStyle = {
-  borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 12,
+  borderRadius: 8, border: '1px solid #ececec', fontSize: 12,
   boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
 }
 
@@ -113,7 +113,7 @@ export function PipelineDetail() {
         <div className="flex items-center gap-3">
           <h1 className="text-[17px] font-semibold text-gray-900">{pipelineLabel(edge)}</h1>
           <span className={cn('rounded px-2 py-0.5 text-[11px] font-semibold',
-            isEda ? 'bg-violet-100 text-violet-700' : 'bg-sky-100 text-sky-700')}>
+            isEda ? 'bg-[#ededed] text-[#6b6b73]' : 'bg-[#ededed] text-[#6b6b73]')}>
             {isEda ? '이벤트 스트림' : '데이터 동기화'}
           </span>
           <StatusBadge status={edge.status} />
@@ -144,7 +144,7 @@ export function PipelineDetail() {
             {t}
             {tabErrors[t] && (
               <span title="이 영역에 에러가 있습니다"
-                className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-rose-500 align-middle" />
+                className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-[#c0392b] align-middle" />
             )}
           </button>
         ))}
@@ -184,7 +184,7 @@ function ActBtn({ icon, label, onClick, danger, disabled, title }: {
   return (
     <button disabled={disabled} title={title} onClick={onClick} className={cn(
       'flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[12.5px] font-medium transition-colors',
-      danger ? 'border-rose-200 text-rose-600 hover:bg-rose-50' : 'border-gray-300 text-gray-700 hover:bg-gray-50',
+      danger ? 'border-[#c0392b] text-[#c0392b] hover:bg-[#fcf3f2]' : 'border-gray-300 text-gray-700 hover:bg-gray-50',
       disabled && 'cursor-not-allowed opacity-45 hover:bg-transparent',
     )}>
       <Icon name={icon} size={13} />
@@ -208,7 +208,7 @@ function DeletePipelineDialog({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/30 px-4">
       <div className="w-full max-w-md overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
         <div className="flex items-start gap-3 border-b border-gray-100 px-5 py-4">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-rose-50 text-rose-600">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#fcf3f2] text-[#c0392b]">
             <Icon name="trash" size={15} />
           </div>
           <div className="min-w-0">
@@ -229,7 +229,7 @@ function DeletePipelineDialog({
           <button
             onClick={onConfirm}
             disabled={busy}
-            className="rounded-md bg-rose-600 px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-rose-700 disabled:opacity-50"
+            className="rounded-md bg-[#c0392b] px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-[#c0392b] disabled:opacity-50"
           >
             {busy ? '삭제 중…' : '삭제'}
           </button>
@@ -351,7 +351,7 @@ function TopicTab({ edge }: { edge: Edge }) {
           <StatusBadge status={edge.status} />
           <div className="ml-auto flex items-center gap-4 text-[12px] text-gray-500">
             <span>{topicInfoErr ? '파티션 조회 실패' : <><span className="font-semibold text-gray-700">{partitions.length}</span> 파티션</>}</span>
-            <span className={cn('font-semibold', topicInfoErr ? 'text-rose-600' : isrOk ? 'text-emerald-600' : 'text-amber-600')}>
+            <span className={cn('font-semibold', topicInfoErr ? 'text-[#c0392b]' : isrOk ? 'text-[#6b6b73]' : 'text-[#6b6b73]')}>
               ISR {topicInfoErr ? '조회 실패' : isrOk ? '정상' : `${Math.round(isrPct)}%`}
             </span>
             <span>Retention <span className="font-semibold text-gray-700">{retention}</span></span>
@@ -405,7 +405,7 @@ function TopicTab({ edge }: { edge: Edge }) {
           </tbody>
         </table>
         {!topicInfoErr && !isrOk && (
-          <div className="mx-5 mb-4 mt-1 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[12px] text-amber-700">
+          <div className="mx-5 mb-4 mt-1 flex items-center gap-2 rounded-lg border border-[#ececec] bg-[#ededed] px-3.5 py-2.5 text-[12px] text-[#6b6b73]">
             <Icon name="alert" size={13} className="shrink-0" />
             Under-replicated partitions 감지 — 브로커 장애 시 데이터 유실 위험
           </div>
@@ -481,7 +481,7 @@ function ConsumersTab({ edge }: { edge: Edge }) {
   const [openGroup, setOpenGroup] = useState<string | null>(null)
 
   const lagChartData = groups.map((g) => ({ name: g.name, lag: g.totalLag }))
-  const axis = { fontSize: 10, fill: '#94a3b8' }
+  const axis = { fontSize: 10, fill: '#9a9a9a' }
   const lagTone = (lag: number): 'unknown' | 'warning' | 'ok' => {
     if (lagWarningThreshold == null) return 'unknown'
     return lag >= lagWarningThreshold ? 'warning' : 'ok'
@@ -497,7 +497,7 @@ function ConsumersTab({ edge }: { edge: Edge }) {
       <Panel title="Consumer Group Lag"
         right={
           <span className="text-[12px] text-gray-400">
-            임계값 <span className={cn('font-semibold', lagThresholdError ? 'text-rose-600' : 'text-amber-600')}>
+            임계값 <span className={cn('font-semibold', lagThresholdError ? 'text-[#c0392b]' : 'text-[#6b6b73]')}>
               {thresholdLabel}
             </span>
           </span>
@@ -518,7 +518,7 @@ function ConsumersTab({ edge }: { edge: Edge }) {
                     openGroup === d.activeLabel ? null : d.activeLabel as string
                   )}
                 >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#eef0f3" vertical={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f1f1" vertical={false} />
                   <XAxis dataKey="name" tick={{ ...axis, fontSize: 11 }} tickLine={false} axisLine={false} />
                   <YAxis tick={axis} tickLine={false} axisLine={false} width={56}
                     tickFormatter={(v) => formatNum(v as number)} />
@@ -576,7 +576,7 @@ function ConsumersTab({ edge }: { edge: Edge }) {
                     <td className={cn('px-4 py-2.5 text-right font-mono font-semibold tabular-nums',
                       lagTone(g.totalLag) === 'unknown'
                         ? 'text-slate-500'
-                        : lagTone(g.totalLag) === 'warning' ? 'text-amber-600' : 'text-gray-700')}>
+                        : lagTone(g.totalLag) === 'warning' ? 'text-[#6b6b73]' : 'text-gray-700')}>
                       {formatNum(g.totalLag)}
                     </td>
                     <td className="px-4 py-2.5 text-gray-500">
@@ -625,8 +625,8 @@ function ConsumersTab({ edge }: { edge: Edge }) {
                                       lagTone(lag) === 'unknown'
                                         ? 'text-slate-500'
                                         : lagTone(lag) === 'warning'
-                                          ? 'text-amber-600'
-                                          : lag > 0 ? 'text-gray-700' : 'text-emerald-500')}>
+                                          ? 'text-[#6b6b73]'
+                                          : lag > 0 ? 'text-gray-700' : 'text-[#8a8a8a]')}>
                                       {formatNum(lag)}
                                     </td>
                                   </tr>
@@ -655,24 +655,24 @@ function ConsumersTab({ edge }: { edge: Edge }) {
 
 function connectorStateClass(state: string | null): string {
   switch (state) {
-    case 'RUNNING':    return 'bg-emerald-100 text-emerald-700'
-    case 'FAILED':     return 'bg-rose-100 text-rose-700'
-    case 'PAUSED':     return 'bg-amber-100 text-amber-700'
+    case 'RUNNING':    return 'bg-[#ededed] text-[#6b6b73]'
+    case 'FAILED':     return 'bg-[#fcf3f2] text-[#c0392b]'
+    case 'PAUSED':     return 'bg-[#ededed] text-[#6b6b73]'
     default:           return 'bg-gray-100 text-gray-500'   // UNASSIGNED / null(대기)
   }
 }
 
 function ConnectorCard({ c, topic }: { c: ConnectorInfo; topic: string }) {
   const isSource  = c.kind === 'source'
-  const kindColor = isSource ? 'border-sky-200 bg-sky-50' : 'border-violet-200 bg-violet-50'
-  const kindText  = isSource ? 'text-sky-700' : 'text-violet-700'
+  const kindColor = isSource ? 'border-[#ececec] bg-[#ededed]' : 'border-[#ececec] bg-[#ededed]'
+  const kindText  = isSource ? 'text-[#6b6b73]' : 'text-[#6b6b73]'
 
   return (
     <div className={cn('rounded-xl border-2', kindColor)}>
       {/* ── connector header ─────────────────────── */}
       <div className={cn('flex items-center gap-3 border-b px-5 py-3', kindColor)}>
         <div className={cn('flex h-7 w-7 items-center justify-center rounded-lg',
-          isSource ? 'bg-sky-100' : 'bg-violet-100')}>
+          isSource ? 'bg-[#ededed]' : 'bg-[#ededed]')}>
           <Icon name={isSource ? 'database' : 'layers'} size={14} className={kindText} />
         </div>
         <div className="min-w-0 flex-1">
@@ -680,14 +680,14 @@ function ConnectorCard({ c, topic }: { c: ConnectorInfo; topic: string }) {
           <div className="truncate font-mono text-[11px] text-gray-500">{c.connectorClass}</div>
         </div>
         <span className={cn('rounded-full px-2.5 py-0.5 text-[10.5px] font-bold uppercase', kindText,
-          isSource ? 'bg-sky-100' : 'bg-violet-100')}>
+          isSource ? 'bg-[#ededed]' : 'bg-[#ededed]')}>
           {c.kind}
         </span>
       </div>
 
       <div className="space-y-3 rounded-b-xl bg-white p-4">
         {c.lastError && (
-          <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-rose-700">
+          <div className="flex items-start gap-2 rounded-lg border border-[#c0392b] bg-[#fcf3f2] px-3.5 py-2.5 text-[#c0392b]">
             <Icon name="alert" size={13} className="mt-0.5 shrink-0" />
             <span className="break-all font-mono text-[11px] leading-relaxed">{c.lastError}</span>
           </div>
@@ -734,7 +734,7 @@ function ConnectorTab({ edge }: { edge: Edge }) {
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white py-16">
-        <Icon name="alert" size={24} className="mb-2 text-rose-300" />
+        <Icon name="alert" size={24} className="mb-2 text-[#c0392b]" />
         <p className="text-[13px] text-gray-400">커넥터 정보를 불러오지 못했습니다</p>
       </div>
     )
@@ -836,7 +836,7 @@ function TraceTab({ edge }: { edge: Edge }) {
             {tracingEnabled === null ? (
               <span className="text-[11px] text-gray-300">…</span>
             ) : tracingEnabled ? (
-              <span className="text-[11px] font-semibold text-emerald-600">ON</span>
+              <span className="text-[11px] font-semibold text-[#6b6b73]">ON</span>
             ) : (
               <span className="text-[11px] font-medium text-gray-400">OFF</span>
             )}
@@ -873,7 +873,7 @@ function TraceTab({ edge }: { edge: Edge }) {
       ) : error ? (
         <TraceState
           tone="error"
-          icon={<Icon name="alert" size={20} className="text-rose-400" />}
+          icon={<Icon name="alert" size={20} className="text-[#c0392b]" />}
           text="추적 정보를 불러오지 못했습니다"
           action={<button onClick={refresh} className={btn}>다시 시도</button>}
         />
@@ -921,7 +921,7 @@ function TraceToggle({ on, disabled, onClick }: { on: boolean; disabled: boolean
       aria-pressed={on}
       className={cn(
         'relative inline-flex h-[22px] w-[38px] shrink-0 items-center rounded-full transition-colors disabled:opacity-50',
-        on ? 'bg-emerald-500' : 'bg-gray-300',
+        on ? 'bg-[#0d0d0d]' : 'bg-gray-300',
       )}
     >
       <span
@@ -942,7 +942,7 @@ function TraceWaitDots() {
   return (
     <span className="flex items-center gap-1">
       {[0, 0.15, 0.3].map((d) => (
-        <span key={d} className="bifrost-dot h-1.5 w-1.5 rounded-full bg-emerald-500" style={{ animationDelay: `${d}s` }} />
+        <span key={d} className="bifrost-dot h-1.5 w-1.5 rounded-full bg-[#c8c8c8]" style={{ animationDelay: `${d}s` }} />
       ))}
     </span>
   )
@@ -965,7 +965,7 @@ function TraceState({
     <div
       className={cn(
         'flex flex-col items-center justify-center rounded-xl border bg-white px-6 py-16 text-center',
-        tone === 'error' ? 'border-gray-200 border-l-[3px] border-l-rose-400' : 'border-dashed border-gray-200',
+        tone === 'error' ? 'border-gray-200 border-l-[3px] border-l-[#c0392b]' : 'border-dashed border-gray-200',
       )}
     >
       <div className="mb-2 flex h-6 items-center justify-center">{icon}</div>
@@ -1050,8 +1050,8 @@ function SyncTab({ edge }: { edge: Edge }) {
     : lag > 0 ? (endOffset > 0 ? Math.max(0, Math.min(99, ((endOffset - lag) / endOffset) * 100)) : 0)
     : rowsKnown && sourceRows > 0 ? Math.min(99, (sinkRows / sourceRows) * 100)
     : 0
-  const pctColor   = sinkFailed ? 'text-rose-600' : isHealthy ? 'text-emerald-600' : 'text-amber-600'
-  const barColor   = sinkFailed ? 'bg-rose-400'   : isHealthy ? 'bg-emerald-400'  : 'bg-amber-400'
+  const pctColor   = sinkFailed ? 'text-[#c0392b]' : isHealthy ? 'text-[#6b6b73]' : 'text-[#6b6b73]'
+  const barColor   = sinkFailed ? 'bg-[#c0392b]'   : isHealthy ? 'bg-[#c8c8c8]'  : 'bg-[#c8c8c8]'
 
   // 실데이터(Prometheus)만 사용. 비어있으면 빈 차트(더미 위장 금지, #175).
   // 소스지연은 Debezium이 전달할 데이터가 없을 때(idle) -1을 준다. 이때는 "지연 0"이 아니라
@@ -1076,7 +1076,7 @@ function SyncTab({ edge }: { edge: Edge }) {
   }, [eventSeries, rangeMin])
   // 약 6개 라벨만 노출(나머지 버킷은 솎음) → 균등 간격 시각 눈금
   const tickEvery = Math.max(0, Math.ceil(eventDist.length / 6) - 1)
-  const axis = { fontSize: 10, fill: '#94a3b8' }
+  const axis = { fontSize: 10, fill: '#9a9a9a' }
   const eventDistEmptyText = eventDistErr ? '이벤트 분포 조회 실패' : '이벤트 데이터 없음'
   const eventDistEmptySub = eventDistErr
     ? 'Prometheus 또는 백엔드 조회를 완료하지 못했습니다.'
@@ -1118,7 +1118,7 @@ function SyncTab({ edge }: { edge: Edge }) {
 
               <span className={cn('text-[11.5px] font-medium',
                 sync === null ? 'text-gray-400'
-                  : sinkFailed ? 'text-rose-600' : isHealthy ? 'text-emerald-600' : 'text-amber-600')}>
+                  : sinkFailed ? 'text-[#c0392b]' : isHealthy ? 'text-[#6b6b73]' : 'text-[#6b6b73]')}>
                 {sync === null
                   ? '불러오는 중…'
                   : sinkFailed
@@ -1174,7 +1174,7 @@ function SyncTab({ edge }: { edge: Edge }) {
           <div className="px-4 py-3">
           <ResponsiveChart width="100%" height={140}>
             <BarChart data={eventDist} maxBarSize={22} barCategoryGap="8%" margin={{ top: 4, right: 8, left: -28, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke="#f1f1f1" vertical={false} />
               <XAxis dataKey="t" tickFormatter={hhmm} interval={tickEvery}
                      tick={axis} tickLine={false} axisLine={false} />
               <YAxis tick={axis} tickLine={false} axisLine={false} allowDecimals={false} />
@@ -1196,7 +1196,7 @@ function SyncTab({ edge }: { edge: Edge }) {
           <div className="px-4 py-3">
           <ResponsiveChart width="100%" height={140}>
             <BarChart data={eventDist} maxBarSize={22} barCategoryGap="8%" margin={{ top: 4, right: 8, left: -28, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke="#f1f1f1" vertical={false} />
               <XAxis dataKey="t" tickFormatter={hhmm} interval={tickEvery}
                      tick={axis} tickLine={false} axisLine={false} />
               <YAxis tick={axis} tickLine={false} axisLine={false} allowDecimals={false} />
@@ -1240,13 +1240,13 @@ function DBNodeCard({ node, role }: { node: Node | null; role: 'Source' | 'Sink'
       </div>
       <span className={cn(
         'rounded px-2 py-0.5 text-[9.5px] font-bold uppercase',
-        role === 'Source' ? 'bg-sky-100 text-sky-700' : 'bg-violet-100 text-violet-700',
+        role === 'Source' ? 'bg-[#ededed] text-[#6b6b73]' : 'bg-[#ededed] text-[#6b6b73]',
       )}>
         {role}
       </span>
       <div className="flex items-center gap-1.5 text-[11px]">
         <span className={cn('h-1.5 w-1.5 rounded-full',
-          effStatus === 'healthy' ? 'bg-emerald-400' : effStatus === 'error' ? 'bg-rose-400' : 'bg-amber-400')} />
+          effStatus === 'healthy' ? 'bg-[#c8c8c8]' : effStatus === 'error' ? 'bg-[#c0392b]' : 'bg-[#c8c8c8]')} />
         <span className="text-gray-500">{effStatus}</span>
       </div>
     </div>
@@ -1256,10 +1256,10 @@ function DBNodeCard({ node, role }: { node: Node | null; role: 'Source' | 'Sink'
 /* ---------------------------------------------------------------- Messages tab */
 
 const OP_META: Record<string, { label: string; cls: string }> = {
-  c: { label: 'INSERT', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-  u: { label: 'UPDATE', cls: 'bg-amber-50  text-amber-700  border-amber-200'  },
-  d: { label: 'DELETE', cls: 'bg-rose-50   text-rose-700   border-rose-200'   },
-  r: { label: 'READ',   cls: 'bg-sky-50    text-sky-700    border-sky-200'    },
+  c: { label: 'INSERT', cls: 'bg-[#ededed] text-[#6b6b73] border-[#ececec]' },
+  u: { label: 'UPDATE', cls: 'bg-[#ededed]  text-[#6b6b73]  border-[#ececec]'  },
+  d: { label: 'DELETE', cls: 'bg-[#fcf3f2]   text-[#c0392b]   border-[#c0392b]'   },
+  r: { label: 'READ',   cls: 'bg-[#ededed]    text-[#6b6b73]    border-[#ececec]'    },
 }
 
 function MessagesTab({ edge }: { edge: Edge }) {
@@ -1426,11 +1426,11 @@ function MessagesTab({ edge }: { edge: Edge }) {
           className={cn(
             'flex items-center gap-1.5 rounded border px-2.5 py-1 text-[11.5px] font-medium transition-colors',
             pageMode ? 'cursor-not-allowed border-gray-200 text-gray-300'
-              : live ? 'border-rose-300 bg-rose-50 text-rose-600' : 'border-gray-200 text-gray-500 hover:bg-gray-50',
+              : live ? 'border-[#c0392b] bg-[#fcf3f2] text-[#c0392b]' : 'border-gray-200 text-gray-500 hover:bg-gray-50',
           )}
         >
           <span className={cn('h-1.5 w-1.5 rounded-full',
-            pageMode ? 'bg-gray-300' : live ? 'animate-pulse bg-rose-500' : 'bg-gray-300')} />
+            pageMode ? 'bg-gray-300' : live ? 'animate-pulse bg-[#c0392b]' : 'bg-gray-300')} />
           Live
         </button>
 
@@ -1600,7 +1600,7 @@ function GuideTab({ edge }: { edge: Edge }) {
     return <Panel title="Connection details"><div className="px-4 py-10 text-center text-[13px] text-gray-400">워크스페이스를 먼저 선택하세요.</div></Panel>
   }
   if (error) {
-    return <Panel title="Connection details"><div className="px-4 py-10 text-center text-[13px] text-rose-500">{error}</div></Panel>
+    return <Panel title="Connection details"><div className="px-4 py-10 text-center text-[13px] text-[#c0392b]">{error}</div></Panel>
   }
   if (!guide) {
     return <Panel title="Connection details"><div className="px-4 py-10 text-center text-[13px] text-gray-400">불러오는 중…</div></Panel>
@@ -1791,7 +1791,7 @@ function MappingTab({ edge }: { edge: Edge }) {
       {!wsId ? (
         <div className="px-4 py-10 text-center text-[13px] text-gray-400">워크스페이스를 먼저 선택하세요.</div>
       ) : error ? (
-        <div className="px-4 py-10 text-center text-[13px] text-rose-500">{error}</div>
+        <div className="px-4 py-10 text-center text-[13px] text-[#c0392b]">{error}</div>
       ) : mapping === null ? (
         <div className="px-4 py-10 text-center text-[13px] text-gray-400">불러오는 중…</div>
       ) : (
@@ -1842,9 +1842,9 @@ function MappingTab({ edge }: { edge: Edge }) {
                     <td className="px-4 py-2.5 font-mono text-gray-500">{c.type}</td>
                     <td className="px-4 py-2.5">
                       <div className="flex gap-1.5">
-                        {c.primaryKey && <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">PK</span>}
+                        {c.primaryKey && <span className="rounded bg-[#ededed] px-1.5 py-0.5 text-[10px] font-semibold text-[#6b6b73]">PK</span>}
                         {!c.nullable && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">NOT NULL</span>}
-                        {c.indexed && <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">INDEX</span>}
+                        {c.indexed && <span className="rounded bg-[#ededed] px-1.5 py-0.5 text-[10px] font-semibold text-[#6b6b73]">INDEX</span>}
                       </div>
                     </td>
                   </tr>
@@ -1886,7 +1886,7 @@ function PartitionViz({ partitions }: {
     return acc
   }, {})
 
-  const axis = { fontSize: 10, fill: '#94a3b8' }
+  const axis = { fontSize: 10, fill: '#9a9a9a' }
   const chartH = Math.max(140, partitions.length * 28)
 
   return (
@@ -1896,7 +1896,7 @@ function PartitionViz({ partitions }: {
         <div className="mb-1.5 flex items-center gap-2">
           <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Partition Balance</span>
           {isSkewed && (
-            <span className="flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-600">
+            <span className="flex items-center gap-1 rounded-full border border-[#ececec] bg-[#ededed] px-2 py-0.5 text-[10px] font-semibold text-[#6b6b73]">
               <Icon name="alert" size={10} />편향 감지
             </span>
           )}
@@ -1948,8 +1948,8 @@ function PartitionViz({ partitions }: {
         <div className="mt-3 border-t border-gray-100 pt-2.5">
           <div className="text-[10.5px] text-gray-400">
             {Object.values(brokerCount).every((c) => c === Object.values(brokerCount)[0])
-              ? <span className="font-medium text-emerald-600">균등 분배</span>
-              : <span className="font-medium text-amber-600">불균등 분배</span>}
+              ? <span className="font-medium text-[#6b6b73]">균등 분배</span>
+              : <span className="font-medium text-[#6b6b73]">불균등 분배</span>}
           </div>
         </div>
       </div>
@@ -1964,7 +1964,7 @@ function SyncStat({ label, value, tone }: { label: string; value: string; tone?:
     <div className="px-5 py-3.5">
       <div className="text-[11px] uppercase tracking-wide text-gray-400">{label}</div>
       <div className={cn('mt-0.5 truncate text-[14px] font-semibold',
-        tone === 'warn' ? 'text-amber-600' : tone === 'good' ? 'text-emerald-600' : 'text-gray-900')}>
+        tone === 'warn' ? 'text-[#6b6b73]' : tone === 'good' ? 'text-[#6b6b73]' : 'text-gray-900')}>
         {value}
       </div>
     </div>
@@ -1975,7 +1975,7 @@ function Kv({ label, value, tone }: { label: string; value: string; tone?: 'warn
   return (
     <div className="flex items-center gap-1.5 text-[12.5px]">
       <span className="text-gray-400">{label}</span>
-      <span className={cn('font-semibold', tone === 'warn' ? 'text-amber-600' : 'text-gray-700')}>{value}</span>
+      <span className={cn('font-semibold', tone === 'warn' ? 'text-[#6b6b73]' : 'text-gray-700')}>{value}</span>
     </div>
   )
 }

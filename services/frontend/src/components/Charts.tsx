@@ -30,14 +30,15 @@ export function ResponsiveChart({
   return <ResponsiveContainer initialDimension={initialDimension ?? { width: 300, height: 200 }} {...rest} />
 }
 
-/* chart series colors — chroma eased down slightly from the raw neon values */
+/* chart series colors — 모노크롬(#719). 1차=잉크, 보조 시리즈=그레이 스케일,
+   오류 시리즈만 빨강. 레인보우 제거. */
 export const CHART_COLORS = {
-  brand: '#4a5ad0',
-  emerald: '#2ba27b',
-  amber: '#e3a52c',
-  red: '#e05c5c',
-  violet: '#8a72ea',
-  slate: '#94a3b8',
+  brand: '#0d0d0d',
+  emerald: '#8a8a8a',
+  amber: '#b0b0b0',
+  red: '#c0392b',
+  violet: '#c8c8c8',
+  slate: '#9a9a9a',
 }
 
 export interface SeriesDef {
@@ -74,7 +75,7 @@ export function TrendChart({
   /** 데이터 점에 dot 표시(끊긴 시리즈의 고립 점이 보이도록). */
   showDots?: boolean
 }) {
-  const axis = { fontSize: 10, fill: '#94a3b8' }
+  const axis = { fontSize: 10, fill: '#9a9a9a' }
 
   // 시간축이면 t(ms)를 숫자 시간 스케일로, 아니면 기존 카테고리 라벨로.
   const xAxis = timeAxis ? (
@@ -102,12 +103,12 @@ export function TrendChart({
                 </linearGradient>
               ))}
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#eef0f3" vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="#f1f1f1" vertical={false} />
             {xAxis}
             <YAxis tick={axis} tickLine={false} axisLine={false} width={44} />
             {tooltip}
             {refLine && (
-              <ReferenceLine y={refLine.y} stroke="#ef4444" strokeDasharray="4 3" label={refLabel(refLine.label)} />
+              <ReferenceLine y={refLine.y} stroke="#c0392b" strokeDasharray="4 3" label={refLabel(refLine.label)} />
             )}
             {series.map((s) => (
               <Area
@@ -125,12 +126,12 @@ export function TrendChart({
           </AreaChart>
         ) : (
           <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#eef0f3" vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="#f1f1f1" vertical={false} />
             {xAxis}
             <YAxis tick={axis} tickLine={false} axisLine={false} width={44} />
             {tooltip}
             {refLine && (
-              <ReferenceLine y={refLine.y} stroke="#ef4444" strokeDasharray="4 3" label={refLabel(refLine.label)} />
+              <ReferenceLine y={refLine.y} stroke="#c0392b" strokeDasharray="4 3" label={refLabel(refLine.label)} />
             )}
             {series.map((s) => (
               <Line
@@ -154,13 +155,13 @@ export function TrendChart({
 
 const tooltipStyle = {
   borderRadius: 8,
-  border: '1px solid #e5e7eb',
+  border: '1px solid #ececec',
   fontSize: 12,
   boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
 }
 
 function refLabel(text: string) {
-  return { value: text, position: 'insideTopRight' as const, fontSize: 10, fill: '#ef4444' }
+  return { value: text, position: 'insideTopRight' as const, fontSize: 10, fill: '#c0392b' }
 }
 
 export function ChartLegend({ series }: { series: SeriesDef[] }) {

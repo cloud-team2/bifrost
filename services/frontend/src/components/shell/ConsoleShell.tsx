@@ -20,7 +20,7 @@ export function ConsoleShell({ viewLabel, children }: { viewLabel: string; child
         <Header viewLabel={viewLabel} />
 
         <div className="flex flex-1 overflow-hidden">
-          <main className="flex-1 overflow-y-auto scroll-thin bg-zinc-50">{children}</main>
+          <main className="flex-1 overflow-y-auto scroll-thin bg-[#fafafa]">{children}</main>
 
           {/* AI drawer — always mounted, width animates open/closed */}
           <div
@@ -36,7 +36,7 @@ export function ConsoleShell({ viewLabel, children }: { viewLabel: string; child
               className="flex w-7 shrink-0 flex-col items-center justify-center gap-2 bg-white hover:bg-gray-50"
             >
               {!app.aiPanelOpen && (
-                <div className="flex h-6 w-5 items-center justify-center rounded bg-gradient-to-br from-brand-500 to-violet-600">
+                <div className="flex h-6 w-5 items-center justify-center rounded bg-[#0d0d0d]">
                   <Icon name="zap" size={11} className="text-white" />
                 </div>
               )}

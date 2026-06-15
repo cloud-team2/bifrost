@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import { BrandMark } from '../components/BrandMark'
 import { useApp } from '../store/AppStore'
-import { DEMO_ACCOUNTS } from '../data/mock'
-import { cn } from '../lib/format'
+import { DEMO_ACCOUNTS } from '../data/constants'
 
 export function Login({ onRegister }: { onRegister: () => void }) {
   const app = useApp()
@@ -22,7 +21,7 @@ export function Login({ onRegister }: { onRegister: () => void }) {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-zinc-100 via-white to-brand-50 p-6">
+    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-zinc-100 via-white to-[#ededed] p-6">
       <div className="w-full max-w-[400px]">
         <div className="mb-7 flex items-center justify-center gap-2.5">
           <BrandMark size={40} />
@@ -62,7 +61,7 @@ export function Login({ onRegister }: { onRegister: () => void }) {
             </div>
           </div>
 
-          {error && <div className="mt-3 text-[12px] font-medium text-rose-600">{error}</div>}
+          {error && <div className="mt-3 text-[12px] font-medium text-[#c0392b]">{error}</div>}
 
           <button
             onClick={submit}
@@ -96,30 +95,16 @@ export function Login({ onRegister }: { onRegister: () => void }) {
                     setPassword(a.password)
                     setError('')
                   }}
-                  className="flex w-full items-center gap-2.5 rounded-lg border border-gray-200 px-3 py-2 text-left transition-colors hover:border-brand-300 hover:bg-brand-50/40"
+                  className="flex w-full items-center gap-2.5 rounded-lg border border-gray-200 px-3 py-2 text-left transition-colors hover:border-gray-300 hover:bg-gray-50"
                 >
-                  <div
-                    className={cn(
-                      'flex h-8 w-8 items-center justify-center rounded-full text-[12px] font-semibold text-white',
-                      a.user.role === 'MEMBER'
-                        ? 'bg-gradient-to-br from-sky-400 to-indigo-500'
-                        : 'bg-gradient-to-br from-violet-400 to-violet-600',
-                    )}
-                  >
+                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#0d0d0d] text-[12px] font-semibold text-white">
                     {a.user.initial}
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-[13px] font-medium text-gray-800">{a.user.name}</div>
                     <div className="truncate text-[11px] text-gray-400">{a.user.email}</div>
                   </div>
-                  <span
-                    className={cn(
-                      'rounded px-1.5 py-0.5 text-[10px] font-semibold capitalize',
-                      a.user.role === 'MEMBER'
-                        ? 'bg-sky-50 text-sky-700'
-                        : 'bg-violet-50 text-violet-700',
-                    )}
-                  >
+                  <span className="rounded bg-[#ededed] px-1.5 py-0.5 text-[10px] font-semibold capitalize text-[#6b6b73]">
                     {a.user.role}
                   </span>
                 </button>

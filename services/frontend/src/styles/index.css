@@ -4,20 +4,29 @@
   --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
 
-  --color-brand-50: #eef1fe;
-  --color-brand-100: #dfe4fd;
-  --color-brand-200: #c2cbfb;
-  --color-brand-300: #9aa8f6;
-  --color-brand-400: #6f80ef;
-  --color-brand-500: #4a5fe6;
-  --color-brand-600: #3b53e0;
-  --color-brand-700: #2f43bd;
-  --color-brand-800: #283898;
-  --color-brand-900: #25337a;
+  /* "Codex 모노크롬" — brand 스케일을 그레이스케일+잉크로 재정의(#719).
+     클래스명(brand-600 등)은 그대로 두고 값만 교체 → 마크업 무변경 반영. */
+  --color-brand-50: #ededed; /* 활성 메뉴/배지 중립 틴트 */
+  --color-brand-100: #e3e3e3;
+  --color-brand-200: #d6d6d6;
+  --color-brand-300: #bdbdbd; /* disabled 버튼 */
+  --color-brand-400: #8a8a8a;
+  --color-brand-500: #2a2a2a;
+  --color-brand-600: #0d0d0d; /* primary 버튼/활성 텍스트 */
+  --color-brand-700: #000000; /* 버튼 hover */
+  --color-brand-800: #000000;
+  --color-brand-900: #000000;
 
-  --color-ink: #1f2937;
-  --color-rail: #1b1e24;
-  --color-rail-hover: #2a2e36;
+  --color-ink: #0d0d0d;
+  --color-rail: #ffffff; /* 사이드바 화이트 (소비처에서 우측 보더 추가) */
+  --color-rail-hover: #ededed;
+
+  /* 의미 토큰 — 후속 다크 모드 대비 (값은 라이트 기준) */
+  --color-surface: #ffffff;
+  --color-border: #ececec;
+  --color-muted: #6b6b73;
+  --color-status-error: #c0392b;
+  --color-neutral-fill: #ededed;
 
   /* accent tints used as badge / card backgrounds — chroma nudged down ~18%
      (lightness & hue kept) so the colored fills read a touch less neon */
@@ -51,8 +60,8 @@
     margin: 0;
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
-    color: #29313d;
-    background: #f4f5f7;
+    color: #0d0d0d;
+    background: #fafafa;
   }
   * {
     box-sizing: border-box;
@@ -65,7 +74,7 @@
   height: 8px;
 }
 .scroll-thin::-webkit-scrollbar-thumb {
-  background: #d4d7dd;
+  background: #ececec;
   border-radius: 8px;
 }
 .scroll-thin::-webkit-scrollbar-track {

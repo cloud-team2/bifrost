@@ -452,6 +452,14 @@ async def test_policy_guard_high_risk_requires_approval():
     assert dec.status == ActionStatus.PENDING_APPROVAL
 
 
+def test_policy_matrix_runtime_medium_requires_approval():
+    from app.catalogs import policy_matrix
+
+    rule = policy_matrix.lookup(ActionType.RUNTIME_TOOL, RiskLevel.MEDIUM)
+
+    assert rule.decision == PolicyDecisionType.REQUIRE_APPROVAL
+
+
 @pytest.mark.asyncio
 async def test_policy_guard_low_risk_allows():
     from app.streaming.event_bus import EventBus

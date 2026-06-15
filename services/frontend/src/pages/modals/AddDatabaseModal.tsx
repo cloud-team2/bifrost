@@ -175,7 +175,7 @@ export function AddDatabaseModal({ open, onClose }: { open: boolean; onClose: ()
             <div
               className={cn(
                 'flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold',
-                i < step ? 'bg-emerald-500 text-white' : i === step ? 'bg-brand-600 text-white' : 'bg-gray-200 text-gray-500',
+                i < step ? 'bg-[#0d0d0d] text-white' : i === step ? 'bg-brand-600 text-white' : 'bg-gray-200 text-gray-500',
               )}
             >
               {i < step ? '✓' : i + 1}
@@ -232,7 +232,7 @@ export function AddDatabaseModal({ open, onClose }: { open: boolean; onClose: ()
             <div
               className={cn(
                 'flex items-center gap-1.5 text-[12.5px] font-medium',
-                testResult.success ? 'text-emerald-600' : 'text-rose-600',
+                testResult.success ? 'text-[#6b6b73]' : 'text-[#c0392b]',
               )}
             >
               <Icon name={testResult.success ? 'check' : 'x'} size={14} strokeWidth={3} />
@@ -240,7 +240,7 @@ export function AddDatabaseModal({ open, onClose }: { open: boolean; onClose: ()
             </div>
           )}
           {error && (
-            <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-rose-600">
+            <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-[#c0392b]">
               <Icon name="x" size={14} strokeWidth={3} />
               {error}
             </div>
@@ -255,10 +255,10 @@ export function AddDatabaseModal({ open, onClose }: { open: boolean; onClose: ()
               className={cn(
                 'rounded-lg border px-3 py-2 text-[12.5px] font-semibold',
                 overall === 'OK'
-                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                  ? 'border-[#ececec] bg-[#ededed] text-[#6b6b73]'
                   : overall === 'WARNING'
-                    ? 'border-amber-200 bg-amber-50 text-amber-700'
-                    : 'border-rose-200 bg-rose-50 text-rose-700',
+                    ? 'border-[#ececec] bg-[#ededed] text-[#6b6b73]'
+                    : 'border-[#c0392b] bg-[#fcf3f2] text-[#c0392b]',
               )}
             >
               {READINESS_LABEL[overall]}
@@ -315,7 +315,7 @@ function CheckGroup({ title, checks }: { title: string; checks: CapabilityCheck[
               strokeWidth={c.state === 'pass' ? 3 : 2}
               className={cn(
                 'mt-0.5 shrink-0',
-                c.state === 'pass' ? 'text-emerald-500' : c.state === 'warn' ? 'text-amber-500' : 'text-rose-500',
+                c.state === 'pass' ? 'text-[#8a8a8a]' : c.state === 'warn' ? 'text-[#8a8a8a]' : 'text-[#c0392b]',
               )}
             />
             <div>

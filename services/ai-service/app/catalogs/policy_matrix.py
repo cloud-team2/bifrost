@@ -25,7 +25,7 @@ _MATRIX: dict[tuple[ActionType, RiskLevel], PolicyRule] = {
     # RUNTIME_TOOL
     (ActionType.RUNTIME_TOOL, RiskLevel.FORBIDDEN):  PolicyRule(_DENY, "금지된 위험 수준"),
     (ActionType.RUNTIME_TOOL, RiskLevel.HIGH):        PolicyRule(_REQUIRE_APPROVAL, "고위험 조치 — 사람 승인 필요"),
-    (ActionType.RUNTIME_TOOL, RiskLevel.MEDIUM):      PolicyRule(_REQUIRE_CHANGE, "중위험 조치 — 변경관리 티켓 필요"),
+    (ActionType.RUNTIME_TOOL, RiskLevel.MEDIUM):      PolicyRule(_REQUIRE_APPROVAL, "중위험 조치 — 사람 승인 필요"),
     (ActionType.RUNTIME_TOOL, RiskLevel.LOW):         PolicyRule(_ALLOW, "저위험 조치 — 자동 허용"),
     (ActionType.RUNTIME_TOOL, RiskLevel.READ_ONLY):   PolicyRule(_ALLOW, "읽기 전용 — 자동 허용"),
     # WORKFLOW_ACTION
