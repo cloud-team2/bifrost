@@ -63,6 +63,7 @@ public class PipelineService {
     private final com.bifrost.ops.pipeline.kafka.KafkaResourceCleaner kafkaResourceCleaner;
     private final com.bifrost.ops.database.service.CdcReadinessService cdcReadinessService;
     private final com.bifrost.ops.pipeline.PostgresReplicationSlotCleaner postgresSlotCleaner;
+    private final com.bifrost.ops.incident.IncidentService incidentService;
 
     public PipelineService(PipelineRepository pipelineRepository,
                            DatasourceRepository datasourceRepository,
@@ -74,7 +75,8 @@ public class PipelineService {
                            AuditService auditService,
                            com.bifrost.ops.pipeline.kafka.KafkaResourceCleaner kafkaResourceCleaner,
                            com.bifrost.ops.database.service.CdcReadinessService cdcReadinessService,
-                           com.bifrost.ops.pipeline.PostgresReplicationSlotCleaner postgresSlotCleaner) {
+                           com.bifrost.ops.pipeline.PostgresReplicationSlotCleaner postgresSlotCleaner,
+                           com.bifrost.ops.incident.IncidentService incidentService) {
         this.pipelineRepository = pipelineRepository;
         this.datasourceRepository = datasourceRepository;
         this.workspaceRepository = workspaceRepository;
@@ -86,6 +88,7 @@ public class PipelineService {
         this.kafkaResourceCleaner = kafkaResourceCleaner;
         this.cdcReadinessService = cdcReadinessService;
         this.postgresSlotCleaner = postgresSlotCleaner;
+        this.incidentService = incidentService;
     }
 
     // ---------- 목록 / 상세 ----------
@@ -308,6 +311,10 @@ public class PipelineService {
         }
         connectorRepository.deleteAll(connectorRepository.findByPipelineId(p.getId()));
         pipelineRepository.delete(p);
+        // 삭제된 파이프라인의 열린 인시던트를 resolve해 orphan을 방지(#692).
+        incidentService.resolveForDeletedPipeline(
+                p.getTenantId(), p.getId(), p.getTopicName(), connectorNames(p),
+                p.getSinkConnectorName() != null ? "connect-" + p.getSinkConnectorName() : null);
         eventService.record(wsId, null, EventLevel.INFO, "PIPELINE_DELETED",
                 "pipeline '" + p.getName() + "' 삭제");
         auditService.record(wsId, principal.email(), "PIPELINE_DELETE", "PIPELINE", id,

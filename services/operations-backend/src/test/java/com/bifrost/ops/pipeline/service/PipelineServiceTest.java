@@ -61,7 +61,8 @@ class PipelineServiceTest {
     private PipelineService service() {
         return new PipelineService(pipelineRepository, datasourceRepository, workspaceRepository,
                 connectorRepository, provisioningService, accessGuard, eventService, auditService,
-                kafkaResourceCleaner, cdcReadinessService, postgresSlotCleaner);
+                kafkaResourceCleaner, cdcReadinessService, postgresSlotCleaner,
+                org.mockito.Mockito.mock(com.bifrost.ops.incident.IncidentService.class));
     }
 
     /** create() 호출 시 live 점검이 OK를 반환하도록 기본 stub. */

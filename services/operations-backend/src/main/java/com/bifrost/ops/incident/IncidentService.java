@@ -212,6 +212,47 @@ public class IncidentService {
         return resp;
     }
 
+    /**
+     * 파이프라인 삭제 시 그 파이프라인에 한정된 grouping_key의 활성 인시던트를 RESOLVED 처리한다(#692).
+     * 삭제된 파이프라인/커넥터/토픽을 참조하는 orphaned incident를 방지한다(에이전트가 RESOURCE_NOT_FOUND로
+     * 분석·조치를 못 세우던 문제). 공유 자원(datasource:{id})은 다른 파이프라인이 쓸 수 있어 건드리지 않는다.
+     *
+     * @return resolve된 인시던트 수
+     */
+    @Transactional
+    public int resolveForDeletedPipeline(UUID tenantId, UUID pipelineId, String topicName,
+                                         List<String> connectorNames, String sinkConsumerGroup) {
+        java.util.Set<String> keys = new java.util.LinkedHashSet<>();
+        keys.add(IncidentGroupingKeys.pipelineAvailability(pipelineId));
+        if (connectorNames != null) {
+            for (String c : connectorNames) {
+                if (c != null && !c.isBlank()) keys.add(IncidentGroupingKeys.connectorWorker(c));
+            }
+        }
+        if (topicName != null && !topicName.isBlank()) {
+            keys.add(IncidentGroupingKeys.topicReplication(topicName));
+        }
+        if (sinkConsumerGroup != null && !sinkConsumerGroup.isBlank()) {
+            keys.add(IncidentGroupingKeys.consumerLag(sinkConsumerGroup));
+        }
+
+        List<IncidentResponse> updates = new ArrayList<>();
+        Instant now = Instant.now();
+        for (String key : keys) {
+            for (IncidentEntity inc : activeIncidents(tenantId, key)) {
+                inc.setStatus(ST_RESOLVED);
+                inc.setResolvedAt(now);
+                incidentRepository.save(inc);
+                updates.add(IncidentResponse.from(inc));
+            }
+        }
+        if (!updates.isEmpty()) {
+            log.info("[incident] 파이프라인 삭제로 인시던트 {}건 resolve: pipeline={}", updates.size(), pipelineId);
+            publishAfterCommit(updates);
+        }
+        return updates.size();
+    }
+
     private void acquireGroupingLock(UUID tenantId, String groupingKey) {
         incidentRepository.lockIncidentGroup(tenantId + ":" + groupingKey);
     }
