@@ -3,6 +3,7 @@ package com.bifrost.ops.pipeline.dto;
 import com.bifrost.ops.provisioning.persistence.entity.ConnectorEntity;
 
 import java.time.Instant;
+import java.util.List;
 
 /**
  * 파이프라인 커넥터 응답(#107). 상세 페이지 Connector 탭용.
@@ -18,9 +19,22 @@ public record ConnectorResponse(
     String state,
     int tasksMax,
     String lastError,
-    Instant updatedAt
+    Instant lastErrorAt,
+    Instant updatedAt,
+    Double errorRatePct,
+    Double pollBatchAvg,
+    Double pollBatchMax,
+    Long retriesTotal,
+    Double recordsPerSec,
+    List<MetricPoint> recordsPerSecSeries,
+    String metricsStatus,
+    String metricsMessage
 ) {
     public static ConnectorResponse from(ConnectorEntity c) {
+        return from(c, ConnectorMetrics.empty());
+    }
+
+    public static ConnectorResponse from(ConnectorEntity c, ConnectorMetrics metrics) {
         return new ConnectorResponse(
             c.getCrName(),
             c.getKind().name().toLowerCase(),
@@ -28,7 +42,46 @@ public record ConnectorResponse(
             c.getState(),
             c.getTasksMax(),
             c.getLastError(),
-            c.getUpdatedAt()
+            hasText(c.getLastError()) ? c.getUpdatedAt() : null,
+            c.getUpdatedAt(),
+            metrics.errorRatePct(),
+            metrics.pollBatchAvg(),
+            metrics.pollBatchMax(),
+            metrics.retriesTotal(),
+            metrics.recordsPerSec(),
+            metrics.recordsPerSecSeries(),
+            metrics.metricsStatus(),
+            metrics.metricsMessage()
         );
+    }
+
+    public record ConnectorMetrics(
+            Double errorRatePct,
+            Double pollBatchAvg,
+            Double pollBatchMax,
+            Long retriesTotal,
+            Double recordsPerSec,
+            List<MetricPoint> recordsPerSecSeries,
+            String metricsStatus,
+            String metricsMessage
+    ) {
+        public static ConnectorMetrics empty() {
+            return unavailable(null);
+        }
+
+        public static ConnectorMetrics available(Double errorRatePct, Double pollBatchAvg, Double pollBatchMax,
+                                                 Long retriesTotal, Double recordsPerSec,
+                                                 List<MetricPoint> recordsPerSecSeries) {
+            return new ConnectorMetrics(errorRatePct, pollBatchAvg, pollBatchMax, retriesTotal, recordsPerSec,
+                    recordsPerSecSeries, "AVAILABLE", null);
+        }
+
+        public static ConnectorMetrics unavailable(String message) {
+            return new ConnectorMetrics(null, null, null, null, null, List.of(), "UNAVAILABLE", message);
+        }
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 }

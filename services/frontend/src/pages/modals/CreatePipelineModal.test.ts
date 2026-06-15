@@ -6,6 +6,8 @@ function table(primaryKey = true): SchemaTable {
   return {
     schema: 'public',
     name: primaryKey ? 'orders' : 'events',
+    approximateRowCount: 10,
+    totalSizeBytes: 8192,
     columns: [
       { name: 'id', type: 'bigint', nullable: false, primaryKey, indexed: primaryKey },
       { name: 'payload', type: 'jsonb', nullable: true, primaryKey: false, indexed: false },

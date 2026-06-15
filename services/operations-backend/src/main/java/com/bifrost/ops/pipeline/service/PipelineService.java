@@ -9,9 +9,11 @@ import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
 import com.bifrost.ops.global.common.log.OpsLog;
 import com.bifrost.ops.governance.audit.AuditService;
+import com.bifrost.ops.monitoring.query.KafkaMetricsQuery;
 import com.bifrost.ops.pipeline.PipelineLifecycle;
 import com.bifrost.ops.pipeline.PipelinePatternCodec;
 import com.bifrost.ops.pipeline.dto.ConnectorResponse;
+import com.bifrost.ops.pipeline.dto.MetricPoint;
 import com.bifrost.ops.pipeline.dto.PipelineCreateRequest;
 import com.bifrost.ops.pipeline.dto.PipelineResponse;
 import com.bifrost.ops.pipeline.persistence.entity.PipelineEntity;
@@ -37,6 +39,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -64,6 +67,7 @@ public class PipelineService {
     private final com.bifrost.ops.database.service.CdcReadinessService cdcReadinessService;
     private final com.bifrost.ops.pipeline.PostgresReplicationSlotCleaner postgresSlotCleaner;
     private final com.bifrost.ops.incident.IncidentService incidentService;
+    private final KafkaMetricsQuery kafkaMetricsQuery;
 
     public PipelineService(PipelineRepository pipelineRepository,
                            DatasourceRepository datasourceRepository,
@@ -76,7 +80,8 @@ public class PipelineService {
                            com.bifrost.ops.pipeline.kafka.KafkaResourceCleaner kafkaResourceCleaner,
                            com.bifrost.ops.database.service.CdcReadinessService cdcReadinessService,
                            com.bifrost.ops.pipeline.PostgresReplicationSlotCleaner postgresSlotCleaner,
-                           com.bifrost.ops.incident.IncidentService incidentService) {
+                           com.bifrost.ops.incident.IncidentService incidentService,
+                           KafkaMetricsQuery kafkaMetricsQuery) {
         this.pipelineRepository = pipelineRepository;
         this.datasourceRepository = datasourceRepository;
         this.workspaceRepository = workspaceRepository;
@@ -89,6 +94,7 @@ public class PipelineService {
         this.cdcReadinessService = cdcReadinessService;
         this.postgresSlotCleaner = postgresSlotCleaner;
         this.incidentService = incidentService;
+        this.kafkaMetricsQuery = kafkaMetricsQuery;
     }
 
     // ---------- 목록 / 상세 ----------
@@ -109,10 +115,59 @@ public class PipelineService {
     /** 파이프라인의 커넥터 목록(#107, 상세 Connector 탭). state/lastError는 watcher가 갱신한 값. */
     public List<ConnectorResponse> listConnectors(UUID wsId, AuthenticatedUser principal, UUID id) {
         accessGuard.requireAccess(wsId, principal);
-        load(wsId, id); // 파이프라인이 해당 워크스페이스 소속인지 검증(아니면 404)
+        PipelineEntity pipeline = load(wsId, id); // 파이프라인이 해당 워크스페이스 소속인지 검증(아니면 404)
         return connectorRepository.findByPipelineId(id).stream()
-                .map(ConnectorResponse::from)
+                .map(c -> ConnectorResponse.from(c, connectorMetrics(pipeline, c)))
                 .toList();
+    }
+
+    private ConnectorResponse.ConnectorMetrics connectorMetrics(PipelineEntity pipeline, ConnectorEntity connector) {
+        if (kafkaMetricsQuery == null || !kafkaMetricsQuery.isEnabled()) {
+            return ConnectorResponse.ConnectorMetrics.unavailable("Prometheus 비활성화");
+        }
+        String connectorName = connector.getCrName();
+        if (connectorName == null || connectorName.isBlank()) {
+            return ConnectorResponse.ConnectorMetrics.unavailable("connector name 없음");
+        }
+        String server = debeziumServer(pipeline);
+        long endSec = System.currentTimeMillis() / 1000L;
+        long startSec = clampStart(endSec - 30L * 60L, pipeline);
+        long stepSec = 30L;
+        try {
+            Double errorRatePct = kafkaMetricsQuery.connectorErrorRatePct(connector.getKind(), connectorName, server);
+            Double pollBatchAvg = kafkaMetricsQuery.connectorPollBatchAvg(connectorName, connector.getKind());
+            Double pollBatchMax = kafkaMetricsQuery.connectorPollBatchMax(connectorName, connector.getKind());
+            Long retriesTotal = kafkaMetricsQuery.connectorRetriesTotal(connectorName);
+            Double recordsPerSec = kafkaMetricsQuery.connectorRecordsPerSec(connector.getKind(), connectorName, server);
+            List<MetricPoint> recordsPerSecSeries = toMetricPoints(
+                    kafkaMetricsQuery.connectorRecordsSeries(connector.getKind(), connectorName, server,
+                            startSec, endSec, stepSec));
+            if (errorRatePct == null && pollBatchAvg == null && pollBatchMax == null && retriesTotal == null
+                    && recordsPerSec == null && recordsPerSecSeries.isEmpty()) {
+                return ConnectorResponse.ConnectorMetrics.unavailable("Prometheus series 없음");
+            }
+            return ConnectorResponse.ConnectorMetrics.available(errorRatePct, pollBatchAvg, pollBatchMax,
+                    retriesTotal, recordsPerSec, recordsPerSecSeries);
+        } catch (RuntimeException e) {
+            log.warn("connector 상세 지표 조회 실패: connector={}, cause={}", connectorName, e.getMessage());
+            return ConnectorResponse.ConnectorMetrics.unavailable("Prometheus 조회 실패");
+        }
+    }
+
+    private static List<MetricPoint> toMetricPoints(Map<Long, Double> series) {
+        List<MetricPoint> out = new ArrayList<>(series.size());
+        new java.util.TreeMap<>(series).forEach((ts, value) -> out.add(new MetricPoint(ts * 1000L, value)));
+        return out;
+    }
+
+    private static long clampStart(long startSec, PipelineEntity p) {
+        if (p.getCreatedAt() == null) return startSec;
+        return Math.max(startSec, p.getCreatedAt().getEpochSecond());
+    }
+
+    private static String debeziumServer(PipelineEntity p) {
+        String topic = p.getTopicName();
+        return (topic == null || topic.isBlank()) ? null : topic;
     }
 
     // ---------- 생성 ----------

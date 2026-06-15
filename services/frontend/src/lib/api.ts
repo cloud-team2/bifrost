@@ -204,6 +204,8 @@ export interface SchemaColumn {
 export interface SchemaTable {
   schema: string
   name: string
+  approximateRowCount: number | null
+  totalSizeBytes: number | null
   columns: SchemaColumn[]
 }
 export interface DatabaseSchemaResponse {
@@ -212,6 +214,7 @@ export interface DatabaseSchemaResponse {
 export interface DatabaseMetricsResponse {
   tps: number
   queryResponseMs: number
+  queryResponseP95Ms: number | null
   activeConnections: number
   stub: boolean
 }
@@ -393,7 +396,16 @@ export interface ConnectorInfo {
   state: string | null
   tasksMax: number
   lastError: string | null
+  lastErrorAt: string | null
   updatedAt: string | null
+  errorRatePct: number | null
+  pollBatchAvg: number | null
+  pollBatchMax: number | null
+  retriesTotal: number | null
+  recordsPerSec: number | null
+  recordsPerSecSeries: MetricPoint[]
+  metricsStatus: 'AVAILABLE' | 'UNAVAILABLE'
+  metricsMessage: string | null
 }
 /** 파이프라인 동기화 상태(#107). source/sink 실제 행수. 미존재/실패 시 -1. */
 export interface SyncStatusResponse {
@@ -517,6 +529,17 @@ export interface KafkaPrincipalResponse {
 export interface KafkaPrincipalCreateRequest {
   username: string
   secretRef?: string | null
+}
+export interface KafkaPrincipalSecretResponse {
+  principalId: string
+  username: string
+  status: KafkaPrincipalStatus
+  namespace: string
+  secretName: string
+  availableKeys: string[]
+  passwordMasked: string
+  retrievedAt: string
+  exposurePolicy: string
 }
 
 
@@ -869,6 +892,8 @@ export const api = {
     request<KafkaPrincipalResponse>('POST', `/api/v1/workspaces/${wsId}/kafka/principals/${id}/revoke`),
   rotateKafkaPrincipal: (wsId: string, id: string) =>
     request<KafkaPrincipalResponse>('POST', `/api/v1/workspaces/${wsId}/kafka/principals/${id}/rotate`),
+  kafkaPrincipalSecret: (wsId: string, id: string) =>
+    request<KafkaPrincipalSecretResponse>('GET', `/api/v1/workspaces/${wsId}/kafka/principals/${id}/secret`),
 }
 
 export interface ConnectionTestInput {

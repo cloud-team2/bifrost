@@ -11,7 +11,9 @@ import com.bifrost.ops.global.common.datasource.DbType;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
 import com.bifrost.ops.governance.audit.AuditService;
+import com.bifrost.ops.monitoring.query.KafkaMetricsQuery;
 import com.bifrost.ops.pipeline.PipelineLifecycle;
+import com.bifrost.ops.pipeline.dto.ConnectorResponse;
 import com.bifrost.ops.pipeline.dto.PipelineCreateRequest;
 import com.bifrost.ops.pipeline.dto.PipelineResponse;
 import com.bifrost.ops.pipeline.persistence.entity.PipelineEntity;
@@ -21,6 +23,7 @@ import com.bifrost.ops.provisioning.dto.ConnectorKind;
 import com.bifrost.ops.provisioning.dto.PipelinePattern;
 import com.bifrost.ops.provisioning.dto.PipelineProvisionCommand;
 import com.bifrost.ops.provisioning.dto.PipelineProvisionResult;
+import com.bifrost.ops.provisioning.persistence.entity.ConnectorEntity;
 import com.bifrost.ops.provisioning.persistence.repository.ConnectorRepository;
 import com.bifrost.ops.workspace.WorkspaceAccessGuard;
 import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
@@ -32,12 +35,14 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -57,12 +62,14 @@ class PipelineServiceTest {
     @Mock private com.bifrost.ops.pipeline.kafka.KafkaResourceCleaner kafkaResourceCleaner;
     @Mock private com.bifrost.ops.pipeline.PostgresReplicationSlotCleaner postgresSlotCleaner;
     @Mock private CdcReadinessService cdcReadinessService;
+    @Mock private KafkaMetricsQuery kafkaMetricsQuery;
 
     private PipelineService service() {
         return new PipelineService(pipelineRepository, datasourceRepository, workspaceRepository,
                 connectorRepository, provisioningService, accessGuard, eventService, auditService,
                 kafkaResourceCleaner, cdcReadinessService, postgresSlotCleaner,
-                org.mockito.Mockito.mock(com.bifrost.ops.incident.IncidentService.class));
+                org.mockito.Mockito.mock(com.bifrost.ops.incident.IncidentService.class),
+                kafkaMetricsQuery);
     }
 
     /** create() 호출 시 live 점검이 OK를 반환하도록 기본 stub. */
@@ -206,6 +213,118 @@ class PipelineServiceTest {
         assertThatThrownBy(() -> service().get(wsId, principal, id))
                 .isInstanceOfSatisfying(ApiException.class, e ->
                         assertThat(e.code()).isEqualTo(ErrorCode.PIPELINE_NOT_FOUND));
+    }
+
+    @Test
+    void listConnectorsAttachesRuntimeMetricsWhenPrometheusEnabled() {
+        UUID id = UUID.randomUUID();
+        PipelineEntity p = entity(PipelineLifecycle.ACTIVE);
+        p.setId(id);
+        p.setTopicName("cdc.team.orders");
+
+        ConnectorEntity connector = new ConnectorEntity();
+        connector.setPipelineId(id);
+        connector.setCrName("orders-source");
+        connector.setKind(ConnectorKind.SOURCE);
+        connector.setConnectorClass("io.debezium.connector.postgresql.PostgresConnector");
+        connector.setState("RUNNING");
+        connector.setTasksMax(1);
+
+        when(pipelineRepository.findByIdAndTenantId(id, wsId)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(id)).thenReturn(List.of(connector));
+        when(kafkaMetricsQuery.isEnabled()).thenReturn(true);
+        when(kafkaMetricsQuery.connectorErrorRatePct(ConnectorKind.SOURCE, "orders-source", "cdc.team.orders"))
+                .thenReturn(0.75);
+        when(kafkaMetricsQuery.connectorPollBatchAvg("orders-source", ConnectorKind.SOURCE)).thenReturn(42.5);
+        when(kafkaMetricsQuery.connectorPollBatchMax("orders-source", ConnectorKind.SOURCE)).thenReturn(120.0);
+        when(kafkaMetricsQuery.connectorRetriesTotal("orders-source")).thenReturn(3L);
+        when(kafkaMetricsQuery.connectorRecordsPerSec(ConnectorKind.SOURCE, "orders-source", "cdc.team.orders"))
+                .thenReturn(25.0);
+        when(kafkaMetricsQuery.connectorRecordsSeries(org.mockito.ArgumentMatchers.eq(ConnectorKind.SOURCE),
+                org.mockito.ArgumentMatchers.eq("orders-source"), org.mockito.ArgumentMatchers.eq("cdc.team.orders"),
+                anyLong(), anyLong(), anyLong())).thenReturn(Map.of(100L, 25.0));
+
+        List<ConnectorResponse> connectors = service().listConnectors(wsId, principal, id);
+
+        assertThat(connectors).hasSize(1);
+        ConnectorResponse out = connectors.get(0);
+        assertThat(out.errorRatePct()).isEqualTo(0.75);
+        assertThat(out.pollBatchAvg()).isEqualTo(42.5);
+        assertThat(out.pollBatchMax()).isEqualTo(120.0);
+        assertThat(out.retriesTotal()).isEqualTo(3L);
+        assertThat(out.recordsPerSec()).isEqualTo(25.0);
+        assertThat(out.metricsStatus()).isEqualTo("AVAILABLE");
+        assertThat(out.metricsMessage()).isNull();
+        assertThat(out.recordsPerSecSeries()).singleElement()
+                .satisfies(point -> {
+                    assertThat(point.timestamp()).isEqualTo(100_000L);
+                    assertThat(point.value()).isEqualTo(25.0);
+                });
+    }
+
+    @Test
+    void listConnectorsMarksMetricsUnavailableWhenPrometheusQueryFails() {
+        UUID id = UUID.randomUUID();
+        PipelineEntity p = entity(PipelineLifecycle.ACTIVE);
+        p.setId(id);
+        p.setTopicName("cdc.team.orders");
+
+        ConnectorEntity connector = new ConnectorEntity();
+        connector.setPipelineId(id);
+        connector.setCrName("orders-source");
+        connector.setKind(ConnectorKind.SOURCE);
+        connector.setConnectorClass("io.debezium.connector.postgresql.PostgresConnector");
+        connector.setState("RUNNING");
+        connector.setTasksMax(1);
+
+        when(pipelineRepository.findByIdAndTenantId(id, wsId)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(id)).thenReturn(List.of(connector));
+        when(kafkaMetricsQuery.isEnabled()).thenReturn(true);
+        when(kafkaMetricsQuery.connectorErrorRatePct(ConnectorKind.SOURCE, "orders-source", "cdc.team.orders"))
+                .thenThrow(new RuntimeException("prometheus down"));
+
+        List<ConnectorResponse> connectors = service().listConnectors(wsId, principal, id);
+
+        assertThat(connectors).hasSize(1);
+        assertThat(connectors.get(0).metricsStatus()).isEqualTo("UNAVAILABLE");
+        assertThat(connectors.get(0).metricsMessage()).isEqualTo("Prometheus 조회 실패");
+        assertThat(connectors.get(0).recordsPerSecSeries()).isEmpty();
+    }
+
+    @Test
+    void listConnectorsMarksMetricsUnavailableWhenAllPrometheusSeriesAreAbsent() {
+        UUID id = UUID.randomUUID();
+        PipelineEntity p = entity(PipelineLifecycle.ACTIVE);
+        p.setId(id);
+        p.setTopicName("cdc.team.orders");
+
+        ConnectorEntity connector = new ConnectorEntity();
+        connector.setPipelineId(id);
+        connector.setCrName("orders-source");
+        connector.setKind(ConnectorKind.SOURCE);
+        connector.setConnectorClass("io.debezium.connector.postgresql.PostgresConnector");
+        connector.setState("RUNNING");
+        connector.setTasksMax(1);
+
+        when(pipelineRepository.findByIdAndTenantId(id, wsId)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(id)).thenReturn(List.of(connector));
+        when(kafkaMetricsQuery.isEnabled()).thenReturn(true);
+        when(kafkaMetricsQuery.connectorErrorRatePct(ConnectorKind.SOURCE, "orders-source", "cdc.team.orders"))
+                .thenReturn(null);
+        when(kafkaMetricsQuery.connectorPollBatchAvg("orders-source", ConnectorKind.SOURCE)).thenReturn(null);
+        when(kafkaMetricsQuery.connectorPollBatchMax("orders-source", ConnectorKind.SOURCE)).thenReturn(null);
+        when(kafkaMetricsQuery.connectorRetriesTotal("orders-source")).thenReturn(null);
+        when(kafkaMetricsQuery.connectorRecordsPerSec(ConnectorKind.SOURCE, "orders-source", "cdc.team.orders"))
+                .thenReturn(null);
+        when(kafkaMetricsQuery.connectorRecordsSeries(org.mockito.ArgumentMatchers.eq(ConnectorKind.SOURCE),
+                org.mockito.ArgumentMatchers.eq("orders-source"), org.mockito.ArgumentMatchers.eq("cdc.team.orders"),
+                anyLong(), anyLong(), anyLong())).thenReturn(Map.of());
+
+        List<ConnectorResponse> connectors = service().listConnectors(wsId, principal, id);
+
+        assertThat(connectors).hasSize(1);
+        assertThat(connectors.get(0).metricsStatus()).isEqualTo("UNAVAILABLE");
+        assertThat(connectors.get(0).metricsMessage()).isEqualTo("Prometheus series 없음");
     }
 
     @Test

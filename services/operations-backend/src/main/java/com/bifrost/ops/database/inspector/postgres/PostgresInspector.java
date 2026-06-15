@@ -59,6 +59,24 @@ public class PostgresInspector implements DatabaseInspector {
     }
 
     @Override
+    public MetricsSnapshot collectMetrics() {
+        try (Connection conn = dataSource.getConnection()) {
+            double queryMs = measureSelectOneMs(conn);
+            double tps = queryDouble(conn, """
+                    SELECT (xact_commit + xact_rollback)::double precision
+                           / GREATEST(EXTRACT(EPOCH FROM now() - COALESCE(stats_reset, pg_postmaster_start_time())), 1)
+                    FROM pg_stat_database
+                    WHERE datname = current_database()
+                    """);
+            int activeConnections = (int) queryLong(conn,
+                    "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()");
+            return new MetricsSnapshot(round(tps), round(queryMs), null, Math.max(0, activeConnections));
+        } catch (SQLException e) {
+            throw new RuntimeException("DB metrics 조회 실패: " + e.getMessage(), e);
+        }
+    }
+
+    @Override
     public CdcReadinessResponse checkSourceReadiness() {
         try (Connection conn = dataSource.getConnection()) {
             List<CdcCheck> checks = new ArrayList<>();
@@ -197,10 +215,41 @@ public class PostgresInspector implements DatabaseInspector {
                 boolean hasPk = cols.stream().anyMatch(ColumnInfo::isPrimaryKey);
                 List<String> pkCols = cols.stream()
                         .filter(ColumnInfo::isPrimaryKey).map(ColumnInfo::name).toList();
-                result.add(new TableInfo(schema, name, 0L, hasPk, cols, pkCols));
+                TableStats stats = tableStats(conn, schema, name);
+                result.add(new TableInfo(schema, name, stats.approximateRows(), stats.totalSizeBytes(),
+                        hasPk, cols, pkCols));
             }
         }
         return result;
+    }
+
+    private static TableStats tableStats(Connection conn, String schema, String table) {
+        String sql = """
+                SELECT c.reltuples AS rows,
+                       pg_total_relation_size(c.oid) AS bytes
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = ? AND c.relname = ?
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, schema);
+            ps.setString(2, table);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    double rowEstimate = rs.getDouble("rows");
+                    Long rows = rs.wasNull() || rowEstimate < 0.0 ? null : Math.max(0L, (long) rowEstimate);
+                    return new TableStats(rows, nullableNonNegativeLong(rs, "bytes"));
+                }
+            }
+        } catch (SQLException ignored) {
+            // Schema listing should still succeed; null marks stats unavailable instead of fake zero.
+        }
+        return new TableStats(null, null);
+    }
+
+    private static Long nullableNonNegativeLong(ResultSet rs, String column) throws SQLException {
+        long value = rs.getLong(column);
+        return rs.wasNull() ? null : Math.max(0L, value);
     }
 
     private List<ColumnInfo> columns(DatabaseMetaData md, String catalog,
@@ -250,6 +299,27 @@ public class PostgresInspector implements DatabaseInspector {
         }
     }
 
+    private static double queryDouble(Connection conn, String sql) throws SQLException {
+        try (Statement st = conn.createStatement(); ResultSet rs = st.executeQuery(sql)) {
+            return rs.next() ? Math.max(0.0, rs.getDouble(1)) : 0.0;
+        }
+    }
+
+    private static double measureSelectOneMs(Connection conn) throws SQLException {
+        long start = System.nanoTime();
+        try (Statement st = conn.createStatement()) {
+            st.execute("SELECT 1");
+        }
+        return (System.nanoTime() - start) / 1_000_000.0;
+    }
+
+    private static double round(double value) {
+        if (!Double.isFinite(value)) {
+            return 0.0;
+        }
+        return Math.round(value * 100.0) / 100.0;
+    }
+
     private static int parseInt(String s) {
         try {
             return Integer.parseInt(s == null ? "0" : s.trim());
@@ -270,4 +340,6 @@ public class PostgresInspector implements DatabaseInspector {
         return raw.toLowerCase().replaceAll("[^a-z0-9_]", "_")
                 .substring(0, Math.min(63, raw.length()));
     }
+
+    private record TableStats(Long approximateRows, Long totalSizeBytes) {}
 }

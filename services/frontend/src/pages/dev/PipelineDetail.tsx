@@ -666,6 +666,7 @@ function ConnectorCard({ c, topic }: { c: ConnectorInfo; topic: string }) {
   const isSource  = c.kind === 'source'
   const kindColor = isSource ? 'border-[#ececec] bg-[#ededed]' : 'border-[#ececec] bg-[#ededed]'
   const kindText  = isSource ? 'text-[#6b6b73]' : 'text-[#6b6b73]'
+  const recordsSeries = (c.recordsPerSecSeries ?? []).map((p) => ({ t: p.timestamp, records: p.value }))
 
   return (
     <div className={cn('rounded-xl border-2', kindColor)}>
@@ -689,20 +690,53 @@ function ConnectorCard({ c, topic }: { c: ConnectorInfo; topic: string }) {
         {c.lastError && (
           <div className="flex items-start gap-2 rounded-lg border border-[#c0392b] bg-[#fcf3f2] px-3.5 py-2.5 text-[#c0392b]">
             <Icon name="alert" size={13} className="mt-0.5 shrink-0" />
-            <span className="break-all font-mono text-[11px] leading-relaxed">{c.lastError}</span>
+            <span className="min-w-0 break-all font-mono text-[11px] leading-relaxed">
+              {c.lastError}
+              {c.lastErrorAt && (
+                <span className="mt-1 block font-sans text-[10.5px] text-[#8f3229]">
+                  {new Date(c.lastErrorAt).toLocaleString('ko-KR')}
+                </span>
+              )}
+            </span>
           </div>
         )}
 
-        <div className="grid grid-cols-3 divide-x divide-gray-100 rounded-lg border border-gray-100 bg-gray-50">
-          <div className="px-4 py-3">
+        {c.metricsStatus !== 'AVAILABLE' && (
+          <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3.5 py-2 text-[12px] text-gray-500">
+            <Icon name="info" size={13} className="shrink-0" />
+            <span>{c.metricsMessage ?? '지표 source 없음'}</span>
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-gray-100 bg-gray-100 md:grid-cols-4">
+          <div className="bg-gray-50 px-4 py-3">
             <div className="text-[10.5px] uppercase tracking-wide text-gray-400">State</div>
             <span className={cn('mt-1 inline-block rounded px-1.5 py-0.5 text-[11px] font-semibold',
               connectorStateClass(c.state))}>
               {c.state ?? '대기중'}
             </span>
           </div>
-          <SyncStat label="Max Tasks" value={String(c.tasksMax)} />
-          <SyncStat label="구독 토픽" value={topic} />
+          <ConnectorMetric label="Max Tasks" value={String(c.tasksMax)} />
+          <ConnectorMetric label="Records/s" value={formatConnectorNumber(c.recordsPerSec)} />
+          <ConnectorMetric label="Error Rate" value={formatConnectorPct(c.errorRatePct)} tone={errorRateTone(c.errorRatePct)} />
+          <ConnectorMetric label="Poll Avg" value={formatConnectorNumber(c.pollBatchAvg)} />
+          <ConnectorMetric label="Poll Max" value={formatConnectorNumber(c.pollBatchMax)} />
+          <ConnectorMetric label="Retries" value={c.retriesTotal == null ? '—' : formatNum(c.retriesTotal)} />
+          <ConnectorMetric label="Topic" value={topic} />
+        </div>
+
+        <div className="rounded-lg border border-gray-100 bg-white px-3 py-2.5">
+          <div className="mb-1.5 text-[10.5px] uppercase tracking-wide text-gray-400">Records/sec Trend</div>
+          {recordsSeries.length > 0 ? (
+            <TrendChart
+              data={recordsSeries}
+              series={[{ key: 'records', label: 'records/s', color: CHART_COLORS.brand }]}
+              height={120}
+              timeAxis
+            />
+          ) : (
+            <div className="flex h-[120px] items-center justify-center text-[12px] text-gray-400">지표 없음</div>
+          )}
         </div>
 
         <div className="px-1 text-[11px] text-gray-400">
@@ -711,6 +745,43 @@ function ConnectorCard({ c, topic }: { c: ConnectorInfo; topic: string }) {
       </div>
     </div>
   )
+}
+
+function ConnectorMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string
+  value: string
+  tone?: 'warn' | 'error'
+}) {
+  return (
+    <div className="min-w-0 bg-gray-50 px-4 py-3">
+      <div className="text-[10.5px] uppercase tracking-wide text-gray-400">{label}</div>
+      <div className={cn('mt-0.5 truncate text-[13px] font-semibold',
+        tone === 'error' ? 'text-[#c0392b]' : tone === 'warn' ? 'text-[#6b6b73]' : 'text-gray-900')}>
+        {value}
+      </div>
+    </div>
+  )
+}
+
+function formatConnectorNumber(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) return '—'
+  return new Intl.NumberFormat('ko-KR', { maximumFractionDigits: value >= 100 ? 0 : 2 }).format(value)
+}
+
+function formatConnectorPct(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) return '—'
+  return `${new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 }).format(value)}%`
+}
+
+function errorRateTone(value: number | null | undefined): 'warn' | 'error' | undefined {
+  if (value == null || Number.isNaN(value)) return undefined
+  if (value > 2) return 'error'
+  if (value > 0.5) return 'warn'
+  return undefined
 }
 
 function ConnectorTab({ edge }: { edge: Edge }) {

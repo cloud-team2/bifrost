@@ -61,6 +61,23 @@ public class MariaDBInspector implements DatabaseInspector {
     }
 
     @Override
+    public MetricsSnapshot collectMetrics() {
+        try (Connection conn = dataSource.getConnection()) {
+            double queryMs = measureSelectOneMs(conn);
+            Map<String, Long> status = globalStatus(conn);
+            long commits = status.getOrDefault("Com_commit", 0L);
+            long rollbacks = status.getOrDefault("Com_rollback", 0L);
+            long uptime = Math.max(1L, status.getOrDefault("Uptime", 1L));
+            double tps = (double) (commits + rollbacks) / uptime;
+            int activeConnections = Math.toIntExact(Math.min(Integer.MAX_VALUE,
+                    Math.max(0L, status.getOrDefault("Threads_connected", 0L))));
+            return new MetricsSnapshot(round(tps), round(queryMs), null, activeConnections);
+        } catch (SQLException e) {
+            throw new RuntimeException("DB metrics 조회 실패: " + e.getMessage(), e);
+        }
+    }
+
+    @Override
     public CdcReadinessResponse checkSourceReadiness() {
         try (Connection conn = dataSource.getConnection()) {
             List<CdcCheck> checks = new ArrayList<>();
@@ -192,10 +209,43 @@ public class MariaDBInspector implements DatabaseInspector {
                 List<String> pkCols = cols.stream()
                         .filter(ColumnInfo::isPrimaryKey).map(ColumnInfo::name).toList();
                 String schema = firstNonBlank(jdbcSchema, rs.getString("TABLE_CAT"), catalog);
-                result.add(new TableInfo(schema, name, 0L, hasPk, cols, pkCols));
+                TableStats stats = tableStats(conn, schema, name);
+                result.add(new TableInfo(schema, name, stats.approximateRows(), stats.totalSizeBytes(),
+                        hasPk, cols, pkCols));
             }
         }
         return result;
+    }
+
+    private TableStats tableStats(Connection conn, String schema, String table) {
+        String sql = """
+                SELECT TABLE_ROWS AS rows,
+                       CASE
+                         WHEN DATA_LENGTH IS NULL AND INDEX_LENGTH IS NULL THEN NULL
+                         ELSE COALESCE(DATA_LENGTH, 0) + COALESCE(INDEX_LENGTH, 0)
+                       END AS bytes
+                FROM information_schema.TABLES
+                WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+                """;
+        String tableSchema = firstNonBlank(schema, dbName);
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, tableSchema);
+            ps.setString(2, table);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return new TableStats(nullableNonNegativeLong(rs, "rows"),
+                            nullableNonNegativeLong(rs, "bytes"));
+                }
+            }
+        } catch (SQLException ignored) {
+            // Schema listing should still succeed; null marks stats unavailable instead of fake zero.
+        }
+        return new TableStats(null, null);
+    }
+
+    private static Long nullableNonNegativeLong(ResultSet rs, String column) throws SQLException {
+        long value = rs.getLong(column);
+        return rs.wasNull() ? null : Math.max(0L, value);
     }
 
     private List<ColumnInfo> columns(DatabaseMetaData md, String catalog,
@@ -274,6 +324,44 @@ public class MariaDBInspector implements DatabaseInspector {
         }
     }
 
+    private static double measureSelectOneMs(Connection conn) throws SQLException {
+        long start = System.nanoTime();
+        try (Statement st = conn.createStatement()) {
+            st.execute("SELECT 1");
+        }
+        return (System.nanoTime() - start) / 1_000_000.0;
+    }
+
+    private static Map<String, Long> globalStatus(Connection conn) throws SQLException {
+        Map<String, Long> values = new HashMap<>();
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery("SHOW GLOBAL STATUS")) {
+            while (rs.next()) {
+                String name = rs.getString(1);
+                String raw = rs.getString(2);
+                if (name == null || raw == null) {
+                    continue;
+                }
+                if (!List.of("Com_commit", "Com_rollback", "Threads_connected", "Uptime").contains(name)) {
+                    continue;
+                }
+                try {
+                    values.put(name, Long.parseLong(raw));
+                } catch (NumberFormatException ignored) {
+                    values.put(name, 0L);
+                }
+            }
+        }
+        return values;
+    }
+
+    private static double round(double value) {
+        if (!Double.isFinite(value)) {
+            return 0.0;
+        }
+        return Math.round(value * 100.0) / 100.0;
+    }
+
     private static boolean isSystemSchema(String schema) {
         if (schema == null) return false;
         String s = schema.toLowerCase();
@@ -288,4 +376,6 @@ public class MariaDBInspector implements DatabaseInspector {
         }
         return null;
     }
+
+    private record TableStats(Long approximateRows, Long totalSizeBytes) {}
 }

@@ -50,12 +50,14 @@ describe('DatabaseDetail helpers', () => {
     const placeholder: DatabaseMetricsResponse = {
       tps: 0,
       queryResponseMs: 0,
+      queryResponseP95Ms: null,
       activeConnections: 0,
       stub: true,
     }
     const live: DatabaseMetricsResponse = {
       tps: 0,
       queryResponseMs: 0,
+      queryResponseP95Ms: 0,
       activeConnections: 0,
       stub: false,
     }
@@ -128,6 +130,7 @@ describe('DatabaseDetail helpers', () => {
     const body: DatabaseMetricsResponse = {
       tps: 12.5,
       queryResponseMs: 4,
+      queryResponseP95Ms: 7,
       activeConnections: 3,
       stub: false,
     }

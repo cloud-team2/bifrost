@@ -54,6 +54,7 @@ public class DatabaseSchemaService {
         return new DatabaseSchemaResponse(
                 tables.stream()
                         .map(t -> new TableSchema(t.schema(), t.name(),
+                                t.approximateRowCount(), t.totalSizeBytes(),
                                 t.columns().stream()
                                         .map(c -> new ColumnSchema(
                                                 c.name(), c.dataType(), c.nullable(),

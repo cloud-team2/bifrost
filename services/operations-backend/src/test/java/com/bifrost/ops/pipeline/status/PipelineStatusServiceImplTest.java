@@ -531,6 +531,88 @@ class PipelineStatusServiceImplTest {
     }
 
     @Test
+    void errorRateWarningRecordsThresholdInputWithoutChangingPipelineStatus() {
+        UUID pid = UUID.randomUUID();
+        UUID tenant = UUID.randomUUID();
+        PipelineEntity p = new PipelineEntity();
+        p.setId(pid);
+        p.setTenantId(tenant);
+        p.setName("orders-eda");
+        p.setPattern(PipelinePattern.FAN_OUT);
+        p.setStatus(PipelineLifecycle.ACTIVE);
+
+        ConnectorEntity src = connector(ConnectorKind.SOURCE, "RUNNING");
+        src.setPipelineId(pid);
+        src.setCrName(pid + "-source");
+        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(pid)).thenReturn(List.of(src));
+
+        service().applyErrorRate(pid, 0.75);
+
+        assertThat(p.getStatus()).isEqualTo(PipelineLifecycle.ACTIVE);
+        verify(incidentService).onThresholdViolation(eq(tenant), eq(IncidentGroupingKeys.pipelineErrorRate(pid)),
+                eq("PIPELINE"), eq(pid), eq(EventLevel.WARN),
+                org.mockito.ArgumentMatchers.contains("error rate 0.75%"),
+                eq("PIPELINE_ERROR_RATE_WARNING"),
+                org.mockito.ArgumentMatchers.contains("error rate 0.75%"), eq(pid));
+        verify(pipelineRepository, never()).save(any());
+    }
+
+    @Test
+    void errorRateCriticalTransitionsActivePipelineToError() {
+        UUID pid = UUID.randomUUID();
+        UUID tenant = UUID.randomUUID();
+        PipelineEntity p = new PipelineEntity();
+        p.setId(pid);
+        p.setTenantId(tenant);
+        p.setName("orders-eda");
+        p.setPattern(PipelinePattern.FAN_OUT);
+        p.setStatus(PipelineLifecycle.ACTIVE);
+
+        ConnectorEntity src = connector(ConnectorKind.SOURCE, "RUNNING");
+        src.setPipelineId(pid);
+        src.setCrName(pid + "-source");
+        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(pid)).thenReturn(List.of(src));
+
+        service().applyErrorRate(pid, 2.5);
+
+        assertThat(p.getStatus()).isEqualTo(PipelineLifecycle.ERROR);
+        assertThat(p.getStatusMessage()).contains("error rate 2.50% > 2.00%");
+        verify(incidentService).onThresholdViolation(eq(tenant), eq(IncidentGroupingKeys.pipelineErrorRate(pid)),
+                eq("PIPELINE"), eq(pid), eq(EventLevel.ERROR),
+                org.mockito.ArgumentMatchers.contains("error rate 2.50%"),
+                eq("PIPELINE_STATUS_CHANGED"),
+                org.mockito.ArgumentMatchers.contains("ACTIVE → ERROR"), eq(pid));
+    }
+
+    @Test
+    void clearErrorRateRemovesStaleCriticalInput() {
+        UUID pid = UUID.randomUUID();
+        UUID tenant = UUID.randomUUID();
+        PipelineEntity p = new PipelineEntity();
+        p.setId(pid);
+        p.setTenantId(tenant);
+        p.setName("orders-eda");
+        p.setPattern(PipelinePattern.FAN_OUT);
+        p.setStatus(PipelineLifecycle.ACTIVE);
+
+        ConnectorEntity src = connector(ConnectorKind.SOURCE, "RUNNING");
+        src.setPipelineId(pid);
+        src.setCrName(pid + "-source");
+        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(pid)).thenReturn(List.of(src));
+
+        PipelineStatusServiceImpl service = service();
+        service.applyErrorRate(pid, 2.5);
+        assertThat(p.getStatus()).isEqualTo(PipelineLifecycle.ERROR);
+
+        service.clearErrorRate(pid);
+
+        assertThat(p.getStatus()).isEqualTo(PipelineLifecycle.ACTIVE);
+    }
+
+    @Test
     void consumerLagRecoveryTransitionsLagToActive() {
         UUID pid = UUID.randomUUID();
         UUID tenant = UUID.randomUUID();

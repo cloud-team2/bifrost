@@ -45,6 +45,14 @@ spec:
     topic.creation.default.cleanup.policy: delete
     topic.creation.default.retention.ms: "604800000"
 
+  # Kafka Connect + Debezium JMX metrics. Connector 상세 탭은 이 ConfigMap의 실제 series만 표시한다.
+  metricsConfig:
+    type: jmxPrometheusExporter
+    valueFrom:
+      configMapKeyRef:
+        name: connect-metrics-config
+        key: connect-metrics-config.yml
+
   resources:
     requests:
       memory: 1Gi

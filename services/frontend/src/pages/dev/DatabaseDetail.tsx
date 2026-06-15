@@ -523,6 +523,24 @@ function schemaTableSub(state: ResourceState<{ tables: SchemaTable[] }>) {
   return undefined
 }
 
+function formatRows(value: number | null | undefined) {
+  if (value == null) return '—'
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value)
+}
+
+function formatBytes(value: number | null | undefined) {
+  if (value == null) return '—'
+  if (!Number.isFinite(value) || value < 0) return '—'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let size = value
+  let unit = 0
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024
+    unit += 1
+  }
+  return `${new Intl.NumberFormat('en-US', { maximumFractionDigits: unit === 0 ? 0 : 1 }).format(size)} ${units[unit]}`
+}
+
 /* ---- 친화적 Capability Check 라벨 매핑: 표시명만 보정하고 실제 detail은 API 응답을 쓴다. ---- */
 const FRIENDLY_LABELS: Record<string, string> = {
   'wal_level = logical': '변경 감지 활성화',
@@ -735,13 +753,19 @@ function MetricsTab({ state }: { state: ResourceState<DatabaseMetricsResponse> }
   }
 
   return (
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
       <MetricCard label="TPS" value={formatMetric(metrics.tps)} sub="transactions/sec" />
       <MetricCard
-        label="Query response"
+        label="Avg response"
         value={formatMetric(metrics.queryResponseMs)}
         sub="ms avg"
         tone={metrics.queryResponseMs > 1000 ? 'warn' : 'good'}
+      />
+      <MetricCard
+        label="P95 response"
+        value={metrics.queryResponseP95Ms == null ? '—' : formatMetric(metrics.queryResponseP95Ms)}
+        sub={metrics.queryResponseP95Ms == null ? 'stat source 없음' : 'ms p95'}
+        tone={metrics.queryResponseP95Ms != null && metrics.queryResponseP95Ms > 1000 ? 'warn' : 'default'}
       />
       <MetricCard label="Active connections" value={formatMetric(metrics.activeConnections)} />
     </div>
@@ -784,16 +808,19 @@ function SchemaTab({ state }: { state: ResourceState<{ tables: SchemaTable[] }> 
       <div className="divide-y divide-gray-50">
         {tables.map((t) => {
           const key = `${t.schema}.${t.name}`
+          const statsUnavailable = t.approximateRowCount == null || t.totalSizeBytes == null
           return (
             <div key={key}>
               <button
                 onClick={() => setOpen(open === key ? null : key)}
-                className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-gray-50"
+                className="flex w-full min-w-0 items-center gap-3 px-4 py-2.5 text-left hover:bg-gray-50"
               >
                 <Icon name={open === key ? 'chevron-down' : 'chevron-right'} size={14} className="text-gray-400" />
                 <Icon name="table" size={15} className="text-gray-400" />
-                <span className="font-mono text-[13px] font-medium text-gray-800">{t.schema}.{t.name}</span>
-                <div className="flex-1" />
+                <span className="min-w-0 flex-1 truncate font-mono text-[13px] font-medium text-gray-800">{t.schema}.{t.name}</span>
+                <span className="font-mono text-[11.5px] tabular-nums text-gray-400">{formatRows(t.approximateRowCount)} rows</span>
+                <span className="font-mono text-[11.5px] tabular-nums text-gray-400">{formatBytes(t.totalSizeBytes)}</span>
+                {statsUnavailable && <span className="text-[11px] text-gray-400">stat source 없음</span>}
                 <span className="text-[12px] text-gray-400">{t.columns.length} cols</span>
               </button>
               {open === key && (

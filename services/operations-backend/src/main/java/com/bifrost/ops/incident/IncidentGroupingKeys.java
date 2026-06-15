@@ -12,6 +12,10 @@ public final class IncidentGroupingKeys {
         return "pipeline:" + pipelineId + ":availability";
     }
 
+    public static String pipelineErrorRate(UUID pipelineId) {
+        return "pipeline:" + pipelineId + ":error-rate";
+    }
+
     public static String datasource(UUID datasourceId) {
         return "datasource:" + datasourceId;
     }
