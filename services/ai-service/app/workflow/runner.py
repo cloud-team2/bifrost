@@ -319,6 +319,76 @@ def _agent_mode_or_none(value: object) -> AgentMode | None:
     return None
 
 
+# --- #712 대화 메모리: thread history 주입 ---
+
+_HISTORY_TURNS = 10            # 직전 메시지 최대 개수(~5턴)
+_HISTORY_CHAR_CAP = 1500      # turn당 길이 컷(토큰 폭증 방지)
+
+
+def _format_history(messages: list) -> str:
+    """이전 대화 메시지들을 LLM 컨텍스트용 텍스트 블록으로 만든다. 비면 빈 문자열."""
+    lines: list[str] = []
+    for m in messages:
+        role = getattr(m, "role", None)
+        content = (getattr(m, "content", "") or "").strip()
+        if not content or role not in ("user", "assistant"):
+            continue
+        if len(content) > _HISTORY_CHAR_CAP:
+            content = content[:_HISTORY_CHAR_CAP] + "…"
+        who = "사용자" if role == "user" else "어시스턴트"
+        lines.append(f"{who}: {content}")
+    return "\n".join(lines)
+
+
+def _contextualize(user_message: str, history_block: str) -> str:
+    """직전 대화 맥락을 현재 질문 앞에 명시 구분해 붙인다. history 없으면 원문 그대로."""
+    if not history_block:
+        return user_message
+    return (
+        "[이전 대화 맥락 — 같은 스레드의 직전 대화이니 후속 질문 해석에 참고]\n"
+        f"{history_block}\n\n[현재 질문]\n{user_message}"
+    )
+
+
+async def _load_history_block(message_repo, thread_id: str | None) -> str:
+    """thread의 이전 메시지를 로드해 컨텍스트 블록으로 만든다. 실패는 빈 문자열로 흡수."""
+    if not message_repo or not thread_id:
+        return ""
+    try:
+        prior = await message_repo.list_by_thread(thread_id, limit=_HISTORY_TURNS)
+    except Exception as exc:
+        logger.warning("conversation history load failed thread=%s error=%s", thread_id, exc)
+        return ""
+    return _format_history(prior)
+
+
+async def _append_message(message_repo, thread_id, role, content, *, project_id, run_id) -> None:
+    """대화 turn 저장. 메모리 기능은 보조라 실패해도 run 흐름을 막지 않는다."""
+    if not message_repo or not thread_id or not content:
+        return
+    try:
+        await message_repo.append(
+            thread_id, role, content, project_id=project_id, run_id=run_id
+        )
+    except Exception as exc:
+        logger.warning("conversation message persist failed thread=%s error=%s", thread_id, exc)
+
+
+async def _persist_assistant_reply(message_repo, thread_id, *, project_id, run_id) -> None:
+    """run이 만든 최종 answer(report_snapshot)를 assistant 메시지로 저장한다."""
+    if not message_repo or not thread_id:
+        return
+    try:
+        snapshot = await get_report_repo().get_latest(run_id, verified_only=False)
+    except Exception as exc:
+        logger.warning("assistant reply lookup failed run=%s error=%s", run_id, exc)
+        return
+    answer = (snapshot.body.get("answer") if snapshot and snapshot.body else None) or ""
+    await _append_message(
+        message_repo, thread_id, "assistant", answer, project_id=project_id, run_id=run_id
+    )
+
+
 async def run_workflow(
     *,
     run_id: str,
@@ -331,10 +401,15 @@ async def run_workflow(
     requested_incident_id: str | None = None,
     requested_remediation_requested: bool | None = None,
     requested_action_candidate: dict[str, Any] | ActionCandidateOutput | None = None,
+    thread_id: str | None = None,
+    message_repo: Any = None,
 ) -> None:
     """에이전트 run 진입점. 루트 trace span(#372)으로 감싸 run 전체(+Spring 호출)를 한 trace 로 묶는다.
 
     BackgroundTask 로 실행되어 요청 핸들러 span 밖이므로, 여기서 루트 span 을 직접 연다.
+
+    #712 대화 메모리: thread_id가 있으면 직전 대화를 컨텍스트로 주입하고, 현재 질문과 run이
+    만든 최종 answer를 thread에 turn으로 저장한다(멀티턴 연속성).
     """
     with run_span(
         run_id=run_id,
@@ -342,9 +417,17 @@ async def run_workflow(
         mode=requested_mode,
         incident_id=requested_incident_id,
     ):
+        # 이전 대화 로드 → 현재 질문 저장(원문) → 컨텍스트 주입된 메시지로 run 실행.
+        history_block = await _load_history_block(message_repo, thread_id)
+        await _append_message(
+            message_repo, thread_id, "user", user_message,
+            project_id=project_id, run_id=run_id,
+        )
+        effective_message = _contextualize(user_message, history_block)
+
         await _run_workflow_impl(
             run_id=run_id,
-            user_message=user_message,
+            user_message=effective_message,
             project_id=project_id,
             bus=bus,
             run_repo=run_repo,
@@ -353,6 +436,11 @@ async def run_workflow(
             requested_incident_id=requested_incident_id,
             requested_remediation_requested=requested_remediation_requested,
             requested_action_candidate=requested_action_candidate,
+        )
+
+        # run이 만든 최종 answer를 assistant turn으로 저장(다음 질문의 history가 됨).
+        await _persist_assistant_reply(
+            message_repo, thread_id, project_id=project_id, run_id=run_id,
         )
 
 

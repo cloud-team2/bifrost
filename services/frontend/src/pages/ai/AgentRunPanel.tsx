@@ -307,6 +307,13 @@ export function AgentRunPanel({
   const runningRef = useRef(false)
   const seenEvents = useRef<Set<string>>(new Set())
   const finalAnswerRunIds = useRef<Set<string>>(new Set())
+  // #712 대화 메모리: 자유 대화도 (워크스페이스·패널)별 thread_id를 localStorage에 고정해
+  // 리마운트·새로고침 후에도 같은 thread로 이어지게 한다(인시던트 채팅은 incidentId를 thread로 우선).
+  // mount 시 이 thread의 이전 대화를 백엔드에서 불러와 transcript를 복원한다.
+  const threadIdRef = useRef<string>(
+    `chat-${(globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`)}`,
+  )
+  const threadRestored = useRef(false)
   const scroll = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const slashOptionRefs = useRef<Record<string, HTMLDivElement | null>>({})
@@ -383,6 +390,63 @@ export function AgentRunPanel({
   }, [wsId, myEmail])
 
   useEffect(() => () => esRef.current?.close(), [])
+
+  // #712 대화 메모리: 워크스페이스·패널별 thread_id를 localStorage에 고정하고, 이 thread의
+  // 이전 대화를 불러와 transcript를 복원한다(리마운트·새로고침 후에도 대화가 이어져 보이게).
+  useEffect(() => {
+    if (!wsId || threadRestored.current) return
+    threadRestored.current = true
+
+    const storageKey = `bifrost.chat.thread.${wsId}.${title}`
+    let threadId: string | null = null
+    try {
+      threadId = window.localStorage.getItem(storageKey)
+      if (!threadId) {
+        threadId = threadIdRef.current
+        window.localStorage.setItem(storageKey, threadId)
+      }
+    } catch {
+      threadId = threadIdRef.current // localStorage 불가(프라이빗 모드 등)면 세션 한정
+    }
+    threadIdRef.current = threadId
+
+    let cancelled = false
+    api
+      .listThreadMessages(threadId)
+      .then((res) => {
+        if (cancelled || res.messages.length === 0) return
+        const restored: AgentMsg[] = res.messages
+          .filter((m) => m.content?.trim())
+          .map((m) => ({
+            id: ++seq.current,
+            kind: 'text' as const,
+            role: m.role === 'user' ? 'user' : 'assistant',
+            text: m.content,
+          }))
+        if (restored.length === 0) return
+        // 인사 메시지(initialMessage) 뒤에 이전 대화를 복원해 잇는다. 사용자가 이미
+        // 입력을 시작했다면(텍스트 외 메시지 존재) 덮어쓰지 않는다.
+        updateMsgs((prev) => {
+          const onlyGreeting = prev.every((m) => m.kind === 'text' && m.role === 'assistant')
+          if (!onlyGreeting) return prev
+          const greeting = initialMessage
+            ? [{ id: 0, kind: 'text' as const, role: 'assistant' as const, text: initialMessage }]
+            : []
+          return [
+            ...greeting,
+            { id: ++seq.current, kind: 'text' as const, role: 'assistant' as const, text: '— 이전 대화 —' },
+            ...restored,
+          ]
+        })
+      })
+      .catch(() => {
+        // 복원 실패는 무시(메모리는 백엔드에 남아 있고, 새 질문부터 이어진다).
+      })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wsId])
 
   useEffect(() => {
     if (!app.agentTask) {
@@ -822,6 +886,7 @@ export function AgentRunPanel({
         mode: options.mode ?? null,
         message,
         incident_id: options.incidentId ?? null,
+        thread_id: options.incidentId ?? threadIdRef.current,
         remediation_requested: options.remediationRequested ?? false,
         action_candidate: options.actionCandidate ?? null,
         stream: true,
