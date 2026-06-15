@@ -303,7 +303,7 @@ class PipelineStatusServiceImplTest {
                 eq("DATABASE"),
                 eq(sinkDsId),
                 eq(EventLevel.ERROR),
-                eq("Pipeline 'orders-sync' status ERROR"),
+                eq("'orders-sync' sink DB 연결 불가: DB 연결 실패 (호스트·포트·네트워크 확인)"),
                 eq("PIPELINE_STATUS_CHANGED"),
                 org.mockito.ArgumentMatchers.contains("sink DB"),  // 회복 매칭이 datasource로 역산하도록
                 eq(pid));
