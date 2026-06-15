@@ -43,12 +43,13 @@ spec:
                   name: operations-backend-secrets
                   key: {{ .Values.secrets.dbPasswordKey }}
                   optional: true
-            # (#646) /internal/ops service-identity 게이트 토큰. 키가 없으면 미설정 → 게이트 비활성(무중단).
+            # (#646) /internal/ops service-identity 게이트 토큰. 전용 SealedSecret 'bifrost-internal-ops'를
+            # ai-service와 공유(같은 bifrost-system ns). 키가 없으면 미설정 → 게이트 비활성(무중단).
             - name: INTERNAL_OPS_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: operations-backend-secrets
-                  key: {{ .Values.secrets.internalOpsTokenKey }}
+                  name: bifrost-internal-ops
+                  key: token
                   optional: true
           livenessProbe:
             httpGet:

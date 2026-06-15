@@ -49,9 +49,6 @@ env:
 secrets:
   jwtSecretKey: JWT_SECRET
   dbPasswordKey: META_DB_PASSWORD
-  # (#646) /internal/ops 게이트 토큰 키. operations-backend-secrets에 이 키를 봉인해 넣으면 게이트 활성.
-  # ai-service(AI_INTERNAL_OPS_TOKEN)도 같은 시크릿·키를 참조한다(동일 bifrost-system ns).
-  internalOpsTokenKey: INTERNAL_OPS_TOKEN
 
 rbac:
   strimziNamespace: platform-kafka
