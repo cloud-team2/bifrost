@@ -39,6 +39,15 @@ data:
             type: latency
             latency:
               threshold_ms: 1000
+          # (#666) dataplane(Connect) 추적 보존. Connect 워커가 always_on으로 전량 보내고, 여기서
+          # cdc./eda. 토픽 publish span만 keep한다. poll-loop·내부토픽(platform-connect-*) 노이즈는
+          # 매칭 정책이 없어 drop → Tempo 폭주 없이 파이프라인 Tracing 탭에 dataplane trace가 보인다.
+          - name: dataplane
+            type: string_attribute
+            string_attribute:
+              key: messaging.destination.name
+              values: ["^(cdc|eda)\\."]
+              enabled_regex_matching: true
       batch: {}
     exporters:
       otlphttp:
