@@ -19,6 +19,11 @@ from app.persistence.change_ticket_repository import (
     STATUS_VERIFIED,
 )
 from app.persistence.evidence_repository import InMemoryEvidenceRepository, PostgresEvidenceRepository
+from app.persistence.message_repository import (
+    AgentMessage,
+    InMemoryMessageRepository,
+    PostgresMessageRepository,
+)
 from app.persistence.event_repository import PostgresEventRepository
 from app.persistence.report_repository import InMemoryReportRepository, PostgresReportRepository, ReportSnapshot
 from app.persistence.run_repository import PostgresRunRepository, RunRecord
@@ -489,6 +494,59 @@ async def test_in_memory_report_repository_reloads_final_report():
 
     assert snapshot is not None
     assert snapshot.body["answer"] == "final"
+
+
+# ---------------------------------------------------------------------------
+# #712 대화 메모리: MessageRepository
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_in_memory_message_repository_append_and_list_in_order():
+    repo = InMemoryMessageRepository()
+
+    await repo.append("thread-1", "user", "원인이 뭐야?", run_id="run-a")
+    await repo.append("thread-1", "assistant", "싱크 DB 연결 불가입니다", run_id="run-a")
+    await repo.append("thread-2", "user", "다른 스레드", run_id="run-b")
+
+    msgs = await repo.list_by_thread("thread-1")
+    assert [m.role for m in msgs] == ["user", "assistant"]
+    assert msgs[0].content == "원인이 뭐야?"
+    # 다른 thread는 섞이지 않는다
+    assert [m.content for m in await repo.list_by_thread("thread-2")] == ["다른 스레드"]
+
+
+@pytest.mark.asyncio
+async def test_in_memory_message_repository_limit_keeps_latest():
+    repo = InMemoryMessageRepository()
+    for i in range(6):
+        await repo.append("t", "user", f"q{i}")
+
+    latest = await repo.list_by_thread("t", limit=2)
+    assert [m.content for m in latest] == ["q4", "q5"]  # 최신 2개, 시간순 유지
+    assert await repo.list_by_thread("t", limit=0) == []
+
+
+@pytest.mark.asyncio
+async def test_postgres_message_repository_append_and_list():
+    row = {
+        "id": "550e8400-e29b-41d4-a716-446655440010",
+        "thread_id": "thread-pg",
+        "project_id": None,
+        "role": "user",
+        "content": "안녕",
+        "run_id": "run-pg",
+        "created_at": _now(),
+    }
+    pool, conn = _make_pool(fetchrow_return=row, fetch_return=[row])
+    repo = PostgresMessageRepository(pool=pool)
+
+    appended = await repo.append("thread-pg", "user", "안녕", run_id="run-pg")
+    listed = await repo.list_by_thread("thread-pg", limit=10)
+
+    assert isinstance(appended, AgentMessage)
+    assert appended.thread_id == "thread-pg"
+    assert listed[0].content == "안녕"
+    # 최신순으로 잡아 시간순으로 되돌리는 서브쿼리 정렬을 쓴다
+    assert "ORDER BY created_at ASC" in conn.fetch.call_args.args[0]
 
 
 @pytest.mark.asyncio
