@@ -38,4 +38,10 @@ public interface PipelineStatusService {
      * error/paused/creating는 우선순위가 높아 lag로 덮어쓰지 않는다.
      */
     void applyConsumerLag(java.util.UUID pipelineId, long lag);
+
+    /**
+     * 처리량 대비 실패율(error rate, %)을 pipeline 상태와 incident 입력에 반영한다(#585).
+     * WARNING은 event/incident gate 입력만 만들고, CRITICAL(>2%)은 pipeline error 전이까지 수행한다.
+     */
+    void applyErrorRate(java.util.UUID pipelineId, double errorRatePct);
 }

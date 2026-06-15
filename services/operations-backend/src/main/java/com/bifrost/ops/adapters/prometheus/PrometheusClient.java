@@ -59,6 +59,30 @@ public class PrometheusClient {
     }
 
     /**
+     * PromQL instant query를 실행하되 result series가 없으면 null을 반환한다.
+     * 0 값과 "지표 소스 없음"을 구분해야 하는 임계 판단용 path에서 사용한다.
+     */
+    public Double queryScalarOrNull(String promql) {
+        PrometheusResponse response = restClient.get()
+                .uri(uri -> uri.path("/api/v1/query")
+                        .queryParam("query", "{q}")
+                        .build(promql))
+                .retrieve()
+                .body(PrometheusResponse.class);
+
+        if (response == null || !"success".equals(response.status())
+                || response.data() == null) {
+            log.debug("Prometheus 빈 응답: query={}", promql);
+            return null;
+        }
+
+        List<PrometheusResponse.VectorResult> results = response.data().result();
+        if (results == null || results.isEmpty()) return null;
+
+        return results.stream().mapToDouble(PrometheusResponse.VectorResult::scalar).sum();
+    }
+
+    /**
      * PromQL range query를 실행하고 timestamp(초)별 합산 값을 시간 오름차순 Map으로 반환한다.
      *
      * @param startSec 시작 epoch(초), endSec 종료 epoch(초), stepSec 간격(초)

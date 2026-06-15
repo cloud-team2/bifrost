@@ -43,6 +43,9 @@ import java.util.concurrent.ConcurrentHashMap;
 public class PipelineStatusServiceImpl implements PipelineStatusService {
 
     private static final Logger log = LoggerFactory.getLogger(PipelineStatusServiceImpl.class);
+    private static final double ERROR_RATE_WARNING_PCT = 0.5;
+    private static final double ERROR_RATE_CRITICAL_PCT = 2.0;
+    private static final String NONE = "NONE";
 
     private final PipelineRepository pipelineRepository;
     private final ConnectorRepository connectorRepository;
@@ -56,6 +59,10 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
     // (#559) 최신 consumer lag(파이프라인별). KafkaAdminPoller가 30초마다 갱신하고, recompute가
     // 커넥터/DB 상태와 함께 읽어 lag 상태를 산정한다. 재기동 시 비어있으면 다음 폴까지 lag=0으로 본다.
     private final java.util.concurrent.ConcurrentHashMap<UUID, Long> lagCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<UUID, Double> errorRateCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<UUID, String> errorRateAlarmState =
             new java.util.concurrent.ConcurrentHashMap<>();
 
     public PipelineStatusServiceImpl(PipelineRepository pipelineRepository,
@@ -85,6 +92,17 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
     public void applyConsumerLag(UUID pipelineId, long lag) {
         lagCache.put(pipelineId, Math.max(0L, lag));
         pipelineRepository.findById(pipelineId).ifPresent(this::recompute);
+    }
+
+    @Override
+    @Transactional
+    public void applyErrorRate(UUID pipelineId, double errorRatePct) {
+        double pct = Math.max(0.0, errorRatePct);
+        errorRateCache.put(pipelineId, pct);
+        pipelineRepository.findById(pipelineId).ifPresent(p -> {
+            recordErrorRateThresholdInput(p, pct);
+            recompute(p);
+        });
     }
 
     @Observed(name = "pipeline.status.apply_connector_status")
@@ -189,6 +207,16 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
             return new StatusDecision(PipelineLifecycle.ERROR, message, incidentCause);
         }
 
+        Double errorRatePct = errorRateCache.get(p.getId());
+        if (current != PipelineLifecycle.CREATING
+                && connectorNext != PipelineLifecycle.PAUSED
+                && errorRatePct != null
+                && errorRatePct > ERROR_RATE_CRITICAL_PCT) {
+            return new StatusDecision(PipelineLifecycle.ERROR,
+                    errorRateMessage(p, errorRatePct, ERROR_RATE_CRITICAL_PCT),
+                    IncidentCause.errorRate(p));
+        }
+
         if (connectorNext == PipelineLifecycle.ACTIVE) {
             long lag = lagCache.getOrDefault(p.getId(), 0L);
             long warning = lagWarningThreshold(p.getTenantId());
@@ -208,9 +236,46 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
 
     /** 워크스페이스의 consumer lag 경고 임계(미설정 시 기본 5,000). */
     private long lagWarningThreshold(UUID tenantId) {
-        return settingsRepository.findById(tenantId)
+        java.util.Optional<WorkspaceSettingsEntity> settings = settingsRepository.findById(tenantId);
+        return (settings == null ? java.util.Optional.<WorkspaceSettingsEntity>empty() : settings)
                 .map(WorkspaceSettingsEntity::getLagWarningThreshold)
                 .orElse(WorkspaceSettingsEntity.DEFAULT_LAG_WARNING);
+    }
+
+    private void recordErrorRateThresholdInput(PipelineEntity p, double pct) {
+        String prev = errorRateAlarmState.getOrDefault(p.getId(), NONE);
+        String key = IncidentGroupingKeys.pipelineErrorRate(p.getId());
+
+        if (pct > ERROR_RATE_CRITICAL_PCT) {
+            if (!"ERROR".equals(prev) && p.getStatus() == PipelineLifecycle.ERROR) {
+                String message = errorRateMessage(p, pct, ERROR_RATE_CRITICAL_PCT);
+                incidentService.onThresholdViolation(p.getTenantId(), key, "PIPELINE", p.getId(),
+                        EventLevel.ERROR, message, "PIPELINE_ERROR_RATE_CRITICAL", message, p.getId());
+            }
+            errorRateAlarmState.put(p.getId(), "ERROR");
+            return;
+        }
+
+        if (pct > ERROR_RATE_WARNING_PCT) {
+            if (!"WARN".equals(prev)) {
+                String message = errorRateMessage(p, pct, ERROR_RATE_WARNING_PCT);
+                incidentService.onThresholdViolation(p.getTenantId(), key, "PIPELINE", p.getId(),
+                        EventLevel.WARN, message, "PIPELINE_ERROR_RATE_WARNING", message, p.getId());
+            }
+            errorRateAlarmState.put(p.getId(), "WARN");
+            return;
+        }
+
+        if (!NONE.equals(prev)) {
+            String message = "pipeline '" + p.getName() + "' error rate recovered: "
+                    + formatPct(pct) + "% ≤ " + formatPct(ERROR_RATE_WARNING_PCT) + "%";
+            if (!incidentService.onRecovery(p.getTenantId(), key,
+                    "PIPELINE_ERROR_RATE_RECOVERED", message, p.getId())) {
+                eventService.record(p.getTenantId(), p.getId(), EventLevel.INFO,
+                        "PIPELINE_ERROR_RATE_RECOVERED", message);
+            }
+        }
+        errorRateAlarmState.put(p.getId(), NONE);
     }
 
     /** 상태 전이 1건: row 갱신 + event/audit/SSE 발행(단일 경로). recompute·timeout이 공통 사용. */
@@ -287,6 +352,9 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
         }
         if (reason.contains("sink DB") && p.getSinkDatasourceId() != null) {
             return IncidentCause.datasource(p.getSinkDatasourceId());
+        }
+        if (reason.contains("error rate")) {
+            return IncidentCause.errorRate(p);
         }
         // (#596) 커넥터 사유는 UUID 대신 역할 키워드로 매칭(메시지 정제 후에도 회복 그룹핑 유지).
         if (reason.contains("소스 커넥터") && p.getSourceConnectorName() != null) {
@@ -441,6 +509,15 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
         return "'" + p.getName() + "' " + who + " 오류: " + summary;
     }
 
+    private static String errorRateMessage(PipelineEntity p, double pct, double threshold) {
+        return "pipeline '" + p.getName() + "' error rate "
+                + formatPct(pct) + "% > " + formatPct(threshold) + "%";
+    }
+
+    private static String formatPct(double pct) {
+        return String.format(java.util.Locale.ROOT, "%.2f", pct);
+    }
+
     /** 커넥터 역할 표기: SOURCE→"소스 커넥터", SINK→"싱크 커넥터", 그 외→"커넥터". */
     private static String connectorRoleKo(ConnectorEntity connector) {
         if (connector.getKind() == com.bifrost.ops.provisioning.dto.ConnectorKind.SOURCE) return "소스 커넥터";
@@ -533,6 +610,10 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
     private record IncidentCause(String groupingKey, String sourceType, UUID sourceId) {
         static IncidentCause pipeline(PipelineEntity p) {
             return new IncidentCause(IncidentGroupingKeys.pipelineAvailability(p.getId()), "PIPELINE", p.getId());
+        }
+
+        static IncidentCause errorRate(PipelineEntity p) {
+            return new IncidentCause(IncidentGroupingKeys.pipelineErrorRate(p.getId()), "PIPELINE", p.getId());
         }
 
         static IncidentCause datasource(UUID datasourceId) {

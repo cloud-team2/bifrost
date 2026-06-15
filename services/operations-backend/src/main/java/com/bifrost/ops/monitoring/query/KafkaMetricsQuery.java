@@ -9,7 +9,7 @@ import org.springframework.stereotype.Service;
 /**
  * Kafka 토픽 메트릭 PromQL 조회 서비스.
  *
- * <p>prometheus.enabled=false(기본)면 모든 메서드가 즉시 0을 반환한다.
+ * <p>prometheus.enabled=false(기본)면 비율/상세 지표는 null, 기존 처리량/lag 지표는 0을 반환한다.
  * true면 Prometheus HTTP API를 호출하고, 실패 시 예외를 던져 호출부 fallback을 트리거한다.
  *
  * <p>세 메트릭 모두 Kafka Exporter의 offset 계열을 쓴다(JMX MessagesOutPerSec는
@@ -94,6 +94,23 @@ public class KafkaMetricsQuery {
                 "max(avg_over_time(debezium_metrics_millisecondsbehindsource" + sel + "[" + smoothSec + "s]))"
                         + " and on() (max(increase(debezium_metrics_totalnumberofeventsseen" + sel + "[" + smoothSec + "s])) > 0)",
                 startSec, endSec, stepSec);
+    }
+
+    /**
+     * Debezium source error rate(%), 5분 증가분 기준.
+     * 지표 series가 없으면 null을 반환해 임계 처리와 UI가 "소스 없음"을 0%로 오해하지 않게 한다.
+     */
+    public Double sourceErrorRatePct(String server) {
+        if (!enabled) return null;
+        String selector = "{server=\"" + server + "\"}";
+        Double events = client.queryScalarOrNull(
+                "sum(increase(debezium_metrics_totalnumberofeventsseen" + selector + "[5m]))");
+        if (events == null) return null;
+        if (events <= 0.0) return 0.0;
+        Double failures = client.queryScalarOrNull(
+                "sum(increase(debezium_metrics_totalnumberofeventprocessingfailures" + selector + "[5m]))");
+        double failureCount = failures == null ? 0.0 : Math.max(0.0, failures);
+        return Math.min(100.0, failureCount / events * 100.0);
     }
 
     /**

@@ -1,6 +1,10 @@
 package com.bifrost.ops.monitoring.collector;
 
 import com.bifrost.ops.adapters.prometheus.PrometheusClient;
+import com.bifrost.ops.monitoring.query.KafkaMetricsQuery;
+import com.bifrost.ops.pipeline.PipelineStatusService;
+import com.bifrost.ops.pipeline.persistence.entity.PipelineEntity;
+import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,11 +23,20 @@ public class JmxPoller {
 
     private final PrometheusClient prometheusClient;
     private final boolean prometheusEnabled;
+    private final KafkaMetricsQuery kafkaMetricsQuery;
+    private final PipelineRepository pipelineRepository;
+    private final PipelineStatusService pipelineStatusService;
 
     public JmxPoller(PrometheusClient prometheusClient,
-                     @Value("${prometheus.enabled:false}") boolean prometheusEnabled) {
+                     @Value("${prometheus.enabled:false}") boolean prometheusEnabled,
+                     KafkaMetricsQuery kafkaMetricsQuery,
+                     PipelineRepository pipelineRepository,
+                     PipelineStatusService pipelineStatusService) {
         this.prometheusClient = prometheusClient;
         this.prometheusEnabled = prometheusEnabled;
+        this.kafkaMetricsQuery = kafkaMetricsQuery;
+        this.pipelineRepository = pipelineRepository;
+        this.pipelineStatusService = pipelineStatusService;
     }
 
     @Scheduled(fixedRate = 60_000, initialDelay = 30_000)
@@ -46,6 +59,25 @@ public class JmxPoller {
                     String.format("%.3f", gcPause));
         } catch (RestClientException e) {
             log.debug("Prometheus JMX 메트릭 조회 실패(무시): {}", e.getMessage());
+        }
+        pollPipelineErrorRates();
+    }
+
+    private void pollPipelineErrorRates() {
+        for (PipelineEntity p : pipelineRepository.findAll()) {
+            String server = p.getTopicName();
+            if (server == null || server.isBlank()) {
+                continue;
+            }
+            try {
+                Double pct = kafkaMetricsQuery.sourceErrorRatePct(server);
+                if (pct != null) {
+                    pipelineStatusService.applyErrorRate(p.getId(), pct);
+                }
+            } catch (RuntimeException e) {
+                log.debug("source error rate 조회 실패(무시): pipeline={} topic={} cause={}",
+                        p.getId(), server, e.getMessage());
+            }
         }
     }
 }
