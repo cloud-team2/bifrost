@@ -100,8 +100,24 @@ kubectl -n "$NS_KAFKA" logs -l strimzi.io/cluster=<connect-cluster> -c <connect-
   (`messaging.destination.name` 외 실제 키 사용), SMT config로 해당 attribute를 부여한다.
 - **H4 확정 시**: 토글 시 커넥터 반영/재시작 보장(설정 변경 후 restart 트리거) 추가.
 
-## 5. 결론
+## 5. 라이브 검증 결과 (skala_student / finalproj-team2, 2026-06-15)
 
-증상(stub 아님 + internal count 0)은 **수집 단계에서 스팬이 Tempo에 거의 들어오지 않음**을 가리키며,
-코드 레벨 근거상 **H1(워커 head 샘플링 5% + Collector 우회로 저볼륨 dataplane 스팬 드롭)** 이 최유력이다.
-H2(topic 속성 불일치)는 독립적으로 잔존 가능하므로 runbook (b)로 H1/H2를 분리 확인한 뒤 정본 수정을 적용한다.
+runbook을 클러스터에서 실행해 **H1 확정 · H2/H4 배제**:
+
+- **(a) SMT 적용 ✅**: `kafkaconnector .../-source`의 `transforms = route,tracing`. SMT는 정상 적용됨(H4 배제).
+- **(b) Tempo에 dataplane 스팬 존재 ✅, 쿼리도 동작 ✅**:
+  - `resource.service.name` 태그 값에 `platform-connect` 존재. service 범위 검색 시 24h 내 20 traces.
+  - span 이름 `eda.table...orders publish`, attribute `messaging.destination.name = eda.table...orders` (key/value 정상).
+  - **앱과 동일한 topic-scoped TraceQL**(`... && span.messaging.destination.name="<topic>"`)을 실제 토픽으로 실행 → **5 traces 매칭**. 즉 조회 경로·속성 매칭은 정상(**H2 배제**).
+- **결정타**: 누적 스팬은 있으나 **샘플링이 5%**(`OTEL_TRACES_SAMPLER_ARG=0.05`)라, 2행짜리 신규 e2e 파이프라인은 기대 보존 스팬 ≈ 0.1개 → 그 파이프라인 창에서는 거의 항상 0건. otel-collector·Tempo는 정상 가동, 워커만 collector를 우회해 Tempo 직송.
+
+→ **근본원인 = H1(워커 head 샘플링 5% + collector 우회)**. 조회/속성/SMT는 모두 정상.
+
+## 6. 정본 수정 (#666)
+
+collector tail_sampling이 **기본 drop**(매칭 정책 없는 trace는 버림)이라는 점을 활용:
+
+1. **Connect 워커 OTLP를 otel-collector 경유로** (`infra/k8s/kafka/kafka-connect.yaml`): `OTEL_EXPORTER_OTLP_ENDPOINT`를 `tempo:4318` → `otel-collector.monitoring:4318`, `OTEL_TRACES_SAMPLER`를 `parentbased_always_on`(전량 송신, 선별은 collector가).
+2. **collector tail_sampling에 dataplane keep 정책** (`monitoring/otel-collector/collector.yaml`, gitops): `messaging.destination.name`이 `^(cdc|eda)\.`로 시작하는 trace를 보존. → dataplane 스팬 100% 유지, poll-loop·내부토픽 노이즈는 기본 drop으로 제외돼 Tempo 폭주 없음.
+
+**적용 후 검증**: 워커·collector 재시작 → 신규 파이프라인에 소량 데이터 흘림 → `/trace`에 span 노출 확인 + Tempo 저장량이 폭주하지 않는지 모니터.
