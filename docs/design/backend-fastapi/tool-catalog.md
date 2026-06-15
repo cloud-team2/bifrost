@@ -143,7 +143,7 @@ Report는 tool을 직접 호출하지 않는다. 검증된 State만 사용한다
 | `list_project_pipelines` | `list_project_pipelines` | `GET` | `/internal/ops/projects/{project_id}/pipelines` | `read_only` | no |
 | `list_pipelines` | `list_pipelines` | `GET` | `/internal/ops/projects/{project_id}/pipelines/status` | `read_only` | no |
 | `get_pipeline_topology` | `get_pipeline_topology` | `GET` | `/internal/ops/projects/{project_id}/pipelines/{pipeline_id}/topology` | `read_only` | no |
-| `get_incident_summary` | `get_incident_summary` | `GET` | `/internal/ops/incidents/{incident_id}/summary` | `read_only` | no |
+| `get_incident_summary` | `get_incident_summary` | `GET` | `/internal/ops/projects/{project_id}/incidents/{incident_id}/summary` | `read_only` | no |
 | `restart_connector` | `restart_connector` | `POST` | `/internal/ops/projects/{project_id}/connectors/{connector_name}/restart` | `high` | yes |
 | `pause_connector` | `pause_connector` | `POST` | `/internal/ops/projects/{project_id}/connectors/{connector_name}/pause` | `medium` | yes |
 | `resume_connector` | `resume_connector` | `POST` | `/internal/ops/projects/{project_id}/connectors/{connector_name}/resume` | `medium` | yes |

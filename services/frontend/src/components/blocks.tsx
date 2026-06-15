@@ -18,6 +18,7 @@ const TONE: Record<string, { dot: string; text: string; bg: string }> = {
   REBALANCING: { dot: 'bg-amber-500', text: 'text-amber-700', bg: 'bg-amber-50' },
   PARTIALLY_FAILED: { dot: 'bg-amber-500', text: 'text-amber-700', bg: 'bg-amber-50' },
   investigating: { dot: 'bg-amber-500', text: 'text-amber-700', bg: 'bg-amber-50' },
+  INVESTIGATING: { dot: 'bg-amber-500', text: 'text-amber-700', bg: 'bg-amber-50' },
   error: { dot: 'bg-rose-500', text: 'text-rose-700', bg: 'bg-rose-50' },
   ERROR: { dot: 'bg-rose-500', text: 'text-rose-700', bg: 'bg-rose-50' },
   DEAD: { dot: 'bg-rose-500', text: 'text-rose-700', bg: 'bg-rose-50' },
