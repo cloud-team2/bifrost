@@ -408,6 +408,8 @@
 
 **그룹화 키**: 동일 Source DB의 여러 Pipeline FAILED → Source DB ID · 동일 Worker의 여러 Connector 문제 → Worker ID · 동일 Consumer Group lag+REBALANCING → Consumer Group ID · 연쇄 Replication lag→Pipeline lag → Source DB ID.
 
+**인시던트 타이틀**: 연결된 이벤트의 정제 메시지(원인 유형 + 대상, 예: `'orders-eda' 소스 커넥터 오류: DB 연결 실패 (호스트·포트·네트워크 확인)`)를 사용한다. 정제 원인을 특정할 수 없으면 상태 기반 fallback(`Pipeline '{name}' status {STATUS}`).
+
 **복구 처리(recovery)**: 트리거 조건이 정상 복구되면 권고 메시지 표시(사용자가 직접 `RESOLVED`) · CRITICAL 인시던트는 자동 닫기 없음(사용자 확인 필수) · WARNING이고 복구 이벤트 발생 시 자동 `INVESTIGATING` + 사용자 복구 알림.
 
 **인시던트 상태값**
