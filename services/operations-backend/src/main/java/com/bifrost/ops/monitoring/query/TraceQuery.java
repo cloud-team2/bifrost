@@ -27,7 +27,11 @@ public class TraceQuery {
 
     private static final Logger log = LoggerFactory.getLogger(TraceQuery.class);
     private static final String DATAPLANE_SERVICE = "platform-connect";
-    private static final long LOOKBACK_SEC = 3600L; // 1h
+    // (#713) Tempo /api/search는 결과를 oldest-first로 limit만큼 절단해 반환한다. 큰 창에 trace가 많으면
+    // (중·고볼륨) limit개가 전부 창 시작점(옛) trace라 최신을 골라도 옛 것이다. 활성 파이프라인은 짧은
+    // 창에서 최신을 잡고, 비면(idle) 긴 창으로 폴백해 마지막 trace라도 보여준다.
+    private static final long RECENT_LOOKBACK_SEC = 300L;  // 5분 — 활성 파이프라인 최신(창 슬라이드)
+    private static final long FULL_LOOKBACK_SEC = 3600L;   // 1h — idle 폴백
 
     private final boolean enabled;
     private final TempoClient client;
@@ -54,9 +58,11 @@ public class TraceQuery {
         }
         String traceql = traceqlFor(topic);
         long end = Instant.now().getEpochSecond();
-        long start = end - LOOKBACK_SEC;
         try {
-            Optional<TempoTrace> trace = client.recentTrace(traceql, start, end);
+            Optional<TempoTrace> trace = client.recentTrace(traceql, end - RECENT_LOOKBACK_SEC, end);
+            if (trace.isEmpty()) {
+                trace = client.recentTrace(traceql, end - FULL_LOOKBACK_SEC, end);
+            }
             if (trace.isEmpty()) {
                 return TraceSummaryResult.stub(pipelineId, "구간 내 trace 없음");
             }
