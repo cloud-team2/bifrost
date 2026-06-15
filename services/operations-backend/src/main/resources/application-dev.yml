@@ -5,7 +5,12 @@ spring:
     password: ${META_DB_PASSWORD:platform}
     driver-class-name: org.postgresql.Driver
     hikari:
-      maximum-pool-size: 10
+      # (#731) 풀 고갈 방어. OSIV off로 점유 시간이 짧아지지만, 부하 버스트 여유를 위해 상향하고
+      # connection-timeout을 30s(기본)→8s로 줄여 풀이 비면 빠르게 실패(요청 누적·liveness kill 방지).
+      # leak-detection으로 60s 이상 점유된 커넥션을 로그로 감지한다.
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:25}
+      connection-timeout: ${DB_POOL_CONNECTION_TIMEOUT_MS:8000}
+      leak-detection-threshold: 60000
 
   jpa:
     hibernate:
