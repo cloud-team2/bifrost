@@ -26,7 +26,7 @@
 | --- | --- | --- |
 | `read_only` | 상태 조회, 로그/메트릭 조회 | `allow` |
 | `low` | 외부 상태 변경 없음, 내부 workflow 상태만 변경 | action type별. runtime/workflow/notification은 `allow`, escalation은 `require_approval` |
-| `medium` | 제한적 runtime 상태 변경 | action type별. runtime/workflow은 `require_change_management`, composite/escalation은 `require_approval`, notification은 `allow` |
+| `medium` | 제한적 runtime 상태 변경 | action type별. runtime/composite/escalation은 `require_approval`, workflow은 `require_change_management`, notification은 `allow` |
 | `high` | 데이터 재처리, rollback, 광범위한 영향 | 현재 코드 matrix에서는 runtime/workflow/composite/notification/escalation 모두 `require_approval` |
 | `forbidden` | 데이터 삭제, secret 노출, shell 실행 | `deny` |
 
@@ -73,12 +73,12 @@
 | `approve_rebalance` | medium | require_approval |
 | `refresh_rebalance` | high | require_approval |
 | `backfill_pipeline` | high | require_approval |
-| `rollback_pipeline` | high | require_change_management |
-| `rollback_deployment` | medium | require_change_management |
+| `rollback_pipeline` | high | require_approval |
+| `rollback_deployment` | high | require_approval |
 
 ### 5. 변경관리 대상
 
-아래는 설계상 change-management로 올려야 하는 조건이다. 현재 `policy_matrix.py`의 실제 mapping은 `runtime_tool`/`workflow_action` medium risk를 `require_change_management`로 두고, high risk는 `require_approval`로 둔다. 따라서 이 조건을 실제 decision으로 쓰려면 action risk/type이 그 mapping에 맞게 catalog에 들어가야 한다.
+아래는 설계상 change-management로 올려야 하는 조건이다. 현재 `policy_matrix.py`의 실제 mapping은 `runtime_tool` medium risk를 `require_approval`, `workflow_action` medium risk를 `require_change_management`, high risk를 `require_approval`로 둔다. 따라서 이 조건을 실제 decision으로 쓰려면 action risk/type이 그 mapping에 맞게 catalog에 들어가야 한다.
 
 - 데이터 재처리
 - rollback
