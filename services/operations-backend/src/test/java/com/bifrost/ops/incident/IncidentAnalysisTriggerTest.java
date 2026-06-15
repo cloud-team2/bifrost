@@ -32,7 +32,7 @@ class IncidentAnalysisTriggerTest {
                           "mode": "incident_analysis",
                           "incident_id": "%s",
                           "message": "Pipeline failed\\nboom",
-                          "remediation_requested": false,
+                          "remediation_requested": true,
                           "stream": false
                         }
                         """.formatted(tenantId, incidentId)))

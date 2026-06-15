@@ -56,6 +56,22 @@ class TraceQueryTest {
     }
 
     @Test
+    void fallsBackToWiderWindowWhenRecentEmpty() {
+        // (#713) 짧은 창(5분)이 비면 긴 창(1h)으로 폴백해 마지막 trace라도 반환한다.
+        TempoClient client = mock(TempoClient.class);
+        TraceSpan span = new TraceSpan("source-poll", "platform-connect", 5L, 5000L, "ok", null);
+        when(client.recentTrace(contains("messaging.destination.name=\"cdc.orders\""), anyLong(), anyLong()))
+                .thenReturn(Optional.empty())                                              // 5분 창: 없음
+                .thenReturn(Optional.of(new TempoTrace("old9", 7L, false, List.of(span)))); // 1h 폴백: 있음
+        TraceQuery q = new TraceQuery(true, client);
+
+        TraceSummaryResult r = q.query("p1-sink", "cdc.orders");
+
+        assertThat(r.traceId()).isEqualTo("old9");
+        assertThat(r.status()).isEqualTo("ok");
+    }
+
+    @Test
     void enabledButNoTraceReturnsStub() {
         TempoClient client = mock(TempoClient.class);
         when(client.recentTrace(eq("{ resource.service.name=\"platform-connect\" }"), anyLong(), anyLong()))

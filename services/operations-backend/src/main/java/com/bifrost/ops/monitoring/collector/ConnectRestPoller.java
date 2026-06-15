@@ -23,6 +23,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -177,16 +178,31 @@ public class ConnectRestPoller {
                     PipelineEntity p = byConnector.get(name);
                     if (p != null) {
                         // (#596) UUID·raw trace 대신 파이프라인명 + 역할 + 정제 요약.
-                        String role = name.equals(p.getSinkConnectorName()) ? "싱크" : "소스";
-                        String summary = com.bifrost.ops.pipeline.status.ConnectorErrorMessages
-                                .summarize(task.containsKey("trace") ? String.valueOf(task.get("trace")) : null);
+                        boolean isSink = name.equals(p.getSinkConnectorName());
+                        String role = isSink ? "싱크" : "소스";
+                        String trace = task.containsKey("trace") ? String.valueOf(task.get("trace")) : null;
+                        String summary = com.bifrost.ops.pipeline.status.ConnectorErrorMessages.summarize(trace);
                         String message = "'" + p.getName() + "' " + role + " 커넥터 task#"
                                 + task.get("id") + " 실패: " + summary;
-                        incidentService.onThresholdViolation(p.getTenantId(),
-                                IncidentGroupingKeys.connectorWorker(name),
-                                "CONNECTOR", null, EventLevel.ERROR,
-                                "Pipeline '" + p.getName() + "' connector task failed",
-                                "CONNECTOR_TASK_FAILED", message, p.getId());
+
+                        // (#692) DB 연결 실패가 원인인 커넥터 실패는 datasource 장애의 증상이므로
+                        // datasource grouping 으로 묶어 DB 헬스 프로브 인시던트와 dedup(중복 방지).
+                        // 그 외(컨버터·설정·CDC 권한 등)는 connector grouping 유지 → restart_connector 조치 보존.
+                        UUID dsId = isSink ? p.getSinkDatasourceId() : p.getSourceDatasourceId();
+                        if (com.bifrost.ops.pipeline.status.ConnectorErrorMessages.isDbConnectionFailure(trace)
+                                && dsId != null) {
+                            incidentService.onThresholdViolation(p.getTenantId(),
+                                    IncidentGroupingKeys.datasource(dsId),
+                                    "DATABASE", dsId, EventLevel.ERROR,
+                                    "Pipeline '" + p.getName() + "' status ERROR",
+                                    "CONNECTOR_TASK_FAILED", message, p.getId());
+                        } else {
+                            incidentService.onThresholdViolation(p.getTenantId(),
+                                    IncidentGroupingKeys.connectorWorker(name),
+                                    "CONNECTOR", null, EventLevel.ERROR,
+                                    "Pipeline '" + p.getName() + "' connector task failed",
+                                    "CONNECTOR_TASK_FAILED", message, p.getId());
+                        }
                     } else {
                         log.warn("connector task 실패 (파이프라인 미매핑): {}", key);
                     }
