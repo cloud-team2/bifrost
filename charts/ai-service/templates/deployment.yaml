@@ -46,13 +46,13 @@ spec:
                   name: ai-llm-secret
                   key: api-key
                   optional: true
-            # (#646) /internal/ops 게이트 토큰. ops-backend와 동일 시크릿·키를 참조(같은 bifrost-system ns).
+            # (#646) /internal/ops 게이트 토큰. ops-backend와 동일 전용 시크릿(bifrost-internal-ops)을 공유.
             # 키가 없으면 미설정 → ai-service가 헤더 미동봉, ops-backend 게이트도 비활성(무중단).
             - name: AI_INTERNAL_OPS_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: operations-backend-secrets
-                  key: INTERNAL_OPS_TOKEN
+                  name: bifrost-internal-ops
+                  key: token
                   optional: true
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
