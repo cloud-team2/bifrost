@@ -48,6 +48,8 @@ public class PipelineSyncService {
     private static final Logger log = LoggerFactory.getLogger(PipelineSyncService.class);
 
     private static final long ADMIN_TIMEOUT_SEC = 5L;
+    private static final int COUNT_QUERY_TIMEOUT_SEC = 4;
+    private static final long COUNT_CONNECTION_TIMEOUT_MS = 2000L;
 
     private final PipelineRepository pipelineRepository;
     private final DatasourceRepository datasourceRepository;
@@ -156,11 +158,13 @@ public class PipelineSyncService {
     private long countRows(DatasourceEntity ds, String schema, String table) {
         String from = qualifiedTable(ds.getDbType(), schema, table);
         String password = secretStore.resolve(ds.getSecretRef()).password();
-        try (HikariDataSource dataSource = dataSourceFactory.create(ds, password, true);
+        try (HikariDataSource dataSource = dataSourceFactory.create(ds, password, true, COUNT_CONNECTION_TIMEOUT_MS);
              Connection conn = dataSource.getConnection();
-             Statement st = conn.createStatement();
-             ResultSet rs = st.executeQuery("SELECT COUNT(*) FROM " + from)) {
-            return rs.next() ? rs.getLong(1) : 0L;
+             Statement st = conn.createStatement()) {
+            st.setQueryTimeout(COUNT_QUERY_TIMEOUT_SEC);
+            try (ResultSet rs = st.executeQuery("SELECT COUNT(*) FROM " + from)) {
+                return rs.next() ? rs.getLong(1) : 0L;
+            }
         } catch (Exception e) {
             log.debug("행수 조회 실패: db={}, table={}, cause={}", ds.getId(), from, e.toString());
             return -1L;
