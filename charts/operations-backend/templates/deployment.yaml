@@ -14,6 +14,8 @@ spec:
     metadata:
       labels:
         {{- include "bifrost.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/env: {{ .Values.env | toJson | sha256sum | quote }}
     spec:
       serviceAccountName: operations-backend
       {{- with .Values.imagePullSecrets }}

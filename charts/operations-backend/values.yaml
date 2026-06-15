@@ -32,6 +32,7 @@ env:
   KAFKA_CLUSTER_NAME: platform-kafka
   KAFKA_CLUSTER_NAMESPACE: platform-kafka
   KAFKA_CONNECT_CLUSTER: platform-connect
+  KAFKA_CONNECT_REST_URL: http://platform-connect-connect-api.platform-kafka.svc.cluster.local:8083
   # Prometheus 메트릭 수집 (#126) — kube-prometheus-stack(#124) Prometheus
   PROMETHEUS_URL: http://kps-prometheus.monitoring.svc.cluster.local:9090
   PROMETHEUS_ENABLED: "true"
