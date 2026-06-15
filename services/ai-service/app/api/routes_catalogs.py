@@ -50,6 +50,16 @@ def _failure(
     )
 
 
+def _params_schema(model: type[BaseModel]) -> dict[str, Any]:
+    schema = model.model_json_schema()
+    schema["required"] = [
+        field.alias or name
+        for name, field in model.model_fields.items()
+        if field.is_required()
+    ]
+    return schema
+
+
 def _tool_summary(definition: ToolDefinition) -> dict[str, Any]:
     return {
         "name": definition.name,
@@ -58,6 +68,7 @@ def _tool_summary(definition: ToolDefinition) -> dict[str, Any]:
         "risk": definition.risk.value,
         "method": definition.method,
         "path_template": definition.path_template,
+        "params_schema": _params_schema(definition.params_model),
     }
 
 
@@ -65,7 +76,7 @@ def _tool_detail(definition: ToolDefinition) -> dict[str, Any]:
     data = _tool_summary(definition)
     data.update(
         {
-            "params_schema": definition.params_model.model_json_schema(),
+            "params_schema": _params_schema(definition.params_model),
             "result_schema": definition.result_model.model_json_schema(),
         }
     )
