@@ -142,6 +142,10 @@ public class PipelineService {
             List<MetricPoint> recordsPerSecSeries = toMetricPoints(
                     kafkaMetricsQuery.connectorRecordsSeries(connector.getKind(), connectorName, server,
                             startSec, endSec, stepSec));
+            if (errorRatePct == null && pollBatchAvg == null && pollBatchMax == null && retriesTotal == null
+                    && recordsPerSec == null && recordsPerSecSeries.isEmpty()) {
+                return ConnectorResponse.ConnectorMetrics.unavailable("Prometheus series 없음");
+            }
             return ConnectorResponse.ConnectorMetrics.available(errorRatePct, pollBatchAvg, pollBatchMax,
                     retriesTotal, recordsPerSec, recordsPerSecSeries);
         } catch (RuntimeException e) {

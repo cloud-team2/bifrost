@@ -219,8 +219,11 @@ public class MariaDBInspector implements DatabaseInspector {
 
     private TableStats tableStats(Connection conn, String schema, String table) {
         String sql = """
-                SELECT COALESCE(TABLE_ROWS, 0) AS rows,
-                       COALESCE(DATA_LENGTH, 0) + COALESCE(INDEX_LENGTH, 0) AS bytes
+                SELECT TABLE_ROWS AS rows,
+                       CASE
+                         WHEN DATA_LENGTH IS NULL AND INDEX_LENGTH IS NULL THEN NULL
+                         ELSE COALESCE(DATA_LENGTH, 0) + COALESCE(INDEX_LENGTH, 0)
+                       END AS bytes
                 FROM information_schema.TABLES
                 WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
                 """;
@@ -230,14 +233,19 @@ public class MariaDBInspector implements DatabaseInspector {
             ps.setString(2, table);
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
-                    return new TableStats(Math.max(0L, rs.getLong("rows")),
-                            Math.max(0L, rs.getLong("bytes")));
+                    return new TableStats(nullableNonNegativeLong(rs, "rows"),
+                            nullableNonNegativeLong(rs, "bytes"));
                 }
             }
         } catch (SQLException ignored) {
             // Schema listing should still succeed; null marks stats unavailable instead of fake zero.
         }
         return new TableStats(null, null);
+    }
+
+    private static Long nullableNonNegativeLong(ResultSet rs, String column) throws SQLException {
+        long value = rs.getLong(column);
+        return rs.wasNull() ? null : Math.max(0L, value);
     }
 
     private List<ColumnInfo> columns(DatabaseMetaData md, String catalog,

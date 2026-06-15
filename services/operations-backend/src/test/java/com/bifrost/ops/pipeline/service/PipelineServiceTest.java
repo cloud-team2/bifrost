@@ -292,6 +292,42 @@ class PipelineServiceTest {
     }
 
     @Test
+    void listConnectorsMarksMetricsUnavailableWhenAllPrometheusSeriesAreAbsent() {
+        UUID id = UUID.randomUUID();
+        PipelineEntity p = entity(PipelineLifecycle.ACTIVE);
+        p.setId(id);
+        p.setTopicName("cdc.team.orders");
+
+        ConnectorEntity connector = new ConnectorEntity();
+        connector.setPipelineId(id);
+        connector.setCrName("orders-source");
+        connector.setKind(ConnectorKind.SOURCE);
+        connector.setConnectorClass("io.debezium.connector.postgresql.PostgresConnector");
+        connector.setState("RUNNING");
+        connector.setTasksMax(1);
+
+        when(pipelineRepository.findByIdAndTenantId(id, wsId)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(id)).thenReturn(List.of(connector));
+        when(kafkaMetricsQuery.isEnabled()).thenReturn(true);
+        when(kafkaMetricsQuery.connectorErrorRatePct(ConnectorKind.SOURCE, "orders-source", "cdc.team.orders"))
+                .thenReturn(null);
+        when(kafkaMetricsQuery.connectorPollBatchAvg("orders-source", ConnectorKind.SOURCE)).thenReturn(null);
+        when(kafkaMetricsQuery.connectorPollBatchMax("orders-source", ConnectorKind.SOURCE)).thenReturn(null);
+        when(kafkaMetricsQuery.connectorRetriesTotal("orders-source")).thenReturn(null);
+        when(kafkaMetricsQuery.connectorRecordsPerSec(ConnectorKind.SOURCE, "orders-source", "cdc.team.orders"))
+                .thenReturn(null);
+        when(kafkaMetricsQuery.connectorRecordsSeries(org.mockito.ArgumentMatchers.eq(ConnectorKind.SOURCE),
+                org.mockito.ArgumentMatchers.eq("orders-source"), org.mockito.ArgumentMatchers.eq("cdc.team.orders"),
+                anyLong(), anyLong(), anyLong())).thenReturn(Map.of());
+
+        List<ConnectorResponse> connectors = service().listConnectors(wsId, principal, id);
+
+        assertThat(connectors).hasSize(1);
+        assertThat(connectors.get(0).metricsStatus()).isEqualTo("UNAVAILABLE");
+        assertThat(connectors.get(0).metricsMessage()).isEqualTo("Prometheus series 없음");
+    }
+
+    @Test
     void pauseRejectedWhileCreating() {
         UUID id = UUID.randomUUID();
         when(pipelineRepository.findByIdAndTenantId(id, wsId)).thenReturn(Optional.of(entity(PipelineLifecycle.CREATING)));

@@ -225,7 +225,7 @@ public class PostgresInspector implements DatabaseInspector {
 
     private static TableStats tableStats(Connection conn, String schema, String table) {
         String sql = """
-                SELECT GREATEST(c.reltuples, 0)::bigint AS rows,
+                SELECT c.reltuples AS rows,
                        pg_total_relation_size(c.oid) AS bytes
                 FROM pg_class c
                 JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -236,14 +236,20 @@ public class PostgresInspector implements DatabaseInspector {
             ps.setString(2, table);
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
-                    return new TableStats(Math.max(0L, rs.getLong("rows")),
-                            Math.max(0L, rs.getLong("bytes")));
+                    double rowEstimate = rs.getDouble("rows");
+                    Long rows = rs.wasNull() || rowEstimate < 0.0 ? null : Math.max(0L, (long) rowEstimate);
+                    return new TableStats(rows, nullableNonNegativeLong(rs, "bytes"));
                 }
             }
         } catch (SQLException ignored) {
             // Schema listing should still succeed; null marks stats unavailable instead of fake zero.
         }
         return new TableStats(null, null);
+    }
+
+    private static Long nullableNonNegativeLong(ResultSet rs, String column) throws SQLException {
+        long value = rs.getLong(column);
+        return rs.wasNull() ? null : Math.max(0L, value);
     }
 
     private List<ColumnInfo> columns(DatabaseMetaData md, String catalog,
