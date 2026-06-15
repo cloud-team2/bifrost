@@ -23,4 +23,19 @@ class SecurityConfigTest {
         assertThat(response.getStatus()).isEqualTo(ErrorCode.UNAUTHENTICATED.status().value());
         assertThat(response.getContentAsString()).contains("\"code\":\"10003\"");
     }
+
+    // (#646) /internal/ops service-identity 게이트 판정
+    @Test
+    void internalOpsGateDisabledWhenTokenUnset() {
+        assertThat(SecurityConfig.internalOpsAllowed("", "anything")).isTrue();
+        assertThat(SecurityConfig.internalOpsAllowed("", null)).isTrue();
+        assertThat(SecurityConfig.internalOpsAllowed(null, null)).isTrue();
+    }
+
+    @Test
+    void internalOpsGateAllowsMatchingTokenOnly() {
+        assertThat(SecurityConfig.internalOpsAllowed("s3cret", "s3cret")).isTrue();
+        assertThat(SecurityConfig.internalOpsAllowed("s3cret", "wrong")).isFalse();
+        assertThat(SecurityConfig.internalOpsAllowed("s3cret", null)).isFalse();
+    }
 }
