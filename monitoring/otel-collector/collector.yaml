@@ -27,7 +27,7 @@ data:
         spike_limit_percentage: 25
       tail_sampling:
         decision_wait: 10s          # trace의 모든 span을 모으는 대기 창
-        num_traces: 50000           # 메모리에 동시 보관할 trace 수 상한
+        num_traces: 10000           # 메모리에 동시 보관할 trace 수 상한(#666: 50000→10000, 저볼륨 앱 trace에 맞춰 memory_limiter Refusing data 해소)
         policies:
           # 에러 trace는 무조건 보존
           - name: errors
@@ -105,9 +105,9 @@ spec:
           resources:
             requests:
               cpu: 100m
-              memory: 256Mi
-            limits:
               memory: 512Mi
+            limits:
+              memory: 1Gi
       volumes:
         - name: config
           configMap:
