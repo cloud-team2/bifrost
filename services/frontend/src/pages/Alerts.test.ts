@@ -170,7 +170,7 @@ describe('incident report actions', () => {
     }))
   })
 
-  it('does not infer a connector target from topology when report params are absent', () => {
+  it('infers a connector target from topology when report params are absent', () => {
     const [action] = reportActions([
       report({
         action_candidates: [
@@ -187,7 +187,16 @@ describe('incident report actions', () => {
       }),
     ])
 
-    expect(buildRunCandidate(action, [pipeline()])).toBeNull()
+    expect(buildRunCandidate(action, [pipeline()])).toEqual(expect.objectContaining({
+      action_id: 'act-4',
+      action_name: 'resume_connector',
+      action_type: 'runtime_tool',
+      root_cause_id: 'SINK_DB_CONNECTION_TIMEOUT',
+      risk: 'low',
+      reason: 'sink recovered',
+      tool_name: 'resume_connector',
+      tool_params: { connector_name: 'orders-source' },
+    }))
   })
 })
 

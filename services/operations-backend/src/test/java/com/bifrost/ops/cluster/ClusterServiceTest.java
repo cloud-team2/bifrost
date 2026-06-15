@@ -3,6 +3,7 @@ package com.bifrost.ops.cluster;
 import com.bifrost.ops.adapters.prometheus.PrometheusClient;
 import com.bifrost.ops.cluster.dto.KafkaClusterResponse;
 import com.bifrost.ops.monitoring.query.KafkaMetricsQuery;
+import com.bifrost.ops.pipeline.dto.ThroughputPoint;
 import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
 import com.bifrost.ops.provisioning.persistence.repository.ConnectorRepository;
 import io.fabric8.kubernetes.client.KubernetesClient;
@@ -32,6 +33,8 @@ import java.util.concurrent.TimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -53,6 +56,26 @@ class ClusterServiceTest {
         return new ClusterService(admin, prometheus, kafkaMetricsQuery, k8s,
                 connectorRepository, pipelineRepository,
                 "platform-kafka", "platform-connect", "http://connect.invalid");
+    }
+
+    @Test
+    void throughputFallsBackToKafkaExporterMetricsWhenJmxAbsent() {
+        // (#728) 배포환경 Prometheus는 JMX broker 메트릭이 없어 throughput이 빈 시리즈였다.
+        // 쿼리에 kafka-exporter 폴백(topic/consumergroup offset rate)이 포함되어 시리즈가 채워져야 한다.
+        when(kafkaMetricsQuery.isEnabled()).thenReturn(true);
+        when(prometheus.queryRange(contains("kafka_topic_partition_current_offset"), anyLong(), anyLong(), anyLong()))
+                .thenReturn(Map.of(1000L, 12.0));
+        when(prometheus.queryRange(contains("kafka_consumergroup_current_offset"), anyLong(), anyLong(), anyLong()))
+                .thenReturn(Map.of(1000L, 7.0));
+
+        List<ThroughputPoint> series = service().throughput(30);
+
+        assertThat(series).hasSize(1);
+        assertThat(series.get(0).produceRate()).isEqualTo(12.0);
+        assertThat(series.get(0).consumeRate()).isEqualTo(7.0);
+        // JMX 1순위 + exporter 폴백이 한 쿼리에 모두 들어간다.
+        verify(prometheus).queryRange(
+                contains("kafka_server_brokertopicmetrics_messagesin_total"), anyLong(), anyLong(), anyLong());
     }
 
     @Test

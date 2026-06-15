@@ -256,7 +256,17 @@ public class ClusterService {
                 round(disk), netIn, netOut, status);
     }
 
-    /** 클러스터 처리량 추이(produce/consume msg/s) — broker JMX messagesin/out. */
+    // 내부/커넥트 관리 토픽 제외 — kafka-exporter 폴백 쿼리에서 실사용 토픽만 집계.
+    private static final String EXPORTER_TOPIC_FILTER = "{topic!~\"__.*|connect-.*|_schemas\"}";
+
+    /**
+     * 클러스터 처리량 추이(produce/consume msg/s).
+     *
+     * <p>1순위는 broker JMX(messagesin/out_total). 단, 배포환경(EKS) Prometheus는 Strimzi JMX 메트릭을
+     * 스크랩하지 않고 kafka-exporter만 수집하므로(#728) JMX 시리즈가 비면 kafka-exporter 기반으로 폴백한다:
+     * produce=토픽 offset 증가율(messagesin 근사), consume=consumer group offset 증가율(messagesout 근사).
+     * CPU/메모리 쿼리의 {@code JMX or container} 폴백과 동일한 방식이다.
+     */
     public List<ThroughputPoint> throughput(int minutes) {
         if (!promEnabled) return List.of();
         long end = System.currentTimeMillis() / 1000L;
@@ -264,9 +274,13 @@ public class ClusterService {
         long step = Math.max(15L, minutes);
         try {
             Map<Long, Double> in = prometheus.queryRange(
-                    "sum(rate(kafka_server_brokertopicmetrics_messagesin_total[1m]))", start, end, step);
+                    "sum(rate(kafka_server_brokertopicmetrics_messagesin_total[1m]))"
+                    + " or sum(rate(kafka_topic_partition_current_offset" + EXPORTER_TOPIC_FILTER + "[1m]))",
+                    start, end, step);
             Map<Long, Double> out = prometheus.queryRange(
-                    "sum(rate(kafka_server_brokertopicmetrics_messagesout_total[1m]))", start, end, step);
+                    "sum(rate(kafka_server_brokertopicmetrics_messagesout_total[1m]))"
+                    + " or sum(rate(kafka_consumergroup_current_offset" + EXPORTER_TOPIC_FILTER + "[1m]))",
+                    start, end, step);
             TreeSet<Long> ts = new TreeSet<>();
             ts.addAll(in.keySet());
             ts.addAll(out.keySet());
