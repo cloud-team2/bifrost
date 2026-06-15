@@ -58,7 +58,7 @@ Frontend → operations-backend: POST /api/v1/workspaces {name}
 2. POST /api/v1/workspaces/{wsId}/pipelines {name, pattern, sourceDbId, sinkDbId?, schema, table}
      → metadb pipeline 저장(status: creating), 응답 {pipeline_id, status:"creating"}
 3. provisioning(Fabric8): KafkaConnector CR apply (생성 시점에만 secretStore.resolve로 자격증명 주입)
-     → EDA: Source Debezium 1개 (tasksMax=1) → 토픽 cdc.table.{projectKey}.{dbName}.{schema}.{table} 자동 생성
+     → EDA: Source Debezium 1개 (tasksMax=1) → 토픽 eda.table.{projectKey}.{dbSlug}.{schema}.{table} 자동 생성
      → CDC: Source Debezium + Sink JDBC 1개 (tasksMax=3, upsert)
 4. Watcher(Fabric8)가 KafkaConnector .status 변화 감지 → PipelineStatusService(단일 writer)
      → pipeline status 재계산(creating→active, 일부 task FAILED→lag) → event/audit 기록 → SSE push

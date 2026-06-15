@@ -39,7 +39,7 @@ spec:
     key.converter.schemas.enable: "false"
     value.converter.schemas.enable: "false"
     topic.creation.enable: "true"
-    # pipeline 생성 시 Debezium이 자동 생성하는 CDC 토픽 기본값 (설계 §4.1)
+    # pipeline 생성 시 Debezium이 자동 생성하는 CDC 토픽 기본값 (KafkaTopic CR 비추적, 설계 §4.1)
     topic.creation.default.replication.factor: "3"
     topic.creation.default.partitions: "3"
     topic.creation.default.cleanup.policy: delete

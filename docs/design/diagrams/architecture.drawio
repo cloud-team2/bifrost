@@ -125,7 +125,7 @@
           <mxGeometry x="130" y="55" width="60" height="60" as="geometry"/>
         </mxCell>
 
-        <mxCell id="kafka_topic_crd" value="KafkaTopic&#xa;tenant-a.orders" style="shape=mxgraph.kubernetes.icon;prIcon=crd;html=1;labelPosition=center;verticalLabelPosition=bottom;align=center;verticalAlign=top;fontSize=9;fontStyle=1;" vertex="1" parent="auto_created">
+        <mxCell id="kafka_topic_broker" value="Kafka Topic&#xa;tenant-a.orders&#xa;(no CR)" style="shape=image;verticalLabelPosition=bottom;labelBackgroundColor=default;verticalAlign=top;imageAspect=0;aspect=fixed;image=https://cdn.simpleicons.org/apachekafka/231F20;fontSize=9;fontStyle=1;" vertex="1" parent="auto_created">
           <mxGeometry x="235" y="55" width="60" height="60" as="geometry"/>
         </mxCell>
 

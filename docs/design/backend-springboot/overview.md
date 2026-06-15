@@ -69,7 +69,7 @@ erDiagram
 | --- | --- |
 | 식별자 | Frontend/FastAPI 저장소의 `workspace_id`/`project_id`는 UUID. Spring `/internal/ops/projects/{projectId}` path는 현재 대부분 workspace `namespace`/`projectKey` slug를 받음 |
 | 파이프라인 | **단일 테이블 1개**. EDA(`fan-out`, Source만) / CDC(`direct`, Source Debezium + Sink JDBC) |
-| 토픽 | Debezium 자동 생성 `cdc.table.{projectKey}.{dbSlug}.{schema}.{table}`(`dbSlug={dbName}-{datasourceId 앞 8 hex}`, part 6/RF 3) |
+| 토픽 | Debezium 자동 생성 `{root}.{projectKey}.{dbSlug}.{schema}.{table}`(`root=cdc.table|eda.table`, `dbSlug={dbName}-{datasourceId 앞 8 hex}`, part 6/RF 3) |
 | DB 자격증명 | datasource row는 `secret_ref`만 저장. 현재 `DbSecretStore`는 metadb `secrets.credential_json`에 자격증명을 저장하고, API에는 마스킹만 노출 |
 | 신뢰 경계 | FastAPI 판단 불신, **실행 직전 재검증**. **집행 allowlist·Approval 원본=Spring**([server.md §7.1](./server.md#71-operation-allowlist-현재-집행-경계)) |
 | 관측 수집 | 상태=Watcher(event) / lag·task·JVM·DB health 일부=폴링. 현재 poller는 event row를 만들지만 incident 자동 생성 경로는 호출하지 않음 → [monitoring.md](./monitoring.md) |

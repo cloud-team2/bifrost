@@ -38,6 +38,7 @@ SRC_ENGINE="${SRC_ENGINE:-POSTGRESQL}"
 SRC_HOST="${SRC_HOST:-user-postgres-service.userdb.svc.cluster.local}"
 SRC_PORT="${SRC_PORT:-5432}"
 SRC_DB="${SRC_DB:-testdb}"
+SRC_DATASOURCE_ID="${SRC_DATASOURCE_ID:-11111111-2222-3333-4444-555555555555}"
 SRC_SCHEMA="${SRC_SCHEMA:-public}"
 SRC_TABLE="${SRC_TABLE:-orders}"
 SRC_SECRET_REF="${SRC_SECRET_REF:-secret://smoke-src}"
@@ -46,6 +47,7 @@ SINK_ENGINE="${SINK_ENGINE:-MARIADB}"
 SINK_HOST="${SINK_HOST:-user-mariadb-service.userdb.svc.cluster.local}"
 SINK_PORT="${SINK_PORT:-3306}"
 SINK_DB="${SINK_DB:-testdb}"
+SINK_DATASOURCE_ID="${SINK_DATASOURCE_ID:-22222222-3333-4444-5555-666666666666}"
 SINK_SECRET_REF="${SINK_SECRET_REF:-secret://smoke-sink}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; NC='\033[0m'
@@ -114,10 +116,11 @@ wait_running() {
 # ── topic 존재 확인 ─────────────────────────────────────────────────────────────
 expect_topic() {
   local topic="$1"
-  if kubectl get kafkatopic -n "${KAFKA_NS}" 2>/dev/null \
-       | awk '{print $1}' | grep -qx "${topic}"; then
-    pass "topic ${topic} 존재(KafkaTopic CR)"
-    return 0
+  if kubectl get kafkatopic -n "${KAFKA_NS}" -o json 2>/dev/null \
+       | jq -e --arg topic "${topic}" \
+           '.items[]? | select((.spec.topicName // .metadata.name) == $topic)' >/dev/null; then
+    fail "pipeline data topic ${topic} 에 KafkaTopic CR 존재(정책 위반: CR 비추적)"
+    return 1
   fi
   if kubectl -n "${KAFKA_NS}" exec "${CONNECT_CLUSTER}-connect-0" -- \
        bin/kafka-topics.sh --bootstrap-server "platform-kafka-kafka-bootstrap:9092" \
@@ -127,6 +130,12 @@ expect_topic() {
   fi
   fail "topic ${topic} 미생성"
   return 1
+}
+
+source_topic() {
+  local root="$1"
+  local ds_prefix="${SRC_DATASOURCE_ID%%-*}"
+  printf '%s.%s.%s-%s.%s.%s\n' "${root}" "${PROJECT_KEY}" "${SRC_DB}" "${ds_prefix}" "${SRC_SCHEMA}" "${SRC_TABLE}"
 }
 
 post_pipeline() {
@@ -158,13 +167,13 @@ run_eda() {
   body=$(jq -nc \
     --arg pid "$pid" --arg pk "$PROJECT_KEY" \
     --arg eng "$SRC_ENGINE" --arg h "$SRC_HOST" --argjson p "$SRC_PORT" \
-    --arg db "$SRC_DB" --arg sc "$SRC_SCHEMA" --arg tb "$SRC_TABLE" --arg sr "$SRC_SECRET_REF" \
+    --arg db "$SRC_DB" --arg dsid "$SRC_DATASOURCE_ID" --arg sc "$SRC_SCHEMA" --arg tb "$SRC_TABLE" --arg sr "$SRC_SECRET_REF" \
     '{pipelineId:$pid, projectKey:$pk, pattern:"FAN_OUT",
-      source:{engine:$eng,host:$h,port:$p,dbName:$db,schema:$sc,table:$tb,secretRef:$sr}}')
+      source:{engine:$eng,host:$h,port:$p,dbName:$db,datasourceId:$dsid,schema:$sc,table:$tb,secretRef:$sr}}')
   info "POST /internal/pipelines (EDA) pipelineId=${pid}"
   post_pipeline "${body}" >/dev/null || return 1
   wait_running "${pid}-source" || return 1
-  expect_topic "cdc.table.${PROJECT_KEY}.${SRC_DB}.${SRC_SCHEMA}.${SRC_TABLE}" || return 1
+  expect_topic "$(source_topic eda.table)" || return 1
   pass "EDA E2E GREEN"
 }
 
@@ -176,17 +185,17 @@ run_cdc() {
   body=$(jq -nc \
     --arg pid "$pid" --arg pk "$PROJECT_KEY" \
     --arg seng "$SRC_ENGINE" --arg sh "$SRC_HOST" --argjson sp "$SRC_PORT" \
-    --arg sdb "$SRC_DB" --arg ssc "$SRC_SCHEMA" --arg stb "$SRC_TABLE" --arg ssr "$SRC_SECRET_REF" \
+    --arg sdb "$SRC_DB" --arg sdsid "$SRC_DATASOURCE_ID" --arg ssc "$SRC_SCHEMA" --arg stb "$SRC_TABLE" --arg ssr "$SRC_SECRET_REF" \
     --arg keng "$SINK_ENGINE" --arg kh "$SINK_HOST" --argjson kp "$SINK_PORT" \
-    --arg kdb "$SINK_DB" --arg ksr "$SINK_SECRET_REF" \
+    --arg kdb "$SINK_DB" --arg kdsid "$SINK_DATASOURCE_ID" --arg ksr "$SINK_SECRET_REF" \
     '{pipelineId:$pid, projectKey:$pk, pattern:"DIRECT",
-      source:{engine:$seng,host:$sh,port:$sp,dbName:$sdb,schema:$ssc,table:$stb,secretRef:$ssr},
-      sink:{engine:$keng,host:$kh,port:$kp,dbName:$kdb,schema:null,table:null,secretRef:$ksr}}')
+      source:{engine:$seng,host:$sh,port:$sp,dbName:$sdb,datasourceId:$sdsid,schema:$ssc,table:$stb,secretRef:$ssr},
+      sink:{engine:$keng,host:$kh,port:$kp,dbName:$kdb,datasourceId:$kdsid,schema:null,table:null,secretRef:$ksr}}')
   info "POST /internal/pipelines (CDC) pipelineId=${pid}"
   post_pipeline "${body}" >/dev/null || return 1
   wait_running "${pid}-source" || return 1
   wait_running "${pid}-sink" || return 1
-  expect_topic "cdc.table.${PROJECT_KEY}.${SRC_DB}.${SRC_SCHEMA}.${SRC_TABLE}" || return 1
+  expect_topic "$(source_topic cdc.table)" || return 1
   pass "CDC E2E GREEN"
 }
 

@@ -1,4 +1,5 @@
-# platform.internal.* 토픽 — orchestrator가 발행, core가 구독
+# platform-internal-* KafkaTopic CR — 플랫폼 내부 예약 토픽.
+# application runtime event topic 기본값(platform.internal.*)과는 별개다.
 # Strimzi Topic Operator가 자동으로 Kafka에 토픽 생성
 ---
 apiVersion: kafka.strimzi.io/v1

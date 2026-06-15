@@ -68,7 +68,7 @@ consumerLagNext = applyConsumerLag(current, cdcSinkConsumerGroupLag)
   → 타임아웃 내 미전이 → ProvisioningTimeoutJob이 error 전이
 ```
 
-- **토픽 이름**: `cdc.table.{projectKey}.{dbSlug}.{schema}.{table}` (`dbSlug = {dbName}-{datasourceId 앞 8 hex}`, 표시 이름 충돌 방지 #265) — Debezium이 자동 생성. KafkaTopic CR을 따로 만들지 않는다.
+- **토픽 이름**: `{root}.{projectKey}.{dbSlug}.{schema}.{table}` (`root=cdc.table|eda.table`, `dbSlug = {dbName}-{datasourceId 앞 8 hex}`, 표시 이름 충돌 방지 #265) — Kafka Connect/Debezium topic creation으로 자동 생성. 파이프라인 데이터 토픽은 Strimzi Topic Operator 관리 대상이 아니므로 KafkaTopic CR을 따로 만들거나 추적하지 않는다(#743).
 - **재생성 주의**: 같은 (source, schema, table, pattern) 중복은 검증에서 차단된다. 다른 파이프라인을 같은 테이블로 만들면 토픽 이름이 같아질 수 있으므로, **삭제 시 토픽을 정리**해 누적을 막는다(§4·§6 참조).
 
 ## 4. 파이프라인 삭제 — 잔재 없는 정리
@@ -102,7 +102,7 @@ consumerLagNext = applyConsumerLag(current, cdcSinkConsumerGroupLag)
 - **CR 정리는 결정적 이름 삭제 + best-effort pid 접두사 sweep**, Kafka 토픽·group 정리도 best-effort다(Kafka 일시 장애가 삭제 자체를 막지 않게). 토픽·group은 수동적 데이터라 잠시 남아도 위험하지 않다.
 - **순서가 중요하다**(라이브 검증으로 확인, #200):
   - CR을 막 지운 직후엔 sink consumer가 아직 group에 남아 있어, group을 바로 지우면 `GroupNotEmptyException`. → consumer가 빠질 때까지 재시도(6회·1.2초).
-  - consumer가 남은 채 토픽을 지우면, 빠져나가는 consumer의 메타데이터 요청이 `auto.create.topics.enable=true` 환경에서 **빈 토픽을 즉시 재생성**한다. → group을 먼저 비우고 **토픽은 맨 마지막**에 지운다.
+  - consumer가 남은 채 토픽을 지우면, 빠져나가는 consumer의 메타데이터 요청이 자동 topic creation 환경에서 **빈 토픽을 즉시 재생성**할 수 있다. 현재 운영 브로커는 `auto.create.topics.enable=false`지만, Connect/Debezium의 topic creation 설정을 쓰므로 group을 먼저 비우고 **토픽은 맨 마지막**에 지운다.
 - **삭제 정책 = 토픽·group 정리 시도**. 현재 `KafkaResourceCleaner`는 group/topic 삭제 실패를 warn log로 남기고 진행할 수 있다. EDA(fan-out) 토픽을 외부 컨슈머가 구독 중이면 그 컨슈머는 끊길 수 있다(합의된 트레이드오프).
 
 > **아직 남는 잔재(개선 대상)**: 삭제는 KafkaConnector CR·토픽·sink consumer group을 정리하지만, **PostgreSQL source의 publication·replication slot**은 아직 정리하지 않는다(`bif_{project}_{pid}_pub` 등이 누적). 후속 작업으로 source DB 측 정리를 추가한다.

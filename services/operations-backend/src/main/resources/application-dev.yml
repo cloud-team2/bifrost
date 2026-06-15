@@ -103,6 +103,7 @@ discovery:
   consumer-group-polling-interval-seconds: 30
 
 # Kafka 토픽
+# runtime event topic 기본값이다. KafkaTopic CR 객체명(platform-internal-*)과는 별개다(#743).
 platform:
   internal-topics:
     connector-status: platform.internal.connector-status
