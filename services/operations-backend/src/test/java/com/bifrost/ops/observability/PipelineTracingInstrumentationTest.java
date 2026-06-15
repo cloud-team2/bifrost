@@ -22,7 +22,7 @@ class PipelineTracingInstrumentationTest {
     @Test
     void pipelineCreateEmitsObservation() {
         TestObservationRegistry registry = TestObservationRegistry.create();
-        PipelineService target = new PipelineService(null, null, null, null, null, null, null, null, null, null);
+        PipelineService target = new PipelineService(null, null, null, null, null, null, null, null, null, null, null);
         AspectJProxyFactory factory = new AspectJProxyFactory(target);
         factory.addAspect(new ObservedAspect(registry));
         PipelineService proxied = factory.getProxy();

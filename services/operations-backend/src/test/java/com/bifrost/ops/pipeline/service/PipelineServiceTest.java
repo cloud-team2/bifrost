@@ -52,12 +52,14 @@ class PipelineServiceTest {
     @Mock private EventService eventService;
     @Mock private AuditService auditService;
     @Mock private com.bifrost.ops.pipeline.kafka.KafkaResourceCleaner kafkaResourceCleaner;
+    @Mock private com.bifrost.ops.pipeline.PostgresReplicationSlotCleaner postgresSlotCleaner;
 
     private PipelineService service() {
         return new PipelineService(pipelineRepository, datasourceRepository, workspaceRepository,
                 connectorRepository, provisioningService, accessGuard, eventService, auditService,
                 kafkaResourceCleaner,
-                org.mockito.Mockito.mock(com.bifrost.ops.database.service.CdcReadinessService.class));
+                org.mockito.Mockito.mock(com.bifrost.ops.database.service.CdcReadinessService.class),
+                postgresSlotCleaner);
     }
 
     private final UUID wsId = UUID.randomUUID();
@@ -194,11 +196,13 @@ class PipelineServiceTest {
         PipelineEntity p = entity(PipelineLifecycle.ACTIVE);
         p.setSourceConnectorName("src");
         when(pipelineRepository.findByIdAndTenantId(id, wsId)).thenReturn(Optional.of(p));
+        stubWorkspace();
 
         service().delete(wsId, principal, id, false);
 
         verify(provisioningService).delete(any());
         verify(pipelineRepository).delete(p);
+        verify(postgresSlotCleaner).dropSlotIfExists(sourceId, "team-a", p.getId());
     }
 
     // ---------- helpers ----------
