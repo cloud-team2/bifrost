@@ -43,6 +43,13 @@ spec:
                   name: operations-backend-secrets
                   key: {{ .Values.secrets.dbPasswordKey }}
                   optional: true
+            # (#646) /internal/ops service-identity 게이트 토큰. 키가 없으면 미설정 → 게이트 비활성(무중단).
+            - name: INTERNAL_OPS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: operations-backend-secrets
+                  key: {{ .Values.secrets.internalOpsTokenKey }}
+                  optional: true
           livenessProbe:
             httpGet:
               path: /actuator/health
