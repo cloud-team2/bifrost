@@ -46,21 +46,33 @@ while (true) {
     handle(record.value());
   }
 }`,
-    Python: `from kafka import KafkaConsumer
+    Python: `# pip install confluent-kafka
+from confluent_kafka import Consumer
 
 # Authentication template (${guide.authenticationMethod}) uses Secret ${guide.credentialReference.namespace}/${guide.credentialReference.secretName}.
 ${commentAuth}
-consumer = KafkaConsumer(
-    "${topicName}",
-    bootstrap_servers="${guide.bootstrapServers}",
-    group_id="${guide.recommendedGroupId}",
-)
-for msg in consumer:
-    # 분산 추적 연결(선택): traceparent 헤더를 OTel로 추출하면 같은 traceId로 이어집니다.
-    headers = dict(msg.headers or [])
-    traceparent = headers.get("traceparent", b"").decode() or None
-    # OTel: ctx = opentelemetry.propagate.extract({"traceparent": traceparent}) 로 context 복원 후 span 시작
-    handle(msg.value)`,
+consumer = Consumer({
+    "bootstrap.servers": "${escapeSnippetValue(guide.bootstrapServers)}",
+    "group.id": "${escapeSnippetValue(guide.recommendedGroupId)}",
+    "auto.offset.reset": "earliest",
+})
+consumer.subscribe(["${escapeSnippetValue(topicName)}"])
+
+try:
+    while True:
+        msg = consumer.poll(1.0)
+        if msg is None:
+            continue
+        if msg.error():
+            print(f"Consumer error: {msg.error()}")
+            continue
+        # 분산 추적 연결(선택): traceparent 헤더를 OTel로 추출하면 같은 traceId로 이어집니다.
+        headers = dict(msg.headers() or [])
+        traceparent = headers.get("traceparent", b"").decode() or None
+        # OTel: ctx = opentelemetry.propagate.extract({"traceparent": traceparent}) 로 context 복원 후 span 시작
+        handle(msg.value())
+finally:
+    consumer.close()`,
     'Node.js': `const { Kafka } = require("kafkajs")
 
 // Authentication template (${guide.authenticationMethod}) uses Secret ${guide.credentialReference.namespace}/${guide.credentialReference.secretName}.
