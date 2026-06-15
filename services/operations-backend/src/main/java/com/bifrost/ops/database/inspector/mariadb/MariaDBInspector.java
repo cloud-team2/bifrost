@@ -192,10 +192,35 @@ public class MariaDBInspector implements DatabaseInspector {
                 List<String> pkCols = cols.stream()
                         .filter(ColumnInfo::isPrimaryKey).map(ColumnInfo::name).toList();
                 String schema = firstNonBlank(jdbcSchema, rs.getString("TABLE_CAT"), catalog);
-                result.add(new TableInfo(schema, name, 0L, hasPk, cols, pkCols));
+                TableStats stats = tableStats(conn, schema, name);
+                result.add(new TableInfo(schema, name, stats.approximateRows(), stats.totalSizeBytes(),
+                        hasPk, cols, pkCols));
             }
         }
         return result;
+    }
+
+    private TableStats tableStats(Connection conn, String schema, String table) {
+        String sql = """
+                SELECT COALESCE(TABLE_ROWS, 0) AS rows,
+                       COALESCE(DATA_LENGTH, 0) + COALESCE(INDEX_LENGTH, 0) AS bytes
+                FROM information_schema.TABLES
+                WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+                """;
+        String tableSchema = firstNonBlank(schema, dbName);
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, tableSchema);
+            ps.setString(2, table);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return new TableStats(Math.max(0L, rs.getLong("rows")),
+                            Math.max(0L, rs.getLong("bytes")));
+                }
+            }
+        } catch (SQLException ignored) {
+            // Schema listing should still succeed when size statistics are unavailable.
+        }
+        return new TableStats(0L, 0L);
     }
 
     private List<ColumnInfo> columns(DatabaseMetaData md, String catalog,
@@ -288,4 +313,6 @@ public class MariaDBInspector implements DatabaseInspector {
         }
         return null;
     }
+
+    private record TableStats(long approximateRows, long totalSizeBytes) {}
 }

@@ -523,6 +523,22 @@ function schemaTableSub(state: ResourceState<{ tables: SchemaTable[] }>) {
   return undefined
 }
 
+function formatRows(value: number) {
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value)
+}
+
+function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value < 0) return '—'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let size = value
+  let unit = 0
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024
+    unit += 1
+  }
+  return `${new Intl.NumberFormat('en-US', { maximumFractionDigits: unit === 0 ? 0 : 1 }).format(size)} ${units[unit]}`
+}
+
 /* ---- 친화적 Capability Check 라벨 매핑: 표시명만 보정하고 실제 detail은 API 응답을 쓴다. ---- */
 const FRIENDLY_LABELS: Record<string, string> = {
   'wal_level = logical': '변경 감지 활성화',
@@ -794,6 +810,8 @@ function SchemaTab({ state }: { state: ResourceState<{ tables: SchemaTable[] }> 
                 <Icon name="table" size={15} className="text-gray-400" />
                 <span className="font-mono text-[13px] font-medium text-gray-800">{t.schema}.{t.name}</span>
                 <div className="flex-1" />
+                <span className="font-mono text-[11.5px] tabular-nums text-gray-400">{formatRows(t.approximateRowCount)} rows</span>
+                <span className="font-mono text-[11.5px] tabular-nums text-gray-400">{formatBytes(t.totalSizeBytes)}</span>
                 <span className="text-[12px] text-gray-400">{t.columns.length} cols</span>
               </button>
               {open === key && (

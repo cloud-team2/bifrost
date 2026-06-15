@@ -204,6 +204,8 @@ export interface SchemaColumn {
 export interface SchemaTable {
   schema: string
   name: string
+  approximateRowCount: number
+  totalSizeBytes: number
   columns: SchemaColumn[]
 }
 export interface DatabaseSchemaResponse {

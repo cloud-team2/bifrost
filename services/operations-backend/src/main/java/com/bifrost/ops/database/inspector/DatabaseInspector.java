@@ -50,6 +50,7 @@ public interface DatabaseInspector extends AutoCloseable {
             String schema,
             String name,
             long approximateRowCount,
+            long totalSizeBytes,
             boolean hasPrimaryKey,
             List<ColumnInfo> columns,
             List<String> primaryKeyColumns

@@ -12,6 +12,8 @@ public record DatabaseSchemaResponse(List<TableSchema> tables) {
     public record TableSchema(
             String schema,
             String name,
+            long approximateRowCount,
+            long totalSizeBytes,
             List<ColumnSchema> columns
     ) {
     }

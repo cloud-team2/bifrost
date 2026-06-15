@@ -197,10 +197,35 @@ public class PostgresInspector implements DatabaseInspector {
                 boolean hasPk = cols.stream().anyMatch(ColumnInfo::isPrimaryKey);
                 List<String> pkCols = cols.stream()
                         .filter(ColumnInfo::isPrimaryKey).map(ColumnInfo::name).toList();
-                result.add(new TableInfo(schema, name, 0L, hasPk, cols, pkCols));
+                TableStats stats = tableStats(conn, schema, name);
+                result.add(new TableInfo(schema, name, stats.approximateRows(), stats.totalSizeBytes(),
+                        hasPk, cols, pkCols));
             }
         }
         return result;
+    }
+
+    private static TableStats tableStats(Connection conn, String schema, String table) {
+        String sql = """
+                SELECT GREATEST(c.reltuples, 0)::bigint AS rows,
+                       pg_total_relation_size(c.oid) AS bytes
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = ? AND c.relname = ?
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, schema);
+            ps.setString(2, table);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return new TableStats(Math.max(0L, rs.getLong("rows")),
+                            Math.max(0L, rs.getLong("bytes")));
+                }
+            }
+        } catch (SQLException ignored) {
+            // Schema listing should still succeed when size statistics are unavailable.
+        }
+        return new TableStats(0L, 0L);
     }
 
     private List<ColumnInfo> columns(DatabaseMetaData md, String catalog,
@@ -270,4 +295,6 @@ public class PostgresInspector implements DatabaseInspector {
         return raw.toLowerCase().replaceAll("[^a-z0-9_]", "_")
                 .substring(0, Math.min(63, raw.length()));
     }
+
+    private record TableStats(long approximateRows, long totalSizeBytes) {}
 }
