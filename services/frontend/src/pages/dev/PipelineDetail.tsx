@@ -844,7 +844,8 @@ function TraceTab({ edge }: { edge: Edge }) {
           <button onClick={refresh} disabled={busy} className={btn}>새로고침</button>
         </div>
         <p className="text-[11.5px] text-gray-400">
-          켜기/끄기 시 소스 커넥터가 잠깐 재시작됩니다 (수십 초) · 약 5% 샘플링
+          켜기/끄기 시 소스 커넥터가 잠깐 재시작됩니다 (수십 초) · dataplane 추적은 전량 수집됩니다.
+          {' '}표시된 trace는 <b className="font-medium text-gray-500">실시간이 아닙니다</b> — 최신 trace를 보려면 <b className="font-medium text-gray-500">새로고침</b>하세요.
         </p>
       </div>
 
