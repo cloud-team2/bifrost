@@ -587,6 +587,32 @@ class PipelineStatusServiceImplTest {
     }
 
     @Test
+    void clearErrorRateRemovesStaleCriticalInput() {
+        UUID pid = UUID.randomUUID();
+        UUID tenant = UUID.randomUUID();
+        PipelineEntity p = new PipelineEntity();
+        p.setId(pid);
+        p.setTenantId(tenant);
+        p.setName("orders-eda");
+        p.setPattern(PipelinePattern.FAN_OUT);
+        p.setStatus(PipelineLifecycle.ACTIVE);
+
+        ConnectorEntity src = connector(ConnectorKind.SOURCE, "RUNNING");
+        src.setPipelineId(pid);
+        src.setCrName(pid + "-source");
+        when(pipelineRepository.findById(pid)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(pid)).thenReturn(List.of(src));
+
+        PipelineStatusServiceImpl service = service();
+        service.applyErrorRate(pid, 2.5);
+        assertThat(p.getStatus()).isEqualTo(PipelineLifecycle.ERROR);
+
+        service.clearErrorRate(pid);
+
+        assertThat(p.getStatus()).isEqualTo(PipelineLifecycle.ACTIVE);
+    }
+
+    @Test
     void consumerLagRecoveryTransitionsLagToActive() {
         UUID pid = UUID.randomUUID();
         UUID tenant = UUID.randomUUID();

@@ -12,7 +12,7 @@ data:
     lowercaseOutputLabelNames: true
     rules:
       # ── Debezium 커넥터 메트릭: server 라벨을 살린 정제 룰 (키 순서 무관하게 매칭) ──
-      - pattern: "debezium.([^:]+)<.*server=([^,>]+).*><>(MilliSecondsBehindSource|MilliSecondsSinceLastEvent|NumberOfEventsFiltered|TotalNumberOfEventsSeen|TotalNumberOfCreateEventsSeen|TotalNumberOfUpdateEventsSeen|TotalNumberOfDeleteEventsSeen|QueueRemainingCapacity|QueueTotalCapacity)"
+      - pattern: "debezium.([^:]+)<.*server=([^,>]+).*><>(MilliSecondsBehindSource|MilliSecondsSinceLastEvent|NumberOfEventsFiltered|NumberOfErroneousEvents|TotalNumberOfEventsSeen|TotalNumberOfCreateEventsSeen|TotalNumberOfUpdateEventsSeen|TotalNumberOfDeleteEventsSeen|QueueRemainingCapacity|QueueTotalCapacity)"
         name: "debezium_metrics_$3"
         labels:
           plugin: "$1"

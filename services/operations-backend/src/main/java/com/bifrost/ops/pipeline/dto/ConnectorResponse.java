@@ -26,7 +26,9 @@ public record ConnectorResponse(
     Double pollBatchMax,
     Long retriesTotal,
     Double recordsPerSec,
-    List<MetricPoint> recordsPerSecSeries
+    List<MetricPoint> recordsPerSecSeries,
+    String metricsStatus,
+    String metricsMessage
 ) {
     public static ConnectorResponse from(ConnectorEntity c) {
         return from(c, ConnectorMetrics.empty());
@@ -47,7 +49,9 @@ public record ConnectorResponse(
             metrics.pollBatchMax(),
             metrics.retriesTotal(),
             metrics.recordsPerSec(),
-            metrics.recordsPerSecSeries()
+            metrics.recordsPerSecSeries(),
+            metrics.metricsStatus(),
+            metrics.metricsMessage()
         );
     }
 
@@ -57,10 +61,23 @@ public record ConnectorResponse(
             Double pollBatchMax,
             Long retriesTotal,
             Double recordsPerSec,
-            List<MetricPoint> recordsPerSecSeries
+            List<MetricPoint> recordsPerSecSeries,
+            String metricsStatus,
+            String metricsMessage
     ) {
         public static ConnectorMetrics empty() {
-            return new ConnectorMetrics(null, null, null, null, null, List.of());
+            return unavailable(null);
+        }
+
+        public static ConnectorMetrics available(Double errorRatePct, Double pollBatchAvg, Double pollBatchMax,
+                                                 Long retriesTotal, Double recordsPerSec,
+                                                 List<MetricPoint> recordsPerSecSeries) {
+            return new ConnectorMetrics(errorRatePct, pollBatchAvg, pollBatchMax, retriesTotal, recordsPerSec,
+                    recordsPerSecSeries, "AVAILABLE", null);
+        }
+
+        public static ConnectorMetrics unavailable(String message) {
+            return new ConnectorMetrics(null, null, null, null, null, List.of(), "UNAVAILABLE", message);
         }
     }
 

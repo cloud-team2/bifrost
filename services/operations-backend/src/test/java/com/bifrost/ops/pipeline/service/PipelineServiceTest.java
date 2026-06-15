@@ -253,11 +253,42 @@ class PipelineServiceTest {
         assertThat(out.pollBatchMax()).isEqualTo(120.0);
         assertThat(out.retriesTotal()).isEqualTo(3L);
         assertThat(out.recordsPerSec()).isEqualTo(25.0);
+        assertThat(out.metricsStatus()).isEqualTo("AVAILABLE");
+        assertThat(out.metricsMessage()).isNull();
         assertThat(out.recordsPerSecSeries()).singleElement()
                 .satisfies(point -> {
                     assertThat(point.timestamp()).isEqualTo(100_000L);
                     assertThat(point.value()).isEqualTo(25.0);
                 });
+    }
+
+    @Test
+    void listConnectorsMarksMetricsUnavailableWhenPrometheusQueryFails() {
+        UUID id = UUID.randomUUID();
+        PipelineEntity p = entity(PipelineLifecycle.ACTIVE);
+        p.setId(id);
+        p.setTopicName("cdc.team.orders");
+
+        ConnectorEntity connector = new ConnectorEntity();
+        connector.setPipelineId(id);
+        connector.setCrName("orders-source");
+        connector.setKind(ConnectorKind.SOURCE);
+        connector.setConnectorClass("io.debezium.connector.postgresql.PostgresConnector");
+        connector.setState("RUNNING");
+        connector.setTasksMax(1);
+
+        when(pipelineRepository.findByIdAndTenantId(id, wsId)).thenReturn(Optional.of(p));
+        when(connectorRepository.findByPipelineId(id)).thenReturn(List.of(connector));
+        when(kafkaMetricsQuery.isEnabled()).thenReturn(true);
+        when(kafkaMetricsQuery.connectorErrorRatePct(ConnectorKind.SOURCE, "orders-source", "cdc.team.orders"))
+                .thenThrow(new RuntimeException("prometheus down"));
+
+        List<ConnectorResponse> connectors = service().listConnectors(wsId, principal, id);
+
+        assertThat(connectors).hasSize(1);
+        assertThat(connectors.get(0).metricsStatus()).isEqualTo("UNAVAILABLE");
+        assertThat(connectors.get(0).metricsMessage()).isEqualTo("Prometheus 조회 실패");
+        assertThat(connectors.get(0).recordsPerSecSeries()).isEmpty();
     }
 
     @Test

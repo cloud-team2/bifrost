@@ -105,6 +105,13 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
         });
     }
 
+    @Override
+    @Transactional
+    public void clearErrorRate(UUID pipelineId) {
+        errorRateCache.remove(pipelineId);
+        pipelineRepository.findById(pipelineId).ifPresent(this::recompute);
+    }
+
     @Observed(name = "pipeline.status.apply_connector_status")
     @Override
     @Transactional

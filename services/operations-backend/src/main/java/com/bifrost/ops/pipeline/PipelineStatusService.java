@@ -44,4 +44,10 @@ public interface PipelineStatusService {
      * WARNING은 event/incident gate 입력만 만들고, CRITICAL(>2%)은 pipeline error 전이까지 수행한다.
      */
     void applyErrorRate(java.util.UUID pipelineId, double errorRatePct);
+
+    /**
+     * error rate metric source가 사라졌거나 조회 불가일 때 stale 임계 입력을 제거한다(#585).
+     * unknown은 0% 회복과 다르므로 warning recovery event는 만들지 않는다.
+     */
+    void clearErrorRate(java.util.UUID pipelineId);
 }

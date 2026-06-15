@@ -701,6 +701,13 @@ function ConnectorCard({ c, topic }: { c: ConnectorInfo; topic: string }) {
           </div>
         )}
 
+        {c.metricsStatus !== 'AVAILABLE' && (
+          <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3.5 py-2 text-[12px] text-gray-500">
+            <Icon name="info" size={13} className="shrink-0" />
+            <span>{c.metricsMessage ?? '지표 source 없음'}</span>
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-gray-100 bg-gray-100 md:grid-cols-4">
           <div className="bg-gray-50 px-4 py-3">
             <div className="text-[10.5px] uppercase tracking-wide text-gray-400">State</div>

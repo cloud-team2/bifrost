@@ -204,8 +204,8 @@ export interface SchemaColumn {
 export interface SchemaTable {
   schema: string
   name: string
-  approximateRowCount: number
-  totalSizeBytes: number
+  approximateRowCount: number | null
+  totalSizeBytes: number | null
   columns: SchemaColumn[]
 }
 export interface DatabaseSchemaResponse {
@@ -404,6 +404,8 @@ export interface ConnectorInfo {
   retriesTotal: number | null
   recordsPerSec: number | null
   recordsPerSecSeries: MetricPoint[]
+  metricsStatus: 'AVAILABLE' | 'UNAVAILABLE'
+  metricsMessage: string | null
 }
 /** 파이프라인 동기화 상태(#107). source/sink 실제 행수. 미존재/실패 시 -1. */
 export interface SyncStatusResponse {

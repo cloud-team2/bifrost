@@ -109,9 +109,9 @@ public class KafkaMetricsQuery {
         if (events == null) return null;
         if (events <= 0.0) return 0.0;
         Double failures = client.queryScalarOrNull(
-                "sum(increase(debezium_metrics_totalnumberofeventprocessingfailures" + selector + "[5m]))");
-        double failureCount = failures == null ? 0.0 : Math.max(0.0, failures);
-        return Math.min(100.0, failureCount / events * 100.0);
+                "sum(increase(debezium_metrics_numberoferroneousevents" + selector + "[5m]))");
+        if (failures == null) return null;
+        return Math.min(100.0, Math.max(0.0, failures) / events * 100.0);
     }
 
     /** Connector 상세 카드용 현재 records/sec. Source는 Debezium counter, sink는 Connect sink-task gauge. */
@@ -160,8 +160,8 @@ public class KafkaMetricsQuery {
         if (records <= 0.0) return 0.0;
         Double failures = client.queryScalarOrNull(
                 "sum(increase(kafka_connect_task_error_total_record_failures" + connectorSelector + "[5m]))");
-        double failureCount = failures == null ? 0.0 : Math.max(0.0, failures);
-        return Math.min(100.0, failureCount / records * 100.0);
+        if (failures == null) return null;
+        return Math.min(100.0, Math.max(0.0, failures) / records * 100.0);
     }
 
     /** Poll batch 평균. Source poll latency가 있으면 ms, 없으면 Connect connector-task batch size 평균으로 fallback. */

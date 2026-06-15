@@ -235,9 +235,9 @@ public class MariaDBInspector implements DatabaseInspector {
                 }
             }
         } catch (SQLException ignored) {
-            // Schema listing should still succeed when size statistics are unavailable.
+            // Schema listing should still succeed; null marks stats unavailable instead of fake zero.
         }
-        return new TableStats(0L, 0L);
+        return new TableStats(null, null);
     }
 
     private List<ColumnInfo> columns(DatabaseMetaData md, String catalog,
@@ -369,5 +369,5 @@ public class MariaDBInspector implements DatabaseInspector {
         return null;
     }
 
-    private record TableStats(long approximateRows, long totalSizeBytes) {}
+    private record TableStats(Long approximateRows, Long totalSizeBytes) {}
 }

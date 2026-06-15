@@ -523,11 +523,13 @@ function schemaTableSub(state: ResourceState<{ tables: SchemaTable[] }>) {
   return undefined
 }
 
-function formatRows(value: number) {
+function formatRows(value: number | null | undefined) {
+  if (value == null) return '—'
   return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value)
 }
 
-function formatBytes(value: number) {
+function formatBytes(value: number | null | undefined) {
+  if (value == null) return '—'
   if (!Number.isFinite(value) || value < 0) return '—'
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
   let size = value
@@ -806,18 +808,19 @@ function SchemaTab({ state }: { state: ResourceState<{ tables: SchemaTable[] }> 
       <div className="divide-y divide-gray-50">
         {tables.map((t) => {
           const key = `${t.schema}.${t.name}`
+          const statsUnavailable = t.approximateRowCount == null || t.totalSizeBytes == null
           return (
             <div key={key}>
               <button
                 onClick={() => setOpen(open === key ? null : key)}
-                className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-gray-50"
+                className="flex w-full min-w-0 items-center gap-3 px-4 py-2.5 text-left hover:bg-gray-50"
               >
                 <Icon name={open === key ? 'chevron-down' : 'chevron-right'} size={14} className="text-gray-400" />
                 <Icon name="table" size={15} className="text-gray-400" />
-                <span className="font-mono text-[13px] font-medium text-gray-800">{t.schema}.{t.name}</span>
-                <div className="flex-1" />
+                <span className="min-w-0 flex-1 truncate font-mono text-[13px] font-medium text-gray-800">{t.schema}.{t.name}</span>
                 <span className="font-mono text-[11.5px] tabular-nums text-gray-400">{formatRows(t.approximateRowCount)} rows</span>
                 <span className="font-mono text-[11.5px] tabular-nums text-gray-400">{formatBytes(t.totalSizeBytes)}</span>
+                {statsUnavailable && <span className="text-[11px] text-gray-400">stat source 없음</span>}
                 <span className="text-[12px] text-gray-400">{t.columns.length} cols</span>
               </button>
               {open === key && (

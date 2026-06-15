@@ -123,11 +123,11 @@ public class PipelineService {
 
     private ConnectorResponse.ConnectorMetrics connectorMetrics(PipelineEntity pipeline, ConnectorEntity connector) {
         if (kafkaMetricsQuery == null || !kafkaMetricsQuery.isEnabled()) {
-            return ConnectorResponse.ConnectorMetrics.empty();
+            return ConnectorResponse.ConnectorMetrics.unavailable("Prometheus 비활성화");
         }
         String connectorName = connector.getCrName();
         if (connectorName == null || connectorName.isBlank()) {
-            return ConnectorResponse.ConnectorMetrics.empty();
+            return ConnectorResponse.ConnectorMetrics.unavailable("connector name 없음");
         }
         String server = debeziumServer(pipeline);
         long endSec = System.currentTimeMillis() / 1000L;
@@ -142,11 +142,11 @@ public class PipelineService {
             List<MetricPoint> recordsPerSecSeries = toMetricPoints(
                     kafkaMetricsQuery.connectorRecordsSeries(connector.getKind(), connectorName, server,
                             startSec, endSec, stepSec));
-            return new ConnectorResponse.ConnectorMetrics(errorRatePct, pollBatchAvg, pollBatchMax,
+            return ConnectorResponse.ConnectorMetrics.available(errorRatePct, pollBatchAvg, pollBatchMax,
                     retriesTotal, recordsPerSec, recordsPerSecSeries);
         } catch (RuntimeException e) {
             log.warn("connector 상세 지표 조회 실패: connector={}, cause={}", connectorName, e.getMessage());
-            return ConnectorResponse.ConnectorMetrics.empty();
+            return ConnectorResponse.ConnectorMetrics.unavailable("Prometheus 조회 실패");
         }
     }
 

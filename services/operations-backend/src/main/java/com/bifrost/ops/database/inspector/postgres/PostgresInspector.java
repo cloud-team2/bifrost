@@ -70,9 +70,7 @@ public class PostgresInspector implements DatabaseInspector {
                     """);
             int activeConnections = (int) queryLong(conn,
                     "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()");
-            Double p95Ms = queryP95FromPgStatStatements(conn);
-            return new MetricsSnapshot(round(tps), round(queryMs), p95Ms == null ? null : round(p95Ms),
-                    Math.max(0, activeConnections));
+            return new MetricsSnapshot(round(tps), round(queryMs), null, Math.max(0, activeConnections));
         } catch (SQLException e) {
             throw new RuntimeException("DB metrics 조회 실패: " + e.getMessage(), e);
         }
@@ -243,9 +241,9 @@ public class PostgresInspector implements DatabaseInspector {
                 }
             }
         } catch (SQLException ignored) {
-            // Schema listing should still succeed when size statistics are unavailable.
+            // Schema listing should still succeed; null marks stats unavailable instead of fake zero.
         }
-        return new TableStats(0L, 0L);
+        return new TableStats(null, null);
     }
 
     private List<ColumnInfo> columns(DatabaseMetaData md, String catalog,
@@ -309,24 +307,6 @@ public class PostgresInspector implements DatabaseInspector {
         return (System.nanoTime() - start) / 1_000_000.0;
     }
 
-    private static Double queryP95FromPgStatStatements(Connection conn) {
-        String sql = """
-                SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY mean_exec_time)
-                FROM pg_stat_statements
-                WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
-                  AND calls > 0
-                """;
-        try (Statement st = conn.createStatement(); ResultSet rs = st.executeQuery(sql)) {
-            if (rs.next()) {
-                double value = rs.getDouble(1);
-                return rs.wasNull() ? null : Math.max(0.0, value);
-            }
-        } catch (SQLException ignored) {
-            // pg_stat_statements is optional; leave p95 null when not installed or not readable.
-        }
-        return null;
-    }
-
     private static double round(double value) {
         if (!Double.isFinite(value)) {
             return 0.0;
@@ -355,5 +335,5 @@ public class PostgresInspector implements DatabaseInspector {
                 .substring(0, Math.min(63, raw.length()));
     }
 
-    private record TableStats(long approximateRows, long totalSizeBytes) {}
+    private record TableStats(Long approximateRows, Long totalSizeBytes) {}
 }

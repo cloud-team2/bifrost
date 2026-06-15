@@ -1006,88 +1006,90 @@ export function KafkaUsersSection() {
     <div>
       <Head title="Kafka 사용자" sub="클러스터 접속이 허용된 주체(Principal)" />
       <Panel title="주체(Principal)">
-        <table className="w-full text-[12px]">
-          <thead>
-            <tr className="border-b border-gray-100 text-left text-[10.5px] uppercase tracking-wide text-gray-400">
-              <th className="px-4 py-2 font-semibold">Username</th>
-              <th className="px-3 py-2 font-semibold">Secret ref</th>
-              <th className="px-3 py-2 font-semibold">Created</th>
-              <th className="px-3 py-2 font-semibold">상태</th>
-              <th className="px-3 py-2" />
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((u) => (
-              <Fragment key={u.id}>
-                <tr className="border-b border-gray-50">
-                  <td className="px-4 py-2.5 font-mono font-medium text-gray-800">{u.username}</td>
-                  <td className="px-3 py-2.5 font-mono text-[11px] text-gray-500">{u.secretRef ?? '—'}</td>
-                  <td className="px-3 py-2.5 text-gray-400">{u.createdAt.slice(0, 10)}</td>
-                  <td className="px-3 py-2.5"><StatusBadge status={u.status} /></td>
-                  <td className="px-3 py-2.5 text-right">
-                    <div className="flex flex-wrap justify-end gap-2">
-                      {u.status === 'ACTIVE' && (
-                        <button
-                          disabled={secretLoadingId === u.id}
-                          onClick={() => viewSecret(u.id)}
-                          className="inline-flex items-center gap-1 text-[11px] font-medium text-gray-700 hover:underline disabled:opacity-50"
-                        >
-                          <Icon name="eye" size={12} />
-                          {secretLoadingId === u.id ? '조회중' : 'Secret'}
-                        </button>
-                      )}
-                      {u.status === 'ACTIVE' && (
-                        <button
-                          disabled={busyId === u.id}
-                          onClick={() => action(u.id, 'deactivate')}
-                          className="text-[11px] font-medium text-gray-600 hover:underline disabled:opacity-50"
-                        >
-                          비활성화
-                        </button>
-                      )}
-                      {u.status !== 'REVOKED' && (
-                        <>
+        <div className="overflow-x-auto">
+          <table className="min-w-[780px] w-full text-[12px]">
+            <thead>
+              <tr className="border-b border-gray-100 text-left text-[10.5px] uppercase tracking-wide text-gray-400">
+                <th className="px-4 py-2 font-semibold">Username</th>
+                <th className="px-3 py-2 font-semibold">Secret ref</th>
+                <th className="px-3 py-2 font-semibold">Created</th>
+                <th className="px-3 py-2 font-semibold">상태</th>
+                <th className="px-3 py-2" />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((u) => (
+                <Fragment key={u.id}>
+                  <tr className="border-b border-gray-50">
+                    <td className="max-w-[180px] truncate px-4 py-2.5 font-mono font-medium text-gray-800">{u.username}</td>
+                    <td className="max-w-[260px] truncate px-3 py-2.5 font-mono text-[11px] text-gray-500">{u.secretRef ?? '—'}</td>
+                    <td className="px-3 py-2.5 text-gray-400">{u.createdAt.slice(0, 10)}</td>
+                    <td className="px-3 py-2.5"><StatusBadge status={u.status} /></td>
+                    <td className="px-3 py-2.5 text-right">
+                      <div className="flex flex-wrap justify-end gap-2">
+                        {u.status === 'ACTIVE' && (
+                          <button
+                            disabled={secretLoadingId === u.id}
+                            onClick={() => viewSecret(u.id)}
+                            className="inline-flex items-center gap-1 text-[11px] font-medium text-gray-700 hover:underline disabled:opacity-50"
+                          >
+                            <Icon name="eye" size={12} />
+                            {secretLoadingId === u.id ? '조회중' : 'Secret'}
+                          </button>
+                        )}
+                        {u.status === 'ACTIVE' && (
                           <button
                             disabled={busyId === u.id}
-                            onClick={() => action(u.id, 'rotate')}
-                            className="text-[11px] font-medium text-brand-600 hover:underline disabled:opacity-50"
+                            onClick={() => action(u.id, 'deactivate')}
+                            className="text-[11px] font-medium text-gray-600 hover:underline disabled:opacity-50"
                           >
-                            교체
+                            비활성화
                           </button>
-                          <button
-                            disabled={busyId === u.id}
-                            onClick={() => action(u.id, 'revoke')}
-                            className="text-[11px] font-medium text-[#c0392b] hover:underline disabled:opacity-50"
-                          >
-                            폐기
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-                {secretById[u.id] && (
-                  <tr className="border-b border-gray-100 bg-gray-50/70">
-                    <td colSpan={5} className="px-4 py-3">
-                      <KafkaPrincipalSecretPanel
-                        secret={secretById[u.id]}
-                        onCopy={copySecret}
-                      />
+                        )}
+                        {u.status !== 'REVOKED' && (
+                          <>
+                            <button
+                              disabled={busyId === u.id}
+                              onClick={() => action(u.id, 'rotate')}
+                              className="text-[11px] font-medium text-brand-600 hover:underline disabled:opacity-50"
+                            >
+                              교체
+                            </button>
+                            <button
+                              disabled={busyId === u.id}
+                              onClick={() => action(u.id, 'revoke')}
+                              className="text-[11px] font-medium text-[#c0392b] hover:underline disabled:opacity-50"
+                            >
+                              폐기
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
-                )}
-              </Fragment>
-            ))}
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-[12.5px] text-gray-400">
-                  Kafka 사용자가 없습니다
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-        <div className="grid grid-cols-[1fr_1fr_auto] items-center gap-2 border-t border-gray-100 px-4 py-3">
+                  {secretById[u.id] && (
+                    <tr className="border-b border-gray-100 bg-gray-50/70">
+                      <td colSpan={5} className="px-4 py-3">
+                        <KafkaPrincipalSecretPanel
+                          secret={secretById[u.id]}
+                          onCopy={copySecret}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              ))}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-6 text-center text-[12.5px] text-gray-400">
+                    Kafka 사용자가 없습니다
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="grid grid-cols-1 items-center gap-2 border-t border-gray-100 px-4 py-3 md:grid-cols-[1fr_1fr_auto]">
           <input
             value={username}
             onChange={(e) => setUsername(e.target.value)}

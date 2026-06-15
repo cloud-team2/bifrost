@@ -73,8 +73,11 @@ public class JmxPoller {
                 Double pct = kafkaMetricsQuery.sourceErrorRatePct(server);
                 if (pct != null) {
                     pipelineStatusService.applyErrorRate(p.getId(), pct);
+                } else {
+                    pipelineStatusService.clearErrorRate(p.getId());
                 }
             } catch (RuntimeException e) {
+                pipelineStatusService.clearErrorRate(p.getId());
                 log.debug("source error rate 조회 실패(무시): pipeline={} topic={} cause={}",
                         p.getId(), server, e.getMessage());
             }
