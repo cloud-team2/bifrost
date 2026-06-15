@@ -9,6 +9,8 @@ import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
@@ -19,13 +21,13 @@ class ConnectRestClientTest {
     private static final String CONNECTOR = "orders-source";
 
     @Test
-    void bodylessConnectorMutationsDoNotSendContentType() {
-        TestContext context = contextWithJsonDefaultHeader();
-        expectBodylessMutation(context.server, HttpMethod.POST,
+    void connectorMutationsSendEmptyJsonEntity() {
+        TestContext context = context();
+        expectEmptyJsonMutation(context.server, HttpMethod.POST,
                 CONNECT_URL + "/connectors/orders-source/restart?includeTasks=true&onlyFailed=false");
-        expectBodylessMutation(context.server, HttpMethod.PUT,
+        expectEmptyJsonMutation(context.server, HttpMethod.PUT,
                 CONNECT_URL + "/connectors/orders-source/pause");
-        expectBodylessMutation(context.server, HttpMethod.PUT,
+        expectEmptyJsonMutation(context.server, HttpMethod.PUT,
                 CONNECT_URL + "/connectors/orders-source/resume");
 
         context.client.restartConnector(CONNECTOR);
@@ -35,18 +37,18 @@ class ConnectRestClientTest {
         context.server.verify();
     }
 
-    private static TestContext contextWithJsonDefaultHeader() {
-        RestClient.Builder builder = RestClient.builder()
-                .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE);
+    private static TestContext context() {
+        RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
         return new TestContext(new ConnectRestClient(CONNECT_URL, builder), server);
     }
 
-    private static void expectBodylessMutation(MockRestServiceServer server, HttpMethod method, String url) {
+    private static void expectEmptyJsonMutation(MockRestServiceServer server, HttpMethod method, String url) {
         server.expect(requestTo(url))
                 .andExpect(method(method))
-                .andExpect(request -> assertThat(request.getHeaders().containsKey(HttpHeaders.CONTENT_TYPE))
-                        .isFalse())
+                .andExpect(header(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE))
+                .andExpect(header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE))
+                .andExpect(content().string("{}"))
                 .andRespond(withSuccess());
     }
 
