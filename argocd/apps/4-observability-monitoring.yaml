@@ -128,8 +128,10 @@ spec:
                     endpoint: 0.0.0.0:4318
             resources:
               # 트레이싱 도입(#371/#366)으로 trace 수신 시작 → 512Mi OOM(#433). 누적 블록 로드 + ingest 대비 증설.
-              requests: { cpu: 250m, memory: 1Gi }
-              limits: { cpu: "1", memory: 2Gi }
+              # 고부하 dataplane trace 적재(#666 keep 정책) + 168h retention 누적 블록 컴팩션에 2Gi가 부족해
+              # OOM 재발 → 증설. retention 동안 누적 블록을 메모리에 로드하므로 한도를 넉넉히 둔다.
+              requests: { cpu: 250m, memory: 2Gi }
+              limits: { cpu: "1", memory: 6Gi }
           persistence:
             enabled: true
             storageClassName: gp3
