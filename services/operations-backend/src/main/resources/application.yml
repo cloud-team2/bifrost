@@ -8,6 +8,12 @@ spring:
   web:
     resources:
       add-mappings: false
+  jpa:
+    # OSIV off(#731): 기본값(true)은 요청 전체 동안 DB 커넥션을 잡아, 메트릭 엔드포인트의 느린
+    # Prometheus 호출이나 sync-status의 source/sink COUNT(~22s) 동안 HikariCP 풀을 점유해
+    # 배포환경에서 풀 고갈(Connection is not available)·Overview 500을 유발했다. 끄면 커넥션을
+    # 리포지토리 호출 직후 반납해 느린 외부 호출이 풀을 잡지 않는다.
+    open-in-view: false
 
 server:
   port: 8080
