@@ -216,7 +216,7 @@ class PipelineStatusServiceImplTest {
                 eq("CONNECTOR"),
                 eq(null),
                 eq(EventLevel.ERROR),
-                eq("Pipeline 'orders-eda' status ERROR"),
+                org.mockito.ArgumentMatchers.contains("task failed"),  // (#679) title도 정제 원인 메시지 사용
                 eq("PIPELINE_STATUS_CHANGED"),
                 org.mockito.ArgumentMatchers.contains("task failed"),
                 eq(pid));
@@ -258,7 +258,7 @@ class PipelineStatusServiceImplTest {
                 eq("CONNECTOR"),
                 eq(null),
                 eq(EventLevel.ERROR),
-                eq("Pipeline 'orders-sync' status ERROR"),
+                org.mockito.ArgumentMatchers.contains("싱크 커넥터 오류"),  // (#679) title도 정제 원인 메시지 사용
                 eq("PIPELINE_STATUS_CHANGED"),
                 org.mockito.ArgumentMatchers.contains("싱크 커넥터 오류"),  // (#596) UUID·raw 예외 제거된 정제 메시지
                 eq(pid));
@@ -331,7 +331,7 @@ class PipelineStatusServiceImplTest {
                 eq("DATABASE"),
                 eq(sourceId),
                 eq(EventLevel.ERROR),
-                eq("Pipeline 'orders-eda' status ERROR"),
+                org.mockito.ArgumentMatchers.contains("source DB 'orders-db' 연결 불가"),  // (#679) title도 정제 원인 메시지 사용
                 eq("PIPELINE_STATUS_CHANGED"),
                 org.mockito.ArgumentMatchers.contains("source DB 'orders-db' 연결 불가"),
                 eq(pid));
@@ -367,7 +367,8 @@ class PipelineStatusServiceImplTest {
         verify(incidentService).onRecovery(eq(tenant), eq(IncidentGroupingKeys.datasource(sourceId)),
                 eq("PIPELINE_STATUS_CHANGED"), org.mockito.ArgumentMatchers.contains("connector task failed"), eq(pid));
         verify(incidentService).onThresholdViolation(eq(tenant), eq(IncidentGroupingKeys.connectorWorker(pid + "-source")),
-                eq("CONNECTOR"), eq(null), eq(EventLevel.ERROR), eq("Pipeline 'orders-eda' status ERROR"),
+                eq("CONNECTOR"), eq(null), eq(EventLevel.ERROR),
+                org.mockito.ArgumentMatchers.contains("connector task failed"),  // (#679) title도 정제 원인 메시지 사용
                 eq("PIPELINE_STATUS_CHANGED"), org.mockito.ArgumentMatchers.contains("connector task failed"), eq(pid));
     }
 

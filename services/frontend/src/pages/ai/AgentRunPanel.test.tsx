@@ -27,11 +27,12 @@ describe('SlashCommandOptionContent', () => {
     usage: '/connectors-status <connector_name>',
   }
 
-  it('keeps slash usage hints visible without exposing internal tool names', () => {
+  it('shows the command name and description without arg-syntax hints or internal tool names', () => {
     const html = renderToStaticMarkup(<SlashCommandOptionContent command={connectorStatusCommand} />)
 
     expect(html).toContain('/connectors-status')
-    expect(html).toContain('&lt;connector_name&gt;')
+    // (#680) 인자 누락은 대화형 안내로 일원화 — 메뉴에 usage 문법(<connector_name>)을 노출하지 않는다
+    expect(html).not.toContain('&lt;connector_name&gt;')
     expect(html).toContain('Connector status')
     expect(html).not.toContain('get_connector_status')
   })

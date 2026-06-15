@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     # Spring Boot Operations Backend — Agent의 모든 운영 조회/조치 위임 대상 (/internal/ops)
     spring_ops_base_url: str = "http://localhost:8080"
     spring_ops_timeout_seconds: float = 10.0
+    # /internal/ops service-to-service 인증 토큰(#646). 값이 있으면 ops 호출에 X-Internal-Token 헤더로
+    # 동봉한다. 비면 미동봉 → ops-backend도 게이트 비활성이라 로컬/기존 환경 호환. gitops가 양쪽에 동일 시크릿 주입.
+    internal_ops_token: str = ""
 
     # 분산 추적(OTel, #372). 엔드포인트가 비면 비활성 → 로컬/CI는 collector 없이 동작.
     # dev/prod(gitops)는 AI_OTLP_TRACING_ENDPOINT=http://otel-collector.monitoring:4318/v1/traces 로 켜고,

@@ -220,14 +220,14 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
         String eventMessage = statusEventMessage(p, current, next, message);
         auditService.record(p.getTenantId(), AuditService.ACTOR_SYSTEM, "PIPELINE_STATUS_TRANSITION",
                 "PIPELINE", p.getId(), current + " -> " + next);
-        recordStatusEvent(p, current, next, level, eventMessage, previousMessage, decision.incidentCause());
+        recordStatusEvent(p, current, next, level, message, eventMessage, previousMessage, decision.incidentCause());
         publishPipelineStatusAfterCommit(p.getTenantId(), p.getId(), next.name().toLowerCase());
         OpsLog.ok("Pipeline", "상태 전이", "name=" + p.getName() + ", " + current + "→" + next);
         log.info("pipeline {} 상태 전이: {} → {}", p.getId(), current, next);
     }
 
     private void recordStatusEvent(PipelineEntity p, PipelineLifecycle current, PipelineLifecycle next,
-                                   EventLevel level, String eventMessage, String previousMessage,
+                                   EventLevel level, String causeMessage, String eventMessage, String previousMessage,
                                    IncidentCause incidentCause) {
         IncidentCause previousCause = current == PipelineLifecycle.ERROR
                 ? incidentCauseFromStoredMessage(p, previousMessage)
@@ -239,7 +239,7 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
                         "PIPELINE_STATUS_CHANGED", eventMessage, p.getId());
             }
             incidentService.onThresholdViolation(p.getTenantId(), cause.groupingKey(), cause.sourceType(), cause.sourceId(),
-                    level, "Pipeline '" + p.getName() + "' status " + next,
+                    level, incidentTitle(p, next, causeMessage),
                     "PIPELINE_STATUS_CHANGED", eventMessage, p.getId());
         } else {
             boolean recovered = previousCause != null && incidentService.onRecovery(p.getTenantId(), previousCause.groupingKey(),
@@ -255,6 +255,16 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
                                              PipelineLifecycle next, String reason) {
         String base = "pipeline '" + p.getName() + "' " + current + " → " + next;
         return reason == null || reason.isBlank() ? base : base + ": " + reason;
+    }
+
+    /**
+     * 인시던트 타이틀(#679). 정제된 원인 메시지(원인 유형 + 대상, 예: "'orders-eda' 소스 커넥터 오류:
+     * DB 연결 실패 …")를 그대로 쓰고, 원인 메시지가 없으면 상태 기반 fallback을 쓴다.
+     */
+    private static String incidentTitle(PipelineEntity p, PipelineLifecycle next, String causeMessage) {
+        return causeMessage == null || causeMessage.isBlank()
+                ? "Pipeline '" + p.getName() + "' status " + next
+                : causeMessage;
     }
 
     private static IncidentCause incidentCauseFromStoredMessage(PipelineEntity p, String reason) {

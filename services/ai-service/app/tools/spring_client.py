@@ -10,6 +10,9 @@ from app.core.config import settings
 from app.schemas.tools import SpringErrorCode, SpringOpsResponse, ToolContext, ToolError
 from app.tools.context import DEFAULT_ACTOR_ID, spring_headers
 
+# (#646) /internal/ops service-to-service 인증 헤더. ops-backend SecurityConfig 게이트와 짝.
+INTERNAL_OPS_TOKEN_HEADER = "X-Internal-Token"
+
 
 # Spring 가 raw list 를 result 로 반환하는 operation → ai-service 모델이 기대하는 wrapper key.
 # (#390) 예: list_project_pipelines 는 List<PipelineResponse> 반환 → {pipelines: [...]} 로 wrap.
@@ -71,10 +74,18 @@ class SpringOpsClient:
         self._actor_id = actor_id
 
     def _client(self) -> httpx.AsyncClient:
+        # (#646) /internal/ops service-identity 토큰을 클라이언트 기본 헤더로 동봉 → health·preapproved·
+        # 일반 operation 등 모든 호출이 게이트를 통과한다. 토큰이 비면 헤더 미동봉(게이트 비활성 호환).
+        default_headers = (
+            {INTERNAL_OPS_TOKEN_HEADER: settings.internal_ops_token}
+            if settings.internal_ops_token
+            else None
+        )
         return httpx.AsyncClient(
             base_url=self._base_url,
             timeout=self._timeout,
             transport=self._transport,
+            headers=default_headers,
         )
 
     async def health(self) -> bool:

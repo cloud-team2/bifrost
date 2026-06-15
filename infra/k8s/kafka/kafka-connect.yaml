@@ -54,13 +54,17 @@ spec:
       cpu: 2
 
   template:
-    # 데이터플레인 추적(#371): OTel SDK exporter 설정. Tempo OTLP HTTP(4318)로 trace 송신.
+    # 데이터플레인 추적(#371, #666): OTel SDK exporter 설정. trace를 otel-collector로 보내고,
+    # collector tail_sampling이 dataplane(cdc./eda. 토픽) span은 100% 보존, poll-loop 노이즈는 drop한다.
     connectContainer:
       env:
         - name: OTEL_SERVICE_NAME
           value: platform-connect
+        # (#666) Tempo 직송(head 5% 샘플) → otel-collector 경유로 변경. 직송+5%는 저볼륨 파이프라인
+        # 스팬을 거의 다 드롭해 Tracing 탭이 항상 비었다(라이브 확인). collector의 tail_sampling이
+        # cdc./eda. 토픽 span을 보존하므로, 워커는 always_on으로 전량 보내고 선별은 collector가 한다.
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
-          value: http://tempo.monitoring:4318
+          value: http://otel-collector.monitoring:4318
         - name: OTEL_EXPORTER_OTLP_PROTOCOL
           value: http/protobuf
         - name: OTEL_TRACES_EXPORTER
@@ -69,9 +73,6 @@ spec:
           value: none
         - name: OTEL_LOGS_EXPORTER
           value: none
-        # 샘플링: 워커 Kafka 클라이언트 auto-instrumentation(poll 루프)이 trace를 폭주시켜
-        # Tempo OOM을 유발 → 5%만 송신해 플러드 차단. 특정 파이프라인 정밀 추적은 별도 토글.
+        # 전량 송신(샘플링은 collector tail_sampling이 담당 — dataplane keep + poll-loop drop).
         - name: OTEL_TRACES_SAMPLER
-          value: parentbased_traceidratio
-        - name: OTEL_TRACES_SAMPLER_ARG
-          value: "0.05"
+          value: parentbased_always_on

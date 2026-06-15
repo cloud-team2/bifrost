@@ -45,6 +45,13 @@ tempo:
   enabled: ${TEMPO_ENABLED:false}
   url: ${TEMPO_URL:http://tempo.monitoring:3200}
 
+# /internal/ops service-to-service 인증(#646). 값이 있으면 ai-service가 동봉하는 X-Internal-Token과
+# 일치할 때만 /internal/ops/**를 허용한다. 비면 게이트 비활성 → 로컬/기존 환경 호환. gitops가 ai-service
+# (AI_INTERNAL_OPS_TOKEN)와 동일 시크릿을 주입한다.
+internal:
+  ops:
+    token: ${INTERNAL_OPS_TOKEN:}
+
 springdoc:
   swagger-ui:
     path: /swagger-ui.html

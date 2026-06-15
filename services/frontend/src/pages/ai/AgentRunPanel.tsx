@@ -1782,7 +1782,7 @@ export function SlashCommandOptionContent({ command }: { command: SlashToolComma
   return (
     <>
       <span className="max-w-[52%] shrink-0 break-all rounded bg-gray-900 px-1.5 py-0.5 font-mono text-[10.5px] text-white">
-        {command.usage}
+        {command.label}
       </span>
       <span className="min-w-0 flex-1">
         <span className="block break-words font-medium text-gray-700">{command.description}</span>
