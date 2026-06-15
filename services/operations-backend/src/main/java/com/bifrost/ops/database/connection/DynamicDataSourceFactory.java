@@ -18,11 +18,15 @@ public class DynamicDataSourceFactory {
     private static final long TIMEOUT_MS = 5000;
 
     public HikariDataSource create(DatasourceEntity ds, String password, boolean readOnly) {
+        return create(ds, password, readOnly, TIMEOUT_MS);
+    }
+
+    public HikariDataSource create(DatasourceEntity ds, String password, boolean readOnly, long connectionTimeoutMs) {
         HikariConfig cfg = new HikariConfig();
         cfg.setJdbcUrl(JdbcUrls.build(ds.getDbType(), ds.getHost(), ds.getPort(), ds.getDbName()));
         cfg.setUsername(ds.getUsername());
         cfg.setPassword(password);
-        cfg.setConnectionTimeout(TIMEOUT_MS);
+        cfg.setConnectionTimeout(connectionTimeoutMs);
         cfg.setMaximumPoolSize(1);
         cfg.setInitializationFailTimeout(1);
         cfg.setReadOnly(readOnly);
