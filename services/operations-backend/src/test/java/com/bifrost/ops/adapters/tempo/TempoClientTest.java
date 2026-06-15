@@ -90,4 +90,28 @@ class TempoClientTest {
         assertThat(TempoClient.parseTrace(json("{}"))).isEmpty();
         assertThat(TempoClient.parseTrace(json("{\"batches\":[]}"))).isEmpty();
     }
+
+    // (#708) /api/search 결과에서 가장 최근(startTimeUnixNano 최대) trace 선택 — limit=1 고정 반환 버그 수정.
+    @Test
+    void newestTracePicksLatestByStartTimeRegardlessOfOrder() throws Exception {
+        JsonNode search = json("""
+            { "traces": [
+              { "traceID": "old",    "startTimeUnixNano": "1000000000000", "durationMs": 5 },
+              { "traceID": "newest", "startTimeUnixNano": "3000000000000", "durationMs": 7 },
+              { "traceID": "mid",    "startTimeUnixNano": "2000000000000", "durationMs": 6 }
+            ]}
+            """);
+
+        JsonNode newest = TempoClient.newestTrace(search);
+
+        assertThat(newest).isNotNull();
+        assertThat(newest.path("traceID").asText()).isEqualTo("newest");
+    }
+
+    @Test
+    void newestTraceNullWhenNoTraces() throws Exception {
+        assertThat(TempoClient.newestTrace(null)).isNull();
+        assertThat(TempoClient.newestTrace(json("{}"))).isNull();
+        assertThat(TempoClient.newestTrace(json("{\"traces\":[]}"))).isNull();
+    }
 }
