@@ -78,7 +78,8 @@ class PipelineEdaIntegrationTest {
         pipelineService = new PipelineService(pipelineRepository, datasourceRepository,
                 workspaceRepository, connectorRepository, provisioningService,
                 accessGuard, eventService, auditService, kafkaResourceCleaner,
-                org.mockito.Mockito.mock(com.bifrost.ops.database.service.CdcReadinessService.class));
+                org.mockito.Mockito.mock(com.bifrost.ops.database.service.CdcReadinessService.class),
+                org.mockito.Mockito.mock(com.bifrost.ops.pipeline.PostgresReplicationSlotCleaner.class));
         statusService = new PipelineStatusServiceImpl(pipelineRepository, connectorRepository,
                 datasourceRepository, eventService, incidentService, auditService, ssePublisher, settingsRepository);
     }
