@@ -1,6 +1,7 @@
 package com.bifrost.ops.adapters.connect;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
@@ -50,5 +51,21 @@ class ConnectRestClientTest {
     }
 
     private record TestContext(ConnectRestClient client, MockRestServiceServer server) {
+    }
+
+    /**
+     * #669 회귀 가드: 생성자가 둘(@Value 3-arg + 위임 대상)이라 @Autowired가 없으면
+     * Spring이 빈을 인스턴스화하지 못해 컨텍스트 기동이 크래시한다("No default constructor").
+     * 단위 테스트(MockRestServiceServer)는 이 와이어링을 검증하지 못하므로 컨텍스트 로드로 가드한다.
+     */
+    @Test
+    void springInstantiatesConnectRestClientBean() {
+        new ApplicationContextRunner()
+                .withUserConfiguration(ConnectRestClient.class)
+                .withPropertyValues(
+                        "kafka-connect.rest-url=http://connect:8083",
+                        "kafka-connect.connect-timeout-ms=2000",
+                        "kafka-connect.read-timeout-ms=3000")
+                .run(ctx -> assertThat(ctx).hasSingleBean(ConnectRestClient.class));
     }
 }
