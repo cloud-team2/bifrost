@@ -77,7 +77,8 @@ public class PostgresInspector implements DatabaseInspector {
                     String.valueOf(maxSlots), "> 0", "ALTER SYSTEM SET max_replication_slots = 10;"));
 
             int usedSlots = (int) queryLong(conn, "SELECT count(*) FROM pg_replication_slots");
-            CdcReadinessStatus slotStatus = (maxSlots > 0 && usedSlots >= maxSlots) ? WARNING : OK;
+            // slot이 가득 찼으면 BLOCKED: 파이프라인 생성 시 커넥터 task가 즉시 실패하기 때문이다(#685).
+            CdcReadinessStatus slotStatus = (maxSlots > 0 && usedSlots >= maxSlots) ? BLOCKED : OK;
             checks.add(CdcCheck.of("Replication Slot 여유", slotStatus,
                     usedSlots + "/" + maxSlots, "< max_replication_slots",
                     "사용하지 않는 replication slot을 정리하세요 (pg_drop_replication_slot)."));

@@ -62,6 +62,7 @@ public class PipelineService {
     private final AuditService auditService;
     private final com.bifrost.ops.pipeline.kafka.KafkaResourceCleaner kafkaResourceCleaner;
     private final com.bifrost.ops.database.service.CdcReadinessService cdcReadinessService;
+    private final com.bifrost.ops.pipeline.PostgresReplicationSlotCleaner postgresSlotCleaner;
 
     public PipelineService(PipelineRepository pipelineRepository,
                            DatasourceRepository datasourceRepository,
@@ -72,7 +73,8 @@ public class PipelineService {
                            EventService eventService,
                            AuditService auditService,
                            com.bifrost.ops.pipeline.kafka.KafkaResourceCleaner kafkaResourceCleaner,
-                           com.bifrost.ops.database.service.CdcReadinessService cdcReadinessService) {
+                           com.bifrost.ops.database.service.CdcReadinessService cdcReadinessService,
+                           com.bifrost.ops.pipeline.PostgresReplicationSlotCleaner postgresSlotCleaner) {
         this.pipelineRepository = pipelineRepository;
         this.datasourceRepository = datasourceRepository;
         this.workspaceRepository = workspaceRepository;
@@ -83,6 +85,7 @@ public class PipelineService {
         this.auditService = auditService;
         this.kafkaResourceCleaner = kafkaResourceCleaner;
         this.cdcReadinessService = cdcReadinessService;
+        this.postgresSlotCleaner = postgresSlotCleaner;
     }
 
     // ---------- 목록 / 상세 ----------
@@ -122,6 +125,24 @@ public class PipelineService {
         DatasourceEntity source = requireDatasource(wsId, req.sourceDbId(), "source");
         if ("BLOCKED".equalsIgnoreCase(source.getCdcReadinessStatus())) {
             throw validation("source DB의 CDC 준비도가 BLOCKED입니다");
+        }
+        // #685: 파이프라인 생성 직전 source DB 준비도를 실시간 점검한다.
+        // 저장된 cdcReadinessStatus는 이전 점검 결과일 수 있어 replication slot 고갈 같은
+        // 순간적 상태 변화를 반영하지 못한다. 점검 실패(일시적 연결 오류 등)는 무시한다.
+        try {
+            com.bifrost.ops.database.dto.CdcReadinessResponse live =
+                    cdcReadinessService.check(wsId, source.getId());
+            if (live.overallStatus() == com.bifrost.ops.database.cdc.CdcReadinessStatus.BLOCKED) {
+                throw validation("source DB의 CDC 준비도가 BLOCKED입니다 — " +
+                        live.checks().stream()
+                            .filter(c -> c.status() == com.bifrost.ops.database.cdc.CdcReadinessStatus.BLOCKED)
+                            .map(com.bifrost.ops.database.dto.CdcReadinessResponse.CdcCheck::name)
+                            .findFirst().orElse("준비도 점검 실패"));
+            }
+        } catch (ApiException e) {
+            throw e;
+        } catch (Exception e) {
+            log.debug("CDC 준비도 실시간 점검 실패(저장값으로 대체): dbId={}, cause={}", source.getId(), e.getMessage());
         }
         DatasourceEntity sink = null;
         if (pattern == PipelinePattern.DIRECT) {
@@ -277,6 +298,14 @@ public class PipelineService {
         // Kafka 측 잔재(토픽·sink consumer group) 정리(#200). best-effort — 실패해도 삭제는 진행.
         // CR이 모두 제거된 뒤 호출해야 Debezium source가 토픽을 재생성하지 않는다.
         kafkaResourceCleaner.deleteResources(p.getTopicName(), p.getId(), p.getPattern());
+        // PostgreSQL replication slot 정리(#684). best-effort — 실패해도 삭제는 진행.
+        // Debezium은 connector CR 삭제 후에도 slot을 자동 drop하지 않으므로 직접 제거한다.
+        String projectKey = workspaceRepository.findById(wsId)
+                .map(com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity::getNamespace)
+                .orElse(null);
+        if (projectKey != null) {
+            postgresSlotCleaner.dropSlotIfExists(p.getSourceDatasourceId(), projectKey, p.getId());
+        }
         connectorRepository.deleteAll(connectorRepository.findByPipelineId(p.getId()));
         pipelineRepository.delete(p);
         eventService.record(wsId, null, EventLevel.INFO, "PIPELINE_DELETED",

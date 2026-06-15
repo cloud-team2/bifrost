@@ -1,8 +1,11 @@
 package com.bifrost.ops.pipeline.service;
 
 import com.bifrost.ops.auth.jwt.AuthenticatedUser;
+import com.bifrost.ops.database.cdc.CdcReadinessStatus;
+import com.bifrost.ops.database.dto.CdcReadinessResponse;
 import com.bifrost.ops.database.persistence.entity.DatasourceEntity;
 import com.bifrost.ops.database.persistence.repository.DatasourceRepository;
+import com.bifrost.ops.database.service.CdcReadinessService;
 import com.bifrost.ops.event.EventService;
 import com.bifrost.ops.global.common.datasource.DbType;
 import com.bifrost.ops.global.common.error.ApiException;
@@ -52,12 +55,27 @@ class PipelineServiceTest {
     @Mock private EventService eventService;
     @Mock private AuditService auditService;
     @Mock private com.bifrost.ops.pipeline.kafka.KafkaResourceCleaner kafkaResourceCleaner;
+    @Mock private com.bifrost.ops.pipeline.PostgresReplicationSlotCleaner postgresSlotCleaner;
+    @Mock private CdcReadinessService cdcReadinessService;
 
     private PipelineService service() {
         return new PipelineService(pipelineRepository, datasourceRepository, workspaceRepository,
                 connectorRepository, provisioningService, accessGuard, eventService, auditService,
-                kafkaResourceCleaner,
-                org.mockito.Mockito.mock(com.bifrost.ops.database.service.CdcReadinessService.class));
+                kafkaResourceCleaner, cdcReadinessService, postgresSlotCleaner);
+    }
+
+    /** create() 호출 시 live 점검이 OK를 반환하도록 기본 stub. */
+    private void stubLiveCheckOk() {
+        CdcReadinessResponse ok = new CdcReadinessResponse(CdcReadinessStatus.OK, List.of());
+        lenient().when(cdcReadinessService.check(any(), any())).thenReturn(ok);
+    }
+
+    /** live 점검이 BLOCKED(slot 고갈)를 반환하도록 stub. */
+    private void stubLiveCheckBlocked() {
+        CdcReadinessResponse blocked = new CdcReadinessResponse(CdcReadinessStatus.BLOCKED,
+                List.of(CdcReadinessResponse.CdcCheck.of("Replication Slot 여유", CdcReadinessStatus.BLOCKED,
+                        "10/10", "< max_replication_slots", "사용하지 않는 slot을 정리하세요")));
+        when(cdcReadinessService.check(any(), any())).thenReturn(blocked);
     }
 
     private final UUID wsId = UUID.randomUUID();
@@ -70,6 +88,7 @@ class PipelineServiceTest {
     @Test
     void createsEdaPipelineReturnsCreatingAndProvisionsSourceOnly() {
         stubSource("OK");
+        stubLiveCheckOk();
         stubWorkspace();
         when(pipelineRepository.existsByTenantIdAndName(wsId, "orders-eda")).thenReturn(false);
         when(pipelineRepository.existsByTenantIdAndSourceDatasourceIdAndSchemaNameAndTableNameAndPattern(
@@ -98,6 +117,7 @@ class PipelineServiceTest {
     @Test
     void createsCdcPipelineProvisionsSourceAndSink() {
         stubSource("OK");
+        stubLiveCheckOk();
         stubSink();
         stubWorkspace();
         when(pipelineRepository.existsByTenantIdAndName(any(), any())).thenReturn(false);
@@ -161,6 +181,14 @@ class PipelineServiceTest {
         assertValidationFailure(new PipelineCreateRequest("x", "fan-out", sourceId, null, "public", "orders"));
     }
 
+    @Test
+    void rejectsSourceWhenLiveCheckReturnsBlockedDueToSlotExhaustion() {
+        stubSource("OK"); // 저장된 값은 OK지만 live 점검이 slot 고갈로 BLOCKED 반환
+        stubLiveCheckBlocked();
+        assertValidationFailure(new PipelineCreateRequest("x", "fan-out", sourceId, null, "public", "t"));
+        verify(provisioningService, never()).provision(any());
+    }
+
     // ---------- 목록 / 상세 / 생명주기 ----------
 
     @Test
@@ -194,11 +222,13 @@ class PipelineServiceTest {
         PipelineEntity p = entity(PipelineLifecycle.ACTIVE);
         p.setSourceConnectorName("src");
         when(pipelineRepository.findByIdAndTenantId(id, wsId)).thenReturn(Optional.of(p));
+        stubWorkspace();
 
         service().delete(wsId, principal, id, false);
 
         verify(provisioningService).delete(any());
         verify(pipelineRepository).delete(p);
+        verify(postgresSlotCleaner).dropSlotIfExists(sourceId, "team-a", p.getId());
     }
 
     // ---------- helpers ----------
