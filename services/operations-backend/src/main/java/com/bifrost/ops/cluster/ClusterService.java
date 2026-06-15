@@ -353,8 +353,23 @@ public class ClusterService {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private List<Plugin> plugins() {
+        List<Plugin> restPlugins = pluginsFromConnectRest();
+        if (!restPlugins.isEmpty()) {
+            return restPlugins;
+        }
+        List<Plugin> crPlugins = pluginsFromKafkaConnectStatus();
+        if (!crPlugins.isEmpty()) {
+            return crPlugins;
+        }
+        return pluginsFromConnectors();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Plugin> pluginsFromConnectRest() {
+        if (!hasText(connectRestUrl)) {
+            return List.of();
+        }
         try {
             // Connect REST: 설치된 커넥터 플러그인 카탈로그. best-effort라 짧은 타임아웃으로 빠르게 실패.
             var factory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
@@ -374,9 +389,39 @@ public class ClusterService {
                 return out;
             }
         } catch (Exception e) {
-            log.warn("connector-plugins 조회 실패, 사용 중 클래스로 폴백: {}", e.getMessage());
+            log.warn("connector-plugins 조회 실패, KafkaConnect CR로 폴백: {}", e.getMessage());
         }
-        return pluginsFromConnectors();
+        return List.of();
+    }
+
+    /**
+     * Strimzi KafkaConnect status.connectorPlugins는 Connect REST /connector-plugins를 operator가 반영한
+     * 설치 플러그인 카탈로그다. 운영 배포에서 REST URL 설정이 빠져도 CR status가 있으면 앱 API count를
+     * 실제 Connect 카탈로그와 맞출 수 있다(#740).
+     */
+    private List<Plugin> pluginsFromKafkaConnectStatus() {
+        try {
+            GenericKubernetesResource cr = kafkaConnectResource();
+            if (cr == null) return List.of();
+            Object statusObj = cr.getAdditionalProperties().get("status");
+            if (!(statusObj instanceof Map<?, ?> status)) return List.of();
+            Object pluginsObj = status.get("connectorPlugins");
+            if (!(pluginsObj instanceof List<?> plugins) || plugins.isEmpty()) return List.of();
+
+            List<Plugin> out = new ArrayList<>();
+            for (Object pluginObj : plugins) {
+                if (!(pluginObj instanceof Map<?, ?> plugin)) continue;
+                Object className = plugin.get("class");
+                if (className == null) continue;
+                out.add(new Plugin(String.valueOf(className),
+                        valueOrDash(plugin.get("type")),
+                        valueOrDash(plugin.get("version"))));
+            }
+            return out;
+        } catch (Exception e) {
+            log.debug("KafkaConnect CR connectorPlugins 조회 실패, 사용 중 커넥터 클래스로 폴백: {}", e.getMessage());
+            return List.of();
+        }
     }
 
     /** Connect REST 미응답 시 폴백: 실제 사용 중인 커넥터 클래스 목록(version 미상). */
@@ -400,8 +445,7 @@ public class ClusterService {
     @SuppressWarnings("unchecked")
     private Map<String, String> connectConfig() {
         try {
-            GenericKubernetesResource cr = k8s.genericKubernetesResources("kafka.strimzi.io/v1", "KafkaConnect")
-                    .inNamespace(namespace).withName(connectCluster).get();
+            GenericKubernetesResource cr = kafkaConnectResource();
             if (cr == null) return Map.of();
             Map<String, Object> spec = (Map<String, Object>) cr.getAdditionalProperties().get("spec");
             if (spec == null) return Map.of();
@@ -424,8 +468,7 @@ public class ClusterService {
     @SuppressWarnings("unchecked")
     private String connectVersion() {
         try {
-            GenericKubernetesResource cr = k8s.genericKubernetesResources("kafka.strimzi.io/v1", "KafkaConnect")
-                    .inNamespace(namespace).withName(connectCluster).get();
+            GenericKubernetesResource cr = kafkaConnectResource();
             if (cr == null) return null;
             Object spec = cr.getAdditionalProperties().get("spec");
             if (spec instanceof Map<?, ?> m && m.get("version") != null) {
@@ -436,6 +479,19 @@ public class ClusterService {
             log.warn("connect version 조회 실패: {}", e.getMessage());
             return null;
         }
+    }
+
+    private GenericKubernetesResource kafkaConnectResource() {
+        return k8s.genericKubernetesResources("kafka.strimzi.io/v1", "KafkaConnect")
+                .inNamespace(namespace).withName(connectCluster).get();
+    }
+
+    private static String valueOrDash(Object value) {
+        return value != null ? String.valueOf(value) : "-";
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     private static Long toLong(Double d) {
