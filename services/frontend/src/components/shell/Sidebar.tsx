@@ -3,7 +3,7 @@ import { BrandMark } from '../BrandMark'
 import { Icon, type IconName } from '../Icon'
 import { useClickOutside } from '../ui'
 import { useApp, type View } from '../../store/AppStore'
-import { APP_VERSION } from '../../data/mock'
+import { APP_VERSION } from '../../data/constants'
 import { cn } from '../../lib/format'
 
 interface NavItem {
@@ -32,11 +32,11 @@ export function Sidebar({ onCreateProject }: { onCreateProject: () => void }) {
     (v === 'databases' && view === 'database-detail')
 
   return (
-    <aside className="flex w-52 shrink-0 flex-col bg-rail text-gray-300">
+    <aside className="flex w-52 shrink-0 flex-col border-r border-[#ececec] bg-rail text-[#6b6b73]">
       {/* logo */}
       <div className="flex items-center gap-2 px-4 pt-4 pb-3">
         <BrandMark size={28} />
-        <span className="text-[17px] font-bold lowercase tracking-tight text-white">bifrost</span>
+        <span className="text-[17px] font-bold lowercase tracking-tight text-[#0d0d0d]">bifrost</span>
       </div>
 
       <ProjectSwitcher onCreate={onCreateProject} />
@@ -44,20 +44,20 @@ export function Sidebar({ onCreateProject }: { onCreateProject: () => void }) {
       <nav className="flex-1 px-3 py-3">
         {nav.map((item) => (
           <div key={item.view}>
-            {item.divider && <div className="my-2 border-t border-white/8" />}
+            {item.divider && <div className="my-2 border-t border-[#ececec]" />}
             <button
               onClick={() => app.setView(item.view)}
               className={cn(
                 'flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-[12.5px] font-medium transition-colors',
                 isActive(item.view)
-                  ? 'bg-brand-600 text-white'
-                  : 'text-gray-400 hover:bg-rail-hover hover:text-gray-100',
+                  ? 'bg-[#ededed] text-[#0d0d0d]'
+                  : 'text-[#6b6b73] hover:bg-rail-hover hover:text-[#0d0d0d]',
               )}
             >
               <Icon name={item.icon} size={16} />
               <span className="flex-1 text-left">{item.label}</span>
               {item.badge ? (
-                <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">
+                <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-[#c0392b] px-1 text-[10px] font-bold text-white">
                   {item.badge}
                 </span>
               ) : null}
@@ -74,18 +74,18 @@ export function Sidebar({ onCreateProject }: { onCreateProject: () => void }) {
           view === 'settings' && 'bg-rail-hover',
         )}
       >
-        <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-sky-400 to-indigo-500 text-[12px] font-semibold text-white">
+        <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[#0d0d0d] text-[12px] font-semibold text-white">
           {currentUser?.initial}
         </div>
         <div className="min-w-0 flex-1 text-left">
-          <div className="truncate text-[12px] font-medium text-white">{currentUser?.name}</div>
-          <div className="truncate text-[10.5px] capitalize text-gray-500">{currentUser?.role}</div>
+          <div className="truncate text-[12px] font-medium text-[#0d0d0d]">{currentUser?.name}</div>
+          <div className="truncate text-[10.5px] capitalize text-[#9a9a9a]">{currentUser?.role}</div>
         </div>
-        <Icon name="settings" size={14} className="text-gray-500" />
+        <Icon name="settings" size={14} className="text-[#9a9a9a]" />
       </button>
 
-      <div className="flex items-center gap-1.5 border-t border-white/8 px-4 py-2.5 text-[10.5px] text-gray-500">
-        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+      <div className="flex items-center gap-1.5 border-t border-[#ececec] px-4 py-2.5 text-[10.5px] text-[#9a9a9a]">
+        <span className="h-1.5 w-1.5 rounded-full bg-[#c8c8c8]" />
         연결됨
         <span className="ml-auto font-mono">{APP_VERSION}</span>
       </div>
@@ -103,13 +103,13 @@ function ProjectSwitcher({ onCreate }: { onCreate: () => void }) {
     <div className="relative px-3 pb-1" ref={ref}>
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-2 rounded-md border border-white/10 bg-rail-hover px-2.5 py-2 text-left hover:border-white/20"
+        className="flex w-full items-center gap-2 rounded-md border border-[#ececec] bg-rail-hover px-2.5 py-2 text-left hover:border-[#d9d9d9]"
       >
-        <Icon name="layers" size={15} className="text-brand-400" />
-        <span className="flex-1 truncate text-[12.5px] font-semibold text-white">
+        <Icon name="layers" size={15} className="text-[#8a8a8a]" />
+        <span className="flex-1 truncate text-[12.5px] font-semibold text-[#0d0d0d]">
           {app.currentProject?.name ?? '프로젝트 선택'}
         </span>
-        <Icon name="chevron-down" size={14} className="text-gray-500" />
+        <Icon name="chevron-down" size={14} className="text-[#9a9a9a]" />
       </button>
 
       {open && (

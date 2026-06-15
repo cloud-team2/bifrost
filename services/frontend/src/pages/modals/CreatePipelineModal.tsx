@@ -206,7 +206,7 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
             <div
               className={cn(
                 'flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold',
-                i < step ? 'bg-emerald-500 text-white' : i === step ? 'bg-brand-600 text-white' : 'bg-gray-200 text-gray-500',
+                i < step ? 'bg-[#0d0d0d] text-white' : i === step ? 'bg-brand-600 text-white' : 'bg-gray-200 text-gray-500',
               )}
             >
               {i < step ? '✓' : i + 1}
@@ -233,9 +233,9 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
               )}
             >
               <div className="flex items-center gap-2">
-                <Icon name="share" size={20} className="text-violet-500" />
+                <Icon name="share" size={20} className="text-[#8a8a8a]" />
                 <GlossaryTooltip term="EDA">
-                  <span className="rounded bg-violet-100 px-1.5 py-0.5 text-[9.5px] font-bold text-violet-700 cursor-help">
+                  <span className="rounded bg-[#ededed] px-1.5 py-0.5 text-[9.5px] font-bold text-[#6b6b73] cursor-help">
                     EDA
                   </span>
                 </GlossaryTooltip>
@@ -247,9 +247,9 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
                 DB 변경이 생기면 여러 서비스가 동시에 받아볼 수 있습니다. 알림, 검색 인덱싱, 로그 수집 등에 적합합니다.
               </div>
               <div className="mt-3 flex items-center gap-1 font-mono text-[10.5px] text-gray-400">
-                <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-700">DB</span>
+                <span className="rounded bg-[#ededed] px-1.5 py-0.5 text-[#6b6b73]">DB</span>
                 <span>→</span>
-                <span className="rounded bg-violet-50 px-1.5 py-0.5 text-violet-700">Topic</span>
+                <span className="rounded bg-[#ededed] px-1.5 py-0.5 text-[#6b6b73]">Topic</span>
                 <span>→</span>
                 <span className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-600">서비스 A, B, C…</span>
               </div>
@@ -264,9 +264,9 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
               )}
             >
               <div className="flex items-center gap-2">
-                <Icon name="route" size={20} className="text-sky-500" />
+                <Icon name="route" size={20} className="text-[#8a8a8a]" />
                 <GlossaryTooltip term="CDC">
-                  <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[9.5px] font-bold text-sky-700 cursor-help">
+                  <span className="rounded bg-[#ededed] px-1.5 py-0.5 text-[9.5px] font-bold text-[#6b6b73] cursor-help">
                     CDC
                   </span>
                 </GlossaryTooltip>
@@ -278,9 +278,9 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
                 Source DB의 변경을 다른 DB에 그대로 동기화합니다. 분석용 DB, 읽기 전용 복제본 구축에 적합합니다.
               </div>
               <div className="mt-3 flex items-center gap-1 font-mono text-[10.5px] text-gray-400">
-                <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-700">Source DB</span>
+                <span className="rounded bg-[#ededed] px-1.5 py-0.5 text-[#6b6b73]">Source DB</span>
                 <span>→→</span>
-                <span className="rounded bg-sky-50 px-1.5 py-0.5 text-sky-700">Sink DB</span>
+                <span className="rounded bg-[#ededed] px-1.5 py-0.5 text-[#6b6b73]">Sink DB</span>
               </div>
             </button>
           </div>
@@ -311,7 +311,7 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
         <div>
           <div className="mb-2 text-[12.5px] text-gray-500">변경을 감지할 테이블을 하나 선택하세요</div>
           {error && (
-            <div className="mb-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-600">
+            <div className="mb-2 rounded-lg border border-[#c0392b] bg-[#fcf3f2] px-3 py-2 text-[12px] text-[#c0392b]">
               {error}
             </div>
           )}
@@ -390,7 +390,7 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
               <FlowNode node={app.nodes.find((n) => n.id === sinkId)} caption="복제 대상" />
             ) : (
               <div className="flex flex-col items-center">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-100 text-violet-600">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#ededed] text-[#6b6b73]">
                   <Icon name="users" size={17} />
                 </div>
                 <span className="mt-1 font-mono text-[10px] text-gray-500">구독 서비스들</span>
@@ -407,7 +407,7 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
               className="h-10 w-full rounded-md border border-gray-300 px-3 text-sm outline-none focus:border-brand-600 focus:ring-1 focus:ring-brand-600"
             />
             {error && (
-              <div className="mt-2 flex items-center gap-1.5 text-[12px] font-medium text-rose-600">
+              <div className="mt-2 flex items-center gap-1.5 text-[12px] font-medium text-[#c0392b]">
                 <Icon name="x" size={13} strokeWidth={3} />
                 {error}
               </div>
@@ -421,13 +421,13 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
 
 function TableReadinessBadge({ status }: { status: CdcStatus | null }) {
   if (status === 'OK') {
-    return <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">OK</span>
+    return <span className="rounded bg-[#ededed] px-1.5 py-0.5 text-[10px] font-semibold text-[#6b6b73]">OK</span>
   }
   if (status === 'WARNING') {
-    return <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">WARNING</span>
+    return <span className="rounded bg-[#ededed] px-1.5 py-0.5 text-[10px] font-semibold text-[#6b6b73]">WARNING</span>
   }
   if (status === 'BLOCKED') {
-    return <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700">BLOCKED</span>
+    return <span className="rounded bg-[#fcf3f2] px-1.5 py-0.5 text-[10px] font-semibold text-[#c0392b]">BLOCKED</span>
   }
   return <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">미점검</span>
 }
@@ -473,12 +473,12 @@ function DbPicker({
                 <div className="truncate font-mono text-[11px] text-gray-400">{d.host}</div>
               </div>
               {blocked && (
-                <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700">
+                <span className="rounded bg-[#fcf3f2] px-1.5 py-0.5 text-[10px] font-semibold text-[#c0392b]">
                   CDC 차단
                 </span>
               )}
               {warn && !blocked && (
-                <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
+                <span className="rounded bg-[#ededed] px-1.5 py-0.5 text-[10px] font-semibold text-[#6b6b73]">
                   경고
                 </span>
               )}

@@ -87,7 +87,7 @@ export function Register({ onSignIn }: { onSignIn: () => void }) {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-zinc-100 via-white to-brand-50 p-6">
+    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-zinc-100 via-white to-[#ededed] p-6">
       <div className="w-full max-w-[440px]">
         <div className="mb-7 flex items-center justify-center gap-2.5">
           <BrandMark size={40} />
@@ -141,7 +141,7 @@ export function Register({ onSignIn }: { onSignIn: () => void }) {
             />
           </div>
 
-          {error && <div className="mt-3 text-[12px] font-medium text-rose-600">{error}</div>}
+          {error && <div className="mt-3 text-[12px] font-medium text-[#c0392b]">{error}</div>}
 
           <button
             type="submit"
@@ -229,14 +229,14 @@ function Field({
         className={cn(
           'h-10 w-full rounded-md border px-3 text-sm outline-none focus:ring-1',
           error
-            ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-500'
+            ? 'border-[#c0392b] focus:border-[#c0392b] focus:ring-[#c0392b]'
             : 'border-gray-300 focus:border-brand-600 focus:ring-brand-600',
           className,
         )}
         {...inputProps}
       />
       {error ? (
-        <div className="mt-1 text-[11px] font-medium text-rose-600">{error}</div>
+        <div className="mt-1 text-[11px] font-medium text-[#c0392b]">{error}</div>
       ) : hint ? (
         <div className="mt-1 text-[11px] text-gray-400">{hint}</div>
       ) : null}

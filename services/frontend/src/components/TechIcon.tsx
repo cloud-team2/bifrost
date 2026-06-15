@@ -3,11 +3,12 @@ import type { Node } from '../data/types'
 
 export type TechKind = 'postgres' | 'mariadb' | 'kafka' | 'service'
 
+// 모노크롬(#719): 기술 브랜드 색 제거 → 중립 회색 칩. 종류는 아이콘 글리프로 구분.
 const MAP: Record<TechKind, { bg: string; fg: string; icon: IconName }> = {
-  postgres: { bg: '#e9f1f8', fg: '#336791', icon: 'database' },
-  mariadb: { bg: '#f6ede7', fg: '#a8763f', icon: 'database' },
-  kafka: { bg: '#e7e7ea', fg: '#1b1e24', icon: 'server' },
-  service: { bg: '#ecebfb', fg: '#5a4fcf', icon: 'branch' },
+  postgres: { bg: '#f2f2f2', fg: '#6b6b73', icon: 'database' },
+  mariadb: { bg: '#f2f2f2', fg: '#6b6b73', icon: 'database' },
+  kafka: { bg: '#f2f2f2', fg: '#6b6b73', icon: 'server' },
+  service: { bg: '#f2f2f2', fg: '#6b6b73', icon: 'branch' },
 }
 
 export function nodeKind(n: Node): TechKind {

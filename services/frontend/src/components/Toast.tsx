@@ -44,9 +44,9 @@ export function useToast(): ToastFn {
 }
 
 const TONE: Record<ToastTone, { bg: string; icon: IconName }> = {
-  success: { bg: 'bg-emerald-600', icon: 'check' },
+  success: { bg: 'bg-[#0d0d0d]', icon: 'check' },
   info: { bg: 'bg-[#1b1e24]', icon: 'info' },
-  error: { bg: 'bg-rose-600', icon: 'info' },
+  error: { bg: 'bg-[#c0392b]', icon: 'info' },
 }
 
 function ToastCard({ item, onClose }: { item: ToastItem; onClose: () => void }) {
