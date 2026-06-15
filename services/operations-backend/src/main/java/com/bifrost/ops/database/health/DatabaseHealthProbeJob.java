@@ -115,6 +115,10 @@ public class DatabaseHealthProbeJob {
     public void probeReplicationLag() {
         for (DatasourceEntity e : datasourceRepository.findAll()) {
             if (!HEALTHY.equals(e.getConnectionStatus())) continue;
+            // (#734) 복제지연(MariaDB SHOW SLAVE STATUS 등)은 REPLICATION/SLAVE MONITOR 권한이 필요하다.
+            // CDC 소스 준비가 OK가 아닌 datasource(예: 그 권한이 없는 sink 전용 MariaDB)는 1227 access
+            // denied만 반복되므로 스킵한다. 복제지연은 소스(CDC) DB에서만 의미가 있다.
+            if (!"OK".equalsIgnoreCase(e.getCdcReadinessStatus())) continue;
             try {
                 checkReplicationLag(e);
             } catch (RuntimeException ex) {
