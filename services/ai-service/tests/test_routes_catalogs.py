@@ -87,6 +87,24 @@ def test_tools_expose_descriptions():
     assert by_name["list_connectors"] == "Kafka Connector 상태 및 Task 정보를 조회합니다."
 
 
+def test_tools_expose_required_params_in_catalog_and_detail():
+    # #741: slash command argument hints depend on params_schema.required.
+    expected = {
+        "get_metrics": ["metric"],
+        "search_logs": ["query"],
+        "sql_read": ["datasource_id", "sql"],
+        "get_connector_status": ["connector_name"],
+        "get_consumer_lag": ["consumer_group"],
+        "get_pipeline_topology": ["pipeline_id"],
+    }
+    catalog = _data("/api/v1/tools")
+    by_name = {tool["name"]: tool for tool in catalog["tools"]}
+
+    for name, required in expected.items():
+        assert by_name[name]["params_schema"]["required"] == required
+        assert _data(f"/api/v1/tools/{name}")["params_schema"]["required"] == required
+
+
 def test_get_tool_by_name():
     data = _data("/api/v1/tools/search_logs")
 
