@@ -23,6 +23,7 @@ from app.schemas.api import (
 )
 from app.streaming.event_bus import get_event_bus
 from app.tools.registry import get_tool_registry
+from app.workflow.action_tools import is_executable_runtime_action_payload
 from app.workflow.runner import run_workflow
 
 router = APIRouter()
@@ -101,7 +102,14 @@ def _merge_timeline(patches: list[StatePatchRecord], events: list[Any]) -> list[
     return [item.model_dump(mode="json") for item in sorted(items, key=_timeline_sort_value)]
 
 
-_ACTION_BUCKET_KEYS = frozenset({"candidates", "policy_decisions", "approval_requests", "approved_actions"})
+_ACTION_BUCKET_KEYS = frozenset({
+    "candidates",
+    "policy_decisions",
+    "approval_requests",
+    "approved_actions",
+    "change_management_records",
+    "execution_results",
+})
 
 
 def _patch_payloads(value: Any) -> list[dict[str, Any]]:
@@ -153,12 +161,15 @@ def _merge_actions(patches: list[StatePatchRecord]) -> list[dict[str, Any]]:
 
     summaries: list[dict[str, Any]] = []
     for action in actions.values():
+        if not is_executable_runtime_action_payload(action):
+            continue
         policy_decision = action.get("policy_decision", action.get("decision"))
         execution_status = action.get("execution_status", action.get("status"))
         summaries.append(ActionSummary(
             action_id=str(action["action_id"]),
             action_type=_value_as_str(action.get("action_type"), "") or "",
             tool_name=_value_as_str(action.get("tool_name")),
+            tool_params=action.get("tool_params") if isinstance(action.get("tool_params"), dict) else None,
             risk=_value_as_str(action.get("risk"), "unknown") or "unknown",
             policy_decision=_value_as_str(policy_decision),
             approval_id=_value_as_str(action.get("approval_id")),

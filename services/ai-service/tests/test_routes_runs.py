@@ -198,6 +198,7 @@ def test_actions_merges_actions_namespace(monkeypatch):
             "action_id": "act_001",
             "action_type": "runtime_tool",
             "tool_name": "restart_connector",
+            "tool_params": {"connector_name": "orders-source"},
             "risk": "medium",
             "policy_decision": "require_approval",
         }),
@@ -215,6 +216,7 @@ def test_actions_merges_actions_namespace(monkeypatch):
         "action_id": "act_001",
         "action_type": "runtime_tool",
         "tool_name": "restart_connector",
+        "tool_params": {"connector_name": "orders-source"},
         "risk": "medium",
         "policy_decision": "require_approval",
         "approval_id": "appr_001",
@@ -222,6 +224,99 @@ def test_actions_merges_actions_namespace(monkeypatch):
         "execution_status": "pending",
         "audit_event_id": None,
     }]
+
+
+def test_actions_projects_only_executable_tool_actions_from_buckets(monkeypatch):
+    _install(monkeypatch, patches=[
+        _patch(1, "actions", "Remediation", path="/actions/candidates", patch={
+            "candidates": [
+                {
+                    "action_id": "act_restart",
+                    "action_type": "runtime_tool",
+                    "action_name": "restart_connector",
+                    "risk": "medium",
+                    "reason": "connector task failed",
+                    "tool_name": "restart_connector",
+                    "tool_params": {"connector_name": "orders-source"},
+                },
+                {
+                    "action_id": "act_collect",
+                    "action_type": "workflow_action",
+                    "action_name": "collect_connector_trace",
+                    "risk": "read_only",
+                    "reason": "collect evidence",
+                    "tool_name": None,
+                },
+                {
+                    "action_id": "act_escalate",
+                    "action_type": "escalation",
+                    "action_name": "escalate_to_operator",
+                    "risk": "low",
+                    "reason": "manual review",
+                    "tool_name": None,
+                },
+            ],
+        }),
+        _patch(2, "actions", "PolicyGuard", path="/actions/policy_decisions", patch={
+            "policy_decisions": [
+                {
+                    "action_id": "act_restart",
+                    "action_type": "runtime_tool",
+                    "risk": "medium",
+                    "decision": "require_approval",
+                    "status": "pending_approval",
+                    "reason": "approval required",
+                    "tool_name": "restart_connector",
+                    "tool_params": {"connector_name": "orders-source"},
+                },
+                {
+                    "action_id": "act_collect",
+                    "action_type": "workflow_action",
+                    "risk": "read_only",
+                    "decision": "allow",
+                    "status": "ready",
+                    "reason": "read only",
+                    "tool_name": None,
+                },
+            ],
+        }),
+        _patch(3, "actions", "PolicyGuard", path="/actions/approval_requests", patch={
+            "approval_requests": [
+                {
+                    "action_id": "act_restart",
+                    "decision": "require_approval",
+                    "status": "pending_approval",
+                    "required_approver": "operator",
+                },
+                {
+                    "action_id": "act_collect",
+                    "decision": "allow",
+                    "status": "ready",
+                },
+            ],
+        }),
+        _patch(4, "actions", "Executor", path="/actions/execution_results", patch={
+            "execution_results": [
+                {
+                    "action_id": "act_restart",
+                    "tool_name": "restart_connector",
+                    "status": "completed",
+                    "audit_event_id": "audit_001",
+                    "summary": "connector restarted",
+                },
+            ],
+        }),
+    ])
+
+    res = client.get("/api/v1/agent/runs/run_001/actions")
+
+    actions = res.json()["data"]["actions"]
+    assert [action["action_id"] for action in actions] == ["act_restart"]
+    assert actions[0]["tool_name"] == "restart_connector"
+    assert actions[0]["tool_params"] == {"connector_name": "orders-source"}
+    assert actions[0]["policy_decision"] == "require_approval"
+    assert actions[0]["execution_status"] == "completed"
+    assert actions[0]["audit_event_id"] == "audit_001"
 
 
 def test_actions_returns_run_not_found_for_unknown_run(monkeypatch):
@@ -271,6 +366,8 @@ def test_auxiliary_routes_accept_db_record_values_for_closed_runs(monkeypatch):
                 patch={
                     "action_id": action_id,
                     "action_type": "runtime_tool",
+                    "tool_name": "restart_connector",
+                    "tool_params": {"connector_name": "orders-source"},
                     "risk": "medium",
                     "approval_id": approval_id,
                     "audit_event_id": audit_event_id,
@@ -305,6 +402,7 @@ def test_auxiliary_routes_accept_db_record_values_for_closed_runs(monkeypatch):
         assert action["approval_id"] == str(approval_id)
         assert action["audit_event_id"] == str(audit_event_id)
         assert action["risk"] == "medium"
+        assert action["tool_name"] == "restart_connector"
 
 
 def test_messages_starts_background_workflow(monkeypatch):
