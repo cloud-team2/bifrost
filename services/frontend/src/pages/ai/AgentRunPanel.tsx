@@ -307,6 +307,11 @@ export function AgentRunPanel({
   const runningRef = useRef(false)
   const seenEvents = useRef<Set<string>>(new Set())
   const finalAnswerRunIds = useRef<Set<string>>(new Set())
+  // #712 대화 메모리: 인시던트와 무관한 자유 대화도 이 패널 세션 동안 연속성을 갖도록
+  // 세션 thread_id를 고정한다. 인시던트 채팅은 incidentId를 thread로 우선 사용한다.
+  const sessionThreadId = useRef<string>(
+    `chat-${(globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`)}`,
+  )
   const scroll = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const slashOptionRefs = useRef<Record<string, HTMLDivElement | null>>({})
@@ -822,6 +827,7 @@ export function AgentRunPanel({
         mode: options.mode ?? null,
         message,
         incident_id: options.incidentId ?? null,
+        thread_id: options.incidentId ?? sessionThreadId.current,
         remediation_requested: options.remediationRequested ?? false,
         action_candidate: options.actionCandidate ?? null,
         stream: true,

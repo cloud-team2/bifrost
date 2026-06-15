@@ -549,6 +549,8 @@ export interface AgentRunCreateInput {
   mode?: AgentRunMode | null
   message?: string | null
   incident_id?: string | null
+  /** #712 대화 메모리 thread. 미지정 시 백엔드가 incident_id로 폴백한다. */
+  thread_id?: string | null
   remediation_requested?: boolean
   stream?: boolean
   action_candidate?: ActionRunCandidateInput | null
