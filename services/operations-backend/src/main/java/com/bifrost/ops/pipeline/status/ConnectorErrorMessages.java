@@ -12,6 +12,22 @@ public final class ConnectorErrorMessages {
     private ConnectorErrorMessages() {
     }
 
+    /**
+     * raw 에러가 DB 연결 자체 실패(호스트 다운·포트·네트워크)인지 판별한다(#692).
+     * 이런 커넥터 실패는 datasource 장애의 증상이므로, datasource 인시던트와 같은 grouping으로
+     * 묶어 중복 인시던트(connector + datasource)를 방지하는 데 쓴다.
+     */
+    public static boolean isDbConnectionFailure(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return false;
+        }
+        String low = raw.toLowerCase();
+        return low.contains("connection refused") || low.contains("connection attempt failed")
+                || low.contains("communications link failure") || low.contains("could not connect")
+                || low.contains("connection timed out") || low.contains("connect timed out")
+                || low.contains("unknownhost") || low.contains("no route to host");
+    }
+
     /** raw 커넥터 에러 → 사용자용 요약. null/빈 값이면 일반 문구. */
     public static String summarize(String raw) {
         if (raw == null || raw.isBlank()) {
@@ -23,10 +39,7 @@ public final class ConnectorErrorMessages {
             return "DB 인증 실패 (사용자·비밀번호 확인)";
         }
         // 연결 실패는 설정오류(config validate)보다 먼저 — 보통 검증 실패의 실제 원인이 연결이다.
-        if (low.contains("connection refused") || low.contains("connection attempt failed")
-                || low.contains("communications link failure") || low.contains("could not connect")
-                || low.contains("connection timed out") || low.contains("connect timed out")
-                || low.contains("unknownhost") || low.contains("no route to host")) {
+        if (isDbConnectionFailure(raw)) {
             return "DB 연결 실패 (호스트·포트·네트워크 확인)";
         }
         if (low.contains("does not exist") || low.contains("unknown database")) {
