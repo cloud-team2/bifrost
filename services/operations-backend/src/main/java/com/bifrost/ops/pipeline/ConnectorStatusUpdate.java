@@ -33,4 +33,14 @@ public record ConnectorStatusUpdate(
             throw new IllegalArgumentException("pipelineStatus must not be null");
         }
     }
+
+    public ConnectorRuntimeState effectiveConnectorState(int tasksMax) {
+        if (connectorState != ConnectorRuntimeState.RUNNING) {
+            return connectorState;
+        }
+        int expectedTasks = Math.max(1, tasksMax);
+        return failedTasks == 0 && totalTasks >= expectedTasks
+                ? ConnectorRuntimeState.RUNNING
+                : ConnectorRuntimeState.UNKNOWN;
+    }
 }

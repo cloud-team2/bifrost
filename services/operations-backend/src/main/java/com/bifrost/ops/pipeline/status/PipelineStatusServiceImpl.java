@@ -6,6 +6,7 @@ import com.bifrost.ops.global.common.log.OpsLog;
 import com.bifrost.ops.governance.audit.AuditService;
 import com.bifrost.ops.incident.IncidentGroupingKeys;
 import com.bifrost.ops.incident.IncidentService;
+import com.bifrost.ops.pipeline.ConnectorRuntimeState;
 import com.bifrost.ops.pipeline.ConnectorStatusUpdate;
 import com.bifrost.ops.pipeline.PipelineLifecycle;
 import com.bifrost.ops.pipeline.PipelineStatusService;
@@ -102,8 +103,8 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
         }
         // connector 상태 변경 알림(상세 토글)
         publishConnectorStateAfterCommit(p.getTenantId(), update.connectorName(),
-                update.connectorState().name());
-        recompute(p);
+                connectorStateForNotification(update));
+        recompute(p, update);
     }
 
     @Override
@@ -148,9 +149,13 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
 
     /** connector 상태 + DB 헬스를 보고 pipeline 상태를 재계산하고, 변경 시에만 기록·발행한다. */
     private void recompute(PipelineEntity p) {
+        recompute(p, null);
+    }
+
+    private void recompute(PipelineEntity p, ConnectorStatusUpdate latestUpdate) {
         List<ConnectorEntity> connectors = connectorRepository.findByPipelineId(p.getId());
         PipelineLifecycle current = p.getStatus();
-        StatusDecision decision = decideStatus(p, current, connectors);
+        StatusDecision decision = decideStatus(p, current, connectors, latestUpdate);
         if (decision.next() == current && !isReasonChangedError(current, p.getStatusMessage(), decision.message())) {
             return;
         }
@@ -159,7 +164,13 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
 
     private StatusDecision decideStatus(PipelineEntity p, PipelineLifecycle current,
                                         List<ConnectorEntity> connectors) {
-        PipelineLifecycle connectorNext = computeStatus(p.getPattern(), connectors);
+        return decideStatus(p, current, connectors, null);
+    }
+
+    private StatusDecision decideStatus(PipelineEntity p, PipelineLifecycle current,
+                                        List<ConnectorEntity> connectors,
+                                        ConnectorStatusUpdate latestUpdate) {
+        PipelineLifecycle connectorNext = computeStatus(p.getPattern(), connectors, latestUpdate);
 
         // DB 헬스도 입력(#179): source/sink DB가 UNREACHABLE이면 커넥터가 retry로 RUNNING이어도 ERROR.
         // 단, 프로비저닝 중(creating)이면 DB 사유로 덮어쓰지 않는다(생성 흐름이 별도 판정).
@@ -315,6 +326,12 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
         publishAfterCommit(publish);
     }
 
+    private String connectorStateForNotification(ConnectorStatusUpdate update) {
+        return connectorRepository.findByCrName(update.connectorName())
+                .map(connector -> update.effectiveConnectorState(connector.getTasksMax()).name())
+                .orElse(update.connectorState().name());
+    }
+
     private void publishAfterCommit(Runnable publish) {
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
             publish.run();
@@ -335,6 +352,11 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
      * lag 상태는 여기서 도출하지 않고 consumer lag(KafkaAdminPoller→applyConsumerLag)로만 산정한다.
      */
     static PipelineLifecycle computeStatus(PipelinePattern pattern, List<ConnectorEntity> connectors) {
+        return computeStatus(pattern, connectors, null);
+    }
+
+    private static PipelineLifecycle computeStatus(PipelinePattern pattern, List<ConnectorEntity> connectors,
+                                                   ConnectorStatusUpdate latestUpdate) {
         int expected = pattern == PipelinePattern.DIRECT ? 2 : 1;
         boolean anyFailed = false;
         boolean anyPartial = false;
@@ -345,7 +367,9 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
                 case "FAILED" -> anyFailed = true;
                 case "PARTIALLY_FAILED" -> anyPartial = true;
                 case "PAUSED" -> anyPaused = true;
-                case "RUNNING" -> running++;
+                case "RUNNING" -> {
+                    if (hasExpectedRunningTasks(c, latestUpdate)) running++;
+                }
                 default -> { /* UNASSIGNED/UNKNOWN/null → 아직 미기동 */ }
             }
         }
@@ -361,6 +385,13 @@ public class PipelineStatusServiceImpl implements PipelineStatusService {
             return PipelineLifecycle.ACTIVE;
         }
         return PipelineLifecycle.CREATING;
+    }
+
+    private static boolean hasExpectedRunningTasks(ConnectorEntity connector, ConnectorStatusUpdate latestUpdate) {
+        if (latestUpdate == null || !Objects.equals(connector.getCrName(), latestUpdate.connectorName())) {
+            return true;
+        }
+        return latestUpdate.effectiveConnectorState(connector.getTasksMax()) == ConnectorRuntimeState.RUNNING;
     }
 
     private static String parseState(String state) {
