@@ -91,8 +91,8 @@ function AccountSection() {
             className={cn(
               'flex h-12 w-12 items-center justify-center rounded-full text-[16px] font-semibold text-white',
               u.role === 'MEMBER'
-                ? 'bg-gradient-to-br from-sky-400 to-indigo-500'
-                : 'bg-gradient-to-br from-violet-400 to-violet-600',
+                ? 'bg-[#0d0d0d]'
+                : 'bg-[#0d0d0d]',
             )}
           >
             {u.initial}
@@ -112,7 +112,7 @@ function AccountSection() {
       </Panel>
       <button
         onClick={app.logout}
-        className="mt-4 flex items-center gap-1.5 rounded-md border border-rose-200 px-3 py-2 text-[13px] font-medium text-rose-600 hover:bg-rose-50"
+        className="mt-4 flex items-center gap-1.5 rounded-md border border-[#c0392b] px-3 py-2 text-[13px] font-medium text-[#c0392b] hover:bg-[#fcf3f2]"
       >
         <Icon name="logout" size={14} />
         로그아웃
@@ -352,7 +352,7 @@ function MembersSection() {
         ) : loading ? (
           <div className="px-4 py-6 text-center text-[12.5px] text-gray-400">불러오는 중…</div>
         ) : loadError ? (
-          <div className="px-4 py-6 text-center text-[12.5px] text-rose-500">{loadError}</div>
+          <div className="px-4 py-6 text-center text-[12.5px] text-[#c0392b]">{loadError}</div>
         ) : (
           <table className="w-full text-[12.5px]">
             <tbody>
@@ -383,7 +383,7 @@ function MembersSection() {
                       {editable && (
                         <button
                           onClick={() => remove(m.userId)}
-                          className="text-[11.5px] font-medium text-rose-600 hover:underline"
+                          className="text-[11.5px] font-medium text-[#c0392b] hover:underline"
                         >
                           제거
                         </button>
@@ -453,7 +453,7 @@ function SettingsLoadState({
     return <div className="rounded-xl border border-gray-200 bg-white py-12 text-center text-[13px] text-gray-400">불러오는 중…</div>
   }
   if (error) {
-    return <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-6 text-center text-[13px] text-rose-700">{error}</div>
+    return <div className="rounded-xl border border-[#c0392b] bg-[#fcf3f2] px-4 py-6 text-center text-[13px] text-[#c0392b]">{error}</div>
   }
   return null
 }
@@ -555,7 +555,7 @@ function NotificationsSection() {
                 <span className="flex-1 text-gray-700">{r}</span>
                 <button
                   onClick={() => update({ emailRecipients: draft.emailRecipients.filter((x) => x !== r) })}
-                  className="text-[11.5px] font-medium text-rose-600 hover:underline"
+                  className="text-[11.5px] font-medium text-[#c0392b] hover:underline"
                 >
                   삭제
                 </button>
@@ -1016,7 +1016,7 @@ export function KafkaUsersSection() {
                         <button
                           disabled={busyId === u.id}
                           onClick={() => action(u.id, 'revoke')}
-                          className="text-[11px] font-medium text-rose-600 hover:underline disabled:opacity-50"
+                          className="text-[11px] font-medium text-[#c0392b] hover:underline disabled:opacity-50"
                         >
                           폐기
                         </button>

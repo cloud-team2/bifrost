@@ -100,7 +100,7 @@ export function Pipelines() {
               className={cn(
                 'ml-1.5 rounded-full px-1.5 py-0.5 text-[10.5px] font-semibold',
                 tab === t ? 'bg-brand-100 text-brand-700' : 'bg-gray-100 text-gray-500',
-                t === 'issue' && counts[t] > 0 ? 'bg-amber-100 text-amber-700' : '',
+                t === 'issue' && counts[t] > 0 ? 'bg-[#ededed] text-[#6b6b73]' : '',
               )}
             >
               {counts[t]}
@@ -133,21 +133,21 @@ function PipelineCard({ edge, consumerGroups }: { edge: Edge; consumerGroups?: C
 
   const lineColor =
     edge.status === 'error'
-      ? 'border-rose-400'
+      ? 'border-[#c0392b]'
       : edge.status === 'lag'
-        ? 'border-amber-400'
+        ? 'border-[#d9d9d9]'
         : edge.status === 'paused'
           ? 'border-gray-300'
-          : 'border-emerald-400'
+          : 'border-[#d9d9d9]'
 
   const arrowColor =
     edge.status === 'error'
-      ? 'text-rose-400'
+      ? 'text-[#c0392b]'
       : edge.status === 'lag'
-        ? 'text-amber-400'
+        ? 'text-[#8a8a8a]'
         : edge.status === 'paused'
           ? 'text-gray-300'
-          : 'text-emerald-400'
+          : 'text-[#8a8a8a]'
 
   return (
     <button
@@ -198,12 +198,12 @@ function PipelineCard({ edge, consumerGroups }: { edge: Edge; consumerGroups?: C
                 consumers 조회 중
               </span>
             ) : consumerGroups?.error ? (
-              <span className="rounded-lg bg-rose-50 px-2 py-1 text-[11px] text-rose-500">
+              <span className="rounded-lg bg-[#fcf3f2] px-2 py-1 text-[11px] text-[#c0392b]">
                 consumer 조회 실패
               </span>
             ) : groups.length > 0 ? (
               groups.slice(0, 2).map((g) => (
-                <span key={g.name} className="max-w-[130px] truncate rounded-lg bg-violet-50 px-2 py-1 font-mono text-[11px] text-violet-700">
+                <span key={g.name} className="max-w-[130px] truncate rounded-lg bg-[#ededed] px-2 py-1 font-mono text-[11px] text-[#6b6b73]">
                   {g.name}
                 </span>
               ))

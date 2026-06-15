@@ -141,20 +141,20 @@ function ProjectCard({
 
 function HealthBadge({ health }: { health: 'healthy' | 'warning' | 'error' }) {
   if (health === 'error')
-    return <span className="shrink-0 rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700">Error</span>
+    return <span className="shrink-0 rounded-full bg-[#fcf3f2] px-2 py-0.5 text-[11px] font-semibold text-[#c0392b]">Error</span>
   if (health === 'warning')
-    return <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">Warning</span>
-  return <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">Healthy</span>
+    return <span className="shrink-0 rounded-full bg-[#ededed] px-2 py-0.5 text-[11px] font-semibold text-[#6b6b73]">Warning</span>
+  return <span className="shrink-0 rounded-full bg-[#ededed] px-2 py-0.5 text-[11px] font-semibold text-[#6b6b73]">Healthy</span>
 }
 
 function HealthStat({ label, value, tone }: { label: string; value: number; tone?: 'good' | 'warn' | 'bad' }) {
   const color =
     tone === 'bad' && value > 0
-      ? 'text-rose-600'
+      ? 'text-[#c0392b]'
       : tone === 'warn' && value > 0
-        ? 'text-amber-600'
+        ? 'text-[#6b6b73]'
         : tone === 'good'
-          ? 'text-emerald-600'
+          ? 'text-[#6b6b73]'
           : 'text-gray-900'
   return (
     <div>

@@ -21,28 +21,28 @@ import { cn } from '../lib/format'
 /* ---------------------------------------------------------------- constants */
 
 const SEV_DOT: Record<string, string> = {
-  CRITICAL: 'bg-rose-500',
-  ERROR: 'bg-rose-500',
-  WARN: 'bg-amber-500',
-  WARNING: 'bg-amber-500',
-  INFO: 'bg-sky-500',
+  CRITICAL: 'bg-[#c0392b]',
+  ERROR: 'bg-[#c0392b]',
+  WARN: 'bg-[#c8c8c8]',
+  WARNING: 'bg-[#c8c8c8]',
+  INFO: 'bg-[#c8c8c8]',
 }
 const SEV_BORDER: Record<string, string> = {
-  CRITICAL: 'border-l-rose-500',
-  ERROR: 'border-l-rose-500',
-  WARN: 'border-l-amber-500',
-  WARNING: 'border-l-amber-500',
-  INFO: 'border-l-sky-500',
+  CRITICAL: 'border-l-[#c0392b]',
+  ERROR: 'border-l-[#c0392b]',
+  WARN: 'border-l-[#d9d9d9]',
+  WARNING: 'border-l-[#d9d9d9]',
+  INFO: 'border-l-[#d9d9d9]',
 }
 const LEVEL_BADGE: Record<LogLevel, string> = {
-  error: 'bg-rose-50 text-rose-700',
-  warning: 'bg-amber-50 text-amber-700',
-  info: 'bg-sky-50 text-sky-700',
+  error: 'bg-[#fcf3f2] text-[#c0392b]',
+  warning: 'bg-[#ededed] text-[#6b6b73]',
+  info: 'bg-[#ededed] text-[#6b6b73]',
 }
 const LEVEL_LEFT: Record<LogLevel, string> = {
-  error: 'border-l-rose-400',
-  warning: 'border-l-amber-400',
-  info: 'border-l-sky-300',
+  error: 'border-l-[#c0392b]',
+  warning: 'border-l-[#d9d9d9]',
+  info: 'border-l-[#ececec]',
 }
 const LEVEL: Record<EventResponse['level'], LogLevel> = { ERROR: 'error', WARN: 'warning', INFO: 'info' }
 
@@ -72,11 +72,11 @@ function severityKey(severity: string): string {
 }
 
 function severityDot(severity: string): string {
-  return SEV_DOT[severityKey(severity)] ?? 'bg-sky-500'
+  return SEV_DOT[severityKey(severity)] ?? 'bg-[#c8c8c8]'
 }
 
 function severityBorder(severity: string): string {
-  return SEV_BORDER[severityKey(severity)] ?? 'border-l-sky-500'
+  return SEV_BORDER[severityKey(severity)] ?? 'border-l-[#d9d9d9]'
 }
 
 function isOpenIncident(incident: IncidentResponse): boolean {
@@ -544,7 +544,7 @@ export function Alerts() {
       />
 
       {app.monitoringError && !hasMonitoringData ? (
-        <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700">
+        <div className="mt-4 rounded-lg border border-[#c0392b] bg-[#fcf3f2] px-4 py-3 text-[13px] text-[#c0392b]">
           {app.monitoringError}
         </div>
       ) : initialLoading ? (
@@ -555,7 +555,7 @@ export function Alerts() {
         <div className="mt-4 flex min-h-0 flex-col gap-4 xl:flex-row">
           <div className="min-w-0 flex-1 space-y-3">
             {app.monitoringError && (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-800">
+              <div className="rounded-lg border border-[#ececec] bg-[#ededed] px-4 py-3 text-[13px] text-[#6b6b73]">
                 {app.monitoringError} · 기존 데이터로 표시합니다
               </div>
             )}
@@ -565,7 +565,7 @@ export function Alerts() {
                   <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
                     활성 인시던트
                   </span>
-                  <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">
+                  <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-[#c0392b] px-1 text-[10px] font-bold text-white">
                     {activeIncidents.length}
                   </span>
                 </div>
@@ -580,7 +580,7 @@ export function Alerts() {
                 ))}
               </div>
             ) : (
-              <div className="rounded-xl border border-gray-200 bg-white py-8 text-center text-[13px] text-emerald-600">
+              <div className="rounded-xl border border-gray-200 bg-white py-8 text-center text-[13px] text-[#6b6b73]">
                 활성 인시던트가 없습니다
               </div>
             )}
@@ -1100,7 +1100,7 @@ function IncidentPanel({
           ) : timelineEvents.length > 0 ? (
             <div>
               {eventsError && (
-                <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-700">
+                <div className="mb-2 rounded-lg border border-[#ececec] bg-[#ededed] px-3 py-2 text-[12px] text-[#6b6b73]">
                   {eventsError} · 기존 로드 데이터로 표시합니다
                 </div>
               )}
@@ -1111,11 +1111,11 @@ function IncidentPanel({
                       className={cn(
                         'h-2 w-2 shrink-0 rounded-full',
                         event.level === 'error'
-                          ? 'bg-rose-500'
+                          ? 'bg-[#c0392b]'
                           : event.level === 'warning'
-                            ? 'bg-amber-400'
+                            ? 'bg-[#c8c8c8]'
                             : event.level === 'info'
-                              ? 'bg-sky-400'
+                              ? 'bg-[#c8c8c8]'
                               : 'bg-gray-300',
                       )}
                     />
@@ -1148,7 +1148,7 @@ function IncidentPanel({
               리포트를 불러오는 중…
             </div>
           ) : reportsError ? (
-            <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-700">
+            <div className="rounded-lg border border-[#c0392b] bg-[#fcf3f2] px-3 py-2 text-[12px] text-[#c0392b]">
               {reportsError}
             </div>
           ) : reports.length > 0 ? (
@@ -1191,7 +1191,7 @@ function IncidentPanel({
               리포트 기반 조치를 불러오는 중…
             </div>
           ) : reportsError ? (
-            <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-700">
+            <div className="rounded-lg border border-[#c0392b] bg-[#fcf3f2] px-3 py-2 text-[12px] text-[#c0392b]">
               {reportsError}
             </div>
           ) : actions.length > 0 ? (
@@ -1351,7 +1351,7 @@ function ReportDrawer({
           </button>
         </div>
         {error && (
-          <div className="border-b border-rose-100 bg-rose-50 px-5 py-2 text-[12px] text-rose-700">
+          <div className="border-b border-[#c0392b] bg-[#fcf3f2] px-5 py-2 text-[12px] text-[#c0392b]">
             {error}
           </div>
         )}

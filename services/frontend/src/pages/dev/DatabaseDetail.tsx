@@ -101,7 +101,7 @@ function DatabaseDetailContent({ node }: { node: Node }) {
             if (!confirm(`"${nodeName(node)}" DB를 삭제하시겠습니까?`)) return
             await app.deleteDatabase(node.id)
           }}
-          className="flex items-center gap-1.5 rounded-md border border-red-200 px-2.5 py-1.5 text-[12.5px] font-medium text-red-600 hover:bg-red-50"
+          className="flex items-center gap-1.5 rounded-md border border-[#c0392b] px-2.5 py-1.5 text-[12.5px] font-medium text-[#c0392b] hover:bg-[#fcf3f2]"
         >
           <Icon name="trash" size={13} />
           삭제
@@ -167,13 +167,13 @@ function DatabaseDetailContent({ node }: { node: Node }) {
                         </span>
                         <span className={cn(
                           'shrink-0 rounded px-1.5 py-0.5 text-[9.5px] font-bold uppercase',
-                          isEda ? 'bg-violet-100 text-violet-700' : 'bg-sky-100 text-sky-700',
+                          isEda ? 'bg-[#ededed] text-[#6b6b73]' : 'bg-[#ededed] text-[#6b6b73]',
                         )}>
                           {isEda ? 'EDA' : 'CDC'}
                         </span>
                         <span className={cn(
                           'shrink-0 rounded px-1.5 py-0.5 text-[9.5px] font-bold uppercase',
-                          isSource ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700',
+                          isSource ? 'bg-[#ededed] text-[#6b6b73]' : 'bg-[#ededed] text-[#6b6b73]',
                         )}>
                           {isSource ? 'source' : 'sink'}
                         </span>
@@ -211,7 +211,7 @@ function DatabaseDetailContent({ node }: { node: Node }) {
                   <span
                     className={cn(
                       'rounded px-1.5 py-0.5 text-[9.5px] font-bold uppercase',
-                      e.source === node.id ? 'bg-sky-100 text-sky-700' : 'bg-violet-100 text-violet-700',
+                      e.source === node.id ? 'bg-[#ededed] text-[#6b6b73]' : 'bg-[#ededed] text-[#6b6b73]',
                     )}
                   >
                     {e.source === node.id ? 'source' : 'sink'}
@@ -618,31 +618,31 @@ function ReadinessSection({
 function readinessTone(status: CdcReadinessResponse['overallStatus']) {
   if (status === 'OK') {
     return {
-      box: 'border-emerald-200 bg-emerald-50',
-      badge: 'bg-emerald-50',
-      dot: 'bg-emerald-500',
-      icon: 'text-emerald-600',
-      title: 'text-emerald-800',
-      text: 'text-emerald-600',
+      box: 'border-[#ececec] bg-[#ededed]',
+      badge: 'bg-[#ededed]',
+      dot: 'bg-[#c8c8c8]',
+      icon: 'text-[#6b6b73]',
+      title: 'text-[#6b6b73]',
+      text: 'text-[#6b6b73]',
     }
   }
   if (status === 'WARNING') {
     return {
-      box: 'border-amber-200 bg-amber-50',
-      badge: 'bg-amber-50',
-      dot: 'bg-amber-500',
-      icon: 'text-amber-600',
-      title: 'text-amber-800',
-      text: 'text-amber-600',
+      box: 'border-[#ececec] bg-[#ededed]',
+      badge: 'bg-[#ededed]',
+      dot: 'bg-[#c8c8c8]',
+      icon: 'text-[#6b6b73]',
+      title: 'text-[#6b6b73]',
+      text: 'text-[#6b6b73]',
     }
   }
   return {
-    box: 'border-rose-200 bg-rose-50',
-    badge: 'bg-rose-50',
-    dot: 'bg-rose-500',
-    icon: 'text-rose-600',
-    title: 'text-rose-800',
-    text: 'text-rose-600',
+    box: 'border-[#c0392b] bg-[#fcf3f2]',
+    badge: 'bg-[#fcf3f2]',
+    dot: 'bg-[#c0392b]',
+    icon: 'text-[#c0392b]',
+    title: 'text-[#c0392b]',
+    text: 'text-[#c0392b]',
   }
 }
 
@@ -685,7 +685,7 @@ function ReadinessStateSection({
   return (
     <div className="rounded-xl border border-gray-200 bg-white px-5 py-4">
       <div className="text-[14px] font-semibold text-gray-800">{title}</div>
-      <div className={cn('mt-1 text-[12px]', state.error ? 'text-rose-500' : 'text-gray-400')}>
+      <div className={cn('mt-1 text-[12px]', state.error ? 'text-[#c0392b]' : 'text-gray-400')}>
         {message}
       </div>
     </div>
@@ -722,7 +722,7 @@ function MetricsTab({ state }: { state: ResourceState<DatabaseMetricsResponse> }
   if (state.error) {
     return (
       <Panel title="Database metrics">
-        <div className="px-4 py-8 text-center text-[12.5px] text-rose-500">{state.error}</div>
+        <div className="px-4 py-8 text-center text-[12.5px] text-[#c0392b]">{state.error}</div>
       </Panel>
     )
   }
@@ -767,7 +767,7 @@ function SchemaTab({ state }: { state: ResourceState<{ tables: SchemaTable[] }> 
   if (state.error) {
     return (
       <Panel title="Tables">
-        <div className="px-4 py-8 text-center text-[12.5px] text-rose-500">{state.error}</div>
+        <div className="px-4 py-8 text-center text-[12.5px] text-[#c0392b]">{state.error}</div>
       </Panel>
     )
   }
@@ -803,10 +803,10 @@ function SchemaTab({ state }: { state: ResourceState<{ tables: SchemaTable[] }> 
                       <span className="font-mono font-medium text-gray-700">{c.name}</span>
                       <span className="font-mono text-gray-400">{c.type}</span>
                       {c.primaryKey && (
-                        <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">PK</span>
+                        <span className="rounded bg-[#ededed] px-1.5 py-0.5 text-[10px] font-semibold text-[#6b6b73]">PK</span>
                       )}
                       {c.indexed && !c.primaryKey && (
-                        <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">IDX</span>
+                        <span className="rounded bg-[#ededed] px-1.5 py-0.5 text-[10px] font-semibold text-[#6b6b73]">IDX</span>
                       )}
                       {!c.nullable && (
                         <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">NOT NULL</span>

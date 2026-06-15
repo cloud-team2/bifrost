@@ -18,7 +18,7 @@ export function Header({ viewLabel }: { viewLabel: string }) {
       {openIncidents > 0 && (
         <button
           onClick={() => app.setView('alerts')}
-          className="flex items-center gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11.5px] font-semibold text-rose-600 hover:bg-rose-100"
+          className="flex items-center gap-1.5 rounded-md border border-[#c0392b] bg-[#c0392b] px-2.5 py-1 text-[11.5px] font-semibold text-white hover:bg-[#a93226]"
         >
           <Icon name="alert" size={13} />
           {openIncidents} open incident{openIncidents > 1 ? 's' : ''}

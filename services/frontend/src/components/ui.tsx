@@ -31,7 +31,7 @@ export function Button({
     primary: 'bg-brand-600 text-white hover:bg-brand-700 disabled:bg-brand-300 shadow-sm',
     secondary: 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50',
     ghost: 'text-gray-600 hover:bg-gray-100 disabled:opacity-40',
-    danger: 'bg-white border border-rose-200 text-rose-600 hover:bg-rose-50',
+    danger: 'bg-white border border-[#c0392b] text-[#c0392b] hover:bg-[#fcf3f2]',
     dark: 'bg-[#1b1e24] text-white hover:bg-[#2a2e36]',
   }
   return (
@@ -85,13 +85,14 @@ export function Badge({
   tone?: 'gray' | 'green' | 'amber' | 'blue' | 'rose' | 'purple'
   className?: string
 }) {
+  // 모노크롬: 오류(rose)만 색, 그 외는 중립 회색 틴트.
   const tones = {
     gray: 'bg-gray-100 text-gray-600',
-    green: 'bg-emerald-50 text-emerald-700',
-    amber: 'bg-amber-50 text-amber-700',
-    blue: 'bg-brand-50 text-brand-700',
-    rose: 'bg-rose-50 text-rose-600',
-    purple: 'bg-violet-50 text-violet-700',
+    green: 'bg-[#ededed] text-[#6b6b73]',
+    amber: 'bg-[#ededed] text-[#6b6b73]',
+    blue: 'bg-[#ededed] text-[#6b6b73]',
+    rose: 'bg-[#fcf3f2] text-[#c0392b]',
+    purple: 'bg-[#ededed] text-[#6b6b73]',
   }
   return (
     <span
@@ -204,7 +205,7 @@ export function Spinner({ size = 18, className }: { size?: number; className?: s
 export function LoadingTile({ label, sub }: { label: string; sub?: string }) {
   return (
     <div className="flex flex-col items-center justify-center gap-4 py-20 text-center">
-      <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-violet-100">
+      <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-[#ededed]">
         <Spinner size={34} />
       </div>
       <div>
@@ -223,7 +224,7 @@ export function LoadingTile({ label, sub }: { label: string; sub?: string }) {
 export function ProgressBar({ value }: { value: number }) {
   return (
     <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-200">
-      <div className="h-full rounded-full bg-emerald-500" style={{ width: `${value}%` }} />
+      <div className="h-full rounded-full bg-[#0d0d0d]" style={{ width: `${value}%` }} />
     </div>
   )
 }
@@ -234,7 +235,7 @@ export function Spark({
   data,
   width = 120,
   height = 30,
-  color = '#4a5fe6',
+  color = '#0d0d0d',
 }: {
   data: number[]
   width?: number
@@ -298,7 +299,7 @@ export function TextField({
           className="peer h-14 w-full rounded-md border border-gray-300 bg-white px-3 pt-5 pb-1.5 text-sm text-gray-800 outline-none transition-colors focus:border-brand-600 focus:ring-1 focus:ring-brand-600"
         />
         <label className="pointer-events-none absolute left-3 top-2 text-[11px] text-gray-500 transition-all peer-placeholder-shown:top-1/2 peer-placeholder-shown:-translate-y-1/2 peer-placeholder-shown:text-sm peer-placeholder-shown:text-gray-400 peer-focus:top-2 peer-focus:translate-y-0 peer-focus:text-[11px] peer-focus:text-brand-600">
-          {label} {required && <span className="text-rose-500">*</span>}
+          {label} {required && <span className="text-[#c0392b]">*</span>}
         </label>
         {rightSlot && <div className="absolute right-3 top-1/2 -translate-y-1/2">{rightSlot}</div>}
       </div>
@@ -362,10 +363,10 @@ export function Menu({
               }}
               className={cn(
                 'flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-[13px] transition-colors hover:bg-gray-50',
-                it.danger ? 'text-rose-600' : 'text-gray-700',
+                it.danger ? 'text-[#c0392b]' : 'text-gray-700',
               )}
             >
-              {it.icon && <Icon name={it.icon} size={15} className={it.danger ? 'text-rose-500' : 'text-gray-400'} />}
+              {it.icon && <Icon name={it.icon} size={15} className={it.danger ? 'text-[#c0392b]' : 'text-gray-400'} />}
               <span className="flex-1">{it.label}</span>
               {it.meta}
             </button>
@@ -420,7 +421,7 @@ export function EmptyState({
 }) {
   return (
     <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
-      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-violet-100 text-violet-500">
+      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[#ededed] text-[#6b6b73]">
         <Icon name={icon} size={24} />
       </div>
       <div className="text-[15px] font-semibold text-gray-700">{title}</div>
@@ -434,7 +435,7 @@ export function EmptyState({
 export function Avatar({ name, size = 32 }: { name: string; size?: number }) {
   return (
     <div
-      className="flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-sky-400 to-indigo-500 font-semibold text-white"
+      className="flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#0d0d0d] font-semibold text-white"
       style={{ width: size, height: size, fontSize: size * 0.4 }}
     >
       {name.slice(0, 1)}

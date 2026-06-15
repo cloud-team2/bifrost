@@ -14,7 +14,7 @@ export function TraceFlow({ trace }: { trace: TraceSummaryResponse }) {
     <div className="rounded-xl border border-gray-200 bg-white p-4">
       <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <span className="text-[15px] font-semibold text-gray-900">end-to-end {fmtDuration(totalMicros)}</span>
-        <span className={cn('text-[12px]', isError ? 'text-rose-500' : 'text-emerald-600')}>{isError ? '오류' : '정상'}</span>
+        <span className={cn('text-[12px]', isError ? 'text-[#c0392b]' : 'text-[#6b6b73]')}>{isError ? '오류' : '정상'}</span>
         {trace.traceId && <span className="font-mono text-[11px] text-gray-400">{trace.traceId.slice(0, 16)}</span>}
       </div>
 
@@ -50,7 +50,7 @@ export function TraceFlow({ trace }: { trace: TraceSummaryResponse }) {
       </p>
 
       {errored.map((s, i) => (
-        <p key={i} className="mt-3 text-[12px] text-rose-500">
+        <p key={i} className="mt-3 text-[12px] text-[#c0392b]">
           {s.name}: {s.error}
         </p>
       ))}
@@ -59,7 +59,7 @@ export function TraceFlow({ trace }: { trace: TraceSummaryResponse }) {
 }
 
 function segClass(s: LatencySegment): string {
-  if (s.status === 'error') return 'bg-rose-500 text-white'
+  if (s.status === 'error') return 'bg-[#c0392b] text-white'
   if (!s.measured) return 'text-gray-400'
   return 'bg-gray-500 text-white'
 }

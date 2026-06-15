@@ -2,46 +2,51 @@ import type { ReactNode } from 'react'
 import { Icon, type IconName } from './Icon'
 import { cn } from '../lib/format'
 
-/* status → colour mapping shared across views */
+/* status → colour mapping shared across views.
+ * "Codex 모노크롬"(#719): 유채색은 오류뿐. 정상·실행중·지연·info 는 모두 무채색이며
+ * 점(dot)·배경 없이 라벨만. 오류/실패/인시던트만 #C0392B(텍스트·점) + 옅은 빨강 배경. */
+const NEUTRAL = { dot: '', text: 'text-[#8a8a8a]', bg: '' } // 정상/실행중
+const MUTED = { dot: '', text: 'text-[#6b6b73]', bg: '' } // 지연/경고/대기/info
+const ERROR = { dot: 'bg-[#c0392b]', text: 'text-[#c0392b]', bg: 'bg-[#fcf3f2]' }
 const TONE: Record<string, { dot: string; text: string; bg: string }> = {
-  healthy: { dot: 'bg-emerald-500', text: 'text-emerald-700', bg: 'bg-emerald-50' },
-  active: { dot: 'bg-emerald-500', text: 'text-emerald-700', bg: 'bg-emerald-50' },
-  RUNNING: { dot: 'bg-emerald-500', text: 'text-emerald-700', bg: 'bg-emerald-50' },
-  STABLE: { dot: 'bg-emerald-500', text: 'text-emerald-700', bg: 'bg-emerald-50' },
-  CONNECTED: { dot: 'bg-emerald-500', text: 'text-emerald-700', bg: 'bg-emerald-50' },
-  resolved: { dot: 'bg-emerald-500', text: 'text-emerald-700', bg: 'bg-emerald-50' },
-  RESOLVED: { dot: 'bg-emerald-500', text: 'text-emerald-700', bg: 'bg-emerald-50' },
-  warning: { dot: 'bg-amber-500', text: 'text-amber-700', bg: 'bg-amber-50' },
-  lag: { dot: 'bg-amber-500', text: 'text-amber-700', bg: 'bg-amber-50' },
-  WARN: { dot: 'bg-amber-500', text: 'text-amber-700', bg: 'bg-amber-50' },
-  WARNING: { dot: 'bg-amber-500', text: 'text-amber-700', bg: 'bg-amber-50' },
-  REBALANCING: { dot: 'bg-amber-500', text: 'text-amber-700', bg: 'bg-amber-50' },
-  PARTIALLY_FAILED: { dot: 'bg-amber-500', text: 'text-amber-700', bg: 'bg-amber-50' },
-  investigating: { dot: 'bg-amber-500', text: 'text-amber-700', bg: 'bg-amber-50' },
-  INVESTIGATING: { dot: 'bg-amber-500', text: 'text-amber-700', bg: 'bg-amber-50' },
-  error: { dot: 'bg-rose-500', text: 'text-rose-700', bg: 'bg-rose-50' },
-  ERROR: { dot: 'bg-rose-500', text: 'text-rose-700', bg: 'bg-rose-50' },
-  DEAD: { dot: 'bg-rose-500', text: 'text-rose-700', bg: 'bg-rose-50' },
-  FAILED: { dot: 'bg-rose-500', text: 'text-rose-700', bg: 'bg-rose-50' },
-  critical: { dot: 'bg-rose-500', text: 'text-rose-700', bg: 'bg-rose-50' },
-  CRITICAL: { dot: 'bg-rose-500', text: 'text-rose-700', bg: 'bg-rose-50' },
-  open: { dot: 'bg-rose-500', text: 'text-rose-700', bg: 'bg-rose-50' },
-  OPEN: { dot: 'bg-rose-500', text: 'text-rose-700', bg: 'bg-rose-50' },
-  revoked: { dot: 'bg-rose-500', text: 'text-rose-700', bg: 'bg-rose-50' },
-  REVOKED: { dot: 'bg-rose-500', text: 'text-rose-700', bg: 'bg-rose-50' },
-  paused: { dot: 'bg-zinc-400', text: 'text-zinc-600', bg: 'bg-zinc-100' },
-  PAUSED: { dot: 'bg-zinc-400', text: 'text-zinc-600', bg: 'bg-zinc-100' },
-  EMPTY: { dot: 'bg-zinc-400', text: 'text-zinc-600', bg: 'bg-zinc-100' },
-  inactive: { dot: 'bg-zinc-400', text: 'text-zinc-600', bg: 'bg-zinc-100' },
-  INACTIVE: { dot: 'bg-zinc-400', text: 'text-zinc-600', bg: 'bg-zinc-100' },
-  creating: { dot: 'bg-brand-500', text: 'text-brand-700', bg: 'bg-brand-50' },
-  UNASSIGNED: { dot: 'bg-brand-500', text: 'text-brand-700', bg: 'bg-brand-50' },
-  info: { dot: 'bg-sky-500', text: 'text-sky-700', bg: 'bg-sky-50' },
-  ACTIVE: { dot: 'bg-emerald-500', text: 'text-emerald-700', bg: 'bg-emerald-50' },
+  healthy: NEUTRAL,
+  active: NEUTRAL,
+  RUNNING: NEUTRAL,
+  STABLE: NEUTRAL,
+  CONNECTED: NEUTRAL,
+  resolved: NEUTRAL,
+  RESOLVED: NEUTRAL,
+  ACTIVE: NEUTRAL,
+  creating: NEUTRAL,
+  UNASSIGNED: NEUTRAL,
+  warning: MUTED,
+  lag: MUTED,
+  WARN: MUTED,
+  WARNING: MUTED,
+  REBALANCING: MUTED,
+  PARTIALLY_FAILED: MUTED,
+  investigating: MUTED,
+  INVESTIGATING: MUTED,
+  paused: MUTED,
+  PAUSED: MUTED,
+  EMPTY: MUTED,
+  inactive: MUTED,
+  INACTIVE: MUTED,
+  info: MUTED,
+  error: ERROR,
+  ERROR: ERROR,
+  DEAD: ERROR,
+  FAILED: ERROR,
+  critical: ERROR,
+  CRITICAL: ERROR,
+  open: ERROR,
+  OPEN: ERROR,
+  revoked: ERROR,
+  REVOKED: ERROR,
 }
 
 export function statusTone(status: string) {
-  return TONE[status] ?? TONE.paused
+  return TONE[status] ?? MUTED
 }
 
 export function StatusBadge({ status, label }: { status: string; label?: string }) {
@@ -54,14 +59,16 @@ export function StatusBadge({ status, label }: { status: string; label?: string 
         t.text,
       )}
     >
-      <span className={cn('h-1.5 w-1.5 rounded-full', t.dot)} />
+      {t.dot && <span className={cn('h-1.5 w-1.5 rounded-full', t.dot)} />}
       {label ?? status}
     </span>
   )
 }
 
 export function StatusDot({ status }: { status: string }) {
-  return <span className={cn('h-2 w-2 rounded-full', statusTone(status).dot)} />
+  // 오류는 빨강 점, 그 외는 중립 회색 점(색 제거하되 마커는 유지).
+  const t = statusTone(status)
+  return <span className={cn('h-2 w-2 rounded-full', t.dot || 'bg-[#c8c8c8]')} />
 }
 
 export function MetricCard({
@@ -77,14 +84,9 @@ export function MetricCard({
   icon?: IconName
   tone?: 'default' | 'good' | 'warn' | 'bad'
 }) {
+  // 모노크롬: 정상/경고 수치는 잉크로 강조, 오류만 빨강.
   const valueColor =
-    tone === 'good'
-      ? 'text-emerald-600'
-      : tone === 'warn'
-        ? 'text-amber-600'
-        : tone === 'bad'
-          ? 'text-rose-600'
-          : 'text-gray-900'
+    tone === 'bad' ? 'text-[#c0392b]' : 'text-gray-900'
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4">
       <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
@@ -109,7 +111,8 @@ export function Gauge({
   max?: number
 }) {
   const pct = Math.min(100, (value / max) * 100)
-  const tone = pct > 80 ? 'bg-rose-500' : pct > 60 ? 'bg-amber-500' : 'bg-emerald-500'
+  // 임계 초과(>80%)만 빨강으로 위험 신호, 그 외는 중립 잉크/회색.
+  const tone = pct > 80 ? 'bg-[#c0392b]' : 'bg-[#8a8a8a]'
   return (
     <div>
       <div className="flex items-center justify-between text-[11.5px]">

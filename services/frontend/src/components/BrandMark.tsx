@@ -1,12 +1,24 @@
 import { useState } from 'react'
 
 /**
- * Bifrost brand mark — renders the real project logo image at `public/logo.svg`.
- * Until that file is added it falls back to a placeholder mark, so the UI
+ * Bifrost brand mark — renders the real project logo image at `public/logo.svg`
+ * (mono ink #0D0D0D). On dark backgrounds pass `tone="light"` to invert the
+ * mark to white via CSS filter. Falls back to a mono inline glyph so the UI
  * never shows a broken image.
  */
-export function BrandMark({ size = 28, className }: { size?: number; className?: string }) {
+export function BrandMark({
+  size = 28,
+  className,
+  tone = 'ink',
+}: {
+  size?: number
+  className?: string
+  tone?: 'ink' | 'light'
+}) {
   const [failed, setFailed] = useState(false)
+  // brightness(0) → pure black, invert(1) → pure white. Used to flip the mono
+  // ink mark to #FFFFFF on dark sections without shipping a second asset.
+  const lightFilter = tone === 'light' ? 'brightness(0) invert(1)' : undefined
 
   if (failed) {
     return (
@@ -16,18 +28,10 @@ export function BrandMark({ size = 28, className }: { size?: number; className?:
         viewBox="0 0 64 64"
         fill="none"
         className={className}
+        style={{ color: tone === 'light' ? '#FFFFFF' : '#0D0D0D' }}
         aria-hidden="true"
       >
-        <defs>
-          <linearGradient id="bifrost-mark" x1="8" y1="32" x2="56" y2="32" gradientUnits="userSpaceOnUse">
-            <stop offset="0" stopColor="#29b6ff" />
-            <stop offset="0.3" stopColor="#4f6bff" />
-            <stop offset="0.52" stopColor="#9b3dff" />
-            <stop offset="0.72" stopColor="#ff3d96" />
-            <stop offset="1" stopColor="#ff8a2b" />
-          </linearGradient>
-        </defs>
-        <g stroke="url(#bifrost-mark)" strokeWidth="9" strokeLinecap="round" strokeLinejoin="round">
+        <g stroke="currentColor" strokeWidth="9" strokeLinecap="round" strokeLinejoin="round">
           <path d="M12 54 Q14 21 32 9 Q50 21 52 54" />
           <path d="M22 39 H42" />
         </g>
@@ -43,7 +47,7 @@ export function BrandMark({ size = 28, className }: { size?: number; className?:
       alt="Bifrost"
       className={className}
       onError={() => setFailed(true)}
-      style={{ objectFit: 'contain' }}
+      style={{ objectFit: 'contain', filter: lightFilter }}
     />
   )
 }
