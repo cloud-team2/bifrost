@@ -115,6 +115,51 @@ async def test_retrieval_stores_redacted_raw_evidence() -> None:
 
 
 @pytest.mark.asyncio
+async def test_incident_analysis_includes_redacted_request_evidence(monkeypatch) -> None:
+    class EmptyVectorStore:
+        async def search(self, query: str, **kwargs):
+            return []
+
+    class NoToolLoopProvider:
+        def supports_tools(self) -> bool:
+            return False
+
+    monkeypatch.setattr(
+        "app.agents.retrieval.get_llm_provider",
+        lambda: NoToolLoopProvider(),
+    )
+    registry = AsyncMock()
+    registry.call_tool.return_value = ToolResult(
+        tool_name="search_logs",
+        status=ToolStatus.SUCCESS,
+        risk=RiskLevel.READ_ONLY,
+        summary="search_logs completed (logs: 0)",
+        evidence_ids=[],
+    )
+    bus = EventBus()
+    bus.publish = AsyncMock()
+
+    out = await run_retrieval(
+        "r1",
+        _plan("search_logs"),
+        _context(),
+        registry,
+        bus,
+        InMemoryEventRepository(),
+        user_message="Source auth failure AccessDenied token expired password=hunter2",
+        mode=AgentMode.INCIDENT_ANALYSIS,
+        vector_store=EmptyVectorStore(),
+    )
+
+    request_evidence = out.evidence_items[0]
+    assert request_evidence.type == "snapshot"
+    assert request_evidence.store_ref == "request://r1/user_message"
+    assert "AccessDenied" in request_evidence.summary
+    assert "hunter2" not in request_evidence.summary
+    assert "[REDACTED]" in request_evidence.summary
+
+
+@pytest.mark.asyncio
 async def test_retrieval_emits_params_and_result_only_for_structured_panel_tools() -> None:
     async def call_tool(tool_name, params, context):
         if tool_name == "analyze_event_log":

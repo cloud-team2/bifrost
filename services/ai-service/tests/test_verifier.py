@@ -31,6 +31,18 @@ def _evidence(evidence_id: str, summary: str) -> EvidenceItem:
     )
 
 
+def _knowledge(evidence_id: str, summary: str) -> EvidenceItem:
+    return EvidenceItem(
+        evidence_id=evidence_id,
+        type=EvidenceType.KNOWLEDGE,
+        store_ref=f"knowledge://test/{evidence_id}",
+        summary=summary,
+        redaction_status=RedactionStatus.REDACTED,
+        collected_by="retrieval",
+        collected_at=datetime.now(timezone.utc),
+    )
+
+
 def _candidate(
     root_cause_id: str,
     *,
@@ -243,6 +255,28 @@ async def test_incident_required_missing_needs_revision() -> None:
     assert result.next_agent == "planner"
     assert result.approved_for_final_response is False
     assert "auth/permission error log" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_incident_verifier_ignores_knowledge_for_required_evidence() -> None:
+    output = await run_verifier(
+        AgentMode.INCIDENT_ANALYSIS,
+        rca_out=RcaOutput(root_cause_candidates=[_candidate("CONSUMER_LAG_SPIKE")]),
+        retrieval_out=RetrievalOutput(
+            evidence_items=[
+                _evidence("ev-lag", "consumer lag 급증 lag p95 증가"),
+                _knowledge(
+                    "ev-catalog",
+                    "[catalog] Evidence Matrix: offset progression 둔화 | Required | commit rate 감소",
+                ),
+            ]
+        ),
+    )
+
+    result = output.verification_results[0]
+    assert result.status == VerificationStatus.NEEDS_REVISION
+    assert result.next_agent == "planner"
+    assert "offset progression 둔화" in result.reason
 
 
 @pytest.mark.asyncio

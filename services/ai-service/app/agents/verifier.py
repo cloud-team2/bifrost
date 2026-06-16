@@ -20,6 +20,7 @@ from app.schemas.state import (
     ActionStatus,
     AgentMode,
     EvidenceItem,
+    EvidenceType,
     RootCauseCandidate,
     VerificationStatus,
 )
@@ -294,6 +295,8 @@ async def _observed_evidence_texts(
     repo = evidence_repo or get_evidence_repo()
     texts: list[str] = []
     for item in evidence_items:
+        if not _is_observed_evidence(item):
+            continue
         pieces = [
             item.evidence_id,
             str(item.type),
@@ -306,6 +309,10 @@ async def _observed_evidence_texts(
             pieces.append(_flatten_payload_text(record.payload))
         texts.append(" ".join(value for value in pieces if value))
     return tuple(texts)
+
+
+def _is_observed_evidence(item: EvidenceItem) -> bool:
+    return item.type != EvidenceType.KNOWLEDGE and item.type != EvidenceType.KNOWLEDGE.value
 
 
 def _flatten_payload_text(value: object) -> str:

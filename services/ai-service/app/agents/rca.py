@@ -13,7 +13,7 @@ from app.catalogs.root_causes import get_root_cause, list_root_causes
 from app.catalogs.types import EvidenceProfile, EvidenceRule, RootCause
 from app.prompts.rca import SYSTEM_PROMPT, build_user_prompt
 from app.schemas.outputs import ClassifierOutput, RcaOutput, RetrievalOutput
-from app.schemas.state import EvidenceItem, RootCauseCandidate
+from app.schemas.state import EvidenceItem, EvidenceType, RootCauseCandidate
 
 UNKNOWN_ROOT_CAUSE_ID = "UNKNOWN_WITH_EVIDENCE_GAP"
 UNKNOWN_INCIDENT_TYPE = "UNKNOWN_NEEDS_MORE_EVIDENCE"
@@ -75,7 +75,11 @@ class _EvaluatedCandidate:
 
 
 async def run_rca(classifier_out: ClassifierOutput | None, retrieval_out: RetrievalOutput | None) -> RcaOutput:
-    evidence_items = retrieval_out.evidence_items if retrieval_out else []
+    evidence_items = [
+        item
+        for item in (retrieval_out.evidence_items if retrieval_out else [])
+        if _is_observed_evidence(item)
+    ]
     candidate_ids = _candidate_pool(classifier_out)
 
     if not evidence_items:
@@ -244,6 +248,10 @@ def _matched_evidence_ids(matches: list[_RuleMatch]) -> set[str]:
     for match in matches:
         evidence_ids.update(match.evidence_ids)
     return evidence_ids
+
+
+def _is_observed_evidence(item: EvidenceItem) -> bool:
+    return item.type != EvidenceType.KNOWLEDGE and item.type != EvidenceType.KNOWLEDGE.value
 
 
 def _score_confidence(
