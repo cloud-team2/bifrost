@@ -50,7 +50,7 @@ export function Sidebar({ onCreateProject }: { onCreateProject: () => void }) {
               className={cn(
                 'flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-[12.5px] font-medium transition-colors',
                 isActive(item.view)
-                  ? 'bg-[#ededed] text-[#0d0d0d]'
+                  ? 'bg-[#0d0d0d] text-white'
                   : 'text-[#6b6b73] hover:bg-rail-hover hover:text-[#0d0d0d]',
               )}
             >

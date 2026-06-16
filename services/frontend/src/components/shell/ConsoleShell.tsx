@@ -20,7 +20,7 @@ export function ConsoleShell({ viewLabel, children }: { viewLabel: string; child
         <Header viewLabel={viewLabel} />
 
         <div className="flex flex-1 overflow-hidden">
-          <main className="flex-1 overflow-y-auto scroll-thin bg-[#fafafa]">{children}</main>
+          <main className="flex-1 overflow-y-auto scroll-thin bg-[#f5f5f6]">{children}</main>
 
           {/* AI drawer — always mounted, width animates open/closed */}
           <div
