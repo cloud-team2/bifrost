@@ -7,7 +7,8 @@ import { cn } from '../lib/format'
  * 점(dot)·배경 없이 라벨만. 오류/실패/인시던트만 #C0392B(텍스트·점) + 옅은 빨강 배경. */
 const NEUTRAL = { dot: '', text: 'text-[#8a8a8a]', bg: '' } // 정상/실행중
 const MUTED = { dot: '', text: 'text-[#6b6b73]', bg: '' } // 지연/경고/대기/info
-const ERROR = { dot: 'bg-[#c0392b]', text: 'text-[#c0392b]', bg: 'bg-[#fcf3f2]' }
+// 오류는 솔리드 빨강+흰 글자(#770) — '1 open incident' 버튼과 통일.
+const ERROR = { dot: '', text: 'text-white', bg: 'bg-[#c0392b]' }
 const TONE: Record<string, { dot: string; text: string; bg: string }> = {
   healthy: NEUTRAL,
   active: NEUTRAL,

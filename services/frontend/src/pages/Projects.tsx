@@ -141,7 +141,7 @@ function ProjectCard({
 
 function HealthBadge({ health }: { health: 'healthy' | 'warning' | 'error' }) {
   if (health === 'error')
-    return <span className="shrink-0 rounded-full bg-[#fcf3f2] px-2 py-0.5 text-[11px] font-semibold text-[#c0392b]">Error</span>
+    return <span className="shrink-0 rounded-full bg-[#c0392b] px-2 py-0.5 text-[11px] font-semibold text-white">Error</span>
   if (health === 'warning')
     return <span className="shrink-0 rounded-full bg-[#ededed] px-2 py-0.5 text-[11px] font-semibold text-[#6b6b73]">Warning</span>
   return <span className="shrink-0 rounded-full bg-[#ededed] px-2 py-0.5 text-[11px] font-semibold text-[#6b6b73]">Healthy</span>
