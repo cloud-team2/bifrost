@@ -1785,6 +1785,20 @@ export function AgentRunPanel({
             commands={slashState.commands}
             loading={slashState.loading}
             error={slashState.error}
+            loadOptions={(param) => {
+              if (!wsId) return null
+              if (param === 'pipeline_id') {
+                return api
+                  .listPipelines(wsId)
+                  .then((items) => items.map((p) => ({ value: p.id, label: p.name || p.id })))
+              }
+              if (param === 'connector_name') {
+                return api
+                  .clusterConnect()
+                  .then((c) => c.connectors.map((row) => ({ value: row.name, label: row.name })))
+              }
+              return null
+            }}
             onRunTool={(command, args) => {
               setInput('')
               void runSlashCommand(command, args)

@@ -1,7 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Icon, type IconName } from './Icon'
 import { cn } from '../lib/format'
 import type { SlashToolCommand } from '../lib/slashCommands'
+
+export interface CommandParamOption {
+  value: string
+  label: string
+}
 
 /**
  * 그룹형 명령 팔레트(#599 후속) — 평면 슬래시 목록을 도메인 그룹 → 기능 목록 → 바로 실행
@@ -43,6 +48,9 @@ interface CommandPaletteProps {
   onRunTool: (command: SlashToolCommand, args: string[]) => void
   onCreatePipeline: () => void
   onClose: () => void
+  // 파라미터(예: connector_name, pipeline_id) 드롭다운 옵션을 채운다.
+  // null이면 자유 텍스트 입력으로 떨어진다.
+  loadOptions?: (param: string) => Promise<CommandParamOption[]> | null
 }
 
 type View =
@@ -57,6 +65,7 @@ export function CommandPalette({
   onRunTool,
   onCreatePipeline,
   onClose,
+  loadOptions,
 }: CommandPaletteProps) {
   const [view, setView] = useState<View>({ kind: 'groups' })
 
@@ -93,6 +102,7 @@ export function CommandPalette({
       ) : (
         <ParamStep
           command={view.command}
+          loadOptions={loadOptions}
           onRun={(args) => {
             onRunTool(view.command, args)
             onClose()
@@ -232,35 +242,79 @@ function FuncRow({
   )
 }
 
+type OptionState = CommandParamOption[] | null | 'loading'
+
 function ParamStep({
   command,
+  loadOptions,
   onRun,
 }: {
   command: SlashToolCommand
+  loadOptions?: (param: string) => Promise<CommandParamOption[]> | null
   onRun: (args: string[]) => void
 }) {
   const [values, setValues] = useState<string[]>(() => command.argParams.map(() => ''))
+  const [options, setOptions] = useState<Record<string, OptionState>>({})
   const ready = command.argParams.every((_, i) => values[i]?.trim())
+  const setValue = (i: number, v: string) =>
+    setValues((prev) => prev.map((cur, idx) => (idx === i ? v : cur)))
+
+  useEffect(() => {
+    let cancelled = false
+    command.argParams.forEach((param) => {
+      const pending = loadOptions?.(param)
+      if (!pending) {
+        setOptions((o) => ({ ...o, [param]: null }))
+        return
+      }
+      setOptions((o) => ({ ...o, [param]: 'loading' }))
+      pending
+        .then((opts) => {
+          if (!cancelled) setOptions((o) => ({ ...o, [param]: opts.length ? opts : null }))
+        })
+        .catch(() => {
+          if (!cancelled) setOptions((o) => ({ ...o, [param]: null }))
+        })
+    })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [command])
 
   return (
     <div className="space-y-2 p-3">
-      {command.argParams.map((param, i) => (
-        <div key={param}>
-          <label className="mb-1 block text-[11px] text-gray-500">{paramLabel(param)}</label>
-          <input
-            autoFocus={i === 0}
-            value={values[i]}
-            onChange={(e) =>
-              setValues((prev) => prev.map((v, idx) => (idx === i ? e.target.value : v)))
-            }
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && ready) onRun(values.map((v) => v.trim()))
-            }}
-            placeholder={paramLabel(param)}
-            className="h-9 w-full rounded-lg border border-gray-200 bg-white px-3 text-[13px] text-gray-800 outline-none focus:border-gray-400"
-          />
-        </div>
-      ))}
+      {command.argParams.map((param, i) => {
+        const state = options[param]
+        return (
+          <div key={param}>
+            <label className="mb-1 block text-[11px] text-gray-500">{paramLabel(param)}</label>
+            {state === 'loading' ? (
+              <div className="flex h-9 items-center rounded-lg border border-gray-200 bg-gray-50 px-3 text-[13px] text-gray-400">
+                불러오는 중…
+              </div>
+            ) : Array.isArray(state) ? (
+              <CustomSelect
+                options={state}
+                value={values[i]}
+                placeholder={`${paramLabel(param)} 선택`}
+                onChange={(v) => setValue(i, v)}
+              />
+            ) : (
+              <input
+                autoFocus={i === 0}
+                value={values[i]}
+                onChange={(e) => setValue(i, e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && ready) onRun(values.map((v) => v.trim()))
+                }}
+                placeholder={paramLabel(param)}
+                className="h-9 w-full rounded-lg border border-gray-200 bg-white px-3 text-[13px] text-gray-800 outline-none focus:border-gray-400"
+              />
+            )}
+          </div>
+        )
+      })}
       <button
         type="button"
         disabled={!ready}
@@ -272,6 +326,76 @@ function ParamStep({
       >
         바로 실행
       </button>
+    </div>
+  )
+}
+
+/** 테마 맞춤 커스텀 드롭다운 — 네이티브 select 팝업(파란 하이라이트)을 피하려 div 기반. */
+function CustomSelect({
+  options,
+  value,
+  placeholder,
+  onChange,
+}: {
+  options: CommandParamOption[]
+  value: string
+  placeholder: string
+  onChange: (value: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const selected = options.find((o) => o.value === value)
+
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [open])
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className={cn(
+          'flex h-9 w-full items-center justify-between gap-2 rounded-lg border bg-white px-3 text-[13px] outline-none',
+          open ? 'border-gray-400' : 'border-gray-200 hover:border-gray-300',
+        )}
+      >
+        <span className={cn('truncate', selected ? 'text-gray-800' : 'text-gray-400')}>
+          {selected ? selected.label : placeholder}
+        </span>
+        <Icon name="chevron-down" size={14} className="shrink-0 text-gray-400" />
+      </button>
+      {open && (
+        <div className="absolute left-0 right-0 top-10 z-30 max-h-44 overflow-y-auto rounded-lg border border-gray-200 bg-white p-1 shadow-lg">
+          {options.map((o) => {
+            const sel = o.value === value
+            return (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => {
+                  onChange(o.value)
+                  setOpen(false)
+                }}
+                className={cn(
+                  'flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-[13px] hover:bg-gray-50',
+                  sel ? 'font-semibold text-gray-900' : 'text-gray-700',
+                )}
+              >
+                <span className="flex w-3.5 shrink-0 justify-center text-gray-900">
+                  {sel && <Icon name="check" size={13} strokeWidth={3} />}
+                </span>
+                <span className="truncate">{o.label}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
