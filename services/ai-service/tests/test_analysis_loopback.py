@@ -162,7 +162,7 @@ def test_normal_decision_proceeds_to_verifier() -> None:
 
     sup.record_policy_guard_result("r", revise_action=False)
 
-    assert sup.advance("r") == "verifier"  # 정적 테이블대로 진행, loopback 없음.
+    assert sup.advance("r") == "approval_gate"  # 정적 테이블대로 진행, loopback 없음.
     assert store.get("r").run.guards.revise_action_loops == 0
 
 
