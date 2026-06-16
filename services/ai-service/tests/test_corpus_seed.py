@@ -75,6 +75,31 @@ def test_incident_reports_reference_valid_root_causes():
 
 
 @pytest.mark.asyncio
+async def test_seed_all_includes_builtin_runbook():
+    # The manifest has no runbook doc_type; runbook only comes from the built-in
+    # index_default_corpus(). The deploy Job runs --with-builtin (seed_all) so the
+    # runbook doc_type is populated and acceptance (runbook >= 1) holds.
+    store = FakeVectorStore()
+    summary = await corpus_seed.seed_all(
+        store=store,
+        embedder=HashingEmbedder(dimensions=32),
+    )
+
+    assert summary["failed"] == 0
+    seeded_doc_types = {doc_type for _, doc_type in store.records}
+    assert "runbook" in seeded_doc_types
+    assert {"glossary", "catalog", "ops_doc", "incident_report"} <= seeded_doc_types
+    assert summary["chunks"] == len(store.chunks)
+
+    # seed_all must add built-in chunks on top of the manifest-only corpus.
+    corpus_only = await corpus_seed.seed_corpus(
+        store=FakeVectorStore(),
+        embedder=HashingEmbedder(dimensions=32),
+    )
+    assert summary["chunks"] > corpus_only["chunks"]
+
+
+@pytest.mark.asyncio
 async def test_dry_run_matches_real_count():
     dry_run = await corpus_seed.seed_corpus(dry_run=True)
     real = await corpus_seed.seed_corpus(
