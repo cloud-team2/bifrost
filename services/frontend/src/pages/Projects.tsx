@@ -20,12 +20,6 @@ export function ProjectListView() {
         <BrandMark size={28} />
         <span className="text-[17px] font-bold lowercase tracking-tight text-gray-900">bifrost</span>
         <div className="flex-1" />
-        <div
-          title={app.currentUser?.name}
-          className="flex h-7 w-7 items-center justify-center rounded-full bg-[#0d0d0d] text-[12px] font-semibold text-white"
-        >
-          {(app.currentUser?.name ?? '?').trim().charAt(0).toUpperCase()}
-        </div>
         <button
           onClick={app.logout}
           className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] text-gray-500 hover:bg-gray-100"
