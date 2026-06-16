@@ -1502,6 +1502,15 @@ async def _persist_report_snapshot(
             for item in (retrieval_out.evidence_items if retrieval_out else [])
         ],
     }
+    if rca_out is not None and rca_out.root_cause_candidates:
+        body["root_cause"] = {
+            "root_cause_id": root_cause_id,
+            "confidence": confidence,
+        }
+        body["root_cause_candidates"] = [
+            candidate.model_dump(mode="json")
+            for candidate in rca_out.root_cause_candidates
+        ]
     if remediation_out is not None:
         body["action_candidates"] = [
             candidate.model_dump(mode="json")
