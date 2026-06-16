@@ -36,8 +36,8 @@ const SEV_BORDER: Record<string, string> = {
 }
 const LEVEL_BADGE: Record<LogLevel, string> = {
   error: 'bg-[#c0392b] text-white', // 오류 솔리드 통일(#770)
-  warning: 'bg-[#ededed] text-[#6b6b73]',
-  info: 'bg-[#ededed] text-[#6b6b73]',
+  warning: 'bg-[#d97316] text-white', // 경고 주황
+  info: 'bg-[#3a47c2] text-white', // 정보 인디고
 }
 const LEVEL_LEFT: Record<LogLevel, string> = {
   error: 'border-l-[#c0392b]',
@@ -832,7 +832,9 @@ export function EventDetailPanel({
             </DetailMetric>
             <DetailMetric label="Level">
               {event.level ? (
-                <StatusBadge status={event.level} />
+                <span className={cn('inline-block rounded px-1.5 py-0.5 text-[10px] font-bold uppercase', LEVEL_BADGE[event.level])}>
+                  {event.level}
+                </span>
               ) : (
                 <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-gray-500">
                   event
@@ -1131,9 +1133,9 @@ function IncidentPanel({
                         event.level === 'error'
                           ? 'bg-[#c0392b]'
                           : event.level === 'warning'
-                            ? 'bg-[#c8c8c8]'
+                            ? 'bg-[#d97316]'
                             : event.level === 'info'
-                              ? 'bg-[#c8c8c8]'
+                              ? 'bg-[#3a47c2]'
                               : 'bg-gray-300',
                       )}
                     />
