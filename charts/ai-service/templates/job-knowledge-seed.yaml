@@ -1,0 +1,49 @@
+{{- if .Values.knowledgeSeed.enabled }}
+# RAG 코퍼스 시딩 Job (#776). knowledge_chunk를 채워 RAG가 라이브에서 실제 동작하게 한다.
+# Helm post-install,post-upgrade hook = ArgoCD PostSync: Deployment(migrate initContainer로
+# alembic upgrade 완료)가 Healthy해진 뒤 실행되므로 테이블 존재가 보장된다.
+# corpus_seed.py는 임베딩 키가 없으면 종료 코드 1로 실패 → Job 실패로 가시화(해시 폴백 silent 시딩 방지).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Chart.Name }}-knowledge-seed
+  labels:
+    app: {{ .Chart.Name }}
+    component: knowledge-seed
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: {{ .Values.knowledgeSeed.backoffLimit | default 3 }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Chart.Name }}
+        component: knowledge-seed
+    spec:
+      restartPolicy: Never
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: knowledge-seed
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # cwd=/app, corpus_seed.py가 /app/scripts/. --with-builtin = corpus + built-in glossary·runbook.
+          command: ["python", "scripts/corpus_seed.py", "--with-builtin"]
+          env:
+            {{- range $key, $value := .Values.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            - name: AI_LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-llm-secret
+                  key: api-key
+                  optional: true
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+{{- end }}
