@@ -69,6 +69,9 @@ def _tool_summary(definition: ToolDefinition) -> dict[str, Any]:
         "method": definition.method,
         "path_template": definition.path_template,
         "params_schema": _params_schema(definition.params_model),
+        # 그룹형 명령 팔레트(한국어) 메타 — group이 비면 팔레트 미노출(#599 후속).
+        "group": definition.group,
+        "label_ko": definition.label_ko,
     }
 
 

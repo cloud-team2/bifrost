@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { Icon, type IconName } from '../../components/Icon'
 import { Markdown } from '../../components/Markdown'
 import { Spinner } from '../../components/ui'
+import { CommandPalette } from '../../components/CommandPalette'
 import { useToast } from '../../components/Toast'
 import { useApp, type AgentTask } from '../../store/AppStore'
 import {
@@ -295,6 +296,8 @@ export function AgentRunPanel({
   }>({ loading: false, commands: [], error: null })
   const [slashActiveIndex, setSlashActiveIndex] = useState(0)
   const [slashMenuDismissed, setSlashMenuDismissed] = useState(false)
+  // 그룹형 명령 팔레트(#599 후속) — 평면 슬래시 대신 그룹 → 기능 선택.
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const [roleState, setRoleState] = useState<{
     loading: boolean
     role: WorkspaceMemberRole | null
@@ -480,6 +483,8 @@ export function AgentRunPanel({
             path: tool.path_template,
             risk: tool.risk,
             params_schema: tool.params_schema,
+            group: tool.group,
+            labelKo: tool.label_ko,
           })), STRUCTURED_TOOL_INTRO),
           error: null,
         })
@@ -1774,11 +1779,46 @@ export function AgentRunPanel({
           </div>
         </div>
       )}
+      {slashCommands && paletteOpen && !running && (
+        <div className="border-t border-gray-100 px-3 pt-2">
+          <CommandPalette
+            commands={slashState.commands}
+            loading={slashState.loading}
+            error={slashState.error}
+            onRunTool={(command, args) => {
+              setInput('')
+              void runSlashCommand(command, args)
+            }}
+            onCreatePipeline={() => {
+              setInput('')
+              void startPipelineWizard('파이프라인 생성')
+            }}
+            onClose={() => setPaletteOpen(false)}
+          />
+        </div>
+      )}
       <div className="flex items-center gap-2 px-3 py-2.5">
+        {slashCommands && (
+          <button
+            type="button"
+            onClick={() => setPaletteOpen((open) => !open)}
+            disabled={running}
+            aria-label="명령 팔레트 열기"
+            className="flex h-9 shrink-0 items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 text-[12px] text-gray-600 hover:bg-gray-50 disabled:opacity-60"
+          >
+            <Icon name="grid" size={14} />
+            명령
+          </button>
+        )}
         <input
           ref={inputRef}
           value={input}
           onChange={(e) => {
+            if (slashCommands && e.target.value === '/') {
+              setPaletteOpen(true)
+              setInput('')
+              return
+            }
             setInput(e.target.value)
             setSlashMenuDismissed(false)
           }}

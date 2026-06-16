@@ -643,6 +643,9 @@ export interface AgentToolCatalogItem {
   risk: string
   method: string
   path_template: string
+  // 그룹형 명령 팔레트 메타(백엔드 _tool_summary). group이 비면 팔레트 미노출.
+  group?: string
+  label_ko?: string
 }
 export interface AgentToolDetail extends AgentToolCatalogItem {
   params_schema: {
