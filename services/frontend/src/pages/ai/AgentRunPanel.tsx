@@ -2226,7 +2226,7 @@ function DatabaseChoiceButton({
         </span>
       )}
       {blockOnKnownStatus && blocked && (
-        <span className="shrink-0 rounded bg-[#fcf3f2] px-1.5 py-0.5 text-[10.5px] font-semibold text-[#c0392b]">
+        <span className="shrink-0 rounded bg-[#c0392b] px-1.5 py-0.5 text-[10.5px] font-semibold text-white">
           선택 불가
         </span>
       )}
@@ -2394,7 +2394,7 @@ function databaseReadinessStatus(db: DatabaseResponse, kind: 'source' | 'sink'):
 function readinessChipClass(status: CdcReadinessResponse['overallStatus']) {
   if (status === 'OK') return 'bg-[#ededed] text-[#6b6b73]'
   if (status === 'WARNING') return 'bg-[#ededed] text-[#6b6b73]'
-  return 'bg-[#fcf3f2] text-[#c0392b]'
+  return 'bg-[#c0392b] text-white'
 }
 
 function StatusCard({ msg, theme }: { msg: StatusMsg; theme: (typeof THEMES)[ThemeName] }) {
@@ -3346,7 +3346,7 @@ function genericBadgeClass(label: string, value: unknown) {
   const normalized = formatGenericScalar(value).toLowerCase()
   if (typeof value === 'boolean') return value ? 'bg-[#ededed] text-[#6b6b73]' : 'bg-gray-100 text-gray-600'
   if (['critical', 'error', 'failed', 'failure', 'blocked', 'down', 'high'].some((token) => normalized.includes(token))) {
-    return 'bg-[#fcf3f2] text-[#c0392b]'
+    return 'bg-[#c0392b] text-white'
   }
   if (['warning', 'warn', 'degraded', 'pending', 'rebalancing', 'medium'].some((token) => normalized.includes(token))) {
     return 'bg-[#ededed] text-[#6b6b73]'
@@ -3415,7 +3415,7 @@ function riskChipClass(risk: string) {
   const normalized = risk.toLowerCase()
   if (normalized === 'read_only' || normalized === 'low') return 'bg-[#ededed] text-[#6b6b73]'
   if (normalized === 'medium') return 'bg-[#ededed] text-[#6b6b73]'
-  if (normalized === 'high' || normalized === 'forbidden') return 'bg-[#fcf3f2] text-[#c0392b]'
+  if (normalized === 'high' || normalized === 'forbidden') return 'bg-[#c0392b] text-white'
   return 'bg-gray-100 text-gray-600'
 }
 

@@ -656,7 +656,7 @@ function readinessTone(status: CdcReadinessResponse['overallStatus']) {
   }
   return {
     box: 'border-[#c0392b] bg-[#fcf3f2]',
-    badge: 'bg-[#fcf3f2]',
+    badge: 'bg-[#c0392b] text-white',
     dot: 'bg-[#c0392b]',
     icon: 'text-[#c0392b]',
     title: 'text-[#c0392b]',

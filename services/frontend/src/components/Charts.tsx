@@ -30,15 +30,15 @@ export function ResponsiveChart({
   return <ResponsiveContainer initialDimension={initialDimension ?? { width: 300, height: 200 }} {...rest} />
 }
 
-/* chart series colors (#762). 1차 시리즈=데이터 색(잉크블루), 보조 시리즈=그레이 스케일,
-   오류 시리즈만 빨강. 파랑=데이터·빨강=문제로 의미 분리. */
+/* chart series colors (#770). 데이터 시각화는 시리즈마다 또렷한 데이터 색(절제된 톤),
+   오류 시리즈만 빨강, 축은 중립. 셸·상태 텍스트는 색을 쓰지 않는다. */
 export const CHART_COLORS = {
-  brand: '#3a47c2',
-  emerald: '#8a8a8a',
-  amber: '#b0b0b0',
-  red: '#c0392b',
-  violet: '#c8c8c8',
-  slate: '#9a9a9a',
+  brand: '#3a47c2', // 1차 / Consume / records — 잉크블루
+  emerald: '#0e9488', // 틸 — INSERT / Produce
+  amber: '#c98a1a', // 앰버 — UPDATE
+  red: '#c0392b', // 오류 / DELETE / 편향
+  violet: '#7c5cd6', // 바이올렛 — source 지연 등
+  slate: '#9a9a9a', // 축 (중립)
 }
 
 export interface SeriesDef {

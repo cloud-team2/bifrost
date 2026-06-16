@@ -91,7 +91,7 @@ export function Badge({
     green: 'bg-[#ededed] text-[#6b6b73]',
     amber: 'bg-[#ededed] text-[#6b6b73]',
     blue: 'bg-[#ededed] text-[#6b6b73]',
-    rose: 'bg-[#fcf3f2] text-[#c0392b]',
+    rose: 'bg-[#c0392b] text-white',
     purple: 'bg-[#ededed] text-[#6b6b73]',
   }
   return (

@@ -427,7 +427,7 @@ function TableReadinessBadge({ status }: { status: CdcStatus | null }) {
     return <span className="rounded bg-[#ededed] px-1.5 py-0.5 text-[10px] font-semibold text-[#6b6b73]">WARNING</span>
   }
   if (status === 'BLOCKED') {
-    return <span className="rounded bg-[#fcf3f2] px-1.5 py-0.5 text-[10px] font-semibold text-[#c0392b]">BLOCKED</span>
+    return <span className="rounded bg-[#c0392b] px-1.5 py-0.5 text-[10px] font-semibold text-white">BLOCKED</span>
   }
   return <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">미점검</span>
 }
@@ -473,7 +473,7 @@ function DbPicker({
                 <div className="truncate font-mono text-[11px] text-gray-400">{d.host}</div>
               </div>
               {blocked && (
-                <span className="rounded bg-[#fcf3f2] px-1.5 py-0.5 text-[10px] font-semibold text-[#c0392b]">
+                <span className="rounded bg-[#c0392b] px-1.5 py-0.5 text-[10px] font-semibold text-white">
                   CDC 차단
                 </span>
               )}

@@ -35,7 +35,7 @@ const SEV_BORDER: Record<string, string> = {
   INFO: 'border-l-[#d9d9d9]',
 }
 const LEVEL_BADGE: Record<LogLevel, string> = {
-  error: 'bg-[#fcf3f2] text-[#c0392b]',
+  error: 'bg-[#c0392b] text-white', // 오류 솔리드 통일(#770)
   warning: 'bg-[#ededed] text-[#6b6b73]',
   info: 'bg-[#ededed] text-[#6b6b73]',
 }
