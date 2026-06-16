@@ -26,7 +26,7 @@ export function ConsoleShell({ viewLabel, children }: { viewLabel: string; child
           <div
             className={cn(
               'flex shrink-0 overflow-hidden border-l border-gray-200 transition-[width] duration-200 ease-in-out',
-              app.aiPanelOpen ? 'w-[388px]' : 'w-7',
+              app.aiPanelOpen ? 'w-[568px]' : 'w-7',
             )}
           >
             {/* Toggle tab — always visible */}
@@ -47,8 +47,8 @@ export function ConsoleShell({ viewLabel, children }: { viewLabel: string; child
               />
             </button>
 
-            {/* Panel body — 360px, clipped when closed */}
-            <div className="flex w-[360px] shrink-0 flex-col border-l border-gray-100 bg-white">
+            {/* Panel body — 540px(기존 360의 1.5배), clipped when closed */}
+            <div className="flex w-[540px] shrink-0 flex-col border-l border-gray-100 bg-white">
               <BifrostAgent viewLabel={viewLabel} />
             </div>
           </div>
