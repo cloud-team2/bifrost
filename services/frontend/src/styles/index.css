@@ -23,10 +23,11 @@
 
   /* 의미 토큰 — 후속 다크 모드 대비 (값은 라이트 기준) */
   --color-surface: #ffffff;
-  --color-border: #ececec;
+  --color-border: #e4e4e7;
   --color-muted: #6b6b73;
   --color-status-error: #c0392b;
   --color-neutral-fill: #ededed;
+  --color-data: #3a47c2; /* 데이터 시각화 단일 색 (#762) — 파랑=데이터, 빨강=오류 */
 
   /* accent tints used as badge / card backgrounds — chroma nudged down ~18%
      (lightness & hue kept) so the colored fills read a touch less neon */
@@ -61,7 +62,7 @@
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     color: #0d0d0d;
-    background: #fafafa;
+    background: #f5f5f6;
   }
   * {
     box-sizing: border-box;
@@ -79,6 +80,13 @@
 }
 .scroll-thin::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* 카드/패널 깊이 — 평면 흰 벌판 해소(#762). 레이아웃 불변, 그림자만. */
+.shadow-card {
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.08),
+    0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
 @keyframes bifrost-spin {

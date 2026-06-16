@@ -121,7 +121,7 @@ export function StatusPill({ status }: { status: string }) {
 
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
   return (
-    <div className={cn('rounded-xl border border-gray-200 bg-white', className)}>{children}</div>
+    <div className={cn('rounded-xl border border-gray-200 bg-white shadow-card', className)}>{children}</div>
   )
 }
 
@@ -224,7 +224,7 @@ export function LoadingTile({ label, sub }: { label: string; sub?: string }) {
 export function ProgressBar({ value }: { value: number }) {
   return (
     <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-200">
-      <div className="h-full rounded-full bg-[#0d0d0d]" style={{ width: `${value}%` }} />
+      <div className="h-full rounded-full bg-[#3a47c2]" style={{ width: `${value}%` }} />
     </div>
   )
 }
@@ -235,7 +235,7 @@ export function Spark({
   data,
   width = 120,
   height = 30,
-  color = '#0d0d0d',
+  color = '#3a47c2',
 }: {
   data: number[]
   width?: number
