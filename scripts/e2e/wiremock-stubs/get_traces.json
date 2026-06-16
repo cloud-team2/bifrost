@@ -10,7 +10,7 @@
       "request_id": "req_e2e_005",
       "operation": "query_traces",
       "result": {
-        "connector": "default-connector",
+        "connector": "orders-source",
         "traces": [
           {
             "taskId": 0,
