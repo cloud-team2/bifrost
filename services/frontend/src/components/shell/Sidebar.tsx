@@ -15,9 +15,9 @@ interface NavItem {
 }
 
 /**
- * 좌측 메뉴(#784): 기본 접힘(아이콘만). 좌상단 토글 버튼으로 수동으로 펼치고/접는다
- * (오버레이 — 본문은 밀리지 않음). 토글은 펼침·접힘 모두 같은 위치(56px 레일 좌상단).
- * 폭은 56px 스페이서로 항상 예약.
+ * 좌측 메뉴(#784): 기본 접힘(아이콘만). 좌상단 토글 버튼으로 수동으로 펼치고/접는다.
+ * 펼치면 스페이서 폭(56→208px)이 함께 늘어 우측 본문이 그만큼 밀리고, 접으면 복귀한다.
+ * 토글은 펼침·접힘 모두 같은 위치(레일 좌상단 56×56).
  */
 export function Sidebar({ onCreateProject }: { onCreateProject: () => void }) {
   const app = useApp()
@@ -38,11 +38,11 @@ export function Sidebar({ onCreateProject }: { onCreateProject: () => void }) {
     (v === 'databases' && view === 'database-detail')
 
   return (
-    <div className="relative w-14 shrink-0">
+    <div className={cn('relative shrink-0 transition-[width] duration-200', expanded ? 'w-52' : 'w-14')}>
       <aside
         className={cn(
           'absolute left-0 top-0 z-40 flex h-full flex-col border-r border-[#ececec] bg-rail text-[#6b6b73] transition-[width] duration-200',
-          expanded ? 'w-52 shadow-xl' : 'w-14',
+          expanded ? 'w-52' : 'w-14',
         )}
       >
         {/* 토글(펼침·접힘 동일 위치) + 브랜드 */}
