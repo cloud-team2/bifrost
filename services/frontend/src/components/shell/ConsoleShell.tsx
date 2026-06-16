@@ -11,15 +11,10 @@ import { cn } from '../../lib/format'
 export function ConsoleShell({ viewLabel, children }: { viewLabel: string; children: ReactNode }) {
   const app = useApp()
   const [projModal, setProjModal] = useState(false)
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(true) // 기본 접힘(#780)
 
   return (
     <div className="flex h-screen overflow-hidden">
-      <Sidebar
-        onCreateProject={() => setProjModal(true)}
-        collapsed={sidebarCollapsed}
-        onToggle={() => setSidebarCollapsed((c) => !c)}
-      />
+      <Sidebar onCreateProject={() => setProjModal(true)} />
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <Header viewLabel={viewLabel} />
