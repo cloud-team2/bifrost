@@ -3,24 +3,26 @@ import { Icon, type IconName } from './Icon'
 import { cn } from '../lib/format'
 
 /* status → 색 (#780): 솔리드 배경 + 흰 글자.
- * 정상=초록 · 경고/지연=주황 · 대기/일시정지/info=회색 · 오류=빨강. */
+ * 정상=초록 · 경고/지연=주황 · 일시정지=슬레이트 · 대기/info=회색 · 오류=빨강. */
 const GREEN = '#157f4a'
 const ORANGE = '#d97316'
 const GRAY = '#6b6b73'
 const RED = '#c0392b'
+const SLATE = '#475569' // 일시정지(PAUSED)
 const TONE: Record<string, string> = {
   healthy: GREEN, active: GREEN, RUNNING: GREEN, STABLE: GREEN, CONNECTED: GREEN,
   resolved: GREEN, RESOLVED: GREEN, ACTIVE: GREEN,
   warning: ORANGE, lag: ORANGE, WARN: ORANGE, WARNING: ORANGE, REBALANCING: ORANGE,
   PARTIALLY_FAILED: ORANGE, investigating: ORANGE, INVESTIGATING: ORANGE,
-  paused: GRAY, PAUSED: GRAY, EMPTY: GRAY, inactive: GRAY, INACTIVE: GRAY, info: GRAY,
+  paused: SLATE, PAUSED: SLATE,
+  EMPTY: GRAY, inactive: GRAY, INACTIVE: GRAY, info: GRAY,
   creating: GRAY, UNASSIGNED: GRAY,
-  error: RED, ERROR: RED, DEAD: RED, FAILED: RED, critical: RED, CRITICAL: RED,
-  open: RED, OPEN: RED, revoked: RED, REVOKED: RED,
+  error: RED, ERROR: RED, DEAD: RED, FAILED: RED, STOPPED: RED, DOWN: RED,
+  critical: RED, CRITICAL: RED, open: RED, OPEN: RED, revoked: RED, REVOKED: RED,
 }
 
 export function statusTone(status: string): string {
-  return TONE[status] ?? GRAY
+  return TONE[status] ?? TONE[String(status).toUpperCase()] ?? GRAY
 }
 
 export function StatusBadge({ status, label }: { status: string; label?: string }) {
