@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../../components/Icon'
-import { MetricCard, PageHead, Panel, StatusBadge } from '../../components/blocks'
+import { MetricCard, PageHead, Panel, StatusBadge, statusTone } from '../../components/blocks'
 import { TrendChart, CHART_COLORS, ChartLegend } from '../../components/Charts'
 import { cn } from '../../lib/format'
 import {
@@ -320,8 +320,8 @@ function KafkaConnectTab() {
                     <div className="font-mono text-[10.5px] text-gray-400">{w.host ?? '—'}</div>
                   </td>
                   <td className="px-4 py-3">
-                    <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase',
-                      w.state === 'Running' ? 'bg-[#ededed] text-[#6b6b73]' : 'bg-[#ededed] text-[#6b6b73]')}>
+                    <span className="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase text-white"
+                      style={{ background: statusTone(w.state) }}>
                       {w.state}
                     </span>
                   </td>
@@ -366,13 +366,11 @@ function KafkaConnectTab() {
               <tr key={c.name} className="border-b border-gray-50">
                 <td className="px-4 py-2.5 font-mono font-medium text-gray-800">{c.name}</td>
                 <td className="px-4 py-2.5">
-                  <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
-                    c.kind === 'SOURCE' ? 'bg-[#ededed] text-[#6b6b73]' : 'bg-[#ededed] text-[#6b6b73]')}>{c.kind}</span>
+                  <span className="rounded bg-[#0d0d0d] px-1.5 py-0.5 text-[10px] font-semibold uppercase text-white">{c.kind}</span>
                 </td>
                 <td className="px-4 py-2.5">
-                  <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase',
-                    c.status === 'RUNNING' ? 'bg-[#ededed] text-[#6b6b73]'
-                      : c.status === 'PAUSED' ? 'bg-gray-100 text-gray-600' : 'bg-[#c0392b] text-white')}>{c.status}</span>
+                  <span className="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase text-white"
+                    style={{ background: statusTone(c.status) }}>{c.status}</span>
                 </td>
                 <td className="px-4 py-2.5 text-gray-500 text-[11.5px]">{c.pipeline}</td>
                 <td className="px-4 py-2.5 text-gray-600">{c.tasks}</td>
@@ -399,8 +397,7 @@ function KafkaConnectTab() {
               <tr key={p.className} className="border-b border-gray-50">
                 <td className="px-4 py-2.5 font-mono text-[11px] text-gray-700">{p.className}</td>
                 <td className="px-4 py-2.5">
-                  <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
-                    p.type === 'source' ? 'bg-[#ededed] text-[#6b6b73]' : 'bg-[#ededed] text-[#6b6b73]')}>{p.type}</span>
+                  <span className="rounded bg-[#0d0d0d] px-1.5 py-0.5 text-[10px] font-semibold uppercase text-white">{p.type}</span>
                 </td>
                 <td className="px-4 py-2.5 font-mono text-[11.5px] text-gray-500">{p.version}</td>
               </tr>

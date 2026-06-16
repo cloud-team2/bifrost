@@ -171,10 +171,7 @@ function DatabaseDetailContent({ node }: { node: Node }) {
                         )}>
                           {isEda ? 'EDA' : 'CDC'}
                         </span>
-                        <span className={cn(
-                          'shrink-0 rounded px-1.5 py-0.5 text-[9.5px] font-bold uppercase',
-                          isSource ? 'bg-[#ededed] text-[#6b6b73]' : 'bg-[#ededed] text-[#6b6b73]',
-                        )}>
+                        <span className="shrink-0 rounded bg-[#0d0d0d] px-1.5 py-0.5 text-[9.5px] font-bold uppercase text-white">
                           {isSource ? 'source' : 'sink'}
                         </span>
                         <StatusBadge status={e.status} />
@@ -208,12 +205,7 @@ function DatabaseDetailContent({ node }: { node: Node }) {
                 >
                   <Icon name="route" size={15} className="text-gray-400" />
                   <span className="text-[13px] font-medium text-gray-800">{pipelineLabel(e)}</span>
-                  <span
-                    className={cn(
-                      'rounded px-1.5 py-0.5 text-[9.5px] font-bold uppercase',
-                      e.source === node.id ? 'bg-[#ededed] text-[#6b6b73]' : 'bg-[#ededed] text-[#6b6b73]',
-                    )}
-                  >
+                  <span className="rounded bg-[#0d0d0d] px-1.5 py-0.5 text-[9.5px] font-bold uppercase text-white">
                     {e.source === node.id ? 'source' : 'sink'}
                   </span>
                   <div className="flex-1" />
