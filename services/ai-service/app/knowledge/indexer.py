@@ -178,16 +178,20 @@ async def index_document(
 
 def _runbook_documents() -> list[SourceDocument]:
     documents: list[SourceDocument] = []
-    for runbook in getattr(runbook_catalog, "_RUNBOOKS", []):
+    for runbook in runbook_catalog.ROOT_CAUSE_RUNBOOKS:
+        tags = ["runbook", runbook.root_cause_id]
         action_lines = []
-        tags = ["runbook", runbook.incident_type]
         for action in runbook.actions:
+            if action.tool_name:
+                tags.append(action.tool_name)
             action_lines.append(
                 "\n".join(
                     part for part in [
-                        f"- tool: {action.tool_name}",
-                        f"  risk: {action.risk.value}",
-                        f"  action_type: {action.action_type.value}",
+                        f"- action: {action.action_name}",
+                        f"  action_type: {action.action_type}",
+                        f"  risk: {action.risk}",
+                        f"  policy: {action.policy}",
+                        f"  tool: {action.tool_name}" if action.tool_name else "",
                         f"  description: {action.description}",
                         f"  rollback: {action.rollback_plan}" if action.rollback_plan else "",
                         f"  estimated_duration: {action.estimated_duration}" if action.estimated_duration else "",
@@ -195,20 +199,25 @@ def _runbook_documents() -> list[SourceDocument]:
                     if part
                 )
             )
-            tags.append(action.tool_name)
 
-        action_body = "\n".join(action_lines)
-        content = (
-            f"incident_type={runbook.incident_type}\n"
-            "권장 조치 후보:\n"
-            f"{action_body}"
-        )
+        action_body = "\n".join(action_lines) or "(권장 조치 없음 — 에스컬레이션/근거 수집만)"
+        content_parts = [
+            f"root_cause_id={runbook.root_cause_id}",
+            f"disposition={runbook.disposition}",
+            f"allowed_action_types={', '.join(runbook.allowed_action_types)}",
+            f"basis: {runbook.basis}",
+            "권장 조치 후보:",
+            action_body,
+        ]
+        if runbook.forbidden_actions:
+            content_parts.append("금지 조치: " + ", ".join(runbook.forbidden_actions))
+
         documents.append(
             SourceDocument(
-                doc_id=f"runbook:{runbook.incident_type}",
+                doc_id=f"runbook:{runbook.root_cause_id}",
                 doc_type="runbook",
-                title=f"Runbook: {runbook.incident_type}",
-                content=content,
+                title=f"Runbook: {runbook.root_cause_id}",
+                content="\n".join(content_parts),
                 metadata={"tags": tags, "source": "app.catalogs.runbooks"},
             )
         )

@@ -32,6 +32,22 @@ class _Registry:
         return self.result
 
 
+class _VectorStore:
+    """Fake vector store whose readiness is driven by chunk count."""
+
+    def __init__(self, count: int = 0, *, delay: float = 0.0, error: Exception | None = None) -> None:
+        self._count = count
+        self.delay = delay
+        self.error = error
+
+    async def count(self) -> int:
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        if self.error is not None:
+            raise self.error
+        return self._count
+
+
 def _pool(execute_return: str = "SELECT 1"):
     conn = AsyncMock()
     conn.execute = AsyncMock(return_value=execute_return)
@@ -48,7 +64,7 @@ async def _ready_dependencies(monkeypatch, *, llm=None, vector=None, spring=True
     monkeypatch.setattr(db, "_pool", db_pool)
     monkeypatch.setattr(routes_health, "get_tool_registry", lambda: _Registry(spring))
     monkeypatch.setattr("app.llm.provider.get_llm_provider", lambda: llm or _Provider())
-    monkeypatch.setattr("app.knowledge.vector_store.get_vector_store", lambda: vector or _Provider())
+    monkeypatch.setattr("app.knowledge.vector_store.get_vector_store", lambda: vector or _VectorStore(1))
 
     response = await routes_health.ready()
     return response.data["dependencies"]
@@ -69,10 +85,28 @@ async def test_ready_llm_provider_unavailable_on_exception(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_ready_vector_store_ok(monkeypatch) -> None:
-    dependencies = await _ready_dependencies(monkeypatch, vector=_Provider(True))
+async def test_ready_vector_store_ok_when_corpus_populated(monkeypatch) -> None:
+    dependencies = await _ready_dependencies(monkeypatch, vector=_VectorStore(42))
 
     assert dependencies["vector_store"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_ready_vector_store_empty_when_unseeded(monkeypatch) -> None:
+    # Regression: a reachable but empty knowledge_chunk used to report "ok",
+    # hiding that RAG had no corpus. Now it must surface as "empty".
+    dependencies = await _ready_dependencies(monkeypatch, vector=_VectorStore(0))
+
+    assert dependencies["vector_store"] == "empty"
+
+
+@pytest.mark.asyncio
+async def test_ready_vector_store_unavailable_on_error(monkeypatch) -> None:
+    dependencies = await _ready_dependencies(
+        monkeypatch, vector=_VectorStore(error=RuntimeError("db down"))
+    )
+
+    assert dependencies["vector_store"] == "unavailable"
 
 
 @pytest.mark.asyncio
@@ -84,14 +118,14 @@ async def test_ready_db_pool_none_returns_unknown(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_ready_timeout_returns_unavailable(monkeypatch) -> None:
-    original_ping = routes_health._ping_with_timeout
+    original_status = routes_health._vector_store_status
 
-    async def fast_ping(coro, timeout: float = 2.0) -> str:
-        return await original_ping(coro, timeout=0.001)
+    async def fast_status(timeout: float = 2.0) -> tuple[str, int]:
+        return await original_status(timeout=0.001)
 
-    monkeypatch.setattr(routes_health, "_ping_with_timeout", fast_ping)
+    monkeypatch.setattr(routes_health, "_vector_store_status", fast_status)
 
-    dependencies = await _ready_dependencies(monkeypatch, vector=_Provider(delay=0.01))
+    dependencies = await _ready_dependencies(monkeypatch, vector=_VectorStore(1, delay=0.05))
 
     assert dependencies["vector_store"] == "unavailable"
 
