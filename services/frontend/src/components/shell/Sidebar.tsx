@@ -15,14 +15,14 @@ interface NavItem {
 }
 
 /**
- * 좌측 메뉴(#784): 기본 접힘(아이콘만). 마우스를 올리면 펼쳐지고(오버레이 — 본문은
- * 밀리지 않음), 마우스를 떼면 다시 접힌다. 폭은 56px 스페이서로 항상 예약.
+ * 좌측 메뉴(#784): 기본 접힘(아이콘만). 좌상단 토글 버튼으로 수동으로 펼치고/접는다
+ * (오버레이 — 본문은 밀리지 않음). 토글은 펼침·접힘 모두 같은 위치(56px 레일 좌상단).
+ * 폭은 56px 스페이서로 항상 예약.
  */
 export function Sidebar({ onCreateProject }: { onCreateProject: () => void }) {
   const app = useApp()
   const { currentUser, view, incidents } = app
-  const [hovered, setHovered] = useState(false)
-  const expanded = hovered
+  const [expanded, setExpanded] = useState(false)
   const openIncidents = incidents.filter((i) => i.status.toUpperCase() !== 'RESOLVED').length
 
   const nav: NavItem[] = [
@@ -40,18 +40,25 @@ export function Sidebar({ onCreateProject }: { onCreateProject: () => void }) {
   return (
     <div className="relative w-14 shrink-0">
       <aside
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
         className={cn(
           'absolute left-0 top-0 z-40 flex h-full flex-col border-r border-[#ececec] bg-rail text-[#6b6b73] transition-[width] duration-200',
           expanded ? 'w-52 shadow-xl' : 'w-14',
         )}
       >
-        {/* logo */}
-        <div className={cn('flex items-center pt-4 pb-3', expanded ? 'gap-2 px-4' : 'justify-center px-3')}>
-          <BrandMark size={expanded ? 28 : 24} />
+        {/* 토글(펼침·접힘 동일 위치) + 브랜드 */}
+        <div className="flex h-14 shrink-0 items-center">
+          <button
+            onClick={() => setExpanded((o) => !o)}
+            title={expanded ? '메뉴 접기' : '메뉴 펼치기'}
+            className="flex h-14 w-14 shrink-0 items-center justify-center text-[#6b6b73] transition-colors hover:text-[#0d0d0d]"
+          >
+            <Icon name="panel" size={18} />
+          </button>
           {expanded && (
-            <span className="text-[17px] font-bold lowercase tracking-tight text-[#0d0d0d]">bifrost</span>
+            <div className="flex items-center gap-2">
+              <BrandMark size={24} />
+              <span className="text-[17px] font-bold lowercase tracking-tight text-[#0d0d0d]">bifrost</span>
+            </div>
           )}
         </div>
 
