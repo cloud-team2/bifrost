@@ -35,6 +35,23 @@ def _retrieval_with_summary(summary: str, evidence_id: str = "ev1") -> Retrieval
     )
 
 
+def _retrieval_with_item(
+    summary: str,
+    evidence_type: EvidenceType,
+    evidence_id: str = "ev1",
+) -> RetrievalOutput:
+    return RetrievalOutput(
+        evidence_items=[
+            EvidenceItem(
+                evidence_id=evidence_id,
+                type=evidence_type,
+                store_ref=f"evidence://run/{evidence_id}",
+                summary=summary,
+            )
+        ]
+    )
+
+
 @pytest.mark.asyncio
 async def test_lag_keyword_classifies_consumer_lag_spike(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_llm(monkeypatch)
@@ -56,6 +73,27 @@ async def test_connector_failed_log_evidence(monkeypatch: pytest.MonkeyPatch) ->
     top = result.classification.incident_types[0]
     assert top.type == "CONNECTOR_TASK_FAILED"
     assert "ev-connect" in top.evidence_ids
+
+
+@pytest.mark.asyncio
+async def test_knowledge_catalog_text_is_not_observed_incident_signal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    retrieval = _retrieval_with_item(
+        "[catalog] Evidence Matrix: sink write latency 증가 | Required | write p95 증가",
+        EvidenceType.KNOWLEDGE,
+        "ev-knowledge",
+    )
+
+    result = await run_classifier(
+        "Evidence points to schema compatibility failure: serialization error and incompatible schema.",
+        retrieval,
+    )
+
+    top = result.classification.incident_types[0]
+    assert top.type == "SCHEMA_MISMATCH"
+    assert top.evidence_ids == []
 
 
 @pytest.mark.asyncio

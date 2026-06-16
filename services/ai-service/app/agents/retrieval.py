@@ -132,6 +132,13 @@ async def run_retrieval(
     if evidence_repo is None:
         evidence_repo = get_evidence_repo()
 
+    request_items = await _collect_request_evidence(
+        run_id=run_id,
+        user_message=user_message,
+        mode=mode,
+        bus=bus,
+        event_repo=event_repo,
+    )
     knowledge_items = await _collect_knowledge_evidence(
         run_id=run_id,
         user_message=user_message,
@@ -273,13 +280,13 @@ async def run_retrieval(
             if remaining_steps:
                 tool_evidence.extend(await _run_plan_steps(remaining_steps, call_step))
             return RetrievalOutput(
-                evidence_items=[*knowledge_items, *tool_evidence],
+                evidence_items=[*request_items, *knowledge_items, *tool_evidence],
                 answer=loop_result.answer or None,
             )
 
     # depends_on을 해석해 독립 tool은 병렬(fan-out), 의존 tool은 선행 완료 후 순차 실행
     tool_evidence = await _run_plan_steps(plan.retrieval_plan, call_step)
-    return RetrievalOutput(evidence_items=[*knowledge_items, *tool_evidence])
+    return RetrievalOutput(evidence_items=[*request_items, *knowledge_items, *tool_evidence])
 
 
 async def _run_plan_steps(steps: list, call_step) -> list[EvidenceItem]:
@@ -336,6 +343,44 @@ def _trace_identifiers(result: Any) -> dict[str, str]:
     if isinstance(pipeline_id, str) and pipeline_id:
         out["pipeline_id"] = pipeline_id
     return out
+
+
+async def _collect_request_evidence(
+    *,
+    run_id: str,
+    user_message: str | None,
+    mode: AgentMode | None,
+    bus: EventBus,
+    event_repo: AnyEventRepo,
+) -> list[EvidenceItem]:
+    if not user_message or mode != AgentMode.INCIDENT_ANALYSIS:
+        return []
+
+    summary = redact_text(user_message)
+    evidence = EvidenceItem(
+        evidence_id=str(uuid4()),
+        type=EvidenceType.SNAPSHOT,
+        store_ref=f"request://{run_id}/user_message",
+        summary=summary,
+        redaction_status=RedactionStatus.REDACTED,
+        collected_by="run_request",
+        collected_at=datetime.now(timezone.utc),
+    )
+    await _pub(bus, event_repo, run_id, StreamingEvent(
+        event_id=str(uuid4()),
+        run_id=run_id,
+        timestamp=datetime.now(timezone.utc),
+        type=StreamingEventType.EVIDENCE_COLLECTED,
+        agent="retrieval",
+        message=f"요청 근거 수집: {summary[:80]}",
+        payload={
+            "evidence_id": evidence.evidence_id,
+            "evidence_type": evidence.type.value,
+            "summary": summary[:80],
+            "redaction_status": evidence.redaction_status.value,
+        },
+    ))
+    return [evidence]
 
 
 async def _collect_knowledge_evidence(
