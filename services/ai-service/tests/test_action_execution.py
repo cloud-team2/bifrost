@@ -891,3 +891,45 @@ async def test_executor_records_before_after_evidence():
     assert result.before_evidence_id is not None
     assert result.after_evidence_id is not None
     assert result.status == ActionStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_executor_reports_connector_not_found_reason_code():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            404,
+            json={
+                "ok": False,
+                "request_id": "req_missing_connector",
+                "operation": "restart_connector",
+                "error": {
+                    "code": "RESOURCE_NOT_FOUND",
+                    "message": "connector not found: missing-source",
+                    "retryable": False,
+                    "required_action": "check_project_scope",
+                },
+            },
+        )
+
+    registry = ToolClientRegistry(transport=httpx.MockTransport(handler))
+    candidates = [
+        ActionCandidate(
+            action_id="act_missing_connector",
+            action_type=ActionType.RUNTIME_TOOL,
+            action_name="restart_connector",
+            risk=RiskLevel.HIGH,
+            reason="approved",
+            status=ActionStatus.READY,
+            tool_name="restart_connector",
+            tool_params={"connector_name": "missing-source"},
+        )
+    ]
+
+    out = await run_executor(candidates, run_id="run_missing_connector", context=_context(), registry=registry)
+
+    assert len(out.execution_results) == 1
+    result = out.execution_results[0]
+    assert result.status == ActionStatus.FAILED
+    assert result.reason_code == "CONNECTOR_NOT_FOUND"
+    assert "커넥터를 찾을 수 없습니다" in result.summary
+    assert "missing-source" not in result.summary

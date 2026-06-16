@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from app.persistence.event_repository import InMemoryEventRepository
@@ -46,6 +47,7 @@ from app.streaming.event_bus import EventBus
 from app.supervisor.graph import Supervisor
 from app.supervisor.retry_policy import RetryPolicy
 from app.supervisor.state_store import InMemoryStateStore
+from app.tools.registry import ToolClientRegistry
 from app.workflow.runner import run_workflow
 
 
@@ -494,3 +496,179 @@ async def test_incident_analysis_full_loop_persists_approval_bridge_and_executes
     assert executed.tool_name == "restart_connector"
     assert executed.tool_params == {"connector_name": connector_name}
     assert executed.status == ActionStatus.READY
+
+
+@pytest.mark.asyncio
+async def test_incident_analysis_full_loop_executes_existing_connector_and_status_check() -> None:
+    run_id = "run_788_existing_connector"
+    incident_id = "inc_788"
+    project_id = "proj_001"
+    connector_name = "orders-source"
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if (
+            request.method == "POST"
+            and request.url.path == f"/internal/ops/projects/{project_id}/connectors/{connector_name}/restart"
+        ):
+            raise httpx.TimeoutException("restart accepted but response timed out", request=request)
+        if (
+            request.method == "GET"
+            and request.url.path == (
+                f"/internal/ops/projects/{project_id}/kafka/connectors/{connector_name}/status"
+            )
+        ):
+            return httpx.Response(
+                200,
+                json={
+                    "ok": True,
+                    "request_id": "req_status",
+                    "operation": "get_connector_status",
+                    "result": {
+                        "connectorName": connector_name,
+                        "connectorState": "RUNNING",
+                        "tasks": [{"id": 0, "state": "RUNNING", "trace": None}],
+                    },
+                },
+            )
+        return httpx.Response(
+            404,
+            json={
+                "ok": False,
+                "request_id": "req_missing",
+                "operation": "unknown",
+                "error": {
+                    "code": "CONNECTOR_NOT_FOUND",
+                    "message": f"connector not found: {request.url.path}",
+                    "retryable": False,
+                    "required_action": "check_project_scope",
+                },
+            },
+        )
+
+    run_repo = InMemoryRunRepository()
+    await run_repo.create(
+        run_id,
+        "incident_analysis",
+        project_id=project_id,
+        incident_id=incident_id,
+        remediation_requested=True,
+    )
+    state_repo = InMemoryStateRepository()
+    event_repo = InMemoryEventRepository()
+    bus = EventBus()
+    bus.publish = AsyncMock()  # type: ignore[method-assign]
+    registry = ToolClientRegistry(transport=httpx.MockTransport(handler))
+
+    retrieval_out = RetrievalOutput(
+        evidence_items=[
+            EvidenceItem(
+                evidence_id="ev_existing_connector_status",
+                type=EvidenceType.TOOL_RESULT,
+                store_ref=f"tool://get_connector_status?connector_name={connector_name}",
+                summary=(
+                    "get_connector_status completed "
+                    f"(connector task status FAILED, connector_name={connector_name}, state=FAILED)"
+                ),
+                redaction_status=RedactionStatus.REDACTED,
+                collected_by="retrieval",
+                collected_at=datetime.now(timezone.utc),
+            )
+        ]
+    )
+    rca_out = RcaOutput(
+        root_cause_candidates=[
+            RootCauseCandidate(
+                root_cause_id="CONNECTOR_TASK_FAILED",
+                confidence=0.91,
+                required_evidence_satisfied=True,
+                evidence_gap=[],
+                explanation="connector task failed",
+            )
+        ]
+    )
+
+    with (
+        patch("app.workflow.runner.router_agent.run_router", new_callable=AsyncMock) as mock_router,
+        patch("app.workflow.runner.planner_agent.run_planner", new_callable=AsyncMock) as mock_planner,
+        patch("app.workflow.runner.retrieval_agent.run_retrieval", new_callable=AsyncMock) as mock_retrieval,
+        patch("app.workflow.runner.classifier_agent.run_classifier", new_callable=AsyncMock) as mock_classifier,
+        patch("app.workflow.runner.rca_agent.run_rca", new_callable=AsyncMock) as mock_rca,
+        patch("app.workflow.runner.verifier_agent.run_verifier", new_callable=AsyncMock) as mock_verifier,
+        patch("app.workflow.runner.report_agent.run_report", new_callable=AsyncMock) as mock_report,
+        patch("app.workflow.runner.get_supervisor") as mock_get_sup,
+        patch("app.workflow.runner.get_event_repo") as mock_get_repo,
+        patch("app.workflow.runner.get_state_repo", return_value=state_repo),
+        patch("app.workflow.runner.get_llm_provider"),
+    ):
+        mock_get_sup.return_value = Supervisor(store=InMemoryStateStore(), policy=RetryPolicy())
+        mock_get_repo.return_value = event_repo
+        mock_router.side_effect = [
+            _router_out(mode=AgentMode.INCIDENT_ANALYSIS, remediation_requested=True),
+            _router_out(mode=AgentMode.APPROVAL_DECISION),
+        ]
+        mock_planner.return_value = _planner_out()
+        mock_retrieval.return_value = retrieval_out
+        mock_classifier.return_value = _classifier_out()
+        mock_rca.return_value = rca_out
+        mock_verifier.return_value = _verifier_out()
+        mock_report.return_value = "완료"
+
+        await run_workflow(
+            run_id=run_id,
+            user_message=f"{connector_name} connector task failed. 조치 후보 보여줘",
+            project_id=project_id,
+            bus=bus,
+            run_repo=run_repo,
+            registry=registry,
+        )
+
+        candidates_patch = next(
+            patch.patch for patch in await state_repo.get_patches(run_id)
+            if patch.path == "/actions/candidates"
+        )
+        restart_candidate = next(
+            candidate for candidate in candidates_patch["candidates"]
+            if candidate["action_name"] == "restart_connector"
+        )
+        assert restart_candidate["tool_params"] == {"connector_name": connector_name}
+
+        restart_link = next(
+            link for link in get_approval_repo().list_pending(run_id)
+            if link.action_id == restart_candidate["action_id"]
+        )
+        get_approval_repo().approve(restart_link.approval_id)
+
+        await run_workflow(
+            run_id=run_id,
+            user_message="승인할게",
+            project_id=project_id,
+            bus=bus,
+            run_repo=run_repo,
+            registry=registry,
+            requested_mode="approval_decision",
+            requested_incident_id=incident_id,
+        )
+
+    execution_patch = [
+        patch.patch for patch in await state_repo.get_patches(run_id)
+        if patch.path == "/actions/execution_results"
+    ][-1]
+    execution_result = execution_patch["execution_results"][0]
+    assert execution_result["status"] == "completed"
+    assert execution_result["tool_name"] == "restart_connector"
+    assert execution_result["reason_code"] == "TIMEOUT"
+
+    assert any(
+        request.method == "POST"
+        and request.url.path == f"/internal/ops/projects/{project_id}/connectors/{connector_name}/restart"
+        for request in requests
+    )
+    assert any(
+        request.method == "GET"
+        and request.url.path == (
+            f"/internal/ops/projects/{project_id}/kafka/connectors/{connector_name}/status"
+        )
+        for request in requests
+    )
