@@ -104,7 +104,7 @@ export function Login({ onRegister }: { onRegister: () => void }) {
                     <div className="truncate text-[13px] font-medium text-gray-800">{a.user.name}</div>
                     <div className="truncate text-[11px] text-gray-400">{a.user.email}</div>
                   </div>
-                  <span className="rounded bg-[#ededed] px-1.5 py-0.5 text-[10px] font-semibold capitalize text-[#6b6b73]">
+                  <span className="rounded bg-[#0d0d0d] px-1.5 py-0.5 text-[10px] font-semibold capitalize text-white">
                     {a.user.role}
                   </span>
                 </button>
