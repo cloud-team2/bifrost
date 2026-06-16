@@ -170,7 +170,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [pipelineTab, setPipelineTab] = useState<string | null>(null)
   const [selectedDatabaseId, setSelectedDatabaseId] = useState<string | null>(null)
   const [opSelectedIncidentId, setOpSelectedIncidentId] = useState<string | null>(null)
-  const [aiPanelOpen, setAiPanelOpen] = useState(false)
+  const [aiPanelOpen, setAiPanelOpen] = useState(true) // 기본 펼침(#780)
   const [agentTask, setAgentTask] = useState<AgentTask | null>(null)
   const [agentRunState, setAgentRunStateRaw] = useState<AgentRunSseState>(() => emptyAgentRunState())
   const [authReady, setAuthReady] = useState(false)

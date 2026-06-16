@@ -498,6 +498,20 @@ export function Alerts() {
     if (!allEvents.some((event) => event.id === selectedEventId)) setSelectedEventId(null)
   }, [allEvents, selectedEventId])
 
+  // 인시던트/이벤트 상세 모달(#780): Esc로 닫기.
+  const closeDetail = () => {
+    setSelectedIncidentId(null)
+    setSelectedEventId(null)
+  }
+  useEffect(() => {
+    if (!selectedIncidentId && !selectedEventId) return
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') closeDetail()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [selectedIncidentId, selectedEventId])
+
   const filteredEvents = useMemo(
     () =>
       allEvents.filter(
@@ -655,27 +669,31 @@ export function Alerts() {
             </div>
           </div>
 
+          {/* 인시던트/이벤트 상세 — 모달(#780). 바깥 클릭·X·Esc로 닫힘. */}
           {(selectedIncident || selectedEvent) && (
-            <div className="w-full shrink-0 self-start overflow-hidden rounded-xl border border-gray-200 bg-white xl:w-[380px]">
-              {selectedIncident ? (
-                <IncidentPanel
-                  incident={selectedIncident}
-                  relatedEvents={selectedRelatedEvents}
-                  onClose={() => setSelectedIncidentId(null)}
-                />
-              ) : selectedEvent ? (
-                <EventDetailPanel
-                  event={selectedEvent}
-                  pipeline={selectedEvent.pipelineId ? app.edges.find((edge) => edge.id === selectedEvent.pipelineId) ?? null : null}
-                  incident={selectedEvent.incidentId ? incidents.find((incident) => incident.id === selectedEvent.incidentId) ?? null : null}
-                  onClose={() => setSelectedEventId(null)}
-                  onOpenIncident={(id) => {
-                    setSelectedEventId(null)
-                    setSelectedIncidentId(id)
-                  }}
-                  onOpenPipeline={(id) => app.openPipeline(id)}
-                />
-              ) : null}
+            <div className="fixed inset-0 z-[90] flex items-start justify-center overflow-y-auto p-4 sm:items-center sm:p-6">
+              <div className="absolute inset-0 bg-gray-900/40" onClick={closeDetail} />
+              <div className="bifrost-fade relative z-10 my-auto w-full max-w-[440px] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl">
+                {selectedIncident ? (
+                  <IncidentPanel
+                    incident={selectedIncident}
+                    relatedEvents={selectedRelatedEvents}
+                    onClose={closeDetail}
+                  />
+                ) : selectedEvent ? (
+                  <EventDetailPanel
+                    event={selectedEvent}
+                    pipeline={selectedEvent.pipelineId ? app.edges.find((edge) => edge.id === selectedEvent.pipelineId) ?? null : null}
+                    incident={selectedEvent.incidentId ? incidents.find((incident) => incident.id === selectedEvent.incidentId) ?? null : null}
+                    onClose={closeDetail}
+                    onOpenIncident={(id) => {
+                      setSelectedEventId(null)
+                      setSelectedIncidentId(id)
+                    }}
+                    onOpenPipeline={(id) => app.openPipeline(id)}
+                  />
+                ) : null}
+              </div>
             </div>
           )}
         </div>

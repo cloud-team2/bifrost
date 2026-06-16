@@ -1272,13 +1272,13 @@ function SyncTab({ edge }: { edge: Edge }) {
                      tick={axis} tickLine={false} axisLine={false} />
               <YAxis tick={axis} tickLine={false} axisLine={false} allowDecimals={false} />
               <Tooltip contentStyle={tooltipStyle} labelFormatter={(v) => hhmm(Number(v))} />
-              <Bar dataKey="insert" stackId="a" fill={CHART_COLORS.emerald} name="INSERT" radius={[0,0,0,0]} />
-              <Bar dataKey="update" stackId="a" fill={CHART_COLORS.amber}   name="UPDATE" radius={[0,0,0,0]} />
-              <Bar dataKey="delete" stackId="a" fill={CHART_COLORS.red}     name="DELETE" radius={[2,2,0,0]} />
+              <Bar dataKey="insert" stackId="a" fill="#2ba27b" name="INSERT" radius={[0,0,0,0]} />
+              <Bar dataKey="update" stackId="a" fill="#e3a52c" name="UPDATE" radius={[0,0,0,0]} />
+              <Bar dataKey="delete" stackId="a" fill="#e05c5c" name="DELETE" radius={[2,2,0,0]} />
             </BarChart>
           </ResponsiveChart>
           <div className="mt-2 flex justify-center gap-5">
-            {[['INSERT', CHART_COLORS.emerald], ['UPDATE', CHART_COLORS.amber], ['DELETE', CHART_COLORS.red]].map(([label, color]) => (
+            {[['INSERT', '#2ba27b'], ['UPDATE', '#e3a52c'], ['DELETE', '#e05c5c']].map(([label, color]) => (
               <div key={label} className="flex items-center gap-1.5">
                 <span className="h-2.5 w-2.5 rounded-sm" style={{ background: color }} />
                 <span className="text-[11px] text-gray-500">{label}</span>
@@ -1326,11 +1326,12 @@ function DBNodeCard({ node, role }: { node: Node | null; role: 'Source' | 'Sink'
 
 /* ---------------------------------------------------------------- Messages tab */
 
+// 이벤트 타입 색과 일관(#780): INSERT 초록·UPDATE 앰버·DELETE 빨강 틴트, READ 중립.
 const OP_META: Record<string, { label: string; cls: string }> = {
-  c: { label: 'INSERT', cls: 'bg-[#ededed] text-[#6b6b73] border-[#ececec]' },
-  u: { label: 'UPDATE', cls: 'bg-[#ededed]  text-[#6b6b73]  border-[#ececec]'  },
-  d: { label: 'DELETE', cls: 'bg-[#c0392b]   text-white   border-[#c0392b]'   },
-  r: { label: 'READ',   cls: 'bg-[#ededed]    text-[#6b6b73]    border-[#ececec]'    },
+  c: { label: 'INSERT', cls: 'bg-[#e9f5ef] text-[#1f7a4d] border-[#cfe9dc]' },
+  u: { label: 'UPDATE', cls: 'bg-[#fbf2df] text-[#b5740f] border-[#f0e2c0]' },
+  d: { label: 'DELETE', cls: 'bg-[#fcefee] text-[#cf4a45] border-[#f5d7d4]' },
+  r: { label: 'READ',   cls: 'bg-[#ededed] text-[#6b6b73] border-[#ececec]' },
 }
 
 function MessagesTab({ edge }: { edge: Edge }) {
@@ -1944,13 +1945,10 @@ function PartitionViz({ partitions }: {
   const max = Math.max(...msgs, 1)
   const isSkewed = max > avg * 1.3
 
-  // broker color mapping — 블루스케일(#770): 리더(첫) 브로커=찐파랑, 나머지=옅은 파랑 1색.
+  // partition 색 — 2색(#780): 정상=파랑, 편향(skew)=주황. 브로커별 구분 없음.
   const brokers = [...new Set(partitions.map((p) => p.leader))].sort()
-  const LEAD_BLUE = '#3a47c2'
-  const REST_BLUE = '#d2d6e6'
-  const brokerColors: Record<string, string> = Object.fromEntries(
-    brokers.map((b, i) => [b, i === 0 ? LEAD_BLUE : REST_BLUE]),
-  )
+  const NORMAL_BLUE = '#3a47c2'
+  const SKEW_ORANGE = '#e0701f'
   const brokerCount = brokers.reduce<Record<string, number>>((acc, b) => {
     acc[b] = partitions.filter((p) => p.leader === b).length
     return acc
@@ -1966,7 +1964,7 @@ function PartitionViz({ partitions }: {
         <div className="mb-1.5 flex items-center gap-2">
           <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Partition Balance</span>
           {isSkewed && (
-            <span className="flex items-center gap-1 rounded-full bg-[#c0392b] px-2 py-0.5 text-[10px] font-semibold text-white">
+            <span className="flex items-center gap-1 rounded-full bg-[#e0701f] px-2 py-0.5 text-[10px] font-semibold text-white">
               <Icon name="alert" size={10} />편향 감지
             </span>
           )}
@@ -1985,7 +1983,7 @@ function PartitionViz({ partitions }: {
                 {chartData.map((entry) => (
                   <Cell
                     key={entry.name}
-                    fill={entry.messages > avg * 1.3 ? '#c0392b' : brokerColors[entry.leader] ?? REST_BLUE}
+                    fill={entry.messages > avg * 1.3 ? SKEW_ORANGE : NORMAL_BLUE}
                   />
                 ))}
               </Bar>
@@ -2001,7 +1999,7 @@ function PartitionViz({ partitions }: {
           {brokers.map((broker) => {
             const count = brokerCount[broker] ?? 0
             const pct = (count / partitions.length) * 100
-            const color = brokerColors[broker] ?? REST_BLUE
+            const color = NORMAL_BLUE
             return (
               <div key={broker}>
                 <div className="mb-1 flex items-center justify-between">
