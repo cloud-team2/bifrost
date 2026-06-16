@@ -16,5 +16,10 @@ RUN pip install --no-cache-dir .
 COPY alembic.ini ./
 COPY alembic alembic
 
+# RAG 코퍼스 시딩 자산. 배포 후 시딩 Job이 `python scripts/corpus_seed.py --with-builtin`로
+# corpus/manifest.json + built-in glossary·runbook을 knowledge_chunk에 적재한다 (#776).
+COPY corpus corpus
+COPY scripts scripts
+
 EXPOSE 8082
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8082"]

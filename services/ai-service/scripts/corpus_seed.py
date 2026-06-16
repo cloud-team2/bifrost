@@ -156,13 +156,21 @@ async def seed_corpus(
     return summary
 
 
-async def seed_all(*, store=None, embedder=None, doc_version: str | None = None) -> dict:
+async def seed_all(
+    *,
+    store=None,
+    embedder=None,
+    doc_version: str | None = None,
+    corpus_dir: Path = CORPUS_DIR,
+) -> dict:
     default_chunks = await index_default_corpus(
         vector_store=store,
         embedder=embedder,
         doc_version=doc_version,
     )
-    summary = await seed_corpus(store=store, embedder=embedder, doc_version=doc_version)
+    summary = await seed_corpus(
+        store=store, embedder=embedder, doc_version=doc_version, corpus_dir=corpus_dir
+    )
     summary["chunks"] += default_chunks
     summary["details"].insert(
         0,
@@ -236,11 +244,11 @@ async def _run_cli(args: argparse.Namespace) -> dict:
 
     await init_pool(settings.database_url)
     try:
-        return await seed_corpus(
-            store=get_vector_store(),
-            embedder=get_embedder(),
-            corpus_dir=args.corpus_dir,
-        )
+        store = get_vector_store()
+        embedder = get_embedder()
+        if args.with_builtin:
+            return await seed_all(store=store, embedder=embedder, corpus_dir=args.corpus_dir)
+        return await seed_corpus(store=store, embedder=embedder, corpus_dir=args.corpus_dir)
     finally:
         await close_pool()
 
@@ -250,6 +258,14 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="parse and validate without DB writes")
     parser.add_argument("--scope", default=GLOBAL_SCOPE, help="knowledge scope; only global is supported")
     parser.add_argument("--corpus-dir", default=str(CORPUS_DIR), help="corpus directory")
+    parser.add_argument(
+        "--with-builtin",
+        action="store_true",
+        help=(
+            "also seed the built-in glossary+runbook corpus (index_default_corpus). "
+            "Required for the runbook doc_type, which the manifest does not provide."
+        ),
+    )
     args = parser.parse_args()
     args.corpus_dir = _resolve_corpus_dir(args.corpus_dir)
 
