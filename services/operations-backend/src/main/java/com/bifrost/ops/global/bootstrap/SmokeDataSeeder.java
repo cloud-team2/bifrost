@@ -30,7 +30,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.Optional;
@@ -87,6 +88,7 @@ public class SmokeDataSeeder implements CommandLineRunner {
     private final IncidentRepository incidentRepository;
     private final EventRepository eventRepository;
     private final PasswordEncoder passwordEncoder;
+    private final TransactionTemplate transactionTemplate;
     private final boolean enabled;
     private final String userPassword;
 
@@ -99,6 +101,7 @@ public class SmokeDataSeeder implements CommandLineRunner {
                            IncidentRepository incidentRepository,
                            EventRepository eventRepository,
                            PasswordEncoder passwordEncoder,
+                           PlatformTransactionManager transactionManager,
                            @Value("${smoke.seed.enabled:true}") boolean enabled,
                            @Value("${smoke.seed.user-password:}") String userPassword) {
         this.workspaceRepository = workspaceRepository;
@@ -110,17 +113,25 @@ public class SmokeDataSeeder implements CommandLineRunner {
         this.incidentRepository = incidentRepository;
         this.eventRepository = eventRepository;
         this.passwordEncoder = passwordEncoder;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.enabled = enabled;
         this.userPassword = userPassword;
     }
 
     @Override
-    @Transactional
     public void run(String... args) {
         if (!enabled) {
             return;
         }
 
+        try {
+            transactionTemplate.executeWithoutResult(status -> seed());
+        } catch (RuntimeException ex) {
+            log.warn("[smoke-seed] seed failed; continuing application startup ({})", ex.getClass().getName());
+        }
+    }
+
+    private void seed() {
         Optional<WorkspaceEntity> workspace = ensureWorkspace();
         if (workspace.isEmpty()) {
             return;

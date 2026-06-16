@@ -13,17 +13,24 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -60,6 +67,8 @@ class SmokeDataSeederJpaTest {
     EventRepository eventRepository;
     @Autowired
     JdbcTemplate jdbc;
+    @Autowired
+    PlatformTransactionManager transactionManager;
 
     @Test
     void runTwicePersistsOneFixedSmokeGraphWithFlywaySchema() {
@@ -108,7 +117,30 @@ class SmokeDataSeederJpaTest {
         assertThat(countWhere("events", "tenant_id", SmokeDataSeeder.WORKSPACE_ID)).isZero();
     }
 
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void midSeedDatabaseFailureDoesNotEscapeAndRollsBackPartialRows() {
+        PipelineRepository failingPipelineRepository = mock(PipelineRepository.class);
+        when(failingPipelineRepository.findById(SmokeDataSeeder.PIPELINE_ID))
+                .thenThrow(new DataIntegrityViolationException("duplicate key"));
+
+        assertThatCode(() -> seeder(true, failingPipelineRepository).run()).doesNotThrowAnyException();
+
+        assertThat(countById("tenants", SmokeDataSeeder.WORKSPACE_ID)).isZero();
+        assertThat(countById("users", SmokeDataSeeder.USER_ID)).isZero();
+        assertThat(countWhere("project_member", "workspace_id", SmokeDataSeeder.WORKSPACE_ID)).isZero();
+        assertThat(countById("datasources", SmokeDataSeeder.DATASOURCE_ID)).isZero();
+        assertThat(countById("pipelines", SmokeDataSeeder.PIPELINE_ID)).isZero();
+        assertThat(countById("connectors", SmokeDataSeeder.CONNECTOR_ID)).isZero();
+        assertThat(countById("incidents", SmokeDataSeeder.INCIDENT_ID)).isZero();
+        assertThat(countById("events", SmokeDataSeeder.EVENT_ID)).isZero();
+    }
+
     private SmokeDataSeeder seeder(boolean enabled) {
+        return seeder(enabled, pipelineRepository);
+    }
+
+    private SmokeDataSeeder seeder(boolean enabled, PipelineRepository pipelineRepository) {
         return new SmokeDataSeeder(
                 workspaceRepository,
                 userRepository,
@@ -119,6 +151,7 @@ class SmokeDataSeederJpaTest {
                 incidentRepository,
                 eventRepository,
                 passwordEncoder(),
+                transactionManager,
                 enabled,
                 ""
         );
