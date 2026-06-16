@@ -1117,8 +1117,9 @@ function SyncTab({ edge }: { edge: Edge }) {
     : lag > 0 ? (endOffset > 0 ? Math.max(0, Math.min(99, ((endOffset - lag) / endOffset) * 100)) : 0)
     : rowsKnown && sourceRows > 0 ? Math.min(99, (sinkRows / sourceRows) * 100)
     : 0
-  const pctColor   = sinkFailed ? 'text-[#c0392b]' : isHealthy ? 'text-[#6b6b73]' : 'text-[#6b6b73]'
-  const barColor   = sinkFailed ? 'bg-[#c0392b]'   : isHealthy ? 'bg-[#c8c8c8]'  : 'bg-[#c8c8c8]'
+  // 동기화율 색(C·상태별): 완료=초록 · 처리중/준비중=주황 · 오류=빨강
+  const pctColor   = sinkFailed ? 'text-[#c0392b]' : isHealthy ? 'text-[#157f4a]' : 'text-[#d97316]'
+  const barColor   = sinkFailed ? 'bg-[#c0392b]'   : isHealthy ? 'bg-[#157f4a]'  : 'bg-[#d97316]'
 
   // 실데이터(Prometheus)만 사용. 비어있으면 빈 차트(더미 위장 금지, #175).
   // 소스지연은 Debezium이 전달할 데이터가 없을 때(idle) -1을 준다. 이때는 "지연 0"이 아니라
@@ -1185,7 +1186,7 @@ function SyncTab({ edge }: { edge: Edge }) {
 
               <span className={cn('text-[11.5px] font-medium',
                 sync === null ? 'text-gray-400'
-                  : sinkFailed ? 'text-[#c0392b]' : isHealthy ? 'text-[#6b6b73]' : 'text-[#6b6b73]')}>
+                  : sinkFailed ? 'text-[#c0392b]' : isHealthy ? 'text-[#157f4a]' : 'text-[#d97316]')}>
                 {sync === null
                   ? '불러오는 중…'
                   : sinkFailed
