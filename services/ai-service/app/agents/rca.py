@@ -203,7 +203,24 @@ def _rule_matches_evidence(rule: EvidenceRule, item: EvidenceItem) -> bool:
     evidence_tokens = set(_tokens(evidence_text))
     rule_tokens = _meaningful_tokens(rule.evidence)
     example_tokens = _meaningful_tokens(rule.example or "")
-    return _tokens_match(rule_tokens, evidence_tokens) or _tokens_match(example_tokens, evidence_tokens)
+    if _tokens_match(rule_tokens, evidence_tokens) or _tokens_match(example_tokens, evidence_tokens):
+        return True
+
+    # #767: example/evidence may list several alternative phrasings separated by
+    # commas (English raw-log tokens AND Korean operations summaries). Match if any
+    # single alternative matches, so Korean summaries are not missed.
+    for alt in _split_alternatives(rule.evidence) + _split_alternatives(rule.example or ""):
+        alt_cf = alt.casefold()
+        if alt_cf and alt_cf in evidence_text:
+            return True
+        if _tokens_match(_meaningful_tokens(alt), evidence_tokens):
+            return True
+    return False
+
+
+def _split_alternatives(value: str) -> list[str]:
+    parts = re.split(r"[,，]", value)
+    return [part.strip() for part in parts if part.strip()]
 
 
 def _tokens_match(rule_tokens: set[str], evidence_tokens: set[str]) -> bool:

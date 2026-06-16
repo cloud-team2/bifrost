@@ -1,0 +1,446 @@
+[
+  {
+    "doc_id": "catalog:catalog-correlation-rules",
+    "doc_type": "catalog",
+    "title": "Catalog — Correlation Rules (§10)",
+    "path": "catalog/catalog-correlation-rules.md",
+    "tags": [
+      "catalog",
+      "correlation",
+      "incident"
+    ],
+    "source": "curated"
+  },
+  {
+    "doc_id": "catalog:catalog-evidence-matrix",
+    "doc_type": "catalog",
+    "title": "Catalog — Evidence Matrix (§9)",
+    "path": "catalog/catalog-evidence-matrix.md",
+    "tags": [
+      "catalog",
+      "evidence",
+      "rca"
+    ],
+    "source": "curated"
+  },
+  {
+    "doc_id": "catalog:catalog-failure-types",
+    "doc_type": "catalog",
+    "title": "Catalog — Failure Types (§6)",
+    "path": "catalog/catalog-failure-types.md",
+    "tags": [
+      "catalog",
+      "failure-types",
+      "classifier"
+    ],
+    "source": "curated"
+  },
+  {
+    "doc_id": "catalog:catalog-incident-root-cause-map",
+    "doc_type": "catalog",
+    "title": "Catalog — Incident→RootCause Map (§7)",
+    "path": "catalog/catalog-incident-root-cause-map.md",
+    "tags": [
+      "catalog",
+      "incident-map",
+      "root-cause"
+    ],
+    "source": "curated"
+  },
+  {
+    "doc_id": "catalog:catalog-policy-matrix",
+    "doc_type": "catalog",
+    "title": "Catalog — Policy Matrix (§12)",
+    "path": "catalog/catalog-policy-matrix.md",
+    "tags": [
+      "catalog",
+      "policy",
+      "approval"
+    ],
+    "source": "curated"
+  },
+  {
+    "doc_id": "catalog:catalog-remediation-runbooks",
+    "doc_type": "catalog",
+    "title": "Catalog — Remediation Runbooks (§11)",
+    "path": "catalog/catalog-remediation-runbooks.md",
+    "tags": [
+      "catalog",
+      "runbook",
+      "remediation"
+    ],
+    "source": "curated"
+  },
+  {
+    "doc_id": "catalog:catalog-root-causes",
+    "doc_type": "catalog",
+    "title": "Catalog — Root Causes (§8)",
+    "path": "catalog/catalog-root-causes.md",
+    "tags": [
+      "catalog",
+      "root-cause",
+      "rca"
+    ],
+    "source": "curated"
+  },
+  {
+    "doc_id": "glossary:broker",
+    "doc_type": "glossary",
+    "title": "Kafka Broker",
+    "path": "glossary/broker.md",
+    "tags": [
+      "kafka",
+      "broker",
+      "cluster"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "glossary:cdc-replication-slot",
+    "doc_type": "glossary",
+    "title": "CDC Replication Slot",
+    "path": "glossary/cdc-replication-slot.md",
+    "tags": [
+      "cdc",
+      "replication-slot",
+      "source"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "glossary:consumer-group",
+    "doc_type": "glossary",
+    "title": "Consumer Group",
+    "path": "glossary/consumer-group.md",
+    "tags": [
+      "kafka",
+      "consumer-group",
+      "offset"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "glossary:consumer-lag",
+    "doc_type": "glossary",
+    "title": "Consumer Lag",
+    "path": "glossary/consumer-lag.md",
+    "tags": [
+      "kafka",
+      "consumer",
+      "lag"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "glossary:dlq",
+    "doc_type": "glossary",
+    "title": "DLQ (Dead Letter Queue)",
+    "path": "glossary/dlq.md",
+    "tags": [
+      "kafka",
+      "dlq",
+      "dead-letter-queue"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "glossary:isr",
+    "doc_type": "glossary",
+    "title": "ISR (In-Sync Replica)",
+    "path": "glossary/isr.md",
+    "tags": [
+      "kafka",
+      "replication",
+      "isr"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "glossary:kafka-connect-converter",
+    "doc_type": "glossary",
+    "title": "Kafka Connect Converter",
+    "path": "glossary/kafka-connect-converter.md",
+    "tags": [
+      "kafka-connect",
+      "converter",
+      "schema"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "glossary:kafka-connect-task",
+    "doc_type": "glossary",
+    "title": "Kafka Connect Task",
+    "path": "glossary/kafka-connect-task.md",
+    "tags": [
+      "kafka-connect",
+      "task",
+      "connector"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "glossary:offset",
+    "doc_type": "glossary",
+    "title": "Kafka Offset",
+    "path": "glossary/offset.md",
+    "tags": [
+      "kafka",
+      "offset",
+      "consumer"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "glossary:partition-rebalance",
+    "doc_type": "glossary",
+    "title": "Partition Rebalance",
+    "path": "glossary/partition-rebalance.md",
+    "tags": [
+      "kafka",
+      "partition",
+      "rebalance"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "glossary:partition-skew",
+    "doc_type": "glossary",
+    "title": "Partition Skew",
+    "path": "glossary/partition-skew.md",
+    "tags": [
+      "kafka",
+      "partition",
+      "skew"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "glossary:schema-registry",
+    "doc_type": "glossary",
+    "title": "Schema Registry",
+    "path": "glossary/schema-registry.md",
+    "tags": [
+      "schema-registry",
+      "schema",
+      "kafka"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "glossary:throttling-backpressure",
+    "doc_type": "glossary",
+    "title": "Throttling and Backpressure",
+    "path": "glossary/throttling-backpressure.md",
+    "tags": [
+      "kafka",
+      "throttling",
+      "backpressure"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "incident_report:2026-connector-task-failed-001",
+    "doc_type": "incident_report",
+    "title": "Connector task failed after transient sink timeout",
+    "path": "incident_report/2026-connector-task-failed-001.md",
+    "tags": [
+      "CONNECTOR_TASK_FAILED",
+      "restart_connector",
+      "kafka-connect"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "incident_report:2026-connector-task-failed-002",
+    "doc_type": "incident_report",
+    "title": "Source connector task failed on malformed CDC event",
+    "path": "incident_report/2026-connector-task-failed-002.md",
+    "tags": [
+      "CONNECTOR_TASK_FAILED",
+      "pause_connector",
+      "kafka-connect"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "incident_report:2026-consumer-lag-spike-001",
+    "doc_type": "incident_report",
+    "title": "Consumer lag spike from downstream write latency",
+    "path": "incident_report/2026-consumer-lag-spike-001.md",
+    "tags": [
+      "CONSUMER_LAG_SPIKE",
+      "scale_consumers",
+      "consumer"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "incident_report:2026-consumer-lag-spike-002",
+    "doc_type": "incident_report",
+    "title": "Lag spike concentrated on hot partition",
+    "path": "incident_report/2026-consumer-lag-spike-002.md",
+    "tags": [
+      "CONSUMER_LAG_SPIKE",
+      "create_rebalance_proposal",
+      "partition-skew"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "incident_report:2026-schema-mismatch-001",
+    "doc_type": "incident_report",
+    "title": "Avro compatibility break after producer deploy",
+    "path": "incident_report/2026-schema-mismatch-001.md",
+    "tags": [
+      "SCHEMA_MISMATCH",
+      "rollback_schema",
+      "schema-registry"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "incident_report:2026-schema-mismatch-002",
+    "doc_type": "incident_report",
+    "title": "Kafka Connect converter misconfigured",
+    "path": "incident_report/2026-schema-mismatch-002.md",
+    "tags": [
+      "SCHEMA_MISMATCH",
+      "collect_schema_changes",
+      "converter"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "incident_report:2026-sink-auth-expired-001",
+    "doc_type": "incident_report",
+    "title": "Warehouse sink credential expired",
+    "path": "incident_report/2026-sink-auth-expired-001.md",
+    "tags": [
+      "SINK_AUTH_EXPIRED",
+      "rotate_credentials",
+      "sink"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "incident_report:2026-sink-auth-expired-002",
+    "doc_type": "incident_report",
+    "title": "Object storage sink access key revoked",
+    "path": "incident_report/2026-sink-auth-expired-002.md",
+    "tags": [
+      "SINK_AUTH_EXPIRED",
+      "rotate_credentials",
+      "object-storage"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "incident_report:2026-source-auth-expired-001",
+    "doc_type": "incident_report",
+    "title": "Postgres source credential expired",
+    "path": "incident_report/2026-source-auth-expired-001.md",
+    "tags": [
+      "SOURCE_AUTH_EXPIRED",
+      "rotate_credentials",
+      "source"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "incident_report:2026-source-auth-expired-002",
+    "doc_type": "incident_report",
+    "title": "OAuth token expired for SaaS source connector",
+    "path": "incident_report/2026-source-auth-expired-002.md",
+    "tags": [
+      "SOURCE_AUTH_EXPIRED",
+      "rotate_credentials",
+      "oauth"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "incident_report:2026-source-network-reachability-001",
+    "doc_type": "incident_report",
+    "title": "Source database subnet unreachable",
+    "path": "incident_report/2026-source-network-reachability-001.md",
+    "tags": [
+      "SOURCE_NETWORK_REACHABILITY",
+      "network_diagnostics",
+      "source"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "incident_report:2026-source-network-reachability-002",
+    "doc_type": "incident_report",
+    "title": "Intermittent packet loss to source API",
+    "path": "incident_report/2026-source-network-reachability-002.md",
+    "tags": [
+      "SOURCE_NETWORK_REACHABILITY",
+      "network_diagnostics",
+      "packet-loss"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "ops_doc:agent-principles",
+    "doc_type": "ops_doc",
+    "title": "FastAPI Agent — Agent Principles (§1)",
+    "path": "ops_doc/agent-principles.md",
+    "tags": [
+      "ops",
+      "agent",
+      "principles"
+    ],
+    "source": "curated"
+  },
+  {
+    "doc_id": "ops_doc:agent-rag-indexing-architecture",
+    "doc_type": "ops_doc",
+    "title": "Agent RAG Indexing Architecture Summary",
+    "path": "ops_doc/agent-rag-indexing-architecture.md",
+    "tags": [
+      "ops",
+      "rag",
+      "architecture"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "ops_doc:contract-agent-roles",
+    "doc_type": "ops_doc",
+    "title": "Contract — Agent Roles (§13)",
+    "path": "ops_doc/contract-agent-roles.md",
+    "tags": [
+      "ops",
+      "agent",
+      "contract"
+    ],
+    "source": "curated"
+  },
+  {
+    "doc_id": "ops_doc:kafka-incident-operations-summary",
+    "doc_type": "ops_doc",
+    "title": "Kafka Incident Operations Summary",
+    "path": "ops_doc/kafka-incident-operations-summary.md",
+    "tags": [
+      "ops",
+      "kafka",
+      "incident-response"
+    ],
+    "source": "synthetic"
+  },
+  {
+    "doc_id": "ops_doc:monitoring",
+    "doc_type": "ops_doc",
+    "title": "Spring Boot Operations Backend — Monitoring & Incident Engine",
+    "path": "ops_doc/monitoring.md",
+    "tags": [
+      "ops",
+      "monitoring",
+      "incident-engine"
+    ],
+    "source": "curated"
+  }
+]

@@ -10,7 +10,11 @@ INCIDENT_ANALYSIS_STAGES: tuple[str, ...] = (
     "classifier", "rca", "verifier", "report",
 )
 
-INCIDENT_ANALYSIS_REMEDIATION_SUFFIX: tuple[str, ...] = ("remediation", "policy_guard")
+INCIDENT_ANALYSIS_REMEDIATION_SUFFIX: tuple[str, ...] = (
+    "remediation",
+    "policy_guard",
+    "approval_gate",
+)
 
 ACTION_EXECUTION_STAGES: tuple[str, ...] = (
     "policy_guard", "approval_gate", "change_gate",

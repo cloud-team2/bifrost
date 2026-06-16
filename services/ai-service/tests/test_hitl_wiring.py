@@ -791,3 +791,76 @@ async def test_action_execution_waits_for_human_approval_before_executor():
     mock_exec.assert_not_awaited()
     mock_verifier.assert_not_awaited()
     mock_report.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_action_execution_selected_candidate_uses_real_policy_approval_bridge():
+    """Direct action_execution still creates a pending approval with real gates."""
+    bus = EventBus()
+    bus.publish = AsyncMock()  # type: ignore[method-assign]
+    run_repo = AsyncMock()
+    run_repo.get.return_value = None
+    state_repo = InMemoryStateRepository()
+    registry = MagicMock()
+    registry.get_definition.return_value = _FakeToolDefinition(
+        name="restart_connector",
+        risk=RiskLevel.HIGH,
+    )
+    run_id = "run_direct_real_bridge"
+
+    with (
+        patch("app.workflow.runner.router_agent.run_router", new_callable=AsyncMock) as mock_router,
+        patch("app.workflow.runner.run_executor", new_callable=AsyncMock) as mock_exec,
+        patch("app.workflow.runner.verifier_agent.run_verifier", new_callable=AsyncMock) as mock_verifier,
+        patch("app.workflow.runner.report_agent.run_report", new_callable=AsyncMock) as mock_report,
+        patch("app.workflow.runner.get_supervisor") as mock_get_sup,
+        patch("app.workflow.runner.get_event_repo") as mock_get_repo,
+        patch("app.workflow.runner.get_state_repo", return_value=state_repo),
+        patch("app.workflow.runner.get_llm_provider"),
+    ):
+        mock_get_sup.return_value = Supervisor(store=InMemoryStateStore(), policy=RetryPolicy())
+        mock_get_repo.return_value = InMemoryEventRepository()
+        mock_router.return_value = RouterOutput(route_decision=RouteDecision(
+            mode=AgentMode.SIMPLE_QUERY, remediation_requested=False, reason="default", required_flow=[],
+        ))
+        mock_verifier.return_value = _verifier_out()
+        mock_report.return_value = "완료"
+
+        await run_workflow(
+            run_id=run_id,
+            user_message="run selected action",
+            project_id="proj_001",
+            bus=bus,
+            run_repo=run_repo,
+            registry=registry,
+            requested_mode="action_execution",
+            requested_action_candidate={
+                "action_id": "act_direct_restart",
+                "action_type": "runtime_tool",
+                "action_name": "restart_connector",
+                "risk": "high",
+                "reason": "selected from report",
+                "tool_name": "restart_connector",
+                "tool_params": {"connector_name": "orders-source-connector"},
+            },
+        )
+
+    pending = get_approval_repo().list_pending(run_id)
+    assert len(pending) == 1
+    assert pending[0].action_id == "act_direct_restart"
+
+    approval_patches = [
+        patch.patch for patch in await state_repo.get_patches(run_id)
+        if patch.path == "/actions/approval_requests"
+    ]
+    assert approval_patches
+    assert approval_patches[-1]["approval_requests"] == [{
+        "approval_id": pending[0].approval_id,
+        "action_id": "act_direct_restart",
+        "params_hash": pending[0].params_hash,
+        "approval_status": "pending",
+    }]
+    run_repo.update_status.assert_any_await(run_id, "waiting_for_approval", "approval_gate")
+    mock_exec.assert_not_awaited()
+    mock_verifier.assert_not_awaited()
+    mock_report.assert_not_awaited()

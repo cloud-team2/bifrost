@@ -25,7 +25,7 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
     EvidenceProfile(
         root_cause_id='SOURCE_AUTH_EXPIRED',
         required=(
-            EvidenceRule(root_cause_id='SOURCE_AUTH_EXPIRED', kind='required', evidence='auth/permission error log', example='`AccessDenied`, `token expired`'),
+            EvidenceRule(root_cause_id='SOURCE_AUTH_EXPIRED', kind='required', evidence='auth/permission error log', example='`AccessDenied`, `token expired`, 인증 실패, 권한 거부, 비밀번호 인증 실패'),
         ),
         supporting=(
             EvidenceRule(root_cause_id='SOURCE_AUTH_EXPIRED', kind='supporting', evidence='credential rotation 또는 secret 변경 이력', example='rotate 직후 실패'),
@@ -63,7 +63,7 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
     EvidenceProfile(
         root_cause_id='SOURCE_NETWORK_REACHABILITY',
         required=(
-            EvidenceRule(root_cause_id='SOURCE_NETWORK_REACHABILITY', kind='required', evidence='Bifrost에서 source endpoint reachability 실패', example='소스 커넥터 오류'),
+            EvidenceRule(root_cause_id='SOURCE_NETWORK_REACHABILITY', kind='required', evidence='Bifrost에서 source endpoint reachability 실패', example='connection refused, no route to host, 연결 실패, 호스트 연결 실패, 네트워크 도달 실패'),
         ),
         supporting=(
             EvidenceRule(root_cause_id='SOURCE_NETWORK_REACHABILITY', kind='supporting', evidence='여러 pipeline에서 같은 source endpoint 연결 실패', example='shared dependency timeout'),
@@ -102,7 +102,7 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
     EvidenceProfile(
         root_cause_id='SCHEMA_MISMATCH',
         required=(
-            EvidenceRule(root_cause_id='SCHEMA_MISMATCH', kind='required', evidence='serialization/deserialization/schema error', example='incompatible schema'),
+            EvidenceRule(root_cause_id='SCHEMA_MISMATCH', kind='required', evidence='serialization/deserialization/schema error', example='incompatible schema, deserialization error, 스키마 불일치, 스키마 오류, 역직렬화 오류'),
         ),
         supporting=(
             EvidenceRule(root_cause_id='SCHEMA_MISMATCH', kind='supporting', evidence='schema version 변경 이력', example='recent subject version'),
@@ -234,7 +234,7 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
     EvidenceProfile(
         root_cause_id='SINK_AUTH_EXPIRED',
         required=(
-            EvidenceRule(root_cause_id='SINK_AUTH_EXPIRED', kind='required', evidence='sink auth/permission error log', example='`AccessDenied`, `token expired`'),
+            EvidenceRule(root_cause_id='SINK_AUTH_EXPIRED', kind='required', evidence='sink auth/permission error log', example='`AccessDenied`, `token expired`, 인증 실패, 권한 거부, 비밀번호 인증 실패'),
         ),
         supporting=(
             EvidenceRule(root_cause_id='SINK_AUTH_EXPIRED', kind='supporting', evidence='credential rotation 또는 secret 변경 이력', example='rotate 직후 실패'),
@@ -435,7 +435,7 @@ EVIDENCE_RULES: tuple[EvidenceRule, ...] = (
     EvidenceRule(root_cause_id='SOURCE_DB_CONNECTION_TIMEOUT', kind='supporting', evidence='최근 source credential rotate 없음', example='auth 변경 없음'),
     EvidenceRule(root_cause_id='SOURCE_DB_CONNECTION_TIMEOUT', kind='negative', evidence='sink write timeout 증가', example='source 단독 원인 가능성 낮춤'),
     EvidenceRule(root_cause_id='SOURCE_DB_CONNECTION_TIMEOUT', kind='negative', evidence='source metric 정상', example='source timeout 후보 약화'),
-    EvidenceRule(root_cause_id='SOURCE_AUTH_EXPIRED', kind='required', evidence='auth/permission error log', example='`AccessDenied`, `token expired`'),
+    EvidenceRule(root_cause_id='SOURCE_AUTH_EXPIRED', kind='required', evidence='auth/permission error log', example='`AccessDenied`, `token expired`, 인증 실패, 권한 거부, 비밀번호 인증 실패'),
     EvidenceRule(root_cause_id='SOURCE_AUTH_EXPIRED', kind='supporting', evidence='credential rotation 또는 secret 변경 이력', example='rotate 직후 실패'),
     EvidenceRule(root_cause_id='SOURCE_AUTH_EXPIRED', kind='negative', evidence='connection timeout만 존재하고 auth error 없음', example='auth 후보 약화'),
     EvidenceRule(root_cause_id='SOURCE_READ_LATENCY', kind='required', evidence='source read latency 증가', example='p95 read latency 증가'),
@@ -446,7 +446,7 @@ EVIDENCE_RULES: tuple[EvidenceRule, ...] = (
     EvidenceRule(root_cause_id='SOURCE_DATA_NOT_READY', kind='required', evidence='pipeline extract 결과 empty batch 반복', example='row count 0 또는 기준 대비 급감'),
     EvidenceRule(root_cause_id='SOURCE_DATA_NOT_READY', kind='supporting', evidence='upstream schedule 지연 또는 source 생성 job 지연', example='source owner schedule delay'),
     EvidenceRule(root_cause_id='SOURCE_DATA_NOT_READY', kind='negative', evidence='source read timeout 또는 auth failure', example='데이터 미준비보다 연결/auth 후보 우선'),
-    EvidenceRule(root_cause_id='SOURCE_NETWORK_REACHABILITY', kind='required', evidence='Bifrost에서 source endpoint reachability 실패', example='DNS/TCP connect failure summary'),
+    EvidenceRule(root_cause_id='SOURCE_NETWORK_REACHABILITY', kind='required', evidence='Bifrost에서 source endpoint reachability 실패', example='connection refused, no route to host, 연결 실패, 호스트 연결 실패, 네트워크 도달 실패'),
     EvidenceRule(root_cause_id='SOURCE_NETWORK_REACHABILITY', kind='supporting', evidence='여러 pipeline에서 같은 source endpoint 연결 실패', example='shared dependency timeout'),
     EvidenceRule(root_cause_id='SOURCE_NETWORK_REACHABILITY', kind='supporting', evidence='고객사 source 내부 지표 정상이나 network path error 존재', example='network error code 증가'),
     EvidenceRule(root_cause_id='SOURCE_NETWORK_REACHABILITY', kind='negative', evidence='auth error 또는 query error만 존재', example='network 후보 약화'),
@@ -458,7 +458,7 @@ EVIDENCE_RULES: tuple[EvidenceRule, ...] = (
     EvidenceRule(root_cause_id='PIPELINE_TASK_RETRY_EXHAUSTED', kind='required', evidence='동일 task 반복 실패', example='retry history'),
     EvidenceRule(root_cause_id='PIPELINE_TASK_RETRY_EXHAUSTED', kind='supporting', evidence='transient dependency error', example='source/sink timeout'),
     EvidenceRule(root_cause_id='PIPELINE_TASK_RETRY_EXHAUSTED', kind='negative', evidence='첫 실패이며 retry 여지 있음', example='exhausted 아님'),
-    EvidenceRule(root_cause_id='SCHEMA_MISMATCH', kind='required', evidence='serialization/deserialization/schema error', example='incompatible schema'),
+    EvidenceRule(root_cause_id='SCHEMA_MISMATCH', kind='required', evidence='serialization/deserialization/schema error', example='incompatible schema, deserialization error, 스키마 불일치, 스키마 오류, 역직렬화 오류'),
     EvidenceRule(root_cause_id='SCHEMA_MISMATCH', kind='supporting', evidence='schema version 변경 이력', example='recent subject version'),
     EvidenceRule(root_cause_id='SCHEMA_MISMATCH', kind='supporting', evidence='데이터 샘플 구조 변화', example='field type mismatch'),
     EvidenceRule(root_cause_id='SCHEMA_MISMATCH', kind='negative', evidence='schema 변경 없음', example='후보 약화'),
@@ -500,7 +500,7 @@ EVIDENCE_RULES: tuple[EvidenceRule, ...] = (
     EvidenceRule(root_cause_id='SINK_WRITE_LATENCY', kind='required', evidence='connector sink task 처리시간 증가', example='flush/batch duration 증가'),
     EvidenceRule(root_cause_id='SINK_WRITE_LATENCY', kind='supporting', evidence='source/Kafka 정상', example='upstream 정상'),
     EvidenceRule(root_cause_id='SINK_WRITE_LATENCY', kind='negative', evidence='sink auth error', example='auth 후보 우선'),
-    EvidenceRule(root_cause_id='SINK_AUTH_EXPIRED', kind='required', evidence='sink auth/permission error log', example='`AccessDenied`, `token expired`'),
+    EvidenceRule(root_cause_id='SINK_AUTH_EXPIRED', kind='required', evidence='sink auth/permission error log', example='`AccessDenied`, `token expired`, 인증 실패, 권한 거부, 비밀번호 인증 실패'),
     EvidenceRule(root_cause_id='SINK_AUTH_EXPIRED', kind='supporting', evidence='credential rotation 또는 secret 변경 이력', example='rotate 직후 실패'),
     EvidenceRule(root_cause_id='SINK_AUTH_EXPIRED', kind='negative', evidence='connection timeout만 존재하고 auth error 없음', example='auth 후보 약화'),
     EvidenceRule(root_cause_id='SINK_CONSTRAINT_VIOLATION', kind='required', evidence='sink constraint 또는 duplicate key error', example='unique constraint violation'),

@@ -178,8 +178,16 @@ class ApprovedActionOutput(StrictModel):
     approved_by: str | None = None
 
 
+class ApprovalRequestOutput(StrictModel):
+    approval_id: str
+    action_id: str
+    params_hash: str
+    approval_status: str
+
+
 class ApprovalGateOutput(StrictModel):
     approved_actions: list[ApprovedActionOutput] = Field(default_factory=list)
+    approval_requests: list[ApprovalRequestOutput] = Field(default_factory=list)
     run_status: str
 
 
