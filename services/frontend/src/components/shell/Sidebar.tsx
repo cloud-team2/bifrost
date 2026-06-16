@@ -14,14 +14,22 @@ interface NavItem {
   badge?: number
 }
 
-export function Sidebar({ onCreateProject }: { onCreateProject: () => void }) {
+export function Sidebar({
+  onCreateProject,
+  collapsed,
+  onToggle,
+}: {
+  onCreateProject: () => void
+  collapsed: boolean
+  onToggle: () => void
+}) {
   const app = useApp()
   const { currentUser, view, incidents } = app
   const openIncidents = incidents.filter((i) => i.status.toUpperCase() !== 'RESOLVED').length
 
   const nav: NavItem[] = [
-    { view: 'pipelines', label: 'Pipeline', icon: 'route' },
-    { view: 'databases', label: 'Database', icon: 'database' },
+    { view: 'pipelines', label: '파이프라인', icon: 'route' },
+    { view: 'databases', label: '데이터베이스', icon: 'database' },
     { view: 'cluster', label: '클러스터', icon: 'server' },
     { view: 'alerts', label: '인시던트', icon: 'bell', badge: openIncidents },
   ]
@@ -32,63 +40,109 @@ export function Sidebar({ onCreateProject }: { onCreateProject: () => void }) {
     (v === 'databases' && view === 'database-detail')
 
   return (
-    <aside className="flex w-52 shrink-0 flex-col border-r border-[#ececec] bg-rail text-[#6b6b73]">
-      {/* logo */}
-      <div className="flex items-center gap-2 px-4 pt-4 pb-3">
-        <BrandMark size={28} />
-        <span className="text-[17px] font-bold lowercase tracking-tight text-[#0d0d0d]">bifrost</span>
+    <aside
+      className={cn(
+        'flex shrink-0 flex-col border-r border-[#ececec] bg-rail text-[#6b6b73] transition-[width] duration-200',
+        collapsed ? 'w-14' : 'w-52',
+      )}
+    >
+      {/* logo + 접기 토글 */}
+      <div className={cn('flex items-center pt-4 pb-3', collapsed ? 'justify-center px-3' : 'gap-2 px-4')}>
+        <BrandMark size={collapsed ? 24 : 28} />
+        {!collapsed && (
+          <span className="flex-1 text-[17px] font-bold lowercase tracking-tight text-[#0d0d0d]">bifrost</span>
+        )}
+        {!collapsed && (
+          <button
+            onClick={onToggle}
+            title="사이드바 접기"
+            className="rounded-md p-1 text-[#9a9a9a] transition-colors hover:bg-rail-hover hover:text-[#0d0d0d]"
+          >
+            <Icon name="chevron-left" size={16} />
+          </button>
+        )}
       </div>
 
-      <ProjectSwitcher onCreate={onCreateProject} />
+      {collapsed ? (
+        <button
+          onClick={onToggle}
+          title={app.currentProject?.name ?? '프로젝트'}
+          className="mx-2 mb-1 flex items-center justify-center rounded-md border border-[#ececec] bg-rail-hover py-2 transition-colors hover:border-[#d9d9d9]"
+        >
+          <Icon name="layers" size={15} className="text-[#8a8a8a]" />
+        </button>
+      ) : (
+        <ProjectSwitcher onCreate={onCreateProject} />
+      )}
 
-      <nav className="flex-1 px-3 py-3">
+      <nav className={cn('flex-1 py-3', collapsed ? 'px-2' : 'px-3')}>
         {nav.map((item) => (
-          <div key={item.view}>
-            {item.divider && <div className="my-2 border-t border-[#ececec]" />}
-            <button
-              onClick={() => app.setView(item.view)}
-              className={cn(
-                'flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-[12.5px] font-medium transition-colors',
-                isActive(item.view)
-                  ? 'bg-[#0d0d0d] text-white'
-                  : 'text-[#6b6b73] hover:bg-rail-hover hover:text-[#0d0d0d]',
-              )}
-            >
-              <Icon name={item.icon} size={16} />
-              <span className="flex-1 text-left">{item.label}</span>
-              {item.badge ? (
+          <button
+            key={item.view}
+            onClick={() => app.setView(item.view)}
+            title={collapsed ? item.label : undefined}
+            className={cn(
+              'relative flex w-full items-center rounded-md text-[12.5px] font-medium transition-colors',
+              collapsed ? 'justify-center py-2.5' : 'gap-2.5 px-2.5 py-2',
+              isActive(item.view)
+                ? 'bg-[#0d0d0d] text-white'
+                : 'text-[#6b6b73] hover:bg-rail-hover hover:text-[#0d0d0d]',
+            )}
+          >
+            <Icon name={item.icon} size={16} />
+            {!collapsed && <span className="flex-1 text-left">{item.label}</span>}
+            {item.badge ? (
+              collapsed ? (
+                <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-[#c0392b] ring-2 ring-white" />
+              ) : (
                 <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-[#c0392b] px-1 text-[10px] font-bold text-white">
                   {item.badge}
                 </span>
-              ) : null}
-            </button>
-          </div>
+              )
+            ) : null}
+          </button>
         ))}
       </nav>
 
       {/* user */}
       <button
         onClick={() => app.setView('settings')}
+        title={collapsed ? currentUser?.name ?? '설정' : undefined}
         className={cn(
-          'mx-3 mb-2 flex items-center gap-2.5 rounded-md px-2.5 py-2 transition-colors hover:bg-rail-hover',
+          'mb-2 flex items-center rounded-md transition-colors hover:bg-rail-hover',
+          collapsed ? 'mx-2 justify-center py-2' : 'mx-3 gap-2.5 px-2.5 py-2',
           view === 'settings' && 'bg-rail-hover',
         )}
       >
-        <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[#0d0d0d] text-[12px] font-semibold text-white">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#0d0d0d] text-[12px] font-semibold text-white">
           {currentUser?.initial}
         </div>
-        <div className="min-w-0 flex-1 text-left">
-          <div className="truncate text-[12px] font-medium text-[#0d0d0d]">{currentUser?.name}</div>
-          <div className="truncate text-[10.5px] capitalize text-[#9a9a9a]">{currentUser?.role}</div>
-        </div>
-        <Icon name="settings" size={14} className="text-[#9a9a9a]" />
+        {!collapsed && (
+          <>
+            <div className="min-w-0 flex-1 text-left">
+              <div className="truncate text-[12px] font-medium text-[#0d0d0d]">{currentUser?.name}</div>
+              <div className="truncate text-[10.5px] capitalize text-[#9a9a9a]">{currentUser?.role}</div>
+            </div>
+            <Icon name="settings" size={14} className="text-[#9a9a9a]" />
+          </>
+        )}
       </button>
 
-      <div className="flex items-center gap-1.5 border-t border-[#ececec] px-4 py-2.5 text-[10.5px] text-[#9a9a9a]">
-        <span className="h-1.5 w-1.5 rounded-full bg-[#c8c8c8]" />
-        연결됨
-        <span className="ml-auto font-mono">{APP_VERSION}</span>
-      </div>
+      {collapsed ? (
+        <button
+          onClick={onToggle}
+          title="사이드바 펼치기"
+          className="flex items-center justify-center border-t border-[#ececec] py-2.5 text-[#9a9a9a] transition-colors hover:bg-rail-hover hover:text-[#0d0d0d]"
+        >
+          <Icon name="chevron-right" size={16} />
+        </button>
+      ) : (
+        <div className="flex items-center gap-1.5 border-t border-[#ececec] px-4 py-2.5 text-[10.5px] text-[#9a9a9a]">
+          <span className="h-1.5 w-1.5 rounded-full bg-[#c8c8c8]" />
+          연결됨
+          <span className="ml-auto font-mono">{APP_VERSION}</span>
+        </div>
+      )}
       <input type="hidden" value={app.currentProject?.id ?? ''} readOnly />
     </aside>
   )
