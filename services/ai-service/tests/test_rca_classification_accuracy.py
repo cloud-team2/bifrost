@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.agents.classifier import run_classifier
 from app.agents.rca import run_rca
 from app.schemas.outputs import (
     Classification,
@@ -52,6 +53,20 @@ def _retrieval(*summaries: str) -> RetrievalOutput:
                 summary=summary,
             )
             for index, summary in enumerate(summaries, start=1)
+        ]
+    )
+
+
+def _retrieval_items(*items: tuple[str, EvidenceType]) -> RetrievalOutput:
+    return RetrievalOutput(
+        evidence_items=[
+            EvidenceItem(
+                evidence_id=f"ev-{index}",
+                type=evidence_type,
+                store_ref=f"evidence://run/ev-{index}",
+                summary=summary,
+            )
+            for index, (summary, evidence_type) in enumerate(items, start=1)
         ]
     )
 
@@ -115,3 +130,55 @@ async def test_at_least_four_of_six_types_correct() -> None:
         if result.root_cause_candidates[0].root_cause_id == expected:
             correct += 1
     assert correct >= 4, f"only {correct}/6 failure types classified correctly"
+
+
+_RAW_E2_REGRESSIONS = {
+    "SOURCE_AUTH_EXPIRED_02": (
+        (
+            "project_id=f537507e-9038-4df4-94b3-fde9e18eff3e. mode=incident_analysis. "
+            "remediation_requested=false. Only identify the root cause id from evidence; "
+            "do not propose or execute remediation. Source connector read stage reports "
+            "permission denied and token expired for source credential. Secret rotation "
+            "history shows source credential changed in this window. Network and sink "
+            "writes are normal."
+        ),
+        (),
+        "SOURCE_AUTH_EXPIRED",
+    ),
+    "SCHEMA_MISMATCH_03": (
+        (
+            "project_id=f537507e-9038-4df4-94b3-fde9e18eff3e. mode=incident_analysis. "
+            "remediation_requested=false. Only identify the root cause id from evidence; "
+            "do not propose or execute remediation. Evidence points to schema compatibility "
+            "failure: serialization error and incompatible schema, recent subject version "
+            "update, sample payload has field type mismatch. Sink is reachable and "
+            "credentials valid."
+        ),
+        (
+            "[catalog] Catalog - Evidence Matrix: write latency 증가 | Required | write p95 증가",
+            "[catalog] Catalog - Evidence Matrix: sink auth/permission error log | Required",
+        ),
+        "SCHEMA_MISMATCH",
+    ),
+}
+
+
+@pytest.mark.parametrize("case_name", list(_RAW_E2_REGRESSIONS))
+@pytest.mark.asyncio
+async def test_raw_e2_user_evidence_drives_classifier_and_rca(case_name: str) -> None:
+    user_message, knowledge_summaries, expected = _RAW_E2_REGRESSIONS[case_name]
+    retrieval = _retrieval_items(
+        (user_message, EvidenceType.SNAPSHOT),
+        *[(summary, EvidenceType.KNOWLEDGE) for summary in knowledge_summaries],
+    )
+
+    classifier = await run_classifier(user_message, retrieval)
+    result = await run_rca(classifier, retrieval)
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == expected, (
+        f"{case_name}: expected {expected}, got {top.root_cause_id} "
+        f"(classifier={[c.type for c in classifier.classification.incident_types]}, "
+        f"candidates={[c.root_cause_id for c in result.root_cause_candidates]})"
+    )
+    assert top.confidence >= 0.60

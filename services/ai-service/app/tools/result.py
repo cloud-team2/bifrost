@@ -14,6 +14,15 @@ BLOCKING_ERROR_CODES = {
     SpringErrorCode.CHANGE_SCOPE_MISMATCH,
 }
 
+CONNECTOR_TARGET_TOOLS = {
+    "get_connector_status",
+    "get_traces",
+    "get_connector_task_trace",
+    "restart_connector",
+    "pause_connector",
+    "resume_connector",
+}
+
 
 def result_from_spring_response(
     *,
@@ -41,6 +50,7 @@ def result_from_spring_response(
         code=SpringErrorCode.INTERNAL_ERROR,
         message="Spring operation failed without an error body",
     )
+    error = _targeted_not_found_error(tool_name, error)
     error = _friendly_tool_error(error)
     status = ToolStatus.BLOCKED if _is_blocking_error(error) else ToolStatus.FAILED
     return ToolResult(
@@ -162,6 +172,28 @@ def _is_blocking_error(error: ToolError) -> bool:
         return SpringErrorCode(error.code) in BLOCKING_ERROR_CODES
     except ValueError:
         return False
+
+
+def _targeted_not_found_error(tool_name: str, error: ToolError) -> ToolError:
+    """Split connector target misses from generic project/path 404s."""
+    raw_message = error.message or ""
+    lowered = raw_message.lower()
+    try:
+        code = SpringErrorCode(error.code)
+    except ValueError:
+        return error
+
+    if (
+        tool_name in CONNECTOR_TARGET_TOOLS
+        and code == SpringErrorCode.RESOURCE_NOT_FOUND
+        and (
+            "connector not found" in lowered
+            or "커넥터를 찾을 수" in raw_message
+        )
+    ):
+        return error.model_copy(update={"code": SpringErrorCode.CONNECTOR_NOT_FOUND})
+
+    return error
 
 
 def _friendly_tool_error(error: ToolError) -> ToolError:

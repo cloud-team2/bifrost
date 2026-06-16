@@ -10,7 +10,7 @@
       "request_id": "req_e2e_004",
       "operation": "get_connector_status",
       "result": {
-        "connectorName": "default-connector",
+        "connectorName": "orders-source",
         "connectorState": "RUNNING",
         "tasks": [
           {

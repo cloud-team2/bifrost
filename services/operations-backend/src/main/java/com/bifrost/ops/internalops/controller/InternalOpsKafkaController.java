@@ -12,9 +12,12 @@ import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.DescribeClusterResult;
+import org.apache.kafka.clients.admin.DescribeTopicsResult;
 import org.apache.kafka.clients.admin.TopicDescription;
+import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartitionInfo;
+import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -25,6 +28,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -94,12 +98,12 @@ public class InternalOpsKafkaController {
                 .collect(Collectors.toCollection(java.util.LinkedHashSet::new));
         if (topicNames.isEmpty()) return List.of();
 
-        Map<String, TopicDescription> described = adminClient.describeTopics(topicNames)
-                .allTopicNames().get(TIMEOUT_SEC, TimeUnit.SECONDS);
+        DescribeTopicsResult result = adminClient.describeTopics(topicNames);
+        Map<String, KafkaFuture<TopicDescription>> described = result.topicNameValues();
 
         List<ClusterInfoResult.TopicInfo> out = new ArrayList<>();
         for (String name : topicNames) {
-            TopicDescription d = described.get(name);
+            TopicDescription d = topicDescriptionOrNull(described.get(name));
             if (d == null) continue;
             int under = 0, offline = 0, rf = 0;
             List<ClusterInfoResult.PartitionInfo> parts = new ArrayList<>();
@@ -116,5 +120,16 @@ public class InternalOpsKafkaController {
             out.add(new ClusterInfoResult.TopicInfo(name, d.partitions().size(), rf, under, offline, parts));
         }
         return out;
+    }
+
+    private TopicDescription topicDescriptionOrNull(KafkaFuture<TopicDescription> future)
+            throws InterruptedException, ExecutionException, java.util.concurrent.TimeoutException {
+        if (future == null) return null;
+        try {
+            return future.get(TIMEOUT_SEC, TimeUnit.SECONDS);
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof UnknownTopicOrPartitionException) return null;
+            throw e;
+        }
     }
 }

@@ -11,7 +11,7 @@ from app.catalogs.failure_types import list_failure_types
 from app.catalogs.types import FailureType
 from app.prompts.classifier import SYSTEM_PROMPT, build_user_prompt
 from app.schemas.outputs import Classification, ClassifierOutput, IncidentTypeOutput, RetrievalOutput
-from app.schemas.state import IncidentScope
+from app.schemas.state import EvidenceItem, EvidenceType, IncidentScope
 
 UNKNOWN_INCIDENT_TYPE = "UNKNOWN_NEEDS_MORE_EVIDENCE"
 AMBIGUOUS_CONFIDENCE_THRESHOLD = 0.60
@@ -56,7 +56,8 @@ async def run_classifier(user_message: str, retrieval_out: RetrievalOutput | Non
     failure_types = list_failure_types()
     known_type_ids = {item.incident_type for item in failure_types}
     evidence_items = retrieval_out.evidence_items if retrieval_out else []
-    evidence_summaries = [item.summary for item in evidence_items]
+    observed_evidence_items = [item for item in evidence_items if _is_observed_evidence(item)]
+    evidence_summaries = [item.summary for item in observed_evidence_items]
 
     rule_candidates = _rank_rule_candidates(user_message, retrieval_out, failure_types)
     incident_scope = _infer_scope(evidence_summaries)
@@ -106,7 +107,11 @@ def _rank_rule_candidates(
 ) -> list[_Candidate]:
     sources: list[tuple[str | None, str]] = [(None, user_message)]
     if retrieval_out:
-        sources.extend((item.evidence_id, item.summary) for item in retrieval_out.evidence_items)
+        sources.extend(
+            (item.evidence_id, item.summary)
+            for item in retrieval_out.evidence_items
+            if _is_observed_evidence(item)
+        )
 
     candidates: list[_Candidate] = []
     for failure_type in failure_types:
@@ -300,6 +305,10 @@ def _merge_candidates(rule_candidates: list[_Candidate], llm_candidates: list[_C
     candidates = list(by_type.values())
     candidates.sort(key=lambda item: item.confidence, reverse=True)
     return candidates
+
+
+def _is_observed_evidence(item: EvidenceItem) -> bool:
+    return item.type != EvidenceType.KNOWLEDGE and item.type != EvidenceType.KNOWLEDGE.value
 
 
 def _infer_scope(evidence_summaries: list[str]) -> IncidentScope:

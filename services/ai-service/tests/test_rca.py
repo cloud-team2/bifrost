@@ -49,6 +49,20 @@ def _retrieval(*summaries: str) -> RetrievalOutput:
     )
 
 
+def _retrieval_items(*items: tuple[str, EvidenceType]) -> RetrievalOutput:
+    return RetrievalOutput(
+        evidence_items=[
+            EvidenceItem(
+                evidence_id=f"ev-{index}",
+                type=evidence_type,
+                store_ref=f"evidence://run/ev-{index}",
+                summary=summary,
+            )
+            for index, (summary, evidence_type) in enumerate(items, start=1)
+        ]
+    )
+
+
 @pytest.mark.asyncio
 async def test_source_db_timeout_full_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_llm(monkeypatch)
@@ -95,6 +109,53 @@ async def test_required_missing_caps_confidence(monkeypatch: pytest.MonkeyPatch)
     assert top.required_evidence_satisfied is False
     assert top.evidence_gap
     assert top.confidence < 0.60
+
+
+@pytest.mark.asyncio
+async def test_knowledge_evidence_does_not_satisfy_required_rules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier("SINK_WRITE_LATENCY"),
+        _retrieval_items(
+            (
+                "[catalog] Evidence Matrix: sink write latency 증가 | Required | write p95 증가",
+                EvidenceType.KNOWLEDGE,
+            ),
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "UNKNOWN_WITH_EVIDENCE_GAP"
+    assert top.confidence < 0.60
+
+
+@pytest.mark.asyncio
+async def test_user_request_snapshot_can_satisfy_schema_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier("SCHEMA_MISMATCH"),
+        _retrieval_items(
+            (
+                "Evidence points to schema compatibility failure: serialization error and "
+                "incompatible schema, recent subject version update, sample payload has "
+                "field type mismatch. Sink is reachable and credentials valid.",
+                EvidenceType.SNAPSHOT,
+            ),
+            (
+                "[catalog] Evidence Matrix: sink write latency 증가 | Required | write p95 증가",
+                EvidenceType.KNOWLEDGE,
+            ),
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "SCHEMA_MISMATCH"
+    assert top.required_evidence_satisfied is True
+    assert top.confidence >= 0.60
 
 
 @pytest.mark.asyncio

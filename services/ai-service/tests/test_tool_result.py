@@ -156,3 +156,27 @@ def test_connector_not_found_error_is_user_friendly() -> None:
 
     assert "커넥터를 찾을 수 없습니다" in tool_result.summary
     assert "default-connector" not in tool_result.summary
+
+
+def test_connector_resource_not_found_is_targeted_reason_code() -> None:
+    response = SpringOpsResponse(
+        ok=False,
+        request_id="req-5",
+        operation="get_connector_status",
+        error=ToolError(
+            code=SpringErrorCode.RESOURCE_NOT_FOUND,
+            message="connector not found: missing-source",
+            required_action="check_project_scope",
+        ),
+    )
+
+    tool_result = result_from_spring_response(
+        tool_name="get_connector_status",
+        risk=RiskLevel.READ_ONLY,
+        response=response,
+    )
+
+    assert tool_result.error is not None
+    assert tool_result.error.code == SpringErrorCode.CONNECTOR_NOT_FOUND
+    assert "커넥터를 찾을 수 없습니다" in tool_result.summary
+    assert "missing-source" not in tool_result.summary
