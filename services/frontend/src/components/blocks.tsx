@@ -2,74 +2,40 @@ import type { ReactNode } from 'react'
 import { Icon, type IconName } from './Icon'
 import { cn } from '../lib/format'
 
-/* status → colour mapping shared across views.
- * "Codex 모노크롬"(#719): 유채색은 오류뿐. 정상·실행중·지연·info 는 모두 무채색이며
- * 점(dot)·배경 없이 라벨만. 오류/실패/인시던트만 #C0392B(텍스트·점) + 옅은 빨강 배경. */
-const NEUTRAL = { dot: '', text: 'text-[#8a8a8a]', bg: '' } // 정상/실행중
-const MUTED = { dot: '', text: 'text-[#6b6b73]', bg: '' } // 지연/경고/대기/info
-// 오류는 솔리드 빨강+흰 글자(#770) — '1 open incident' 버튼과 통일.
-const ERROR = { dot: '', text: 'text-white', bg: 'bg-[#c0392b]' }
-const TONE: Record<string, { dot: string; text: string; bg: string }> = {
-  healthy: NEUTRAL,
-  active: NEUTRAL,
-  RUNNING: NEUTRAL,
-  STABLE: NEUTRAL,
-  CONNECTED: NEUTRAL,
-  resolved: NEUTRAL,
-  RESOLVED: NEUTRAL,
-  ACTIVE: NEUTRAL,
-  creating: NEUTRAL,
-  UNASSIGNED: NEUTRAL,
-  warning: MUTED,
-  lag: MUTED,
-  WARN: MUTED,
-  WARNING: MUTED,
-  REBALANCING: MUTED,
-  PARTIALLY_FAILED: MUTED,
-  investigating: MUTED,
-  INVESTIGATING: MUTED,
-  paused: MUTED,
-  PAUSED: MUTED,
-  EMPTY: MUTED,
-  inactive: MUTED,
-  INACTIVE: MUTED,
-  info: MUTED,
-  error: ERROR,
-  ERROR: ERROR,
-  DEAD: ERROR,
-  FAILED: ERROR,
-  critical: ERROR,
-  CRITICAL: ERROR,
-  open: ERROR,
-  OPEN: ERROR,
-  revoked: ERROR,
-  REVOKED: ERROR,
+/* status → 색 (#780): 솔리드 배경 + 흰 글자.
+ * 정상=초록 · 경고/지연=주황 · 대기/일시정지/info=회색 · 오류=빨강. */
+const GREEN = '#157f4a'
+const ORANGE = '#d97316'
+const GRAY = '#6b6b73'
+const RED = '#c0392b'
+const TONE: Record<string, string> = {
+  healthy: GREEN, active: GREEN, RUNNING: GREEN, STABLE: GREEN, CONNECTED: GREEN,
+  resolved: GREEN, RESOLVED: GREEN, ACTIVE: GREEN,
+  warning: ORANGE, lag: ORANGE, WARN: ORANGE, WARNING: ORANGE, REBALANCING: ORANGE,
+  PARTIALLY_FAILED: ORANGE, investigating: ORANGE, INVESTIGATING: ORANGE,
+  paused: GRAY, PAUSED: GRAY, EMPTY: GRAY, inactive: GRAY, INACTIVE: GRAY, info: GRAY,
+  creating: GRAY, UNASSIGNED: GRAY,
+  error: RED, ERROR: RED, DEAD: RED, FAILED: RED, critical: RED, CRITICAL: RED,
+  open: RED, OPEN: RED, revoked: RED, REVOKED: RED,
 }
 
-export function statusTone(status: string) {
-  return TONE[status] ?? MUTED
+export function statusTone(status: string): string {
+  return TONE[status] ?? GRAY
 }
 
 export function StatusBadge({ status, label }: { status: string; label?: string }) {
-  const t = statusTone(status)
   return (
     <span
-      className={cn(
-        'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide',
-        t.bg,
-        t.text,
-      )}
+      className="inline-flex items-center rounded-full px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide text-white"
+      style={{ background: statusTone(status) }}
     >
-      {t.dot && <span className={cn('h-1.5 w-1.5 rounded-full', t.dot)} />}
       {label ?? status}
     </span>
   )
 }
 
 export function StatusDot({ status }: { status: string }) {
-  // 오류는 빨강 점, 그 외는 중립 회색 점(색 제거하되 마커는 유지).
-  const t = statusTone(status)
-  return <span className={cn('h-2 w-2 rounded-full', t.dot || 'bg-[#c8c8c8]')} />
+  return <span className="h-2 w-2 rounded-full" style={{ background: statusTone(status) }} />
 }
 
 export function MetricCard({
