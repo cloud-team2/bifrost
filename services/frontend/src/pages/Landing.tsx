@@ -111,7 +111,7 @@ export function Landing({ onEnter }: { onEnter: () => void }) {
       <section className="bg-[#0D0D0D] text-[#F2F2F2]">
         <div className="mx-auto max-w-6xl px-6 py-20">
           <div className="text-center">
-            <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[#B0B0B0]">작동 방식</div>
+            <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-white">작동 방식</div>
             <h2 className="mt-3 text-[26px] font-semibold tracking-tight text-white sm:text-[30px]">
               DB 연결에서 AI 장애 대응까지
             </h2>
@@ -184,11 +184,11 @@ export function Landing({ onEnter }: { onEnter: () => void }) {
       <section id="deploy" className="bg-[#0D0D0D] text-[#F2F2F2]">
         <div className="mx-auto max-w-6xl px-6 py-20">
           <div className="text-center">
-            <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[#B0B0B0]">배포</div>
+            <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-white">배포</div>
             <h2 className="mt-3 text-[26px] font-semibold tracking-tight text-white sm:text-[30px]">
               우리 인프라 안에서 운영합니다
             </h2>
-            <p className="mx-auto mt-3 max-w-xl text-[14px] leading-relaxed text-[#CFCFCF]">
+            <p className="mx-auto mt-3 max-w-xl text-[14px] leading-relaxed text-white">
               데이터가 외부로 나가지 않도록, 폐쇄망·온프레미스까지 동일한 콘솔로.
             </p>
           </div>
@@ -225,7 +225,7 @@ export function Landing({ onEnter }: { onEnter: () => void }) {
       <section className="bg-[#0D0D0D] text-center text-white">
         <div className="mx-auto max-w-3xl px-6 py-20">
           <h2 className="text-[26px] font-semibold tracking-tight sm:text-[30px]">도입을 검토 중이신가요?</h2>
-          <p className="mt-3 text-[15px] text-[#A8A8A8]">팀 환경에 맞춘 데모와 배포 방식을 안내해 드립니다.</p>
+          <p className="mt-3 text-[15px] text-white">팀 환경에 맞춘 데모와 배포 방식을 안내해 드립니다.</p>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
             <button onClick={onEnter} className="rounded-lg bg-white px-6 py-3 text-sm font-semibold text-[#0D0D0D] transition-colors hover:bg-[#ECECEC]">
               로그인
@@ -239,7 +239,7 @@ export function Landing({ onEnter }: { onEnter: () => void }) {
 
       {/* ───────────────────────── 푸터 (dark) */}
       <footer className="border-t border-[#1F1F1F] bg-[#0D0D0D]">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5 text-[12px] text-[#9A9A9A]">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5 text-[12px] text-white">
           <div className="flex items-center gap-2">
             <BrandMark size={16} tone="light" />
             <span>© 2026 bifrost</span>
@@ -266,9 +266,9 @@ function Feature({ kicker, title, desc }: { kicker: string; title: string; desc:
 function Step({ n, title, desc }: { n: string; title: string; desc: ReactNode }) {
   return (
     <div>
-      <div className="font-mono text-[11px] text-[#9CA0AE]">{n}</div>
+      <div className="font-mono text-[11px] text-white">{n}</div>
       <div className="mt-1.5 text-[15px] font-bold text-white">{title}</div>
-      <div className="mt-2 text-[13px] leading-relaxed text-[#CFCFCF]">{desc}</div>
+      <div className="mt-2 text-[13px] leading-relaxed text-white">{desc}</div>
     </div>
   )
 }
@@ -304,7 +304,7 @@ function DeployCard({ title, sub }: { title: string; sub: string }) {
   return (
     <div className="rounded-xl border border-[#2C2C2C] bg-[#171717] p-4">
       <div className="text-[13px] font-bold text-white">{title}</div>
-      <div className="mt-1 text-[11px] text-[#B6B6B6]">{sub}</div>
+      <div className="mt-1 text-[11px] text-white">{sub}</div>
     </div>
   )
 }

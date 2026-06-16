@@ -664,24 +664,20 @@ function connectorStateClass(state: string | null): string {
 
 function ConnectorCard({ c, topic }: { c: ConnectorInfo; topic: string }) {
   const isSource  = c.kind === 'source'
-  const kindColor = isSource ? 'border-[#ececec] bg-[#ededed]' : 'border-[#ececec] bg-[#ededed]'
-  const kindText  = isSource ? 'text-[#6b6b73]' : 'text-[#6b6b73]'
   const recordsSeries = (c.recordsPerSecSeries ?? []).map((p) => ({ t: p.timestamp, records: p.value }))
 
   return (
-    <div className={cn('rounded-xl border-2', kindColor)}>
-      {/* ── connector header ─────────────────────── */}
-      <div className={cn('flex items-center gap-3 border-b px-5 py-3', kindColor)}>
-        <div className={cn('flex h-7 w-7 items-center justify-center rounded-lg',
-          isSource ? 'bg-[#ededed]' : 'bg-[#ededed]')}>
-          <Icon name={isSource ? 'database' : 'layers'} size={14} className={kindText} />
+    <div className="overflow-hidden rounded-xl border-2 border-[#ececec]">
+      {/* ── connector header (검정 배경·흰 글자/아이콘) ─────────────────────── */}
+      <div className="flex items-center gap-3 bg-[#0d0d0d] px-5 py-3">
+        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/10">
+          <Icon name={isSource ? 'database' : 'layers'} size={14} className="text-white" />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[13px] font-bold text-gray-900">{c.name}</div>
-          <div className="truncate font-mono text-[11px] text-gray-500">{c.connectorClass}</div>
+          <div className="truncate text-[13px] font-bold text-white">{c.name}</div>
+          <div className="truncate font-mono text-[11px] text-white/70">{c.connectorClass}</div>
         </div>
-        <span className={cn('rounded-full px-2.5 py-0.5 text-[10.5px] font-bold uppercase', kindText,
-          isSource ? 'bg-[#ededed]' : 'bg-[#ededed]')}>
+        <span className="rounded-full bg-white/15 px-2.5 py-0.5 text-[10.5px] font-bold uppercase text-white">
           {c.kind}
         </span>
       </div>
@@ -1121,8 +1117,9 @@ function SyncTab({ edge }: { edge: Edge }) {
     : lag > 0 ? (endOffset > 0 ? Math.max(0, Math.min(99, ((endOffset - lag) / endOffset) * 100)) : 0)
     : rowsKnown && sourceRows > 0 ? Math.min(99, (sinkRows / sourceRows) * 100)
     : 0
-  const pctColor   = sinkFailed ? 'text-[#c0392b]' : isHealthy ? 'text-[#6b6b73]' : 'text-[#6b6b73]'
-  const barColor   = sinkFailed ? 'bg-[#c0392b]'   : isHealthy ? 'bg-[#c8c8c8]'  : 'bg-[#c8c8c8]'
+  // 동기화율 색(C·상태별): 완료=초록 · 처리중/준비중=주황 · 오류=빨강
+  const pctColor   = sinkFailed ? 'text-[#c0392b]' : isHealthy ? 'text-[#157f4a]' : 'text-[#d97316]'
+  const barColor   = sinkFailed ? 'bg-[#c0392b]'   : isHealthy ? 'bg-[#157f4a]'  : 'bg-[#d97316]'
 
   // 실데이터(Prometheus)만 사용. 비어있으면 빈 차트(더미 위장 금지, #175).
   // 소스지연은 Debezium이 전달할 데이터가 없을 때(idle) -1을 준다. 이때는 "지연 0"이 아니라
@@ -1189,7 +1186,7 @@ function SyncTab({ edge }: { edge: Edge }) {
 
               <span className={cn('text-[11.5px] font-medium',
                 sync === null ? 'text-gray-400'
-                  : sinkFailed ? 'text-[#c0392b]' : isHealthy ? 'text-[#6b6b73]' : 'text-[#6b6b73]')}>
+                  : sinkFailed ? 'text-[#c0392b]' : isHealthy ? 'text-[#157f4a]' : 'text-[#d97316]')}>
                 {sync === null
                   ? '불러오는 중…'
                   : sinkFailed
