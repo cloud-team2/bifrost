@@ -58,6 +58,12 @@ internal:
   ops:
     token: ${INTERNAL_OPS_TOKEN:}
 
+# 라이브 read-tool 스모크 프로젝트 복구 seed(#650). 수동 DB INSERT 대신 앱 부트스트랩에서
+# 고정 UUID(11111111-2222-3333-4444-555555555555) 프로젝트와 최소 샘플 데이터를 보장한다.
+smoke:
+  seed:
+    enabled: ${SMOKE_SEED_ENABLED:true}
+
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
