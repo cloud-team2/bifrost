@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Bar, BarChart, CartesianGrid, Cell, Tooltip, XAxis, YAxis } from 'recharts'
 import { Icon } from '../../components/Icon'
-import { Panel, StatusBadge } from '../../components/blocks'
+import { Panel, StatusBadge, statusTone } from '../../components/blocks'
 import { TrendChart, CHART_COLORS, ResponsiveChart } from '../../components/Charts'
 import { TechIcon, nodeKind } from '../../components/TechIcon'
 import { useToast } from '../../components/Toast'
@@ -388,7 +388,7 @@ function TopicTab({ edge }: { edge: Edge }) {
                     <td className="px-5 py-2.5">
                       <div className="flex items-center gap-2">
                         <div className="h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-gray-100">
-                          <div className="h-full rounded-full bg-brand-400 transition-all" style={{ width: `${pct}%` }} />
+                          <div className="h-full rounded-full bg-[#3a47c2] transition-all" style={{ width: `${pct}%` }} />
                         </div>
                         <span className="font-mono text-[11.5px] tabular-nums font-semibold text-gray-800">
                           {formatNum(msgCount)}
@@ -670,14 +670,14 @@ function ConnectorCard({ c, topic }: { c: ConnectorInfo; topic: string }) {
     <div className="overflow-hidden rounded-xl border-2 border-[#ececec]">
       {/* ── connector header (검정 배경·흰 글자/아이콘) ─────────────────────── */}
       <div className="flex items-center gap-3 bg-[#0d0d0d] px-5 py-3">
-        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/10">
-          <Icon name={isSource ? 'database' : 'layers'} size={14} className="text-white" />
+        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-white">
+          <Icon name={isSource ? 'database' : 'layers'} size={14} className="text-[#0d0d0d]" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="truncate text-[13px] font-bold text-white">{c.name}</div>
           <div className="truncate font-mono text-[11px] text-white/70">{c.connectorClass}</div>
         </div>
-        <span className="rounded-full bg-white/15 px-2.5 py-0.5 text-[10.5px] font-bold uppercase text-white">
+        <span className="rounded-full bg-white px-2.5 py-0.5 text-[10.5px] font-bold uppercase text-[#0d0d0d]">
           {c.kind}
         </span>
       </div>
@@ -1306,17 +1306,13 @@ function DBNodeCard({ node, role }: { node: Node | null; role: 'Source' | 'Sink'
         <div className="mt-0.5 text-[11.5px] text-gray-500">{node.techLabel}</div>
         <div className="mt-0.5 font-mono text-[10.5px] text-gray-400">{node.host}</div>
       </div>
-      <span className={cn(
-        'rounded px-2 py-0.5 text-[9.5px] font-bold uppercase',
-        role === 'Source' ? 'bg-[#ededed] text-[#6b6b73]' : 'bg-[#ededed] text-[#6b6b73]',
-      )}>
+      <span className="rounded bg-[#0d0d0d] px-2 py-0.5 text-[9.5px] font-bold uppercase text-white">
         {role}
       </span>
-      <div className="flex items-center gap-1.5 text-[11px]">
-        <span className={cn('h-1.5 w-1.5 rounded-full',
-          effStatus === 'healthy' ? 'bg-[#c8c8c8]' : effStatus === 'error' ? 'bg-[#c0392b]' : 'bg-[#c8c8c8]')} />
-        <span className="text-gray-500">{effStatus}</span>
-      </div>
+      <span className="rounded px-2 py-0.5 text-[9.5px] font-bold uppercase text-white"
+        style={{ background: statusTone(effStatus ?? '') }}>
+        {effStatus}
+      </span>
     </div>
   )
 }
