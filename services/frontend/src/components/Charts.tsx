@@ -30,10 +30,10 @@ export function ResponsiveChart({
   return <ResponsiveContainer initialDimension={initialDimension ?? { width: 300, height: 200 }} {...rest} />
 }
 
-/* chart series colors — 모노크롬(#719). 1차=잉크, 보조 시리즈=그레이 스케일,
-   오류 시리즈만 빨강. 레인보우 제거. */
+/* chart series colors (#762). 1차 시리즈=데이터 색(잉크블루), 보조 시리즈=그레이 스케일,
+   오류 시리즈만 빨강. 파랑=데이터·빨강=문제로 의미 분리. */
 export const CHART_COLORS = {
-  brand: '#0d0d0d',
+  brand: '#3a47c2',
   emerald: '#8a8a8a',
   amber: '#b0b0b0',
   red: '#c0392b',

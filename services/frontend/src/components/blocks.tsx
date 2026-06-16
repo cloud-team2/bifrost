@@ -88,7 +88,7 @@ export function MetricCard({
   const valueColor =
     tone === 'bad' ? 'text-[#c0392b]' : 'text-gray-900'
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-4">
+    <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-card">
       <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
         {icon && <Icon name={icon} size={12} />}
         {label}
@@ -111,8 +111,8 @@ export function Gauge({
   max?: number
 }) {
   const pct = Math.min(100, (value / max) * 100)
-  // 임계 초과(>80%)만 빨강으로 위험 신호, 그 외는 중립 잉크/회색.
-  const tone = pct > 80 ? 'bg-[#c0392b]' : 'bg-[#8a8a8a]'
+  // 데이터 색(잉크블루) 기본, 임계 초과(>80%)만 빨강으로 위험 신호.
+  const tone = pct > 80 ? 'bg-[#c0392b]' : 'bg-[#3a47c2]'
   return (
     <div>
       <div className="flex items-center justify-between text-[11.5px]">
@@ -161,7 +161,7 @@ export function Panel({
   className?: string
 }) {
   return (
-    <div className={cn('rounded-xl border border-gray-200 bg-white', className)}>
+    <div className={cn('rounded-xl border border-gray-200 bg-white shadow-card', className)}>
       {title && (
         <div className="flex items-center justify-between border-b border-gray-100 px-4 py-2.5">
           <span className="text-[13px] font-semibold text-gray-800">{title}</span>
