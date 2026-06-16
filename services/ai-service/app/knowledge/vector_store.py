@@ -80,6 +80,19 @@ class PostgresVectorStore:
         except Exception:
             return False
 
+    async def count(self) -> int:
+        """Total chunk count. 0 means the table exists but the corpus is unseeded."""
+        async with self._get_pool().acquire() as conn:
+            value = await conn.fetchval("SELECT COUNT(*) FROM knowledge_chunk")
+        return int(value or 0)
+
+    async def count_by_doc_type(self) -> dict[str, int]:
+        async with self._get_pool().acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT doc_type, COUNT(*) AS n FROM knowledge_chunk GROUP BY doc_type"
+            )
+        return {row["doc_type"]: int(row["n"]) for row in rows}
+
     async def upsert_chunks(self, chunks: Sequence[KnowledgeChunk]) -> int:
         """Insert/update chunks by deterministic chunk_id."""
         if not chunks:

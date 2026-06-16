@@ -35,7 +35,6 @@ def health() -> ApiResponse:
 async def ready() -> ApiResponse:
     """의존성(LLM, Spring Boot, State/Evidence Store) 준비 상태."""
     from app.core.db import _pool
-    from app.knowledge.vector_store import get_vector_store
     from app.llm.provider import get_llm_provider
 
     db_status = "unknown"
@@ -54,7 +53,7 @@ async def ready() -> ApiResponse:
         spring_status = "unavailable"
 
     llm_status = await _ping_with_timeout(get_llm_provider().health(), timeout=5.0)
-    vector_status = await _ping_with_timeout(get_vector_store().health(), timeout=2.0)
+    vector_status, corpus_count = await _vector_store_status(timeout=2.0)
     evidence_status = spring_status
 
     return ApiResponse.success(
@@ -65,11 +64,26 @@ async def ready() -> ApiResponse:
                 "spring_operations": spring_status,
                 "llm_provider": llm_status,
                 "agent_run_store": db_status,
+                # "empty" = table reachable but corpus unseeded (RAG returns nothing).
+                # A bare "ok" hid this, so seed via scripts/knowledge_seed.py.
                 "vector_store": vector_status,
                 "evidence_store": evidence_status,
             },
+            "knowledge_corpus": {"chunks": corpus_count},
         },
     )
+
+
+async def _vector_store_status(timeout: float = 2.0) -> tuple[str, int]:
+    """Return (status, chunk_count). "empty" distinguishes an unseeded corpus
+    from a healthy one so a reachable-but-empty table isn't reported as ok."""
+    from app.knowledge.vector_store import get_vector_store
+
+    try:
+        count = await asyncio.wait_for(get_vector_store().count(), timeout=timeout)
+    except (asyncio.TimeoutError, Exception):
+        return "unavailable", 0
+    return ("ok" if count > 0 else "empty"), count
 
 
 @router.get("/version")
