@@ -4,7 +4,6 @@ import { Icon } from '../components/Icon'
 import { Modal } from '../components/Modal'
 import { useToast } from '../components/Toast'
 import { useApp } from '../store/AppStore'
-import { cn } from '../lib/format'
 import type { Edge, Project } from '../data/types'
 import type { IncidentResponse } from '../lib/api'
 
@@ -21,7 +20,12 @@ export function ProjectListView() {
         <BrandMark size={28} />
         <span className="text-[17px] font-bold lowercase tracking-tight text-gray-900">bifrost</span>
         <div className="flex-1" />
-        <span className="text-[13px] text-gray-500">{app.currentUser?.name}</span>
+        <div
+          title={app.currentUser?.name}
+          className="flex h-7 w-7 items-center justify-center rounded-full bg-[#0d0d0d] text-[12px] font-semibold text-white"
+        >
+          {(app.currentUser?.name ?? '?').trim().charAt(0).toUpperCase()}
+        </div>
         <button
           onClick={app.logout}
           className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] text-gray-500 hover:bg-gray-100"
@@ -143,22 +147,18 @@ function HealthBadge({ health }: { health: 'healthy' | 'warning' | 'error' }) {
   if (health === 'error')
     return <span className="shrink-0 rounded-full bg-[#c0392b] px-2 py-0.5 text-[11px] font-semibold text-white">Error</span>
   if (health === 'warning')
-    return <span className="shrink-0 rounded-full bg-[#ededed] px-2 py-0.5 text-[11px] font-semibold text-[#6b6b73]">Warning</span>
-  return <span className="shrink-0 rounded-full bg-[#ededed] px-2 py-0.5 text-[11px] font-semibold text-[#6b6b73]">Healthy</span>
+    return <span className="shrink-0 rounded-full bg-[#d97316] px-2 py-0.5 text-[11px] font-semibold text-white">Warning</span>
+  return <span className="shrink-0 rounded-full bg-[#157f4a] px-2 py-0.5 text-[11px] font-semibold text-white">Healthy</span>
 }
 
 function HealthStat({ label, value, tone }: { label: string; value: number; tone?: 'good' | 'warn' | 'bad' }) {
-  const color =
-    tone === 'bad' && value > 0
-      ? 'text-[#c0392b]'
-      : tone === 'warn' && value > 0
-        ? 'text-[#6b6b73]'
-        : tone === 'good'
-          ? 'text-[#6b6b73]'
-          : 'text-gray-900'
+  // S1 시맨틱: Pipelines=잉크 · Active=초록 · Issues=주황 · Incidents=빨강. 값 0은 회색으로 죽인다.
+  const accent =
+    tone === 'bad' ? '#c0392b' : tone === 'warn' ? '#d97316' : tone === 'good' ? '#157f4a' : '#171717'
+  const color = value > 0 ? accent : '#c4c4cc'
   return (
     <div>
-      <div className={cn('text-[17px] font-bold', color)}>{value}</div>
+      <div className="text-[17px] font-bold" style={{ color }}>{value}</div>
       <div className="text-[10.5px] text-gray-400">{label}</div>
     </div>
   )
