@@ -321,7 +321,7 @@ async def test_remediation_requested_continues_past_no_progress_to_candidates():
         )
 
     statuses = [call.args for call in run_repo.update_status.await_args_list]
-    assert ("run_remediation_592", "completed", None) in statuses
+    assert ("run_remediation_592", "waiting_for_approval", "approval_gate") in statuses
     assert not any(args[1] == "failed" for args in statuses)
 
     # no-progress에서 클린 종료하지 않고 remediation까지 진행했다.

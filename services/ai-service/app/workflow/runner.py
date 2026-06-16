@@ -287,6 +287,145 @@ def _evidence_patch(evidence) -> dict[str, Any]:
     }
 
 
+_TARGET_RE = r"[A-Za-z0-9][A-Za-z0-9_.:-]{1,127}"
+_TARGET_STOPWORDS = {
+    "connector",
+    "consumer",
+    "group",
+    "task",
+    "tasks",
+    "status",
+    "state",
+    "failed",
+    "failure",
+    "error",
+    "restart",
+    "pause",
+    "resume",
+    "unknown",
+}
+
+
+def _clean_target_value(value: str | None) -> str | None:
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip("`'\".,;:)(")
+    if not cleaned:
+        return None
+    if cleaned.lower() in _TARGET_STOPWORDS:
+        return None
+    return cleaned
+
+
+def _action_target_context(user_message: str, retrieval_out) -> str:
+    parts = [user_message]
+    if retrieval_out is not None:
+        for item in getattr(retrieval_out, "evidence_items", []) or []:
+            parts.extend([
+                getattr(item, "summary", "") or "",
+                getattr(item, "store_ref", "") or "",
+            ])
+    return "\n".join(part for part in parts if part)
+
+
+def _extract_keyed_target(text: str, key: str) -> str | None:
+    patterns = [
+        rf"\b{re.escape(key)}\b\s*[:=]\s*['\"]?({_TARGET_RE})",
+        rf"['\"]{re.escape(key)}['\"]\s*:\s*['\"]({_TARGET_RE})['\"]",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            value = _clean_target_value(match.group(1))
+            if value:
+                return value
+    return None
+
+
+def _extract_connector_target(text: str) -> str | None:
+    keyed = _extract_keyed_target(text, "connector_name") or _extract_keyed_target(text, "connectorName")
+    if keyed:
+        return keyed
+
+    patterns = [
+        rf"(?:connector|커넥터)\s*(?:name|이름|명)?\s*[:=]?\s*`?({_TARGET_RE})",
+        rf"\b({_TARGET_RE})\s*(?:connector|커넥터)\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            value = _clean_target_value(match.group(1))
+            if value:
+                return value
+
+    consumer_group = _extract_consumer_group_target(text)
+    if consumer_group and consumer_group.lower().startswith("connect-"):
+        return consumer_group[len("connect-"):]
+    return None
+
+
+def _extract_consumer_group_target(text: str) -> str | None:
+    keyed = (
+        _extract_keyed_target(text, "consumer_group")
+        or _extract_keyed_target(text, "consumerGroup")
+    )
+    if keyed:
+        return keyed
+
+    group_match = re.search(rf"\b(connect-{_TARGET_RE})\b", text, flags=re.IGNORECASE)
+    if group_match:
+        return _clean_target_value(group_match.group(1))
+
+    patterns = [
+        rf"(?:consumer\s*group|consumer-group|컨슈머\s*그룹|group|그룹)\s*(?:name|이름|명)?\s*[:=]?\s*`?({_TARGET_RE})",
+        rf"\b({_TARGET_RE})\s*(?:consumer\s*group|consumer-group|컨슈머\s*그룹)\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            value = _clean_target_value(match.group(1))
+            if value:
+                return value
+    return None
+
+
+def _infer_tool_params(tool_name: str | None, text: str) -> dict[str, Any] | None:
+    if tool_name in {"restart_connector", "pause_connector", "resume_connector"}:
+        connector_name = _extract_connector_target(text)
+        return {"connector_name": connector_name} if connector_name else None
+    if tool_name == "restart_consumer_group":
+        consumer_group = _extract_consumer_group_target(text)
+        if not consumer_group:
+            connector_name = _extract_connector_target(text)
+            consumer_group = f"connect-{connector_name}" if connector_name else None
+        return {"consumer_group": consumer_group} if consumer_group else None
+    return None
+
+
+def _with_inferred_tool_params(
+    remediation_out: RemediationOutput,
+    *,
+    user_message: str,
+    retrieval_out,
+) -> RemediationOutput:
+    context = _action_target_context(user_message, retrieval_out)
+    candidates: list[ActionCandidateOutput] = []
+    changed = False
+    for candidate in remediation_out.action_candidates:
+        if candidate.tool_params or candidate.action_type != ActionType.RUNTIME_TOOL:
+            candidates.append(candidate)
+            continue
+        tool_params = _infer_tool_params(candidate.tool_name, context)
+        if tool_params is None:
+            candidates.append(candidate)
+            continue
+        candidates.append(candidate.model_copy(update={"tool_params": tool_params}))
+        changed = True
+    if not changed:
+        return remediation_out
+    return remediation_out.model_copy(update={"action_candidates": candidates})
+
+
 def _string_or_none(value: object) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
 
@@ -892,6 +1031,11 @@ async def _run_workflow_impl(
                     await _publish(bus, event_repo, run_id,
                                    _evt(run_id, StreamingEventType.AGENT_STARTED, "remediation", "조치 후보를 생성합니다"))
                     remediation_out = await remediation_agent.run_remediation(rca_out)
+                    remediation_out = _with_inferred_tool_params(
+                        remediation_out,
+                        user_message=user_message,
+                        retrieval_out=retrieval_out,
+                    )
                     await _publish(bus, event_repo, run_id, _evt(
                         run_id, StreamingEventType.AGENT_COMPLETED, "remediation",
                         f"후보 {len(remediation_out.action_candidates)}건",
@@ -987,6 +1131,16 @@ async def _run_workflow_impl(
                         path="/actions/approved_actions",
                         patch={"approved_actions": _jsonable(approval_out.approved_actions)},
                     )
+                    if approval_out.approval_requests:
+                        await _append_state_patch(
+                            state_repo,
+                            run_id,
+                            namespace="actions",
+                            author="HumanApprovalGate",
+                            op="append",
+                            path="/actions/approval_requests",
+                            patch={"approval_requests": _jsonable(approval_out.approval_requests)},
+                        )
                     if approval_out.run_status == "waiting_for_approval":
                         keep_stream_open = True
                         return

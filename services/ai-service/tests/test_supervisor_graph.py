@@ -236,7 +236,7 @@ def test_incident_analysis_remediation_advances_through_stages():
 
     assert stages == [
         "correlation", "planner", "retrieval", "classifier", "rca",
-        "remediation", "policy_guard", "verifier", "report",
+        "remediation", "policy_guard", "approval_gate", "verifier", "report",
     ]
     state = store.get("run_001")
     assert state is not None

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from app.persistence.approval_link_repository import ApprovalLink, get_approval_repo, spring_params_hash
-from app.schemas.outputs import ApprovedActionOutput, ApprovalGateOutput
+from app.schemas.outputs import ApprovedActionOutput, ApprovalGateOutput, ApprovalRequestOutput
 from app.schemas.state import ActionStatus, PolicyDecision, PolicyDecisionType, RunStatus
 
 
@@ -11,6 +11,15 @@ def _approval_params(decision: PolicyDecision) -> dict:
         "tool_name": decision.tool_name,
         "tool_params": decision.tool_params or {},
     }
+
+
+def _approval_request(link: ApprovalLink) -> ApprovalRequestOutput:
+    return ApprovalRequestOutput(
+        approval_id=link.approval_id,
+        action_id=link.action_id,
+        params_hash=link.params_hash,
+        approval_status=link.status,
+    )
 
 
 async def run_approval_gate(
@@ -25,6 +34,7 @@ async def run_approval_gate(
     """
     repo = get_approval_repo()
     approved_actions: list[ApprovedActionOutput] = []
+    approval_requests: list[ApprovalRequestOutput] = []
     has_pending = False
 
     for decision in policy_decisions:
@@ -45,6 +55,9 @@ async def run_approval_gate(
                 ))
             elif existing and existing.status == "rejected":
                 pass  # blocked — Executor가 READY 아닌 action 건너뜀
+            elif existing and existing.status == "pending":
+                approval_requests.append(_approval_request(existing))
+                has_pending = True
             else:
                 link = repo.create(run_id=run_id, action_id=decision.action_id, params=_approval_params(decision))
                 link.tool_name = decision.tool_name
@@ -56,6 +69,7 @@ async def run_approval_gate(
                         tool_params=decision.tool_params,
                     )
                     link.spring_params_hash = s_hash
+                approval_requests.append(_approval_request(link))
                 has_pending = True
 
         elif decision.status == ActionStatus.READY:
@@ -65,8 +79,16 @@ async def run_approval_gate(
                 params_hash="",
             ))
 
+    has_human_approved_action = any(
+        not action.approval_id.startswith("auto_")
+        for action in approved_actions
+    )
     run_status = (
-        RunStatus.WAITING_FOR_APPROVAL.value if has_pending
+        RunStatus.WAITING_FOR_APPROVAL.value if has_pending and not has_human_approved_action
         else RunStatus.RUNNING.value
     )
-    return ApprovalGateOutput(approved_actions=approved_actions, run_status=run_status)
+    return ApprovalGateOutput(
+        approved_actions=approved_actions,
+        approval_requests=approval_requests,
+        run_status=run_status,
+    )
