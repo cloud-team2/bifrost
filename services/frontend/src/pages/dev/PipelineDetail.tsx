@@ -656,7 +656,7 @@ function ConsumersTab({ edge }: { edge: Edge }) {
 function connectorStateClass(state: string | null): string {
   switch (state) {
     case 'RUNNING':    return 'bg-[#ededed] text-[#6b6b73]'
-    case 'FAILED':     return 'bg-[#fcf3f2] text-[#c0392b]'
+    case 'FAILED':     return 'bg-[#c0392b] text-white'
     case 'PAUSED':     return 'bg-[#ededed] text-[#6b6b73]'
     default:           return 'bg-gray-100 text-gray-500'   // UNASSIGNED / null(대기)
   }
@@ -1329,7 +1329,7 @@ function DBNodeCard({ node, role }: { node: Node | null; role: 'Source' | 'Sink'
 const OP_META: Record<string, { label: string; cls: string }> = {
   c: { label: 'INSERT', cls: 'bg-[#ededed] text-[#6b6b73] border-[#ececec]' },
   u: { label: 'UPDATE', cls: 'bg-[#ededed]  text-[#6b6b73]  border-[#ececec]'  },
-  d: { label: 'DELETE', cls: 'bg-[#fcf3f2]   text-[#c0392b]   border-[#c0392b]'   },
+  d: { label: 'DELETE', cls: 'bg-[#c0392b]   text-white   border-[#c0392b]'   },
   r: { label: 'READ',   cls: 'bg-[#ededed]    text-[#6b6b73]    border-[#ececec]'    },
 }
 
@@ -1944,14 +1944,13 @@ function PartitionViz({ partitions }: {
   const max = Math.max(...msgs, 1)
   const isSkewed = max > avg * 1.3
 
-  // broker color mapping
+  // broker color mapping — 블루스케일(#770): 리더(첫) 브로커=찐파랑, 나머지=옅은 파랑 1색.
   const brokers = [...new Set(partitions.map((p) => p.leader))].sort()
-  const brokerColors: Record<string, string> = {
-    [brokers[0]]: CHART_COLORS.brand,
-    [brokers[1]]: CHART_COLORS.violet,
-    [brokers[2]]: CHART_COLORS.emerald,
-    [brokers[3]]: CHART_COLORS.amber,
-  }
+  const LEAD_BLUE = '#3a47c2'
+  const REST_BLUE = '#d2d6e6'
+  const brokerColors: Record<string, string> = Object.fromEntries(
+    brokers.map((b, i) => [b, i === 0 ? LEAD_BLUE : REST_BLUE]),
+  )
   const brokerCount = brokers.reduce<Record<string, number>>((acc, b) => {
     acc[b] = partitions.filter((p) => p.leader === b).length
     return acc
@@ -1967,7 +1966,7 @@ function PartitionViz({ partitions }: {
         <div className="mb-1.5 flex items-center gap-2">
           <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Partition Balance</span>
           {isSkewed && (
-            <span className="flex items-center gap-1 rounded-full border border-[#ececec] bg-[#ededed] px-2 py-0.5 text-[10px] font-semibold text-[#6b6b73]">
+            <span className="flex items-center gap-1 rounded-full bg-[#c0392b] px-2 py-0.5 text-[10px] font-semibold text-white">
               <Icon name="alert" size={10} />편향 감지
             </span>
           )}
@@ -1986,7 +1985,7 @@ function PartitionViz({ partitions }: {
                 {chartData.map((entry) => (
                   <Cell
                     key={entry.name}
-                    fill={entry.messages > avg * 1.3 ? CHART_COLORS.amber : brokerColors[entry.leader] ?? CHART_COLORS.brand}
+                    fill={entry.messages > avg * 1.3 ? '#c0392b' : brokerColors[entry.leader] ?? REST_BLUE}
                   />
                 ))}
               </Bar>
@@ -2002,7 +2001,7 @@ function PartitionViz({ partitions }: {
           {brokers.map((broker) => {
             const count = brokerCount[broker] ?? 0
             const pct = (count / partitions.length) * 100
-            const color = brokerColors[broker] ?? CHART_COLORS.brand
+            const color = brokerColors[broker] ?? REST_BLUE
             return (
               <div key={broker}>
                 <div className="mb-1 flex items-center justify-between">

@@ -198,7 +198,7 @@ function PipelineCard({ edge, consumerGroups }: { edge: Edge; consumerGroups?: C
                 consumers 조회 중
               </span>
             ) : consumerGroups?.error ? (
-              <span className="rounded-lg bg-[#fcf3f2] px-2 py-1 text-[11px] text-[#c0392b]">
+              <span className="rounded-lg bg-[#c0392b] px-2 py-1 text-[11px] text-white">
                 consumer 조회 실패
               </span>
             ) : groups.length > 0 ? (

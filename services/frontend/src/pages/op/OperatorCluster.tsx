@@ -125,7 +125,7 @@ function BrokersTab({ onSelectBroker }: { onSelectBroker: (b: BrokerInfo) => voi
       consume: Math.round(p.consumeRate * 100) / 100,
     })), [throughput])
   const tputSeries = [
-    { key: 'produce', label: 'Produce msg/s', color: CHART_COLORS.amber },
+    { key: 'produce', label: 'Produce msg/s', color: CHART_COLORS.emerald },
     { key: 'consume', label: 'Consume msg/s', color: CHART_COLORS.brand },
   ]
 
@@ -372,7 +372,7 @@ function KafkaConnectTab() {
                 <td className="px-4 py-2.5">
                   <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase',
                     c.status === 'RUNNING' ? 'bg-[#ededed] text-[#6b6b73]'
-                      : c.status === 'PAUSED' ? 'bg-gray-100 text-gray-600' : 'bg-[#fcf3f2] text-[#c0392b]')}>{c.status}</span>
+                      : c.status === 'PAUSED' ? 'bg-gray-100 text-gray-600' : 'bg-[#c0392b] text-white')}>{c.status}</span>
                 </td>
                 <td className="px-4 py-2.5 text-gray-500 text-[11.5px]">{c.pipeline}</td>
                 <td className="px-4 py-2.5 text-gray-600">{c.tasks}</td>
