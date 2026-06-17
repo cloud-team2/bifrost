@@ -81,6 +81,31 @@ async def test_event_log_analysis_routes_to_event_summary():
 
     names = _tool_names(plan)
     assert names == ["analyze_event_log"]
+    assert "connector_name" not in plan.retrieval_plan[0].params
+
+
+@pytest.mark.asyncio
+async def test_event_log_analysis_keeps_connector_scope_when_identifier_is_present():
+    plan = await run_planner("orders-sink connector 이벤트 로그 분석", "proj_001")
+
+    step = next(step for step in plan.retrieval_plan if step.tool_name == "analyze_event_log")
+    assert step.params["connector_name"] == "orders-sink"
+
+
+@pytest.mark.asyncio
+async def test_alert_lookup_keeps_connector_scope_when_identifier_is_present():
+    plan = await run_planner("orders-sink connector alert 확인", "proj_001")
+
+    step = next(step for step in plan.retrieval_plan if step.tool_name == "get_alerts")
+    assert step.params["connector_name"] == "orders-sink"
+
+
+@pytest.mark.asyncio
+async def test_generic_alert_lookup_does_not_invent_connector_scope_from_stopwords():
+    plan = await run_planner("alert 확인", "proj_001")
+
+    step = next(step for step in plan.retrieval_plan if step.tool_name == "get_alerts")
+    assert "connector_name" not in step.params
 
 
 @pytest.mark.asyncio

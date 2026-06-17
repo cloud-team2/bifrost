@@ -280,6 +280,128 @@ async def test_analyze_event_log_sends_window_and_level_query_params():
     assert result.result is not None
 
 
+@pytest.mark.asyncio
+async def test_observability_tools_send_explicit_scope_query_params():
+    captured: dict[str, httpx.Request] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured[request.url.path] = request
+        operation = "list_alerts" if request.url.path.endswith("/alerts") else "analyze_event_log"
+        result = (
+            {"alerts": [], "summary": "0 alerts matched"}
+            if operation == "list_alerts"
+            else {
+                "window": "2h",
+                "level": "warn+",
+                "openIncidents": 0,
+                "criticalIncidents": 0,
+                "critical": [],
+                "warnings": [],
+            }
+        )
+        return httpx.Response(
+            200,
+            json={"ok": True, "request_id": "req_001", "operation": operation, "result": result},
+        )
+
+    registry = ToolClientRegistry(transport=httpx.MockTransport(handler))
+
+    await registry.call_tool(
+        "get_alerts",
+        {"pipeline_id": "pipe-001", "connector_name": "orders-sink"},
+        _context(),
+    )
+    await registry.call_tool(
+        "analyze_event_log",
+        {"window": "2h", "level": "warn+", "pipeline_id": "pipe-001", "connector_name": "orders-sink"},
+        _context(),
+    )
+
+    alerts_request = captured["/internal/ops/projects/proj_001/observability/alerts"]
+    events_request = captured["/internal/ops/projects/proj_001/observability/events/summary"]
+    assert alerts_request.url.params["pipeline_id"] == "pipe-001"
+    assert alerts_request.url.params["connector_name"] == "orders-sink"
+    assert events_request.url.params["pipeline_id"] == "pipe-001"
+    assert events_request.url.params["connector_name"] == "orders-sink"
+
+
+@pytest.mark.asyncio
+async def test_observability_tools_default_to_context_pipeline_scope():
+    captured: dict[str, httpx.Request] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured[request.url.path] = request
+        operation = "list_alerts" if request.url.path.endswith("/alerts") else "analyze_event_log"
+        result = (
+            {"alerts": [], "summary": "0 alerts matched"}
+            if operation == "list_alerts"
+            else {
+                "window": "2h",
+                "level": "warn+",
+                "openIncidents": 0,
+                "criticalIncidents": 0,
+                "critical": [],
+                "warnings": [],
+            }
+        )
+        return httpx.Response(
+            200,
+            json={"ok": True, "request_id": "req_001", "operation": operation, "result": result},
+        )
+
+    context = _context().model_copy(update={"pipeline_id": "pipe-from-context"})
+    registry = ToolClientRegistry(transport=httpx.MockTransport(handler))
+
+    events = await registry.call_tool("analyze_event_log", {"window": "2h", "level": "warn+"}, context)
+    alerts = await registry.call_tool("get_alerts", {}, context)
+
+    events_request = captured["/internal/ops/projects/proj_001/observability/events/summary"]
+    alerts_request = captured["/internal/ops/projects/proj_001/observability/alerts"]
+    assert events_request.url.params["pipeline_id"] == "pipe-from-context"
+    assert alerts_request.url.params["pipeline_id"] == "pipe-from-context"
+    assert events.status == ToolStatus.SUCCESS
+    assert alerts.status == ToolStatus.SUCCESS
+
+
+@pytest.mark.asyncio
+async def test_explicit_observability_connector_scope_is_not_overwritten_by_context_pipeline():
+    captured_request: httpx.Request | None = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal captured_request
+        captured_request = request
+        return httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "request_id": "req_001",
+                "operation": "analyze_event_log",
+                "result": {
+                    "window": "2h",
+                    "level": "warn+",
+                    "openIncidents": 0,
+                    "criticalIncidents": 0,
+                    "critical": [],
+                    "warnings": [],
+                },
+            },
+        )
+
+    context = _context().model_copy(update={"pipeline_id": "pipe-from-context"})
+    registry = ToolClientRegistry(transport=httpx.MockTransport(handler))
+
+    result = await registry.call_tool(
+        "analyze_event_log",
+        {"window": "2h", "level": "warn+", "connector_name": "orders-sink"},
+        context,
+    )
+
+    assert captured_request is not None
+    assert "pipeline_id" not in captured_request.url.params
+    assert captured_request.url.params["connector_name"] == "orders-sink"
+    assert result.status == ToolStatus.SUCCESS
+
+
 def _deployments_response(request: httpx.Request) -> httpx.Response:
     return httpx.Response(
         200,

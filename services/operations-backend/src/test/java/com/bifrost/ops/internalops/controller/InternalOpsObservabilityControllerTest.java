@@ -4,6 +4,7 @@ import com.bifrost.ops.adapters.logstore.LokiClient;
 import com.bifrost.ops.event.EventLevel;
 import com.bifrost.ops.event.persistence.entity.EventEntity;
 import com.bifrost.ops.event.persistence.repository.EventRepository;
+import com.bifrost.ops.incident.IncidentGroupingKeys;
 import com.bifrost.ops.incident.persistence.entity.IncidentEntity;
 import com.bifrost.ops.incident.persistence.repository.IncidentRepository;
 import com.bifrost.ops.internalops.dto.AlertListResult;
@@ -42,6 +43,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -125,7 +127,7 @@ class InternalOpsObservabilityControllerTest {
         request.addHeader("X-Request-Id", "req-alerts-002");
 
         ResponseEntity<OpsEnvelope<AlertListResult>> response =
-                controller.listAlerts("proj-001", null, null, null, request);
+                controller.listAlerts("proj-001", null, null, null, null, null, request);
 
         assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
         assertThat(response.getBody()).isNotNull();
@@ -141,7 +143,7 @@ class InternalOpsObservabilityControllerTest {
         when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId, "proj-001")));
 
         ResponseEntity<OpsEnvelope<AlertListResult>> response =
-                controller.listAlerts("proj-001", null, null, "0", new MockHttpServletRequest());
+                controller.listAlerts("proj-001", null, null, "0", null, null, new MockHttpServletRequest());
 
         assertThat(response.getStatusCode().value()).isEqualTo(400);
         assertThat(response.getBody()).isNotNull();
@@ -158,8 +160,8 @@ class InternalOpsObservabilityControllerTest {
         when(incidentRepository.findByTenantIdOrderByOpenedAtDesc(eq(tenantId), any(Pageable.class)))
                 .thenReturn(List.of());
 
-        controller.listAlerts("proj-001", null, null, null, new MockHttpServletRequest());
-        controller.listAlerts("proj-001", null, null, "999", new MockHttpServletRequest());
+        controller.listAlerts("proj-001", null, null, null, null, null, new MockHttpServletRequest());
+        controller.listAlerts("proj-001", null, null, "999", null, null, new MockHttpServletRequest());
 
         ArgumentCaptor<Pageable> pageCaptor = ArgumentCaptor.forClass(Pageable.class);
         verify(incidentRepository, times(2)).findByTenantIdOrderByOpenedAtDesc(eq(tenantId), pageCaptor.capture());
@@ -221,12 +223,174 @@ class InternalOpsObservabilityControllerTest {
     }
 
     @Test
+    void listAlertsScopedByPipelineExcludesOtherPipelineIncidents() throws Exception {
+        UUID tenantId = UUID.randomUUID();
+        UUID pipelineId = UUID.randomUUID();
+        PipelineEntity pipeline = pipeline(pipelineId, tenantId, "orders-cdc");
+        pipeline.setSinkConnectorName("orders-sink");
+        IncidentEntity target = incident("orders sink failed", "ERROR", "OPEN", "CONNECTOR");
+        target.setTenantId(tenantId);
+        target.setGroupingKey(IncidentGroupingKeys.connectorWorker("orders-sink"));
+        IncidentEntity other = incident("other sink failed", "ERROR", "OPEN", "CONNECTOR");
+        other.setTenantId(tenantId);
+        other.setGroupingKey(IncidentGroupingKeys.connectorWorker("other-sink"));
+
+        when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId, "proj-001")));
+        when(pipelineRepository.findByIdAndTenantId(pipelineId, tenantId)).thenReturn(Optional.of(pipeline));
+        when(connectorRepository.findByPipelineId(pipelineId))
+                .thenReturn(List.of(connector(pipelineId, "orders-sink", ConnectorKind.SINK)));
+        when(incidentRepository.findScopedByTenantIdOrderByOpenedAtDesc(
+                eq(tenantId), isNull(), isNull(), any(), any(), any(Pageable.class)))
+                .thenReturn(List.of(target));
+
+        mockMvc().perform(get("/internal/ops/projects/{projectId}/observability/alerts", "proj-001")
+                        .queryParam("pipeline_id", pipelineId.toString())
+                        .header("X-Request-Id", "req-alerts-pipeline"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.operation").value("list_alerts"))
+                .andExpect(jsonPath("$.result.summary").value("1 alerts matched"))
+                .andExpect(jsonPath("$.result.alerts[0].summary").value("orders sink failed"))
+                .andExpect(jsonPath("$.result.alerts[1]").doesNotExist());
+    }
+
+    @Test
+    void listAlertsScopedByConnectorExcludesSiblingConnectorIncidents() throws Exception {
+        UUID tenantId = UUID.randomUUID();
+        UUID pipelineId = UUID.randomUUID();
+        PipelineEntity pipeline = pipeline(pipelineId, tenantId, "orders-cdc");
+        pipeline.setSinkDatasourceId(UUID.randomUUID());
+        ConnectorEntity connector = connector(pipelineId, "orders-sink", ConnectorKind.SINK);
+        IncidentEntity target = incident("orders sink lag", "WARN", "OPEN", "CONSUMER_GROUP");
+        target.setTenantId(tenantId);
+        target.setGroupingKey(IncidentGroupingKeys.consumerLag("connect-orders-sink"));
+        IncidentEntity sibling = incident("orders source failed", "ERROR", "OPEN", "CONNECTOR");
+        sibling.setTenantId(tenantId);
+        sibling.setGroupingKey(IncidentGroupingKeys.connectorWorker("orders-source"));
+
+        when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId, "proj-001")));
+        when(connectorRepository.findByCrName("orders-sink")).thenReturn(Optional.of(connector));
+        when(pipelineRepository.findByIdAndTenantId(pipelineId, tenantId)).thenReturn(Optional.of(pipeline));
+        when(incidentRepository.findScopedByTenantIdOrderByOpenedAtDesc(
+                eq(tenantId), isNull(), isNull(), any(), any(), any(Pageable.class)))
+                .thenReturn(List.of(target));
+
+        mockMvc().perform(get("/internal/ops/projects/{projectId}/observability/alerts", "proj-001")
+                        .queryParam("connector_name", "orders-sink")
+                        .header("X-Request-Id", "req-alerts-connector"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.operation").value("list_alerts"))
+                .andExpect(jsonPath("$.result.summary").value("1 alerts matched"))
+                .andExpect(jsonPath("$.result.alerts[0].summary").value("orders sink lag"))
+                .andExpect(jsonPath("$.result.alerts[1]").doesNotExist());
+    }
+
+    @Test
+    void eventIncidentSummaryScopedByPipelineUsesPipelineEventQueryAndFiltersIncidents() throws Exception {
+        UUID tenantId = UUID.randomUUID();
+        UUID pipelineId = UUID.randomUUID();
+        PipelineEntity pipeline = pipeline(pipelineId, tenantId, "orders-cdc");
+        pipeline.setSinkConnectorName("orders-sink");
+        IncidentEntity target = incident("orders sink failed", "ERROR", "OPEN", "CONNECTOR");
+        target.setTenantId(tenantId);
+        target.setOpenedAt(Instant.now());
+        target.setGroupingKey(IncidentGroupingKeys.connectorWorker("orders-sink"));
+        IncidentEntity unrelated = incident("other connector failed", "ERROR", "OPEN", "CONNECTOR");
+        unrelated.setTenantId(tenantId);
+        unrelated.setOpenedAt(Instant.now());
+        unrelated.setGroupingKey(IncidentGroupingKeys.connectorWorker("other-sink"));
+        EventEntity warning = event(tenantId, EventLevel.WARN, "CONSUMER_LAG_WARNING", "consumer lag 경고");
+        warning.setPipelineId(pipelineId);
+
+        when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId, "proj-001")));
+        when(pipelineRepository.findByIdAndTenantId(pipelineId, tenantId)).thenReturn(Optional.of(pipeline));
+        when(connectorRepository.findByPipelineId(pipelineId))
+                .thenReturn(List.of(connector(pipelineId, "orders-sink", ConnectorKind.SINK)));
+        when(incidentRepository.findScopedByTenantIdAndStatusAndSeverityInAndOpenedAtGreaterThanEqualOrderByOpenedAtDesc(
+                eq(tenantId), eq("OPEN"), eq(List.of("WARN", "ERROR", "CRITICAL")),
+                any(Instant.class), any(), any()))
+                .thenReturn(List.of(target));
+        when(eventRepository.findByTenantIdAndPipelineIdAndLevelInAndCreatedAtGreaterThanEqualOrderByCreatedAtDesc(
+                eq(tenantId), eq(pipelineId), eq(List.of(EventLevel.WARN, EventLevel.ERROR)),
+                any(Instant.class), any(Pageable.class)))
+                .thenReturn(List.of(warning));
+
+        mockMvc().perform(get("/internal/ops/projects/{projectId}/observability/events/summary", "proj-001")
+                        .queryParam("pipeline_id", pipelineId.toString())
+                        .queryParam("window", "2h")
+                        .queryParam("level", "warn+")
+                        .header("X-Request-Id", "req-events-pipeline"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.operation").value("analyze_event_log"))
+                .andExpect(jsonPath("$.result.openIncidents").value(1))
+                .andExpect(jsonPath("$.result.criticalIncidents").value(1))
+                .andExpect(jsonPath("$.result.critical[0].title").value("orders sink failed"))
+                .andExpect(jsonPath("$.result.critical[1]").doesNotExist())
+                .andExpect(jsonPath("$.result.warnings[0].pipelineId").value(pipelineId.toString()))
+                .andExpect(jsonPath("$.result.warnings[1]").doesNotExist());
+    }
+
+    @Test
+    void eventIncidentSummaryScopedByConnectorUsesConnectorEventQuery() throws Exception {
+        UUID tenantId = UUID.randomUUID();
+        UUID pipelineId = UUID.randomUUID();
+        PipelineEntity pipeline = pipeline(pipelineId, tenantId, "orders-cdc");
+        pipeline.setSinkDatasourceId(UUID.randomUUID());
+        ConnectorEntity connector = connector(pipelineId, "orders-sink", ConnectorKind.SINK);
+        IncidentEntity target = incident("orders sink failed", "ERROR", "OPEN", "CONNECTOR");
+        target.setTenantId(tenantId);
+        target.setOpenedAt(Instant.now());
+        target.setGroupingKey(IncidentGroupingKeys.connectorWorker("orders-sink"));
+        EventEntity warning = event(tenantId, EventLevel.ERROR, "CONNECTOR_TASK_FAILED",
+                "'orders-cdc' 싱크 커넥터 task#0 실패");
+        warning.setPipelineId(pipelineId);
+        warning.setIncidentId(target.getId());
+
+        when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId, "proj-001")));
+        when(connectorRepository.findByCrName("orders-sink")).thenReturn(Optional.of(connector));
+        when(pipelineRepository.findByIdAndTenantId(pipelineId, tenantId)).thenReturn(Optional.of(pipeline));
+        when(incidentRepository.findScopedByTenantIdAndStatusAndSeverityInAndOpenedAtGreaterThanEqualOrderByOpenedAtDesc(
+                eq(tenantId), eq("OPEN"), eq(List.of("WARN", "ERROR", "CRITICAL")),
+                any(Instant.class), any(), any()))
+                .thenReturn(List.of(target));
+        when(eventRepository.findConnectorScopedEventsOrderByCreatedAtDesc(
+                eq(tenantId), eq(pipelineId), eq(List.of(EventLevel.WARN, EventLevel.ERROR)),
+                any(Instant.class), eq(List.of(target.getId())), eq("orders-sink"),
+                eq("connect-orders-sink"), any(Pageable.class)))
+                .thenReturn(List.of(warning));
+
+        mockMvc().perform(get("/internal/ops/projects/{projectId}/observability/events/summary", "proj-001")
+                        .queryParam("connector_name", "orders-sink")
+                        .queryParam("window", "2h")
+                        .queryParam("level", "warn+")
+                        .header("X-Request-Id", "req-events-connector"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.operation").value("analyze_event_log"))
+                .andExpect(jsonPath("$.result.openIncidents").value(1))
+                .andExpect(jsonPath("$.result.critical[0].title").value("orders sink failed"))
+                .andExpect(jsonPath("$.result.warnings[0].type").value("CONNECTOR_TASK_FAILED"))
+                .andExpect(jsonPath("$.result.warnings[1]").doesNotExist());
+    }
+
+    @Test
+    void eventIncidentSummaryRejectsInvalidPipelineIdWithErrorEnvelope() throws Exception {
+        UUID tenantId = UUID.randomUUID();
+        when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId, "proj-001")));
+
+        mockMvc().perform(get("/internal/ops/projects/{projectId}/observability/events/summary", "proj-001")
+                        .queryParam("pipeline_id", "not-a-uuid")
+                        .header("X-Request-Id", "req-events-invalid"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.operation").value("analyze_event_log"))
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+    }
+
+    @Test
     void listAlertsReturnsFastApiCompatibleErrorEnvelopeForUnknownProject() {
         String projectId = "missing-project";
         when(workspaceRepository.findByNamespace(projectId)).thenReturn(Optional.empty());
 
         ResponseEntity<OpsEnvelope<AlertListResult>> response =
-                controller.listAlerts(projectId, null, null, null, new MockHttpServletRequest());
+                controller.listAlerts(projectId, null, null, null, null, null, new MockHttpServletRequest());
 
         assertThat(response.getStatusCode().value()).isEqualTo(404);
         assertThat(response.getBody()).isNotNull();
@@ -242,7 +406,7 @@ class InternalOpsObservabilityControllerTest {
         when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId, "proj-001")));
 
         ResponseEntity<OpsEnvelope<AlertListResult>> response =
-                controller.listAlerts("proj-001", null, null, "abc", new MockHttpServletRequest());
+                controller.listAlerts("proj-001", null, null, "abc", null, null, new MockHttpServletRequest());
 
         assertThat(response.getStatusCode().value()).isEqualTo(400);
         assertThat(response.getBody()).isNotNull();

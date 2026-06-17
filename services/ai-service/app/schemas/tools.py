@@ -522,6 +522,8 @@ class GetAlertsParams(StrictModel):
     status: str | None = None
     severity: str | None = None
     limit: int | None = None
+    pipeline_id: str | None = None
+    connector_name: str | None = None
 
 
 class AlertSummaryData(SpringResponseModel):
