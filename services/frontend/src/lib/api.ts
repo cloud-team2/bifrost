@@ -221,6 +221,7 @@ export interface DatabaseMetricsResponse {
 export interface PipelineResponse {
   id: string
   name: string
+  alias?: string | null
   pattern: 'fan-out' | 'direct'
   status: 'creating' | 'active' | 'lag' | 'error' | 'paused'
   statusMessage: string | null
@@ -709,6 +710,7 @@ export interface DbRegisterInput {
 }
 export interface PipelineCreateInput {
   name: string
+  alias?: string | null
   pattern: 'fan-out' | 'direct'
   sourceDbId: string
   sinkDbId?: string | null

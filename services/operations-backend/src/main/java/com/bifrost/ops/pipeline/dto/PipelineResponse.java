@@ -14,6 +14,7 @@ import java.util.UUID;
 public record PipelineResponse(
     UUID id,
     String name,
+    String alias,
     String pattern,
     String status,
     String statusMessage,
@@ -26,10 +27,20 @@ public record PipelineResponse(
     String sinkConnector,
     Instant createdAt
 ) {
+    /** 하위호환: alias 없는 기존 호출용. */
+    public PipelineResponse(
+        UUID id, String name, String pattern, String status, String statusMessage,
+        UUID sourceDbId, UUID sinkDbId, String schema, String table, String topic,
+        String sourceConnector, String sinkConnector, Instant createdAt) {
+        this(id, name, null, pattern, status, statusMessage, sourceDbId, sinkDbId,
+            schema, table, topic, sourceConnector, sinkConnector, createdAt);
+    }
+
     public static PipelineResponse from(PipelineEntity p) {
         return new PipelineResponse(
             p.getId(),
             p.getName(),
+            p.getAlias(),
             PipelinePatternCodec.toApi(p.getPattern()),
             p.getStatus().name().toLowerCase(),
             p.getStatusMessage(),

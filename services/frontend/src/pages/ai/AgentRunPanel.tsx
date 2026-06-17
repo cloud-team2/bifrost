@@ -64,19 +64,19 @@ const AGENT_EVENT_TYPES: AgentStreamingEventType[] = [
 ]
 
 const AGENT_LABEL: Record<string, string> = {
-  router: 'Router',
-  correlation: 'Correlation',
-  planner: 'Planner',
-  retrieval: 'Retrieval',
-  classifier: 'Classifier',
-  rca: 'RCA',
-  remediation: 'Remediation',
-  policy_guard: 'Policy Guard',
-  approval_gate: 'Approval Gate',
-  change_gate: 'Change Gate',
-  executor: 'Executor',
-  verifier: 'Verifier',
-  report: 'Report',
+  router: '라우팅',
+  correlation: '상관 분석',
+  planner: '계획 수립',
+  retrieval: '조회',
+  classifier: '분류',
+  rca: '근본 원인 분석',
+  remediation: '권장 조치',
+  policy_guard: '정책 검사',
+  approval_gate: '승인 게이트',
+  change_gate: '변경 게이트',
+  executor: '실행',
+  verifier: '검증',
+  report: '리포트',
 }
 
 const ROLE_LABEL: Record<WorkspaceMemberRole, string> = {
@@ -231,6 +231,7 @@ interface PipelineWizardMsg {
     sink: CdcReadinessResponse | null
   }
   name: string
+  alias?: string
   created: PipelineResponse | null
   loading: PipelineWizardLoading
   error: string | null
@@ -933,6 +934,16 @@ export function AgentRunPanel({
     updatePipelineWizard(messageId, (msg) => ({ ...msg, name }))
   }
 
+  function updatePipelineWizardAlias(messageId: number, alias: string) {
+    const current = findPipelineWizard(messageId)
+    if (!current) return
+    if (!isCurrentPipelineWizardWorkspace(current)) {
+      markStalePipelineWizard(messageId)
+      return
+    }
+    updatePipelineWizard(messageId, (msg) => ({ ...msg, alias }))
+  }
+
   async function createPipelineFromWizard(messageId: number) {
     const current = findPipelineWizard(messageId)
     if (!current?.sourceDbId || !current.pattern || !current.table || !current.name.trim()) return
@@ -947,6 +958,7 @@ export function AgentRunPanel({
     try {
       const created = await api.createPipeline(current.workspaceId, buildPipelineCreateInput({
         name: current.name,
+        alias: current.alias,
         pattern: current.pattern,
         sourceDbId: current.sourceDbId,
         sinkDbId: current.sinkDbId,
@@ -1969,13 +1981,14 @@ export function AgentRunPanel({
                 onSelectSink={(sinkDbId) => selectPipelineWizardSink(m.id, sinkDbId)}
                 onSelectTable={(table) => selectPipelineWizardTable(m.id, table)}
                 onNameChange={(name) => updatePipelineWizardName(m.id, name)}
+                onAliasChange={(alias) => updatePipelineWizardAlias(m.id, alias)}
                 onCreate={() => createPipelineFromWizard(m.id)}
                 onRetry={() => retryPipelineWizard(m.id)}
                 onBackToSource={() => backPipelineWizardToSource(m.id)}
               />
             )
           }
-          if (m.kind === 'toolPanel') return <ToolPanelCard key={m.id} msg={m} />
+          if (m.kind === 'toolPanel') return <ToolPanelCard key={m.id} msg={m} onOpenPipeline={app.openPipeline} onOpenIncident={app.openIncident} />
           if (m.kind === 'approval') {
             return (
               <ApprovalCard
@@ -2079,6 +2092,12 @@ export function AgentRunPanel({
                 return api
                   .clusterConnect()
                   .then((c) => c.connectors.map((row) => ({ value: row.name, label: row.name })))
+              }
+              if (param === 'incident_id') {
+                // 인시던트 ID 는 자유 입력 대신 프로젝트 인시던트 목록에서 선택.
+                return Promise.resolve(
+                  app.incidents.map((inc) => ({ value: inc.id, label: inc.title || inc.id })),
+                )
               }
               return null
             }}
@@ -2218,6 +2237,7 @@ function PipelineWizardCard({
   onSelectSink,
   onSelectTable,
   onNameChange,
+  onAliasChange,
   onCreate,
   onRetry,
   onBackToSource,
@@ -2228,6 +2248,7 @@ function PipelineWizardCard({
   onSelectSink: (sinkDbId: string) => void
   onSelectTable: (table: PipelineWizardTable) => void
   onNameChange: (name: string) => void
+  onAliasChange: (alias: string) => void
   onCreate: () => void
   onRetry: () => void
   onBackToSource: () => void
@@ -2428,6 +2449,17 @@ function PipelineWizardCard({
                   value={msg.name}
                   onChange={(e) => onNameChange(e.target.value)}
                   disabled={msg.loading === 'creating'}
+                  className="h-9 w-full rounded-md border border-gray-200 px-2.5 text-[12.5px] outline-none focus:border-brand-500 disabled:opacity-60"
+                />
+                <label className="block text-[11.5px] font-medium text-gray-600" htmlFor={`pipeline-alias-${msg.id}`}>
+                  표시 이름 <span className="font-normal text-gray-400">(선택 · 한글)</span>
+                </label>
+                <input
+                  id={`pipeline-alias-${msg.id}`}
+                  value={msg.alias ?? ''}
+                  onChange={(e) => onAliasChange(e.target.value)}
+                  disabled={msg.loading === 'creating'}
+                  placeholder="예: 주문 동기화"
                   className="h-9 w-full rounded-md border border-gray-200 px-2.5 text-[12.5px] outline-none focus:border-brand-500 disabled:opacity-60"
                 />
                 {blocked && (
@@ -2963,7 +2995,15 @@ function ProgressDot({ state }: { state: ProgressState }) {
   return <Icon name="check" size={12} strokeWidth={3} className="mt-0.5 text-[#8a8a8a]" />
 }
 
-function ToolPanelCard({ msg }: { msg: ToolPanelMsg }) {
+function ToolPanelCard({
+  msg,
+  onOpenPipeline,
+  onOpenIncident,
+}: {
+  msg: ToolPanelMsg
+  onOpenPipeline?: (id: string) => void
+  onOpenIncident?: (id: string) => void
+}) {
   const result = asRecord(msg.result)
   const resultError = result ? recordString(result, 'error') : null
   const error = msg.error ?? resultError
@@ -3012,12 +3052,14 @@ function ToolPanelCard({ msg }: { msg: ToolPanelMsg }) {
         ) : (error || notice) && msg.result == null ? null : msg.toolName === 'get_consumer_groups' ? (
           <ConsumerGroupsPanel result={result} />
         ) : msg.toolName === 'list_pipelines' || msg.toolName === 'list_project_pipelines' ? (
-          <PipelineStatusPanel result={result} />
+          <PipelineStatusPanel result={result} onOpenPipeline={onOpenPipeline} />
         ) : msg.toolName === 'list_connectors' ? (
           <ConnectorStatusPanel result={result} />
         ) : msg.toolName === 'get_connector_status' ? (
           <ConnectorDetailPanel result={result} />
-        ) : msg.toolName === 'analyze_event_log' ? (
+        ) : msg.toolName === 'get_alerts' ? (
+          <AlertsPanel result={result} onOpenIncident={onOpenIncident} />
+        ) : msg.toolName === 'analyze_event_log' || msg.toolName === 'get_incident_summary' ? (
           <EventSummaryPanel result={result} />
         ) : (
           <GenericToolResultPanel result={msg.result} />
@@ -3204,7 +3246,13 @@ function ConsumerGroupsPanel({ result }: { result: Record<string, unknown> | nul
   )
 }
 
-export function PipelineStatusPanel({ result }: { result: Record<string, unknown> | null }) {
+export function PipelineStatusPanel({
+  result,
+  onOpenPipeline,
+}: {
+  result: Record<string, unknown> | null
+  onOpenPipeline?: (id: string) => void
+}) {
   const rows = recordArray(result, 'pipelines')
   if (rows.length === 0) return <PanelEmpty text="파이프라인 데이터 없음" />
 
@@ -3213,6 +3261,7 @@ export function PipelineStatusPanel({ result }: { result: Record<string, unknown
     const lag = recordNumber(row, 'lag')
     const token = lag != null && lag >= 5000 && semanticToken(status) === 'safe' ? 'warn' : semanticToken(status)
     return {
+      id: recordString(row, 'id', 'pipeline_id', 'pipelineId'),
       name: recordString(row, 'name') ?? recordString(row, 'id') ?? '-',
       statusLabel: pipelineStatusKo(status),
       token,
@@ -3226,17 +3275,37 @@ export function PipelineStatusPanel({ result }: { result: Record<string, unknown
     <div className="text-[12px]">
       <div className="mb-1.5 text-[11px] text-gray-500">{statusCountText(rows.length, counts)}</div>
       <div className="divide-y divide-gray-100 rounded-md border border-gray-100">
-        {items.map((item, index) => (
-          <div key={`${item.name}:${index}`} className="flex items-center justify-between gap-2 px-2.5 py-1.5">
-            <span className="min-w-0 truncate font-medium text-gray-800">{item.name}</span>
-            <span className={cn('inline-flex shrink-0 items-center gap-1', statusTextClass(item.token))}>
-              <span className={cn('h-1.5 w-1.5 rounded-full', semanticDotClass(item.token))} />
-              {item.statusLabel}
-              {item.token === 'warn' && item.lag != null && <span className="font-mono">{item.lag.toLocaleString()}</span>}
-              {item.error && <span className="ml-1 truncate font-mono text-[10px] text-[#c0392b]">{item.error}</span>}
+        {items.map((item, index) => {
+          const clickable = !!(onOpenPipeline && item.id)
+          const right = (
+            <span className="flex shrink-0 items-center gap-1.5">
+              <span className={cn('inline-flex items-center gap-1', statusTextClass(item.token))}>
+                <span className={cn('h-1.5 w-1.5 rounded-full', semanticDotClass(item.token))} />
+                {item.statusLabel}
+                {item.token === 'warn' && item.lag != null && <span className="font-mono">{item.lag.toLocaleString()}</span>}
+                {item.error && <span className="ml-1 truncate font-mono text-[10px] text-[#c0392b]">{item.error}</span>}
+              </span>
+              {clickable && <Icon name="chevron-right" size={12} className="text-gray-300" />}
             </span>
-          </div>
-        ))}
+          )
+          const name = <span className="min-w-0 truncate font-medium text-gray-800">{item.name}</span>
+          return clickable ? (
+            <button
+              key={`${item.name}:${index}`}
+              onClick={() => onOpenPipeline!(item.id!)}
+              title="파이프라인 상세 열기"
+              className="flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left hover:bg-gray-50"
+            >
+              {name}
+              {right}
+            </button>
+          ) : (
+            <div key={`${item.name}:${index}`} className="flex items-center justify-between gap-2 px-2.5 py-1.5">
+              {name}
+              {right}
+            </div>
+          )
+        })}
       </div>
     </div>
   )
@@ -3360,12 +3429,119 @@ export function ConnectorDetailPanel({ result }: { result: Record<string, unknow
   )
 }
 
+const SEVERITY_KO: Record<string, string> = {
+  critical: '긴급',
+  fatal: '긴급',
+  error: '오류',
+  high: '높음',
+  warning: '경고',
+  warn: '경고',
+  medium: '중간',
+  info: '정보',
+  low: '낮음',
+}
+
+export function severityKo(severity: string) {
+  return SEVERITY_KO[severity.toLowerCase()] ?? severity
+}
+
+const INCIDENT_STATUS_KO: Record<string, string> = {
+  open: '미해결',
+  active: '진행 중',
+  investigating: '조사 중',
+  acknowledged: '확인됨',
+  mitigated: '완화됨',
+  resolved: '해결',
+  closed: '종료',
+}
+
+function incidentStatusKo(status: string) {
+  return INCIDENT_STATUS_KO[status.toLowerCase()] ?? status
+}
+
+// get_incident_summary 는 단일 인시던트(IncidentSummaryData)를 반환할 수 있다.
+function IncidentSummaryCard({ result }: { result: Record<string, unknown> }) {
+  const id = recordString(result, 'incident_id', 'incidentId')
+  const status = recordString(result, 'status') ?? ''
+  const severity = recordString(result, 'severity')
+  const summary = recordString(result, 'summary', 'note', 'root_cause_summary', 'rootCauseSummary')
+  const rootCause = recordString(result, 'root_cause_summary', 'rootCauseSummary')
+  return (
+    <div className="space-y-2 text-[12px]">
+      <div className="flex flex-wrap items-center gap-2">
+        {status && (
+          <span className={cn('inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-semibold', semanticBadgeClass(semanticToken(status)))}>
+            {incidentStatusKo(status)}
+          </span>
+        )}
+        {severity && <span className="text-gray-500">심각도 {severityKo(severity)}</span>}
+        {id && <span className="font-mono text-[10.5px] text-gray-400">#{shortId(id)}</span>}
+      </div>
+      {summary && <div className="leading-relaxed text-gray-700">{summary}</div>}
+      {rootCause && rootCause !== summary && (
+        <div className="rounded bg-gray-50 px-2 py-1.5 text-[11.5px] text-gray-600">
+          <span className="font-semibold">근본 원인</span> · {rootCause}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function AlertsPanel({
+  result,
+  onOpenIncident,
+}: {
+  result: Record<string, unknown> | null
+  onOpenIncident?: (id: string) => void
+}) {
+  const rows = recordArray(result, 'alerts')
+  if (rows.length === 0) return <PanelEmpty text="인시던트 없음" />
+  return (
+    <div className="space-y-1.5 text-[12px]">
+      {rows.map((row, index) => {
+        const severity = (recordString(row, 'severity') ?? '').toLowerCase()
+        const token = semanticToken(severity)
+        const incidentId = recordString(row, 'incident_id', 'incidentId')
+        const clickable = !!(onOpenIncident && incidentId)
+        const inner = (
+          <>
+            <span className={cn('inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10.5px] font-semibold', semanticBadgeClass(token))}>
+              {severityKo(severity)}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-gray-700">{recordString(row, 'summary', 'title') ?? '-'}</span>
+            {clickable && <Icon name="chevron-right" size={12} className="shrink-0 text-gray-300" />}
+          </>
+        )
+        return clickable ? (
+          <button
+            key={index}
+            onClick={() => onOpenIncident!(incidentId!)}
+            title="인시던트 상세 열기"
+            className="flex w-full items-center gap-2 rounded-md border border-gray-100 px-2 py-1.5 text-left hover:bg-gray-50"
+          >
+            {inner}
+          </button>
+        ) : (
+          <div key={index} className="flex items-center gap-2 rounded-md border border-gray-100 px-2 py-1.5">
+            {inner}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export function EventSummaryPanel({ result }: { result: Record<string, unknown> | null }) {
   if (!result) return <PanelEmpty text="이벤트/인시던트 데이터 없음" />
   const open = recordNumber(result, 'openIncidents', 'open_incidents') ?? 0
   const criticalCount = recordNumber(result, 'criticalIncidents', 'critical_incidents') ?? 0
   const critical = recordArray(result, 'critical')
   const warnings = recordArray(result, 'warnings')
+
+  // 현황(집계/목록) 데이터가 아니고 단일 인시던트 요약이면 요약 카드로 폴백.
+  const hasOverview = open > 0 || criticalCount > 0 || critical.length > 0 || warnings.length > 0
+  const isSingleIncident = !hasOverview && !!recordString(result, 'incident_id', 'incidentId', 'summary', 'note')
+  if (isSingleIncident) return <IncidentSummaryCard result={result} />
 
   return (
     <div className="space-y-2.5 text-[12px]">
@@ -3442,26 +3618,28 @@ function ApprovalCard({
 }) {
   const resolved = msg.state === 'approved' || msg.state === 'rejected'
   const disabled = msg.state === 'submitting' || resolved || !msg.approvalId || roleLoading || !canApprove
+  // 권한이 정상이고 승인 가능한 평상시엔 도움말을 띄우지 않는다(노이즈 제거).
   const help = roleLoading
     ? '승인 권한 확인 중…'
     : roleError
       ? roleError
       : !canApprove
-        ? `OWNER/ADMIN만 승인할 수 있습니다${roleLabel ? ` (현재 ${roleLabel})` : ''}`
+        ? `소유자 또는 관리자만 승인할 수 있습니다${roleLabel ? ` (현재 ${roleLabel})` : ''}`
         : !msg.approvalId
-          ? 'approval id 확인 중…'
-          : `현재 권한: ${roleLabel}`
+          ? '승인 요청 확인 중…'
+          : null
 
   return (
-    <div className="min-w-0 rounded-xl border border-[#ececec] bg-white">
-      <div className="flex min-w-0 items-center gap-1.5 border-b border-[#ececec] bg-[#ededed] px-3 py-2 text-[12px] font-semibold text-[#6b6b73]">
+    <div className="min-w-0 rounded-xl border border-[#e7c9c4] bg-white">
+      <div className="flex min-w-0 items-center gap-1.5 border-b border-[#f0dad6] bg-[#fcf3f2] px-3 py-2 text-[12px] font-semibold text-[#c0392b]">
         <Icon name="shield" size={13} className="shrink-0" />
-        <span className="min-w-0 break-words">승인 필요 · {msg.actionId}</span>
+        <span className="min-w-0 break-words">승인 필요</span>
       </div>
       <div className="space-y-1.5 px-3 py-2.5 text-[12px] text-gray-700">
         <div className="break-words leading-relaxed">{msg.message}</div>
-        <div className="break-words text-[11.5px] text-gray-500">{msg.reason}</div>
-        <div className="break-all font-mono text-[10.5px] text-gray-400">{msg.approvalId ?? 'approval id pending'}</div>
+        {msg.reason && msg.reason !== msg.message && (
+          <div className="break-words text-[11.5px] text-gray-500">{msg.reason}</div>
+        )}
         {(msg.error || help) && <div className={cn('break-words text-[11.5px]', msg.error || roleError ? 'text-[#c0392b]' : 'text-gray-400')}>{msg.error ?? help}</div>}
       </div>
       {resolved ? (
