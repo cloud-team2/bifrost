@@ -27,6 +27,8 @@ env:
   AI_SPRING_OPS_BASE_URL: http://operations-backend.bifrost-system.svc.cluster.local:8080
   AI_LLM_PROVIDER: openai
   AI_LLM_DEFAULT_MODEL: gpt-4o-mini
+  # RCA 증거 매칭 임베딩 보조(#831). 글자 매칭 실패 시에만 의미 유사도 보조, 가드레일(앵커 필수·negative 무효화·구조형 룰 제외) 유지.
+  AI_RCA_EMBEDDING_MATCH_ENABLED: "true"
   # Agent Run Store / Knowledge Vector Store (pgvector).
   # 코드 기대 env = AI_DATABASE_URL (config.py: env_prefix=AI_, field=database_url). 드라이버 prefix는 db.py가 asyncpg용으로 strip.
   AI_DATABASE_URL: postgresql+asyncpg://agent:agent@agentdb-service.agentdb.svc.cluster.local:5432/agentdb
