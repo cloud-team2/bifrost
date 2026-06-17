@@ -42,6 +42,7 @@ import java.util.regex.Pattern;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.times;
@@ -226,21 +227,27 @@ class InternalOpsObservabilityControllerTest {
     void listAlertsScopedByPipelineExcludesOtherPipelineIncidents() throws Exception {
         UUID tenantId = UUID.randomUUID();
         UUID pipelineId = UUID.randomUUID();
+        UUID sharedDatasourceId = UUID.randomUUID();
         PipelineEntity pipeline = pipeline(pipelineId, tenantId, "orders-cdc");
+        pipeline.setSourceDatasourceId(sharedDatasourceId);
         pipeline.setSinkConnectorName("orders-sink");
         IncidentEntity target = incident("orders sink failed", "ERROR", "OPEN", "CONNECTOR");
         target.setTenantId(tenantId);
         target.setGroupingKey(IncidentGroupingKeys.connectorWorker("orders-sink"));
-        IncidentEntity other = incident("other sink failed", "ERROR", "OPEN", "CONNECTOR");
-        other.setTenantId(tenantId);
-        other.setGroupingKey(IncidentGroupingKeys.connectorWorker("other-sink"));
 
         when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId, "proj-001")));
         when(pipelineRepository.findByIdAndTenantId(pipelineId, tenantId)).thenReturn(Optional.of(pipeline));
         when(connectorRepository.findByPipelineId(pipelineId))
                 .thenReturn(List.of(connector(pipelineId, "orders-sink", ConnectorKind.SINK)));
-        when(incidentRepository.findScopedByTenantIdOrderByOpenedAtDesc(
-                eq(tenantId), isNull(), isNull(), any(), any(), any(Pageable.class)))
+        when(incidentRepository.findScopedAlertsByTenantIdOrderByOpenedAtDesc(
+                eq(tenantId),
+                isNull(),
+                isNull(),
+                argThat(keys -> keys.contains(IncidentGroupingKeys.datasource(sharedDatasourceId))
+                        && keys.contains(IncidentGroupingKeys.connectorWorker("orders-sink"))),
+                argThat(ids -> ids.contains(pipelineId) && ids.contains(sharedDatasourceId)),
+                eq(pipelineId),
+                any(Pageable.class)))
                 .thenReturn(List.of(target));
 
         mockMvc().perform(get("/internal/ops/projects/{projectId}/observability/alerts", "proj-001")
@@ -257,21 +264,27 @@ class InternalOpsObservabilityControllerTest {
     void listAlertsScopedByConnectorExcludesSiblingConnectorIncidents() throws Exception {
         UUID tenantId = UUID.randomUUID();
         UUID pipelineId = UUID.randomUUID();
+        UUID sinkDatasourceId = UUID.randomUUID();
         PipelineEntity pipeline = pipeline(pipelineId, tenantId, "orders-cdc");
-        pipeline.setSinkDatasourceId(UUID.randomUUID());
+        pipeline.setSinkDatasourceId(sinkDatasourceId);
         ConnectorEntity connector = connector(pipelineId, "orders-sink", ConnectorKind.SINK);
         IncidentEntity target = incident("orders sink lag", "WARN", "OPEN", "CONSUMER_GROUP");
         target.setTenantId(tenantId);
         target.setGroupingKey(IncidentGroupingKeys.consumerLag("connect-orders-sink"));
-        IncidentEntity sibling = incident("orders source failed", "ERROR", "OPEN", "CONNECTOR");
-        sibling.setTenantId(tenantId);
-        sibling.setGroupingKey(IncidentGroupingKeys.connectorWorker("orders-source"));
 
         when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId, "proj-001")));
         when(connectorRepository.findByCrName("orders-sink")).thenReturn(Optional.of(connector));
         when(pipelineRepository.findByIdAndTenantId(pipelineId, tenantId)).thenReturn(Optional.of(pipeline));
-        when(incidentRepository.findScopedByTenantIdOrderByOpenedAtDesc(
-                eq(tenantId), isNull(), isNull(), any(), any(), any(Pageable.class)))
+        when(incidentRepository.findScopedAlertsByTenantIdOrderByOpenedAtDesc(
+                eq(tenantId),
+                isNull(),
+                isNull(),
+                argThat(keys -> keys.contains(IncidentGroupingKeys.datasource(sinkDatasourceId))
+                        && keys.contains(IncidentGroupingKeys.connectorWorker("orders-sink"))
+                        && keys.contains(IncidentGroupingKeys.consumerLag("connect-orders-sink"))),
+                argThat(ids -> ids.contains(connector.getId()) && ids.contains(sinkDatasourceId)),
+                eq(pipelineId),
+                any(Pageable.class)))
                 .thenReturn(List.of(target));
 
         mockMvc().perform(get("/internal/ops/projects/{projectId}/observability/alerts", "proj-001")
@@ -281,6 +294,78 @@ class InternalOpsObservabilityControllerTest {
                 .andExpect(jsonPath("$.operation").value("list_alerts"))
                 .andExpect(jsonPath("$.result.summary").value("1 alerts matched"))
                 .andExpect(jsonPath("$.result.alerts[0].summary").value("orders sink lag"))
+                .andExpect(jsonPath("$.result.alerts[1]").doesNotExist());
+    }
+
+    @Test
+    void listAlertsScopedByPipelineKeepsDatabaseIncidentWithPipelineEventOwnership() throws Exception {
+        UUID tenantId = UUID.randomUUID();
+        UUID pipelineId = UUID.randomUUID();
+        UUID sourceDatasourceId = UUID.randomUUID();
+        PipelineEntity pipeline = pipeline(pipelineId, tenantId, "orders-cdc");
+        pipeline.setSourceDatasourceId(sourceDatasourceId);
+        IncidentEntity ownedDatabase = incident("orders source DB failed", "CRITICAL", "OPEN", "DATABASE");
+        ownedDatabase.setTenantId(tenantId);
+        ownedDatabase.setGroupingKey(IncidentGroupingKeys.datasource(sourceDatasourceId));
+        ownedDatabase.setSourceId(sourceDatasourceId);
+
+        when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId, "proj-001")));
+        when(pipelineRepository.findByIdAndTenantId(pipelineId, tenantId)).thenReturn(Optional.of(pipeline));
+        when(connectorRepository.findByPipelineId(pipelineId)).thenReturn(List.of());
+        when(incidentRepository.findScopedAlertsByTenantIdOrderByOpenedAtDesc(
+                eq(tenantId),
+                isNull(),
+                isNull(),
+                argThat(keys -> keys.contains(IncidentGroupingKeys.datasource(sourceDatasourceId))),
+                argThat(ids -> ids.contains(pipelineId) && ids.contains(sourceDatasourceId)),
+                eq(pipelineId),
+                any(Pageable.class)))
+                .thenReturn(List.of(ownedDatabase));
+
+        mockMvc().perform(get("/internal/ops/projects/{projectId}/observability/alerts", "proj-001")
+                        .queryParam("pipeline_id", pipelineId.toString())
+                        .header("X-Request-Id", "req-alerts-pipeline-db"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.operation").value("list_alerts"))
+                .andExpect(jsonPath("$.result.summary").value("1 alerts matched"))
+                .andExpect(jsonPath("$.result.alerts[0].summary").value("orders source DB failed"))
+                .andExpect(jsonPath("$.result.alerts[1]").doesNotExist());
+    }
+
+    @Test
+    void listAlertsScopedByConnectorKeepsDatabaseIncidentWithPipelineEventOwnership() throws Exception {
+        UUID tenantId = UUID.randomUUID();
+        UUID pipelineId = UUID.randomUUID();
+        UUID sinkDatasourceId = UUID.randomUUID();
+        PipelineEntity pipeline = pipeline(pipelineId, tenantId, "orders-cdc");
+        pipeline.setSinkDatasourceId(sinkDatasourceId);
+        ConnectorEntity connector = connector(pipelineId, "orders-sink", ConnectorKind.SINK);
+        IncidentEntity ownedDatabase = incident("orders sink DB failed", "CRITICAL", "OPEN", "DATABASE");
+        ownedDatabase.setTenantId(tenantId);
+        ownedDatabase.setGroupingKey(IncidentGroupingKeys.datasource(sinkDatasourceId));
+        ownedDatabase.setSourceId(sinkDatasourceId);
+
+        when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId, "proj-001")));
+        when(connectorRepository.findByCrName("orders-sink")).thenReturn(Optional.of(connector));
+        when(pipelineRepository.findByIdAndTenantId(pipelineId, tenantId)).thenReturn(Optional.of(pipeline));
+        when(incidentRepository.findScopedAlertsByTenantIdOrderByOpenedAtDesc(
+                eq(tenantId),
+                isNull(),
+                isNull(),
+                argThat(keys -> keys.contains(IncidentGroupingKeys.datasource(sinkDatasourceId))
+                        && keys.contains(IncidentGroupingKeys.connectorWorker("orders-sink"))),
+                argThat(ids -> ids.contains(connector.getId()) && ids.contains(sinkDatasourceId)),
+                eq(pipelineId),
+                any(Pageable.class)))
+                .thenReturn(List.of(ownedDatabase));
+
+        mockMvc().perform(get("/internal/ops/projects/{projectId}/observability/alerts", "proj-001")
+                        .queryParam("connector_name", "orders-sink")
+                        .header("X-Request-Id", "req-alerts-connector-db"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.operation").value("list_alerts"))
+                .andExpect(jsonPath("$.result.summary").value("1 alerts matched"))
+                .andExpect(jsonPath("$.result.alerts[0].summary").value("orders sink DB failed"))
                 .andExpect(jsonPath("$.result.alerts[1]").doesNotExist());
     }
 
