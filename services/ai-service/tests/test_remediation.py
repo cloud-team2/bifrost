@@ -21,6 +21,23 @@ def _root_cause(root_cause_id: str, explanation: str = "test explanation") -> Ro
     )
 
 
+def _partial_root_cause(
+    root_cause_id: str,
+    *,
+    evidence_gap: list[str],
+    explanation: str = "test explanation",
+) -> RootCauseCandidate:
+    return RootCauseCandidate(
+        root_cause_id=root_cause_id,
+        confidence=0.68,
+        required_evidence_satisfied=False,
+        supporting_evidence_ids=["ev1"],
+        negative_evidence_ids=[],
+        evidence_gap=evidence_gap,
+        explanation=explanation,
+    )
+
+
 def _rca_out(*root_cause_ids: str) -> RcaOutput:
     return RcaOutput(root_cause_candidates=[_root_cause(root_cause_id) for root_cause_id in root_cause_ids])
 
@@ -36,11 +53,8 @@ def _catalog_action_names() -> set[str]:
 @pytest.mark.asyncio
 async def test_connector_task_failed_runbook() -> None:
     output = await remediation.run_remediation(_rca_out("CONNECTOR_TASK_FAILED"))
-    restart = next(
-        candidate
-        for candidate in output.action_candidates
-        if candidate.action_name == "restart_connector"
-    )
+    assert [candidate.action_name for candidate in output.action_candidates] == ["restart_connector"]
+    restart = output.action_candidates[0]
     catalog_restart = next(
         action
         for action in get_actions_for_root_cause("CONNECTOR_TASK_FAILED")
@@ -52,6 +66,90 @@ async def test_connector_task_failed_runbook() -> None:
     assert restart.tool_name == catalog_restart.tool_name
     assert restart.root_cause_id == "CONNECTOR_TASK_FAILED"
     assert "runbook: restart_connector" in restart.reason
+
+
+@pytest.mark.asyncio
+async def test_connector_task_failed_does_not_bulk_list_lifecycle_actions() -> None:
+    output = await remediation.run_remediation(_rca_out("CONNECTOR_TASK_FAILED"))
+
+    runtime_tools = [
+        candidate.tool_name
+        for candidate in output.action_candidates
+        if candidate.action_type == ActionType.RUNTIME_TOOL
+    ]
+    assert runtime_tools == ["restart_connector"]
+
+
+@pytest.mark.asyncio
+async def test_connector_task_failed_pause_requires_repeated_impact_context() -> None:
+    output = await remediation.run_remediation(
+        RcaOutput(
+            root_cause_candidates=[
+                _root_cause(
+                    "CONNECTOR_TASK_FAILED",
+                    explanation="CONNECTOR_TASK_FAILED: 반복 실패로 downstream 영향이 커짐",
+                )
+            ]
+        )
+    )
+
+    assert [candidate.action_name for candidate in output.action_candidates] == ["pause_connector"]
+    assert "repeated impact" in output.action_candidates[0].reason
+
+
+@pytest.mark.asyncio
+async def test_connector_task_failed_resume_requires_resolved_context() -> None:
+    output = await remediation.run_remediation(
+        RcaOutput(
+            root_cause_candidates=[
+                _root_cause(
+                    "CONNECTOR_TASK_FAILED",
+                    explanation="CONNECTOR_TASK_FAILED: 원인 해소 후 재개 필요",
+                )
+            ]
+        )
+    )
+
+    assert [candidate.action_name for candidate in output.action_candidates] == ["resume_connector"]
+    assert "cause is resolved" in output.action_candidates[0].reason
+
+
+@pytest.mark.asyncio
+async def test_connector_task_failed_negated_resume_prefers_pause_context() -> None:
+    output = await remediation.run_remediation(
+        RcaOutput(
+            root_cause_candidates=[
+                _root_cause(
+                    "CONNECTOR_TASK_FAILED",
+                    explanation=(
+                        "CONNECTOR_TASK_FAILED: not recovered; repeated failures continue "
+                        "downstream impact; do not resume yet"
+                    ),
+                )
+            ]
+        )
+    )
+
+    assert [candidate.action_name for candidate in output.action_candidates] == ["pause_connector"]
+    assert output.action_candidates[0].tool_name == "pause_connector"
+
+
+@pytest.mark.asyncio
+async def test_connector_task_failed_missing_failed_status_does_not_restart() -> None:
+    output = await remediation.run_remediation(
+        RcaOutput(
+            root_cause_candidates=[
+                _partial_root_cause(
+                    "CONNECTOR_TASK_FAILED",
+                    evidence_gap=["connector task status `FAILED`"],
+                    explanation="CONNECTOR_TASK_FAILED: task trace exists but failed status is not confirmed",
+                )
+            ]
+        )
+    )
+
+    assert [candidate.action_name for candidate in output.action_candidates] == ["collect_connector_trace"]
+    assert output.action_candidates[0].action_type == ActionType.WORKFLOW_ACTION
 
 
 @pytest.mark.asyncio
