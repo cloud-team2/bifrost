@@ -18,6 +18,7 @@ export interface PipelineWizardSelections {
   sinkDbId: string | null
   table: PipelineWizardTable
   name: string
+  alias?: string | null
 }
 
 const PIPELINE_WORDS = ['파이프라인', 'pipeline']
@@ -65,6 +66,7 @@ export function suggestPipelineName(
 export function buildPipelineCreateInput(selections: PipelineWizardSelections): PipelineCreateInput {
   return {
     name: selections.name.trim(),
+    alias: selections.alias?.trim() ? selections.alias.trim() : null,
     pattern: selections.pattern,
     sourceDbId: selections.sourceDbId,
     sinkDbId: selections.pattern === 'direct' ? selections.sinkDbId : null,

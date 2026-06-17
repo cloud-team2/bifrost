@@ -14,9 +14,16 @@ import java.util.UUID;
  */
 public record PipelineCreateRequest(
     @NotBlank @Size(min = 1, max = 100) String name,
+    @Size(max = 100) String alias,
     @NotBlank String pattern,
     @NotNull UUID sourceDbId,
     UUID sinkDbId,
     @NotBlank String schema,
     @NotBlank String table
-) {}
+) {
+    /** 하위호환: alias 없는 기존 호출용. */
+    public PipelineCreateRequest(
+        String name, String pattern, UUID sourceDbId, UUID sinkDbId, String schema, String table) {
+        this(name, null, pattern, sourceDbId, sinkDbId, schema, table);
+    }
+}

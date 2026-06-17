@@ -30,6 +30,10 @@ public class PipelineEntity {
     @Column(nullable = false, length = 100)
     private String name;
 
+    /** 사용자 친화 한글 표시명(선택). 기술 이름(name)과 별개. */
+    @Column(name = "alias", length = 100)
+    private String alias;
+
     /** 레거시 coarse 분류(CDC/SYNC). pattern이 권위값이다. */
     @Column(nullable = false, length = 20)
     private String type;
@@ -93,6 +97,8 @@ public class PipelineEntity {
     public void setTenantId(UUID tenantId) { this.tenantId = tenantId; }
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
+    public String getAlias() { return alias; }
+    public void setAlias(String alias) { this.alias = alias; }
     public String getType() { return type; }
     public void setType(String type) { this.type = type; }
     public PipelinePattern getPattern() { return pattern; }

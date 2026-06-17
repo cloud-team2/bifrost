@@ -230,6 +230,7 @@ interface PipelineWizardMsg {
     sink: CdcReadinessResponse | null
   }
   name: string
+  alias?: string
   created: PipelineResponse | null
   loading: PipelineWizardLoading
   error: string | null
@@ -801,6 +802,16 @@ export function AgentRunPanel({
     updatePipelineWizard(messageId, (msg) => ({ ...msg, name }))
   }
 
+  function updatePipelineWizardAlias(messageId: number, alias: string) {
+    const current = findPipelineWizard(messageId)
+    if (!current) return
+    if (!isCurrentPipelineWizardWorkspace(current)) {
+      markStalePipelineWizard(messageId)
+      return
+    }
+    updatePipelineWizard(messageId, (msg) => ({ ...msg, alias }))
+  }
+
   async function createPipelineFromWizard(messageId: number) {
     const current = findPipelineWizard(messageId)
     if (!current?.sourceDbId || !current.pattern || !current.table || !current.name.trim()) return
@@ -815,6 +826,7 @@ export function AgentRunPanel({
     try {
       const created = await api.createPipeline(current.workspaceId, buildPipelineCreateInput({
         name: current.name,
+        alias: current.alias,
         pattern: current.pattern,
         sourceDbId: current.sourceDbId,
         sinkDbId: current.sinkDbId,
@@ -1712,6 +1724,7 @@ export function AgentRunPanel({
                 onSelectSink={(sinkDbId) => selectPipelineWizardSink(m.id, sinkDbId)}
                 onSelectTable={(table) => selectPipelineWizardTable(m.id, table)}
                 onNameChange={(name) => updatePipelineWizardName(m.id, name)}
+                onAliasChange={(alias) => updatePipelineWizardAlias(m.id, alias)}
                 onCreate={() => createPipelineFromWizard(m.id)}
                 onRetry={() => retryPipelineWizard(m.id)}
                 onBackToSource={() => backPipelineWizardToSource(m.id)}
@@ -1967,6 +1980,7 @@ function PipelineWizardCard({
   onSelectSink,
   onSelectTable,
   onNameChange,
+  onAliasChange,
   onCreate,
   onRetry,
   onBackToSource,
@@ -1977,6 +1991,7 @@ function PipelineWizardCard({
   onSelectSink: (sinkDbId: string) => void
   onSelectTable: (table: PipelineWizardTable) => void
   onNameChange: (name: string) => void
+  onAliasChange: (alias: string) => void
   onCreate: () => void
   onRetry: () => void
   onBackToSource: () => void
@@ -2177,6 +2192,17 @@ function PipelineWizardCard({
                   value={msg.name}
                   onChange={(e) => onNameChange(e.target.value)}
                   disabled={msg.loading === 'creating'}
+                  className="h-9 w-full rounded-md border border-gray-200 px-2.5 text-[12.5px] outline-none focus:border-brand-500 disabled:opacity-60"
+                />
+                <label className="block text-[11.5px] font-medium text-gray-600" htmlFor={`pipeline-alias-${msg.id}`}>
+                  표시 이름 <span className="font-normal text-gray-400">(선택 · 한글)</span>
+                </label>
+                <input
+                  id={`pipeline-alias-${msg.id}`}
+                  value={msg.alias ?? ''}
+                  onChange={(e) => onAliasChange(e.target.value)}
+                  disabled={msg.loading === 'creating'}
+                  placeholder="예: 주문 동기화"
                   className="h-9 w-full rounded-md border border-gray-200 px-2.5 text-[12.5px] outline-none focus:border-brand-500 disabled:opacity-60"
                 />
                 {blocked && (

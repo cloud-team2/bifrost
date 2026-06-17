@@ -693,6 +693,7 @@ export interface DbRegisterInput {
 }
 export interface PipelineCreateInput {
   name: string
+  alias?: string | null
   pattern: 'fan-out' | 'direct'
   sourceDbId: string
   sinkDbId?: string | null
