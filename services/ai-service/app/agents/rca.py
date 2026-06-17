@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -11,6 +13,7 @@ from app.catalogs.evidence_matrix import get_evidence_profile
 from app.catalogs.incident_rootcause_map import get_root_cause_candidates
 from app.catalogs.root_causes import get_root_cause, list_root_causes
 from app.catalogs.types import EvidenceProfile, EvidenceRule, RootCause
+from app.core.config import settings
 from app.prompts.rca import SYSTEM_PROMPT, build_user_prompt
 from app.schemas.outputs import ClassifierOutput, RcaOutput, RetrievalOutput
 from app.schemas.state import EvidenceItem, EvidenceType, RootCauseCandidate
@@ -20,6 +23,8 @@ UNKNOWN_INCIDENT_TYPE = "UNKNOWN_NEEDS_MORE_EVIDENCE"
 MIN_CONFIDENT_ROOT_CAUSE = 0.60
 LLM_TIE_MARGIN = 0.10
 MAX_CANDIDATES = 5
+
+logger = logging.getLogger(__name__)
 
 _TOKEN_RE = re.compile(r"[0-9A-Za-z가-힣]+")
 _CONNECTOR_TASK_FAILED_ID = "CONNECTOR_TASK_FAILED"
@@ -74,6 +79,11 @@ _GENERIC_TOKENS = {
 class _RuleMatch:
     rule: EvidenceRule
     evidence_ids: set[str]
+    semantic_evidence_ids: set[str]
+
+    @property
+    def lexical_evidence_ids(self) -> set[str]:
+        return self.evidence_ids - self.semantic_evidence_ids
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +102,66 @@ class _EvaluatedCandidate:
         return self.root_cause.root_cause_id
 
 
+@dataclass(frozen=True, slots=True)
+class _RuleEvidenceMatch:
+    lexical: bool = False
+    semantic: bool = False
+
+    @property
+    def matched(self) -> bool:
+        return self.lexical or self.semantic
+
+
+class _SemanticEvidenceMatcher:
+    def __init__(self, *, enabled: bool, threshold: float, vectors: dict[str, list[float]] | None = None) -> None:
+        self.enabled = enabled
+        self.threshold = threshold
+        self._vectors = vectors or {}
+
+    @classmethod
+    async def build(
+        cls,
+        candidate_ids: list[str],
+        evidence_items: list[EvidenceItem],
+    ) -> "_SemanticEvidenceMatcher":
+        if not settings.rca_embedding_match_enabled:
+            return cls(enabled=False, threshold=settings.rca_embedding_match_threshold)
+
+        texts = _semantic_texts(candidate_ids, evidence_items)
+        if len(texts) < 2:
+            return cls(enabled=False, threshold=settings.rca_embedding_match_threshold)
+
+        try:
+            from app.knowledge.embedder import get_embedder
+
+            embedder = get_embedder(prefer_openai=settings.rca_embedding_match_prefer_openai)
+            embeddings = await embedder.embed_texts(texts)
+            vectors = _validated_embedding_vectors(texts, embeddings)
+        except Exception as exc:
+            logger.warning("RCA semantic evidence matcher disabled after embedder failure: %s", exc)
+            return cls(enabled=False, threshold=settings.rca_embedding_match_threshold)
+
+        return cls(
+            enabled=True,
+            threshold=settings.rca_embedding_match_threshold,
+            vectors=vectors,
+        )
+
+    def matches(self, rule: EvidenceRule, item: EvidenceItem) -> bool:
+        if not self.enabled:
+            return False
+
+        evidence_vector = self._vectors.get(item.summary)
+        if not evidence_vector:
+            return False
+
+        for phrase in _semantic_rule_phrases(rule):
+            phrase_vector = self._vectors.get(phrase)
+            if phrase_vector and _cosine_similarity(phrase_vector, evidence_vector) >= self.threshold:
+                return True
+        return False
+
+
 async def run_rca(classifier_out: ClassifierOutput | None, retrieval_out: RetrievalOutput | None) -> RcaOutput:
     evidence_items = [
         item
@@ -107,10 +177,11 @@ async def run_rca(classifier_out: ClassifierOutput | None, retrieval_out: Retrie
     if not candidate_ids:
         return _unknown_output(["classifier_incident_type_mapping_missing"])
 
+    matcher = await _SemanticEvidenceMatcher.build(candidate_ids, evidence_items)
     candidates = [
         candidate
         for candidate_id in candidate_ids
-        if (candidate := _evaluate_candidate(candidate_id, evidence_items)) is not None
+        if (candidate := await _evaluate_candidate(candidate_id, evidence_items, matcher)) is not None
     ]
     candidates.sort(key=lambda item: item.confidence, reverse=True)
 
@@ -156,21 +227,36 @@ def _classifier_types(classifier_out: ClassifierOutput | None) -> list[str]:
     return [item.type for item in classifier_out.classification.incident_types]
 
 
-def _evaluate_candidate(root_cause_id: str, evidence_items: list[EvidenceItem]) -> _EvaluatedCandidate | None:
+async def _evaluate_candidate(
+    root_cause_id: str,
+    evidence_items: list[EvidenceItem],
+    matcher: _SemanticEvidenceMatcher,
+) -> _EvaluatedCandidate | None:
     root_cause = get_root_cause(root_cause_id)
     profile = get_evidence_profile(root_cause_id)
     if root_cause is None or profile is None:
         return None
 
-    required_matches = _match_rules(profile.required, evidence_items)
-    supporting_matches = _match_rules(profile.supporting, evidence_items)
-    negative_matches = _match_rules(profile.negative, evidence_items)
+    required_matches = _match_rules(profile.required, evidence_items, matcher)
+    supporting_matches = _match_rules(profile.supporting, evidence_items, matcher)
+    negative_matches = _match_rules(profile.negative, evidence_items, matcher)
+    negative_ids = _matched_evidence_ids(negative_matches)
+    has_required_lexical_anchor = _has_lexical_required_anchor(required_matches)
+    has_positive_lexical_anchor = has_required_lexical_anchor or _has_lexical_anchor(supporting_matches)
+    if negative_ids:
+        required_matches = _discard_semantic_only_matches(required_matches)
+        supporting_matches = _discard_semantic_only_matches(supporting_matches)
+    else:
+        if not has_required_lexical_anchor:
+            required_matches = _discard_semantic_only_matches(required_matches)
+        if not has_positive_lexical_anchor:
+            supporting_matches = _discard_semantic_only_matches(supporting_matches)
+
     matched_required = [item for item in required_matches if item.evidence_ids]
     evidence_gap = [item.rule.evidence for item in required_matches if not item.evidence_ids]
 
     required_satisfied = not evidence_gap
     supporting_ids = _matched_evidence_ids(supporting_matches)
-    negative_ids = _matched_evidence_ids(negative_matches)
     confidence = _score_confidence(
         root_cause=root_cause,
         required_matched=len(matched_required),
@@ -201,18 +287,151 @@ def _evaluate_candidate(root_cause_id: str, evidence_items: list[EvidenceItem]) 
     )
 
 
-def _match_rules(rules: tuple[EvidenceRule, ...], evidence_items: list[EvidenceItem]) -> list[_RuleMatch]:
+def _match_rules(
+    rules: tuple[EvidenceRule, ...],
+    evidence_items: list[EvidenceItem],
+    matcher: _SemanticEvidenceMatcher,
+) -> list[_RuleMatch]:
+    matches: list[_RuleMatch] = []
+    for rule in rules:
+        evidence_ids: set[str] = set()
+        semantic_evidence_ids: set[str] = set()
+        for item in evidence_items:
+            match = _rule_evidence_match(rule, item, matcher)
+            if match.matched:
+                evidence_ids.add(item.evidence_id)
+            if match.semantic and not match.lexical:
+                semantic_evidence_ids.add(item.evidence_id)
+        matches.append(
+            _RuleMatch(
+                rule=rule,
+                evidence_ids=evidence_ids,
+                semantic_evidence_ids=semantic_evidence_ids,
+            )
+        )
+    return matches
+
+
+def _rule_evidence_match(
+    rule: EvidenceRule,
+    item: EvidenceItem,
+    matcher: _SemanticEvidenceMatcher,
+) -> _RuleEvidenceMatch:
+    lexical = _rule_matches_evidence(rule, item)
+    semantic = False
+    if not lexical and _allows_semantic_rule_match(rule, item):
+        semantic = matcher.matches(rule, item)
+    return _RuleEvidenceMatch(lexical=lexical, semantic=semantic)
+
+
+def _discard_semantic_only_matches(matches: list[_RuleMatch]) -> list[_RuleMatch]:
     return [
         _RuleMatch(
-            rule=rule,
-            evidence_ids={
-                item.evidence_id
-                for item in evidence_items
-                if _rule_matches_evidence(rule, item)
-            },
+            rule=match.rule,
+            evidence_ids=match.lexical_evidence_ids,
+            semantic_evidence_ids=set(),
         )
-        for rule in rules
+        for match in matches
     ]
+
+
+def _has_lexical_required_anchor(required_matches: list[_RuleMatch]) -> bool:
+    return _has_lexical_anchor(required_matches)
+
+
+def _has_lexical_anchor(matches: list[_RuleMatch]) -> bool:
+    return any(match.lexical_evidence_ids for match in matches)
+
+
+def _allows_semantic_rule_match(rule: EvidenceRule, item: EvidenceItem) -> bool:
+    if not settings.rca_embedding_match_enabled:
+        return False
+    if not item.summary.strip():
+        return False
+    return _allows_semantic_rule(rule)
+
+
+def _allows_semantic_rule(rule: EvidenceRule) -> bool:
+    if not rule.semantic_allowed:
+        return False
+    return any(_semantic_phrase_allowed(phrase) for phrase in _semantic_rule_phrases(rule))
+
+
+def _validated_embedding_vectors(texts: list[str], embeddings: object) -> dict[str, list[float]]:
+    if not isinstance(embeddings, Sequence) or isinstance(embeddings, (str, bytes)):
+        raise ValueError("embedder returned a non-sequence response")
+    if len(embeddings) != len(texts):
+        raise ValueError("embedder returned a different number of vectors than inputs")
+
+    vectors: dict[str, list[float]] = {}
+    expected_dimensions: int | None = None
+    for text, vector in zip(texts, embeddings, strict=True):
+        if not isinstance(vector, Sequence) or isinstance(vector, (str, bytes)) or not vector:
+            raise ValueError("embedder returned a non-vector item")
+        try:
+            normalized = [float(value) for value in vector]
+        except (TypeError, ValueError) as exc:
+            raise ValueError("embedder returned a non-numeric vector item") from exc
+        if expected_dimensions is None:
+            expected_dimensions = len(normalized)
+        elif len(normalized) != expected_dimensions:
+            raise ValueError("embedder returned vectors with inconsistent dimensions")
+        vectors[text] = normalized
+    return vectors
+
+
+def _semantic_texts(candidate_ids: list[str], evidence_items: list[EvidenceItem]) -> list[str]:
+    texts: list[str] = []
+
+    def add(value: str) -> None:
+        value = value.strip()
+        if value and value not in texts:
+            texts.append(value)
+
+    for item in evidence_items:
+        add(item.summary)
+
+    for candidate_id in candidate_ids:
+        profile = get_evidence_profile(candidate_id)
+        if profile is None:
+            continue
+        for rule in (*profile.required, *profile.supporting, *profile.negative):
+            if _allows_semantic_rule(rule):
+                for phrase in _semantic_rule_phrases(rule):
+                    if _semantic_phrase_allowed(phrase):
+                        add(phrase)
+    return texts
+
+
+def _semantic_rule_phrases(rule: EvidenceRule) -> list[str]:
+    phrases: list[str] = []
+    for value in (rule.evidence, rule.example or ""):
+        value = value.strip()
+        if value and value not in phrases:
+            phrases.append(value)
+        for alt in _split_alternatives(value):
+            if alt and alt not in phrases:
+                phrases.append(alt)
+    return phrases
+
+
+def _semantic_phrase_allowed(phrase: str) -> bool:
+    tokens = _meaningful_tokens(phrase)
+    if len(tokens) >= 2:
+        return True
+    compact = "".join(_tokens(phrase))
+    return len(tokens) == 1 and len(compact) >= 12
+
+
+def _cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
+    if not left or not right or len(left) != len(right):
+        return 0.0
+    dot = sum(a * b for a, b in zip(left, right, strict=True))
+    left_norm = math.sqrt(sum(a * a for a in left))
+    right_norm = math.sqrt(sum(b * b for b in right))
+    if left_norm == 0.0 or right_norm == 0.0:
+        return 0.0
+    return dot / (left_norm * right_norm)
 
 
 def _rule_matches_evidence(rule: EvidenceRule, item: EvidenceItem) -> bool:

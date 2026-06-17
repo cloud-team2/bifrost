@@ -33,7 +33,9 @@ _DEFAULT_TOOL = ("search_logs", _LOG_PARAMS)
 _READ_TOOL_DEFAULT_PARAMS: dict[str, dict] = {
     "list_project_pipelines": _PIPELINE_LIST_PARAMS,
     "list_pipelines": _PIPELINE_STATUS_PARAMS,
+    "get_pipeline_topology": {},
     "list_connectors": _PROJECT_SCOPE_PARAMS,
+    "get_cluster_info": _PROJECT_SCOPE_PARAMS,
     "get_consumer_groups": _PROJECT_SCOPE_PARAMS,
     "analyze_event_log": _EVENT_SUMMARY_PARAMS,
     "search_logs": _LOG_PARAMS,
@@ -48,7 +50,9 @@ _READ_TOOL_DEFAULT_PARAMS: dict[str, dict] = {
 _READ_TOOL_DESCRIPTIONS: dict[str, str] = {
     "list_project_pipelines": "프로젝트 파이프라인 목록 조회",
     "list_pipelines": "프로젝트 파이프라인 상태·lag 요약 조회",
+    "get_pipeline_topology": "특정 파이프라인의 source/topic/sink/connector 토폴로지 조회",
     "list_connectors": "프로젝트 Kafka Connect 커넥터 목록·상태 조회",
+    "get_cluster_info": "Kafka broker/controller/topic partition 상태 조회",
     "get_consumer_groups": "프로젝트 Kafka consumer group 목록·lag 요약 조회",
     "analyze_event_log": "프로젝트 이벤트·인시던트 경고 요약 조회",
     "search_logs": "파이프라인/에러 로그 검색",
@@ -74,6 +78,7 @@ _TOOL_CATALOG = [
 
 _CONNECTOR_PARAM_TOOLS = frozenset({"get_connector_status", "get_traces", "get_connector_task_trace"})
 _CONSUMER_GROUP_PARAM_TOOLS = frozenset({"get_consumer_lag", "get_kafka_lag"})
+_PIPELINE_ID_PARAM_TOOLS = frozenset({"get_pipeline_topology"})
 _OBSERVABILITY_TARGET_TOOLS = frozenset({"get_alerts", "analyze_event_log"})
 # discovery tool — 파이프라인/커넥터 식별자를 산출한다. 식별자에 의존하는 조회는
 # 이 step들이 끝난 뒤 실행돼야 정확하므로 retrieval에서 순차 chain으로 풀린다 (#481).
@@ -129,23 +134,51 @@ async def run_planner(
     selected_by_llm = selected is not None
     if selected is None:
         selected = _keyword_select_tools(user_message)
+        llm_selected_tools: set[str] = set()
+    else:
+        llm_selected_tools = {tool for tool, _ in selected}
 
+    selected = _augment_hypothesis_routes(selected, user_message.lower())
     selected_tools = {tool for tool, _ in selected}
+    if selected_tools & _PIPELINE_ID_PARAM_TOOLS:
+        pipeline_id = _extract_pipeline_id(user_message)
+        if pipeline_id is None:
+            selected = _fallback_to_project_scope_tools(selected)
+        else:
+            selected = [
+                (tool, _params_with_pipeline_id(tool, params, pipeline_id))
+                for tool, params in selected
+            ]
+        selected_tools = {tool for tool, _ in selected}
+
     if selected_tools & _IDENTIFIER_DEPENDENT_TOOLS:
         identifier = _extract_identifier(user_message)
         if identifier is None and registry is not None and tool_context is not None:
             identifier = await _resolve_single_project_connector(registry, tool_context)
 
         if identifier is None:
-            if selected_by_llm:
+            if selected_by_llm and (llm_selected_tools & _IDENTIFIER_DEPENDENT_TOOLS):
                 return PlannerOutput(
                     retrieval_plan=[],
                     clarification_message=_identifier_required_message(selected_tools),
                 )
             selected = _fallback_to_project_scope_tools(selected)
         else:
+            connector_identifier = _extract_connector_identifier(user_message)
+            consumer_group_identifier = _extract_consumer_group_identifier(user_message)
+            if connector_identifier is None and identifier.kind == "connector":
+                connector_identifier = identifier
+            if consumer_group_identifier is None and identifier.kind == "consumer_group":
+                consumer_group_identifier = identifier
             selected = [
-                (tool, _params_with_identifier(tool, params, identifier))
+                (
+                    tool,
+                    _params_with_identifier(
+                        tool,
+                        params,
+                        _identifier_for_tool(tool, connector_identifier, consumer_group_identifier, identifier),
+                    ),
+                )
                 for tool, params in selected
             ]
 
@@ -153,7 +186,12 @@ async def run_planner(
         identifier = _extract_identifier(user_message)
         if identifier is not None:
             selected = [
-                (tool, _params_with_identifier(tool, params, identifier))
+                (
+                    tool,
+                    _params_with_identifier(tool, params, identifier)
+                    if tool in _OBSERVABILITY_TARGET_TOOLS
+                    else params,
+                )
                 for tool, params in selected
             ]
 
@@ -205,6 +243,7 @@ def _keyword_select_tools(user_message: str) -> list[tuple[str, dict]]:
     has_pipeline = _has_any(msg, {"파이프라인", "pipeline"})
     has_pipeline_list = _has_any(msg, {"리스트", "목록", "연결"})
     has_lag = _has_any(msg, {"lag", "지연"})
+    metrics_requested = _has_any(msg, {"메트릭", "metric", "지표", "수치", "성능"})
     has_connector = _has_any(msg, {"커넥터", "connector"})
     identifier = _extract_identifier(msg)
 
@@ -229,11 +268,15 @@ def _keyword_select_tools(user_message: str) -> list[tuple[str, dict]]:
         else:
             add("list_connectors", _PROJECT_SCOPE_PARAMS)
     if has_pipeline:
-        if has_lag or (_has_any(msg, {"상태", "현황", "status"}) and not has_pipeline_list):
+        if _has_any(msg, {"토폴로지", "topology"}):
+            add("get_pipeline_topology", {})
+        elif has_lag or (_has_any(msg, {"상태", "현황", "status"}) and not has_pipeline_list):
             add("list_pipelines", _PIPELINE_STATUS_PARAMS)
         else:
             add("list_project_pipelines", _PIPELINE_LIST_PARAMS)
-    if _has_any(msg, {"consumer group", "consumer-group", "컨슈머", "consumer"}) or (has_lag and not has_pipeline):
+    if _has_any(msg, {"consumer group", "consumer-group", "컨슈머", "consumer"}) or (
+        has_lag and not has_pipeline and not metrics_requested
+    ):
         if has_lag:
             add("get_consumer_lag", {})
         else:
@@ -242,7 +285,7 @@ def _keyword_select_tools(user_message: str) -> list[tuple[str, dict]]:
         add("search_logs", _LOG_PARAMS)
     if _has_any(msg, {"오류", "에러"}) and not has_event_summary and ("search_logs", "") not in seen_tools:
         add("search_logs", _INCIDENT_LOG_PARAMS)
-    if _has_any(msg, {"메트릭", "metric", "지표", "수치", "성능"}):
+    if metrics_requested:
         for params in _metric_param_list_for_message(msg):
             add("get_metrics", params)
     if _has_any(msg, {"배포", "deploy", "변경", "change", "토폴로지", "topology"}):
@@ -251,6 +294,81 @@ def _keyword_select_tools(user_message: str) -> list[tuple[str, dict]]:
     if not selected:
         selected.append(_DEFAULT_TOOL)
     return selected
+
+
+def _augment_hypothesis_routes(selected: list[tuple[str, dict]], msg: str) -> list[tuple[str, dict]]:
+    """Add deterministic read tools/metrics for incident hypotheses.
+
+    LLM selection remains allowlisted, but RCA prompts often describe a broad
+    active incident and ask for metrics without naming each metric. This expands
+    those broad hypotheses into concrete Spring-backed metric names.
+    """
+    augmented = list(selected)
+    seen: set[tuple[str, str]] = {
+        (
+            tool,
+            json.dumps(params, sort_keys=True) if tool == "get_metrics" else "",
+        )
+        for tool, params in augmented
+    }
+
+    def add(tool: str, params: dict) -> None:
+        dedupe_key = (
+            tool,
+            json.dumps(params, sort_keys=True) if tool == "get_metrics" else "",
+        )
+        if dedupe_key not in seen:
+            augmented.append((tool, params))
+            seen.add(dedupe_key)
+
+    incidentish = _has_any(
+        msg,
+        {
+            "incident_analysis",
+            "active incident",
+            "root cause",
+            "root_cause",
+            "근본 원인",
+            "장애",
+            "인시던트",
+        },
+    )
+    metrics_requested = _has_any(msg, {"metric", "metrics", "메트릭", "지표", "수치"})
+    broad_metric_probe = incidentish and metrics_requested
+
+    has_lag = _has_any(msg, {"consumer lag", "consumer_group", "lag", "지연", "offset progression"})
+    has_auth = _has_any(
+        msg,
+        {"auth", "authentication", "permission", "credential", "token", "인증", "권한", "비밀번호"},
+    )
+    has_schema = _has_any(
+        msg,
+        {"schema", "serialization", "deserialization", "config", "스키마", "역직렬화", "설정"},
+    )
+
+    if "pipeline_id=" in msg:
+        add("get_pipeline_topology", {})
+    if has_lag and not _has_any(msg, {"pipeline", "파이프라인"}) and not metrics_requested:
+        add("get_consumer_lag", {})
+    if broad_metric_probe:
+        add("get_metrics", {"metric": "consumer_lag_p95", "time_range": "last_30m"})
+        add("get_metrics", {"metric": "consumer_commit_rate_per_sec", "time_range": "last_30m"})
+        add("get_metrics", {"metric": "source_freshness_delay_ms", "time_range": "last_30m"})
+        add("get_metrics", {"metric": "source_watermark_delay_ms", "time_range": "last_30m"})
+        add("get_metrics", {"metric": "topic_ingress_messages_per_sec", "time_range": "last_30m"})
+        add("get_metrics", {"metric": "source_event_rate_per_sec", "time_range": "last_30m"})
+        add("get_cluster_info", _PROJECT_SCOPE_PARAMS)
+        add("get_metrics", {"metric": "broker_cpu_cores", "time_range": "last_30m"})
+        add("get_metrics", {"metric": "broker_fs_read_bytes_per_sec", "time_range": "last_30m"})
+    if has_auth or has_schema or incidentish:
+        add("analyze_event_log", _EVENT_SUMMARY_PARAMS)
+    if has_auth or has_schema:
+        add("get_connector_task_trace", {})
+        add("search_logs", _INCIDENT_LOG_PARAMS)
+    if has_schema:
+        add("get_deployments", {})
+
+    return augmented
 
 
 async def _llm_select_tools(user_message: str) -> list[tuple[str, dict]] | None:
@@ -307,13 +425,19 @@ def _metric_param_list_for_message(msg: str) -> list[dict]:
     if _has_any(msg, {"broker", "브로커"}):
         if _has_any(msg, {"memory", "mem", "메모리"}):
             add_metric("broker_memory_working_set_bytes")
-        if _has_any(msg, {"transmit", "tx", "송신"}):
+        has_transmit = _has_any(msg, {"transmit", "tx", "송신"})
+        has_read = _has_any(msg, {"read", "reads", "읽기"})
+        if has_transmit:
             add_metric("broker_network_transmit_bytes_per_sec")
-        if _has_any(msg, {"network", "receive", "rx", "네트워크", "수신"}):
+        if _has_any(msg, {"receive", "rx", "수신"}) or (
+            _has_any(msg, {"network", "네트워크"}) and not has_transmit
+        ):
             add_metric("broker_network_receive_bytes_per_sec")
-        if _has_any(msg, {"read", "reads", "읽기"}):
+        if has_read:
             add_metric("broker_fs_read_bytes_per_sec")
-        if _has_any(msg, {"disk", "fs", "write", "writes", "디스크", "쓰기"}):
+        if _has_any(msg, {"write", "writes", "쓰기"}) or (
+            _has_any(msg, {"disk", "fs", "디스크"}) and not has_read
+        ):
             add_metric("broker_fs_write_bytes_per_sec")
         if not any(metric.startswith("broker_") for metric in metrics):
             add_metric("broker_cpu_cores")
@@ -350,6 +474,8 @@ def _fallback_to_project_scope_tools(selected: list[tuple[str, dict]]) -> list[t
             next_tool, next_params = "list_connectors", _PROJECT_SCOPE_PARAMS
         elif tool in _CONSUMER_GROUP_PARAM_TOOLS:
             next_tool, next_params = "get_consumer_groups", _PROJECT_SCOPE_PARAMS
+        elif tool in _PIPELINE_ID_PARAM_TOOLS:
+            next_tool, next_params = "list_project_pipelines", _PIPELINE_LIST_PARAMS
         else:
             next_tool, next_params = tool, params
         dedupe_key = (
@@ -360,6 +486,13 @@ def _fallback_to_project_scope_tools(selected: list[tuple[str, dict]]) -> list[t
             fallback.append((next_tool, next_params))
             seen.add(dedupe_key)
     return fallback
+
+
+def _params_with_pipeline_id(tool: str, params: dict, pipeline_id: str) -> dict:
+    next_params = dict(params)
+    if tool in _PIPELINE_ID_PARAM_TOOLS:
+        next_params["pipeline_id"] = pipeline_id
+    return next_params
 
 
 def _params_with_identifier(tool: str, params: dict, identifier: _Identifier) -> dict:
@@ -382,16 +515,39 @@ def _params_with_identifier(tool: str, params: dict, identifier: _Identifier) ->
     return next_params
 
 
+def _identifier_for_tool(
+    tool: str,
+    connector_identifier: _Identifier | None,
+    consumer_group_identifier: _Identifier | None,
+    fallback: _Identifier,
+) -> _Identifier:
+    if tool in _CONNECTOR_PARAM_TOOLS:
+        return connector_identifier or consumer_group_identifier or fallback
+    if tool in _CONSUMER_GROUP_PARAM_TOOLS:
+        return consumer_group_identifier or connector_identifier or fallback
+    if tool in _OBSERVABILITY_TARGET_TOOLS:
+        return connector_identifier or fallback
+    return fallback
+
+
 def _extract_identifier(user_message: str) -> _Identifier | None:
+    explicit_connector = _extract_connector_identifier(user_message)
+    if explicit_connector is not None:
+        return explicit_connector
+
+    explicit_group = _extract_consumer_group_identifier(user_message)
+    if explicit_group is not None:
+        return explicit_group
+
     quoted = re.search(r"`([^`]+)`|['\"]([^'\"]+)['\"]", user_message)
     if quoted:
-        value = (quoted.group(1) or quoted.group(2)).strip()
+        value = _clean_identifier(quoted.group(1) or quoted.group(2))
         if _is_identifier(value):
             return _Identifier(value=value, kind=_kind_for(value))
 
     group_match = re.search(rf"\b(connect-{_IDENTIFIER_RE})\b", user_message, flags=re.IGNORECASE)
     if group_match:
-        return _Identifier(value=group_match.group(1), kind="consumer_group")
+        return _Identifier(value=_clean_identifier(group_match.group(1)), kind="consumer_group")
 
     patterns = [
         rf"(?:connector|커넥터)\s*(?:name|이름|명)?\s*[:=]?\s*({_IDENTIFIER_RE})",
@@ -404,11 +560,49 @@ def _extract_identifier(user_message: str) -> _Identifier | None:
         match = re.search(pattern, user_message, flags=re.IGNORECASE)
         if not match:
             continue
-        value = match.group(1)
+        value = _clean_identifier(match.group(1))
         if _is_identifier(value):
             return _Identifier(value=value, kind=_kind_for(value))
 
     return None
+
+
+def _extract_connector_identifier(user_message: str) -> _Identifier | None:
+    explicit_connector = re.search(rf"\bconnector_name\s*=\s*({_IDENTIFIER_RE})", user_message, flags=re.IGNORECASE)
+    if explicit_connector:
+        value = _clean_identifier(explicit_connector.group(1))
+        if _is_identifier(value):
+            return _Identifier(value=value, kind="connector")
+    return None
+
+
+def _extract_consumer_group_identifier(user_message: str) -> _Identifier | None:
+    explicit_group = re.search(rf"\bconsumer_group\s*=\s*({_IDENTIFIER_RE})", user_message, flags=re.IGNORECASE)
+    if explicit_group:
+        value = _clean_identifier(explicit_group.group(1))
+        if _is_identifier(value):
+            return _Identifier(value=value, kind="consumer_group")
+    return None
+
+
+def _extract_pipeline_id(user_message: str) -> str | None:
+    explicit = re.search(rf"\bpipeline_id\s*=\s*({_IDENTIFIER_RE})", user_message, flags=re.IGNORECASE)
+    if explicit:
+        return _clean_identifier(explicit.group(1))
+    labelled = re.search(
+        rf"(?:pipeline|파이프라인)[\s_-]*(?:id|아이디)\s*[:=]\s*({_IDENTIFIER_RE})",
+        user_message,
+        flags=re.IGNORECASE,
+    )
+    if labelled:
+        value = _clean_identifier(labelled.group(1))
+        if _is_identifier(value):
+            return value
+    return None
+
+
+def _clean_identifier(value: str) -> str:
+    return value.strip().rstrip(".,;")
 
 
 def _is_identifier(value: str) -> bool:

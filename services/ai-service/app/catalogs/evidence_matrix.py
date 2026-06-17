@@ -76,7 +76,7 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
     EvidenceProfile(
         root_cause_id='CONNECTOR_TASK_FAILED',
         required=(
-            EvidenceRule(root_cause_id='CONNECTOR_TASK_FAILED', kind='required', evidence='connector task status `FAILED`', example='Kafka Connect task 상태'),
+            EvidenceRule(root_cause_id='CONNECTOR_TASK_FAILED', kind='required', evidence='connector task status `FAILED`', example='Kafka Connect task 상태', semantic_allowed=False),
             EvidenceRule(root_cause_id='CONNECTOR_TASK_FAILED', kind='required', evidence='task trace 또는 worker log', example='소스 커넥터 오류'),
         ),
         supporting=(
@@ -141,8 +141,8 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
     EvidenceProfile(
         root_cause_id='CONSUMER_LAG_SPIKE',
         required=(
-            EvidenceRule(root_cause_id='CONSUMER_LAG_SPIKE', kind='required', evidence='consumer lag 급증', example='lag p95 증가'),
-            EvidenceRule(root_cause_id='CONSUMER_LAG_SPIKE', kind='required', evidence='offset progression 둔화', example='commit rate 감소'),
+            EvidenceRule(root_cause_id='CONSUMER_LAG_SPIKE', kind='required', evidence='consumer lag 급증', example='lag p95 증가', semantic_allowed=False),
+            EvidenceRule(root_cause_id='CONSUMER_LAG_SPIKE', kind='required', evidence='offset progression 둔화', example='commit rate 감소', semantic_allowed=False),
         ),
         supporting=(
             EvidenceRule(root_cause_id='CONSUMER_LAG_SPIKE', kind='supporting', evidence='topic ingress 증가', example='incoming messages 증가'),
@@ -259,8 +259,8 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
     EvidenceProfile(
         root_cause_id='POD_OOM_KILLED',
         required=(
-            EvidenceRule(root_cause_id='POD_OOM_KILLED', kind='required', evidence='pod last state OOMKilled', example='Kubernetes status'),
-            EvidenceRule(root_cause_id='POD_OOM_KILLED', kind='required', evidence='restart count 증가', example='restart count delta'),
+            EvidenceRule(root_cause_id='POD_OOM_KILLED', kind='required', evidence='pod last state OOMKilled', example='Kubernetes status', semantic_allowed=False),
+            EvidenceRule(root_cause_id='POD_OOM_KILLED', kind='required', evidence='restart count 증가', example='restart count delta', semantic_allowed=False),
         ),
         supporting=(
             EvidenceRule(root_cause_id='POD_OOM_KILLED', kind='supporting', evidence='memory usage limit 근접', example='container memory metric'),
@@ -272,8 +272,8 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
     EvidenceProfile(
         root_cause_id='DEPLOYMENT_REGRESSION',
         required=(
-            EvidenceRule(root_cause_id='DEPLOYMENT_REGRESSION', kind='required', evidence='배포 이후 error/latency 증가', example='rollout time correlation'),
-            EvidenceRule(root_cause_id='DEPLOYMENT_REGRESSION', kind='required', evidence='image/config diff', example='change record'),
+            EvidenceRule(root_cause_id='DEPLOYMENT_REGRESSION', kind='required', evidence='배포 이후 error/latency 증가', example='rollout time correlation', semantic_allowed=False),
+            EvidenceRule(root_cause_id='DEPLOYMENT_REGRESSION', kind='required', evidence='image/config diff', example='change record', semantic_allowed=False),
         ),
         supporting=(
             EvidenceRule(root_cause_id='DEPLOYMENT_REGRESSION', kind='supporting', evidence='rollback 후 개선', example='after evidence'),
@@ -324,8 +324,8 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
     EvidenceProfile(
         root_cause_id='RECENT_CONFIG_CHANGE_REGRESSION',
         required=(
-            EvidenceRule(root_cause_id='RECENT_CONFIG_CHANGE_REGRESSION', kind='required', evidence='config 변경 시점 이후 error/latency 증가', example='change time correlation'),
-            EvidenceRule(root_cause_id='RECENT_CONFIG_CHANGE_REGRESSION', kind='required', evidence='변경 diff와 증상 계층이 연결됨', example='connector task config diff'),
+            EvidenceRule(root_cause_id='RECENT_CONFIG_CHANGE_REGRESSION', kind='required', evidence='config 변경 시점 이후 error/latency 증가', example='change time correlation', semantic_allowed=False),
+            EvidenceRule(root_cause_id='RECENT_CONFIG_CHANGE_REGRESSION', kind='required', evidence='변경 diff와 증상 계층이 연결됨', example='connector task config diff', semantic_allowed=False),
         ),
         supporting=(
             EvidenceRule(root_cause_id='RECENT_CONFIG_CHANGE_REGRESSION', kind='supporting', evidence='rollback 또는 이전 config로 개선', example='after evidence'),
@@ -337,8 +337,8 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
     EvidenceProfile(
         root_cause_id='RECENT_SCHEMA_CHANGE_REGRESSION',
         required=(
-            EvidenceRule(root_cause_id='RECENT_SCHEMA_CHANGE_REGRESSION', kind='required', evidence='schema version 변경 이후 schema/serialization error 증가', example='subject version change'),
-            EvidenceRule(root_cause_id='RECENT_SCHEMA_CHANGE_REGRESSION', kind='required', evidence='compatibility check 실패 또는 필드 타입 변화', example='incompatible schema'),
+            EvidenceRule(root_cause_id='RECENT_SCHEMA_CHANGE_REGRESSION', kind='required', evidence='schema version 변경 이후 schema/serialization error 증가', example='subject version change', semantic_allowed=False),
+            EvidenceRule(root_cause_id='RECENT_SCHEMA_CHANGE_REGRESSION', kind='required', evidence='compatibility check 실패 또는 필드 타입 변화', example='incompatible schema', semantic_allowed=False),
         ),
         supporting=(
             EvidenceRule(root_cause_id='RECENT_SCHEMA_CHANGE_REGRESSION', kind='supporting', evidence='affected topic/connector가 변경 subject를 사용', example='topology match'),
@@ -350,8 +350,8 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
     EvidenceProfile(
         root_cause_id='RECENT_IMAGE_DEPLOYMENT_REGRESSION',
         required=(
-            EvidenceRule(root_cause_id='RECENT_IMAGE_DEPLOYMENT_REGRESSION', kind='required', evidence='image rollout 이후 error/latency/restart 증가', example='deployment rollout event'),
-            EvidenceRule(root_cause_id='RECENT_IMAGE_DEPLOYMENT_REGRESSION', kind='required', evidence='이전 image 대비 config/runtime 차이', example='image tag diff'),
+            EvidenceRule(root_cause_id='RECENT_IMAGE_DEPLOYMENT_REGRESSION', kind='required', evidence='image rollout 이후 error/latency/restart 증가', example='deployment rollout event', semantic_allowed=False),
+            EvidenceRule(root_cause_id='RECENT_IMAGE_DEPLOYMENT_REGRESSION', kind='required', evidence='이전 image 대비 config/runtime 차이', example='image tag diff', semantic_allowed=False),
         ),
         supporting=(
             EvidenceRule(root_cause_id='RECENT_IMAGE_DEPLOYMENT_REGRESSION', kind='supporting', evidence='rollback 후 개선', example='after evidence'),
@@ -363,8 +363,8 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
     EvidenceProfile(
         root_cause_id='CREDENTIAL_ROTATION_REGRESSION',
         required=(
-            EvidenceRule(root_cause_id='CREDENTIAL_ROTATION_REGRESSION', kind='required', evidence='credential rotation 이후 auth failure 증가', example='rotate time correlation'),
-            EvidenceRule(root_cause_id='CREDENTIAL_ROTATION_REGRESSION', kind='required', evidence='affected dependency가 해당 credential을 사용', example='dependency ownership match'),
+            EvidenceRule(root_cause_id='CREDENTIAL_ROTATION_REGRESSION', kind='required', evidence='credential rotation 이후 auth failure 증가', example='rotate time correlation', semantic_allowed=False),
+            EvidenceRule(root_cause_id='CREDENTIAL_ROTATION_REGRESSION', kind='required', evidence='affected dependency가 해당 credential을 사용', example='dependency ownership match', semantic_allowed=False),
         ),
         supporting=(
             EvidenceRule(root_cause_id='CREDENTIAL_ROTATION_REGRESSION', kind='supporting', evidence='rotation audit 또는 secret version 변경', example='version diff'),
@@ -402,8 +402,8 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
     EvidenceProfile(
         root_cause_id='PIPELINE_FRESHNESS_DELAY',
         required=(
-            EvidenceRule(root_cause_id='PIPELINE_FRESHNESS_DELAY', kind='required', evidence='end-to-end freshness 또는 watermark delay 증가', example='freshness SLA breach'),
-            EvidenceRule(root_cause_id='PIPELINE_FRESHNESS_DELAY', kind='required', evidence='pipeline stage 중 병목 단계 식별', example='source/Kafka/sink stage duration'),
+            EvidenceRule(root_cause_id='PIPELINE_FRESHNESS_DELAY', kind='required', evidence='end-to-end freshness 또는 watermark delay 증가', example='freshness SLA breach', semantic_allowed=False),
+            EvidenceRule(root_cause_id='PIPELINE_FRESHNESS_DELAY', kind='required', evidence='pipeline stage 중 병목 단계 식별', example='source/Kafka/sink stage duration', semantic_allowed=False),
         ),
         supporting=(
             EvidenceRule(root_cause_id='PIPELINE_FRESHNESS_DELAY', kind='supporting', evidence='lag 또는 sink latency 동반', example='downstream bottleneck'),
@@ -415,8 +415,8 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
     EvidenceProfile(
         root_cause_id='SCHEMA_NULL_RATE_SPIKE',
         required=(
-            EvidenceRule(root_cause_id='SCHEMA_NULL_RATE_SPIKE', kind='required', evidence='특정 field null rate 급증', example='null rate metric 증가'),
-            EvidenceRule(root_cause_id='SCHEMA_NULL_RATE_SPIKE', kind='required', evidence='schema/source/transform 변경과 시간 상관', example='field mapping change'),
+            EvidenceRule(root_cause_id='SCHEMA_NULL_RATE_SPIKE', kind='required', evidence='특정 field null rate 급증', example='null rate metric 증가', semantic_allowed=False),
+            EvidenceRule(root_cause_id='SCHEMA_NULL_RATE_SPIKE', kind='required', evidence='schema/source/transform 변경과 시간 상관', example='field mapping change', semantic_allowed=False),
         ),
         supporting=(
             EvidenceRule(root_cause_id='SCHEMA_NULL_RATE_SPIKE', kind='supporting', evidence='downstream validation error 동반', example='bad record increase'),
@@ -450,7 +450,7 @@ EVIDENCE_RULES: tuple[EvidenceRule, ...] = (
     EvidenceRule(root_cause_id='SOURCE_NETWORK_REACHABILITY', kind='supporting', evidence='여러 pipeline에서 같은 source endpoint 연결 실패', example='shared dependency timeout'),
     EvidenceRule(root_cause_id='SOURCE_NETWORK_REACHABILITY', kind='supporting', evidence='고객사 source 내부 지표 정상이나 network path error 존재', example='network error code 증가'),
     EvidenceRule(root_cause_id='SOURCE_NETWORK_REACHABILITY', kind='negative', evidence='auth error 또는 query error만 존재', example='network 후보 약화'),
-    EvidenceRule(root_cause_id='CONNECTOR_TASK_FAILED', kind='required', evidence='connector task status `FAILED`', example='Kafka Connect task 상태'),
+    EvidenceRule(root_cause_id='CONNECTOR_TASK_FAILED', kind='required', evidence='connector task status `FAILED`', example='Kafka Connect task 상태', semantic_allowed=False),
     EvidenceRule(root_cause_id='CONNECTOR_TASK_FAILED', kind='required', evidence='task trace 또는 worker log', example='exception stack summary'),
     EvidenceRule(root_cause_id='CONNECTOR_TASK_FAILED', kind='supporting', evidence='최근 connector config/schema 변경', example='변경 이후 실패'),
     EvidenceRule(root_cause_id='CONNECTOR_TASK_FAILED', kind='negative', evidence='worker 전체 장애', example='worker/root infra 후보 우선'),
@@ -470,8 +470,8 @@ EVIDENCE_RULES: tuple[EvidenceRule, ...] = (
     EvidenceRule(root_cause_id='PIPELINE_CONFIG_INVALID', kind='required', evidence='최근 pipeline/connector config 변경', example='config diff 존재'),
     EvidenceRule(root_cause_id='PIPELINE_CONFIG_INVALID', kind='supporting', evidence='rollback 또는 이전 config에서 정상 동작', example='config regression evidence'),
     EvidenceRule(root_cause_id='PIPELINE_CONFIG_INVALID', kind='negative', evidence='변경 없이 dependency timeout만 존재', example='config 후보 약화'),
-    EvidenceRule(root_cause_id='CONSUMER_LAG_SPIKE', kind='required', evidence='consumer lag 급증', example='lag p95 증가'),
-    EvidenceRule(root_cause_id='CONSUMER_LAG_SPIKE', kind='required', evidence='offset progression 둔화', example='commit rate 감소'),
+    EvidenceRule(root_cause_id='CONSUMER_LAG_SPIKE', kind='required', evidence='consumer lag 급증', example='lag p95 증가', semantic_allowed=False),
+    EvidenceRule(root_cause_id='CONSUMER_LAG_SPIKE', kind='required', evidence='offset progression 둔화', example='commit rate 감소', semantic_allowed=False),
     EvidenceRule(root_cause_id='CONSUMER_LAG_SPIKE', kind='supporting', evidence='topic ingress 증가', example='incoming messages 증가'),
     EvidenceRule(root_cause_id='CONSUMER_LAG_SPIKE', kind='supporting', evidence='consumer pod resource pressure', example='CPU/memory saturation'),
     EvidenceRule(root_cause_id='CONSUMER_LAG_SPIKE', kind='negative', evidence='broker 장애 evidence', example='broker 원인 우선'),
@@ -507,12 +507,12 @@ EVIDENCE_RULES: tuple[EvidenceRule, ...] = (
     EvidenceRule(root_cause_id='SINK_CONSTRAINT_VIOLATION', kind='supporting', evidence='schema 또는 transform 변경 이력', example='field 변경 후 write error'),
     EvidenceRule(root_cause_id='SINK_CONSTRAINT_VIOLATION', kind='supporting', evidence='동일 record 반복 실패', example='poison record 가능성'),
     EvidenceRule(root_cause_id='SINK_CONSTRAINT_VIOLATION', kind='negative', evidence='sink timeout/latency만 존재', example='constraint 후보 약화'),
-    EvidenceRule(root_cause_id='POD_OOM_KILLED', kind='required', evidence='pod last state OOMKilled', example='Kubernetes status'),
-    EvidenceRule(root_cause_id='POD_OOM_KILLED', kind='required', evidence='restart count 증가', example='restart count delta'),
+    EvidenceRule(root_cause_id='POD_OOM_KILLED', kind='required', evidence='pod last state OOMKilled', example='Kubernetes status', semantic_allowed=False),
+    EvidenceRule(root_cause_id='POD_OOM_KILLED', kind='required', evidence='restart count 증가', example='restart count delta', semantic_allowed=False),
     EvidenceRule(root_cause_id='POD_OOM_KILLED', kind='supporting', evidence='memory usage limit 근접', example='container memory metric'),
     EvidenceRule(root_cause_id='POD_OOM_KILLED', kind='negative', evidence='app-level source timeout만 존재', example='source 후보 우선'),
-    EvidenceRule(root_cause_id='DEPLOYMENT_REGRESSION', kind='required', evidence='배포 이후 error/latency 증가', example='rollout time correlation'),
-    EvidenceRule(root_cause_id='DEPLOYMENT_REGRESSION', kind='required', evidence='image/config diff', example='change record'),
+    EvidenceRule(root_cause_id='DEPLOYMENT_REGRESSION', kind='required', evidence='배포 이후 error/latency 증가', example='rollout time correlation', semantic_allowed=False),
+    EvidenceRule(root_cause_id='DEPLOYMENT_REGRESSION', kind='required', evidence='image/config diff', example='change record', semantic_allowed=False),
     EvidenceRule(root_cause_id='DEPLOYMENT_REGRESSION', kind='supporting', evidence='rollback 후 개선', example='after evidence'),
     EvidenceRule(root_cause_id='DEPLOYMENT_REGRESSION', kind='negative', evidence='배포 전부터 문제 지속', example='변경 원인 약화'),
     EvidenceRule(root_cause_id='POD_CRASH_LOOP', kind='required', evidence='pod `CrashLoopBackOff` 또는 반복 restart', example='restart count 증가'),
@@ -527,20 +527,20 @@ EVIDENCE_RULES: tuple[EvidenceRule, ...] = (
     EvidenceRule(root_cause_id='PVC_PRESSURE', kind='required', evidence='pod log에 disk full 또는 write failure', example='no space left on device'),
     EvidenceRule(root_cause_id='PVC_PRESSURE', kind='supporting', evidence='broker 또는 DB workload와 시간 상관', example='storage-backed workload 영향'),
     EvidenceRule(root_cause_id='PVC_PRESSURE', kind='negative', evidence='CPU/memory pressure만 존재', example='PVC 후보 약화'),
-    EvidenceRule(root_cause_id='RECENT_CONFIG_CHANGE_REGRESSION', kind='required', evidence='config 변경 시점 이후 error/latency 증가', example='change time correlation'),
-    EvidenceRule(root_cause_id='RECENT_CONFIG_CHANGE_REGRESSION', kind='required', evidence='변경 diff와 증상 계층이 연결됨', example='connector task config diff'),
+    EvidenceRule(root_cause_id='RECENT_CONFIG_CHANGE_REGRESSION', kind='required', evidence='config 변경 시점 이후 error/latency 증가', example='change time correlation', semantic_allowed=False),
+    EvidenceRule(root_cause_id='RECENT_CONFIG_CHANGE_REGRESSION', kind='required', evidence='변경 diff와 증상 계층이 연결됨', example='connector task config diff', semantic_allowed=False),
     EvidenceRule(root_cause_id='RECENT_CONFIG_CHANGE_REGRESSION', kind='supporting', evidence='rollback 또는 이전 config로 개선', example='after evidence'),
     EvidenceRule(root_cause_id='RECENT_CONFIG_CHANGE_REGRESSION', kind='negative', evidence='변경 전부터 동일 증상 지속', example='config regression 후보 약화'),
-    EvidenceRule(root_cause_id='RECENT_SCHEMA_CHANGE_REGRESSION', kind='required', evidence='schema version 변경 이후 schema/serialization error 증가', example='subject version change'),
-    EvidenceRule(root_cause_id='RECENT_SCHEMA_CHANGE_REGRESSION', kind='required', evidence='compatibility check 실패 또는 필드 타입 변화', example='incompatible schema'),
+    EvidenceRule(root_cause_id='RECENT_SCHEMA_CHANGE_REGRESSION', kind='required', evidence='schema version 변경 이후 schema/serialization error 증가', example='subject version change', semantic_allowed=False),
+    EvidenceRule(root_cause_id='RECENT_SCHEMA_CHANGE_REGRESSION', kind='required', evidence='compatibility check 실패 또는 필드 타입 변화', example='incompatible schema', semantic_allowed=False),
     EvidenceRule(root_cause_id='RECENT_SCHEMA_CHANGE_REGRESSION', kind='supporting', evidence='affected topic/connector가 변경 subject를 사용', example='topology match'),
     EvidenceRule(root_cause_id='RECENT_SCHEMA_CHANGE_REGRESSION', kind='negative', evidence='schema 변경 없음', example='schema regression 후보 약화'),
-    EvidenceRule(root_cause_id='RECENT_IMAGE_DEPLOYMENT_REGRESSION', kind='required', evidence='image rollout 이후 error/latency/restart 증가', example='deployment rollout event'),
-    EvidenceRule(root_cause_id='RECENT_IMAGE_DEPLOYMENT_REGRESSION', kind='required', evidence='이전 image 대비 config/runtime 차이', example='image tag diff'),
+    EvidenceRule(root_cause_id='RECENT_IMAGE_DEPLOYMENT_REGRESSION', kind='required', evidence='image rollout 이후 error/latency/restart 증가', example='deployment rollout event', semantic_allowed=False),
+    EvidenceRule(root_cause_id='RECENT_IMAGE_DEPLOYMENT_REGRESSION', kind='required', evidence='이전 image 대비 config/runtime 차이', example='image tag diff', semantic_allowed=False),
     EvidenceRule(root_cause_id='RECENT_IMAGE_DEPLOYMENT_REGRESSION', kind='supporting', evidence='rollback 후 개선', example='after evidence'),
     EvidenceRule(root_cause_id='RECENT_IMAGE_DEPLOYMENT_REGRESSION', kind='negative', evidence='rollout 전부터 문제 지속', example='image regression 후보 약화'),
-    EvidenceRule(root_cause_id='CREDENTIAL_ROTATION_REGRESSION', kind='required', evidence='credential rotation 이후 auth failure 증가', example='rotate time correlation'),
-    EvidenceRule(root_cause_id='CREDENTIAL_ROTATION_REGRESSION', kind='required', evidence='affected dependency가 해당 credential을 사용', example='dependency ownership match'),
+    EvidenceRule(root_cause_id='CREDENTIAL_ROTATION_REGRESSION', kind='required', evidence='credential rotation 이후 auth failure 증가', example='rotate time correlation', semantic_allowed=False),
+    EvidenceRule(root_cause_id='CREDENTIAL_ROTATION_REGRESSION', kind='required', evidence='affected dependency가 해당 credential을 사용', example='dependency ownership match', semantic_allowed=False),
     EvidenceRule(root_cause_id='CREDENTIAL_ROTATION_REGRESSION', kind='supporting', evidence='rotation audit 또는 secret version 변경', example='version diff'),
     EvidenceRule(root_cause_id='CREDENTIAL_ROTATION_REGRESSION', kind='negative', evidence='auth error 없이 timeout만 존재', example='credential 후보 약화'),
     EvidenceRule(root_cause_id='UPSTREAM_DATA_VOLUME_ANOMALY', kind='required', evidence='source row count 또는 topic ingress가 기준 대비 급변', example='volume z-score 이상'),
@@ -551,12 +551,12 @@ EVIDENCE_RULES: tuple[EvidenceRule, ...] = (
     EvidenceRule(root_cause_id='PIPELINE_DUPLICATE_SPIKE', kind='required', evidence='retry/replay/backfill 또는 idempotency gap', example='repeated processing evidence'),
     EvidenceRule(root_cause_id='PIPELINE_DUPLICATE_SPIKE', kind='supporting', evidence='최근 transform/config 변경', example='key derivation change'),
     EvidenceRule(root_cause_id='PIPELINE_DUPLICATE_SPIKE', kind='negative', evidence='upstream부터 duplicate가 존재', example='upstream data quality 후보 우선'),
-    EvidenceRule(root_cause_id='PIPELINE_FRESHNESS_DELAY', kind='required', evidence='end-to-end freshness 또는 watermark delay 증가', example='freshness SLA breach'),
-    EvidenceRule(root_cause_id='PIPELINE_FRESHNESS_DELAY', kind='required', evidence='pipeline stage 중 병목 단계 식별', example='source/Kafka/sink stage duration'),
+    EvidenceRule(root_cause_id='PIPELINE_FRESHNESS_DELAY', kind='required', evidence='end-to-end freshness 또는 watermark delay 증가', example='freshness SLA breach', semantic_allowed=False),
+    EvidenceRule(root_cause_id='PIPELINE_FRESHNESS_DELAY', kind='required', evidence='pipeline stage 중 병목 단계 식별', example='source/Kafka/sink stage duration', semantic_allowed=False),
     EvidenceRule(root_cause_id='PIPELINE_FRESHNESS_DELAY', kind='supporting', evidence='lag 또는 sink latency 동반', example='downstream bottleneck'),
     EvidenceRule(root_cause_id='PIPELINE_FRESHNESS_DELAY', kind='negative', evidence='source 데이터 미생성만 확인', example='source data not ready 후보 우선'),
-    EvidenceRule(root_cause_id='SCHEMA_NULL_RATE_SPIKE', kind='required', evidence='특정 field null rate 급증', example='null rate metric 증가'),
-    EvidenceRule(root_cause_id='SCHEMA_NULL_RATE_SPIKE', kind='required', evidence='schema/source/transform 변경과 시간 상관', example='field mapping change'),
+    EvidenceRule(root_cause_id='SCHEMA_NULL_RATE_SPIKE', kind='required', evidence='특정 field null rate 급증', example='null rate metric 증가', semantic_allowed=False),
+    EvidenceRule(root_cause_id='SCHEMA_NULL_RATE_SPIKE', kind='required', evidence='schema/source/transform 변경과 시간 상관', example='field mapping change', semantic_allowed=False),
     EvidenceRule(root_cause_id='SCHEMA_NULL_RATE_SPIKE', kind='supporting', evidence='downstream validation error 동반', example='bad record increase'),
     EvidenceRule(root_cause_id='SCHEMA_NULL_RATE_SPIKE', kind='negative', evidence='전체 volume 급감만 존재', example='volume anomaly 후보 우선'),
 )

@@ -92,6 +92,7 @@ class EvidenceRule:
     kind: EvidenceKind
     evidence: str
     example: str | None = None
+    semantic_allowed: bool = True
 
 
 @dataclass(frozen=True, slots=True)

@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     embedding_dimensions: int = 1536
     knowledge_search_limit: int = 3
     knowledge_min_score: float = 0.05
+    # RCA evidence matching. Embeddings are auxiliary only: catalog required and
+    # negative rules still gate confidence. Keep rollout default-off so
+    # semantic matching has to be enabled deliberately during A/B evaluation.
+    rca_embedding_match_enabled: bool = False
+    rca_embedding_match_threshold: float = 0.86
+    rca_embedding_match_prefer_openai: bool = True
 
     # Agent Run Store (agentdb — PostgreSQL)
     database_url: str = "postgresql+asyncpg://agent:agent@localhost:5432/agentdb"
