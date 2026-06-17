@@ -139,6 +139,51 @@ async def test_metric_keyword_can_request_lag_p95_and_commit_rate_together():
 
 
 @pytest.mark.asyncio
+async def test_incident_analysis_prompt_expands_cross_lever_metrics_and_tools():
+    plan = await run_planner(
+        "project_id=proj_001. mode=incident_analysis. pipeline_id=pipe-123. "
+        "connector_name=orders-source. consumer_group=connect-orders-sink. "
+        "The dedicated evaluation pipeline has an active incident now. "
+        "Use read-only tools for pipeline topology, connector status, connector task trace, "
+        "logs/events, metrics, consumer lag, alerts, and recent deployment/config/schema changes.",
+        "proj_001",
+    )
+
+    metric_params = [
+        step.params for step in plan.retrieval_plan if step.tool_name == "get_metrics"
+    ]
+    assert {"metric": "consumer_lag_p95", "time_range": "last_30m"} in metric_params
+    assert {"metric": "consumer_commit_rate_per_sec", "time_range": "last_30m"} in metric_params
+    assert {"metric": "topic_ingress_messages_per_sec", "time_range": "last_30m"} in metric_params
+    assert {"metric": "source_freshness_delay_ms", "time_range": "last_30m"} in metric_params
+    assert {"metric": "broker_cpu_cores", "time_range": "last_30m"} in metric_params
+
+    steps = {step.tool_name: step for step in plan.retrieval_plan}
+    assert steps["get_pipeline_topology"].params == {"pipeline_id": "pipe-123"}
+    assert steps["get_consumer_lag"].params == {"consumer_group": "connect-orders-sink"}
+    assert steps["get_connector_task_trace"].params == {"connector_name": "orders-source"}
+    assert "get_cluster_info" in steps
+    assert "get_deployments" in steps
+
+
+@pytest.mark.asyncio
+async def test_pipeline_topology_without_explicit_id_falls_back_to_project_discovery():
+    plan = await run_planner("pipeline topology 확인해줘", "proj_001")
+
+    names = _tool_names(plan)
+    assert "list_project_pipelines" in names
+    assert "get_pipeline_topology" not in names
+    assert all(step.params != {"pipeline_id": "topology"} for step in plan.retrieval_plan)
+
+
+@pytest.mark.asyncio
+async def test_pipeline_incident_phrase_does_not_invent_pipeline_id():
+    plan = await run_planner("pipeline has an active incident", "proj_001")
+
+    assert all(step.params != {"pipeline_id": "has"} for step in plan.retrieval_plan)
+
+
+@pytest.mark.asyncio
 async def test_broker_transmit_metric_intent_is_not_captured_by_generic_network():
     plan = await run_planner("broker network transmit metric 확인", "proj_001")
 
