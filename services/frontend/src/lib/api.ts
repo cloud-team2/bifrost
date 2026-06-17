@@ -580,6 +580,20 @@ export interface ThreadMessagesResponse {
   thread_id: string
   messages: ThreadMessage[]
 }
+/** #821 멀티 채팅방(세션) 요약 */
+export interface AgentThreadSummary {
+  id: string
+  project_id: string
+  owner: string
+  title: string | null
+  archived: boolean
+  created_at?: string | null
+  updated_at?: string | null
+  preview?: string | null
+}
+export interface ThreadListResponse {
+  threads: AgentThreadSummary[]
+}
 export interface AgentRunCreateInput {
   project_id: string
   mode?: AgentRunMode | null
@@ -587,6 +601,8 @@ export interface AgentRunCreateInput {
   incident_id?: string | null
   /** #712 대화 메모리 thread. 미지정 시 백엔드가 incident_id로 폴백한다. */
   thread_id?: string | null
+  /** #821 멀티 채팅방 소유자(자유 채팅 스레드 lazy 생성·소유) */
+  owner?: string | null
   remediation_requested?: boolean
   stream?: boolean
   action_candidate?: ActionRunCandidateInput | null
@@ -845,6 +861,18 @@ export const api = {
       'GET',
       `/api/v1/agent/threads/${encodeURIComponent(threadId)}/messages?limit=${limit}`,
     ),
+  // #821 멀티 채팅방(세션)
+  listThreads: (projectId: string, owner: string, limit = 100) =>
+    agentRequest<ThreadListResponse>(
+      'GET',
+      `/api/v1/agent/threads?project_id=${encodeURIComponent(projectId)}&owner=${encodeURIComponent(owner)}&limit=${limit}`,
+    ),
+  createThread: (body: { project_id: string; owner: string; title?: string | null }) =>
+    agentRequest<AgentThreadSummary>('POST', '/api/v1/agent/threads', body),
+  renameThread: (threadId: string, title: string) =>
+    agentRequest<AgentThreadSummary>('PATCH', `/api/v1/agent/threads/${encodeURIComponent(threadId)}`, { title }),
+  deleteThread: (threadId: string) =>
+    agentRequest<{ id: string; deleted: boolean }>('DELETE', `/api/v1/agent/threads/${encodeURIComponent(threadId)}`),
   listAgentRunApprovals: (runId: string) =>
     agentRequest<AgentRunApprovalsResponse>('GET', `/api/v1/agent/runs/${runId}/approvals`),
   approvalDecision: (approvalId: string, body: ApprovalDecisionInput) =>

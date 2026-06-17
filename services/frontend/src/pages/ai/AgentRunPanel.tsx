@@ -10,6 +10,7 @@ import {
   api,
   type ActionRunCandidateInput,
   type AgentRunMode,
+  type AgentThreadSummary,
   type AgentRunEvent,
   type AgentStreamingEventType,
   type ApprovalDecisionValue,
@@ -293,6 +294,8 @@ interface AgentRunPanelProps {
   inputPlaceholder: string
   runningPlaceholder: string
   hitlLabel?: string
+  /** #821 멀티 채팅방(세션) UI 활성화 — 자유 채팅 패널(BifrostAgent)에서만 true */
+  multiThread?: boolean
 }
 
 export function AgentRunPanel({
@@ -306,6 +309,7 @@ export function AgentRunPanel({
   inputPlaceholder,
   runningPlaceholder,
   hitlLabel,
+  multiThread = false,
 }: AgentRunPanelProps) {
   const app = useApp()
   const toast = useToast()
@@ -343,6 +347,13 @@ export function AgentRunPanel({
     `chat-${(globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`)}`,
   )
   const threadRestored = useRef(false)
+  // #821 멀티 채팅방(세션) — multiThread일 때만 사용.
+  const [threads, setThreads] = useState<AgentThreadSummary[]>([])
+  const [threadListOpen, setThreadListOpen] = useState(false)
+  const [activeThreadId, setActiveThreadId] = useState<string>(threadIdRef.current)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameText, setRenameText] = useState('')
+  const [threadQuery, setThreadQuery] = useState('')
   const scroll = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const slashOptionRefs = useRef<Record<string, HTMLDivElement | null>>({})
@@ -420,11 +431,132 @@ export function AgentRunPanel({
 
   useEffect(() => () => esRef.current?.close(), [])
 
+  // #821 멀티 채팅방 헬퍼 ----------------------------------------------------
+  const activeThreadTitle = threads.find((t) => t.id === activeThreadId)?.title ?? null
+
+  function greetingMsgs(): AgentMsg[] {
+    return initialMessage
+      ? [{ id: ++seq.current, kind: 'text' as const, role: 'assistant' as const, text: initialMessage }]
+      : []
+  }
+
+  async function refreshThreads() {
+    if (!multiThread || !wsId || !myEmail) return
+    try {
+      setThreads((await api.listThreads(wsId, myEmail)).threads)
+    } catch {
+      /* 목록 갱신 실패는 무시 */
+    }
+  }
+
+  async function restoreTranscript(id: string) {
+    try {
+      const res = await api.listThreadMessages(id)
+      const restored: AgentMsg[] = res.messages
+        .filter((m) => m.content?.trim())
+        .map((m) => ({
+          id: ++seq.current,
+          kind: 'text' as const,
+          role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
+          text: m.content,
+        }))
+      updateMsgs(() =>
+        restored.length
+          ? [
+              ...greetingMsgs(),
+              { id: ++seq.current, kind: 'text' as const, role: 'assistant' as const, text: '— 이전 대화 —' },
+              ...restored,
+            ]
+          : greetingMsgs(),
+      )
+    } catch {
+      updateMsgs(() => greetingMsgs())
+    }
+  }
+
+  function activateThread(id: string) {
+    threadIdRef.current = id
+    setActiveThreadId(id)
+    try {
+      if (wsId) window.localStorage.setItem(`bifrost.chat.active.${wsId}`, id)
+    } catch {
+      /* localStorage 불가 시 세션 한정 */
+    }
+  }
+
+  async function switchThread(id: string) {
+    setThreadListOpen(false)
+    if (runningRef.current || id === activeThreadId) return
+    activateThread(id)
+    await restoreTranscript(id)
+  }
+
+  function newChat() {
+    setThreadListOpen(false)
+    if (runningRef.current) return
+    const id = `chat-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`
+    activateThread(id)
+    updateMsgs(() => greetingMsgs())
+    setInput('')
+    inputRef.current?.focus()
+  }
+
+  async function commitRename(id: string) {
+    const next = renameText.trim()
+    setRenamingId(null)
+    if (!next) return
+    setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, title: next } : t)))
+    try {
+      await api.renameThread(id, next)
+    } catch {
+      refreshThreads()
+    }
+  }
+
+  async function removeThread(id: string) {
+    setThreads((prev) => prev.filter((t) => t.id !== id))
+    try {
+      await api.deleteThread(id)
+    } catch {
+      /* 삭제 실패는 무시 */
+    }
+    if (id === activeThreadId) newChat()
+  }
+  // ------------------------------------------------------------------------
+
   // #712 대화 메모리: 워크스페이스·패널별 thread_id를 localStorage에 고정하고, 이 thread의
   // 이전 대화를 불러와 transcript를 복원한다(리마운트·새로고침 후에도 대화가 이어져 보이게).
   useEffect(() => {
     if (!wsId || threadRestored.current) return
+    if (multiThread && !myEmail) return // 소유자(이메일) 준비 후 진행
     threadRestored.current = true
+
+    // #821 멀티 채팅방: 내 스레드 목록 로드 + 마지막 활성(없으면 최근) 스레드 복원.
+    if (multiThread) {
+      let cancelled = false
+      let last: string | null = null
+      try {
+        last = window.localStorage.getItem(`bifrost.chat.active.${wsId}`)
+      } catch {
+        /* noop */
+      }
+      api
+        .listThreads(wsId, myEmail)
+        .then((res) => {
+          if (cancelled) return
+          setThreads(res.threads)
+          const has = (id: string | null): id is string => !!id && res.threads.some((t) => t.id === id)
+          const target = has(last) ? last : res.threads[0]?.id ?? threadIdRef.current
+          activateThread(target)
+          if (has(target)) restoreTranscript(target)
+        })
+        .catch(() => {
+          /* 목록 로드 실패는 무시 — 새 대화로 시작 */
+        })
+      return () => {
+        cancelled = true
+      }
+    }
 
     const storageKey = `bifrost.chat.thread.${wsId}.${title}`
     let threadId: string | null = null
@@ -475,7 +607,7 @@ export function AgentRunPanel({
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wsId])
+  }, [wsId, myEmail, multiThread])
 
   useEffect(() => {
     if (!app.agentTask) {
@@ -918,10 +1050,13 @@ export function AgentRunPanel({
         message,
         incident_id: options.incidentId ?? null,
         thread_id: options.incidentId ?? threadIdRef.current,
+        owner: multiThread && !options.incidentId ? (myEmail || undefined) : undefined,
         remediation_requested: options.remediationRequested ?? false,
         action_candidate: options.actionCandidate ?? null,
         stream: true,
       })
+      // #821 멀티 채팅방: 새 스레드 등장·제목·시각 반영을 위해 목록 갱신.
+      if (multiThread && !options.incidentId) void refreshThreads()
       app.setAgentRunState({
         runId: run.run_id,
         status: 'starting',
@@ -1678,17 +1813,139 @@ export function AgentRunPanel({
   }
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div className="relative flex flex-1 flex-col overflow-hidden">
       <div className="flex items-center gap-2 border-b border-gray-200 px-4 py-3">
         <div className={cn('flex h-7 w-7 items-center justify-center rounded-md text-white', theme.avatar)}>
           <Icon name={icon} size={15} />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-[13px] font-semibold text-gray-900">{title}</div>
+          <div className="truncate text-[13px] font-semibold text-gray-900">
+            {multiThread ? activeThreadTitle || '새 대화' : title}
+          </div>
           <div className="truncate text-[11px] text-gray-400">{subtitle}</div>
         </div>
+        {multiThread && (
+          <>
+            <button
+              type="button"
+              onClick={() => setThreadListOpen(true)}
+              title="채팅방 목록"
+              className="flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 text-gray-500 hover:bg-gray-50"
+            >
+              <Icon name="list" size={15} />
+            </button>
+            <button
+              type="button"
+              onClick={newChat}
+              disabled={running}
+              title="새 대화"
+              className="flex h-7 w-7 items-center justify-center rounded-md bg-[#0d0d0d] text-white hover:opacity-90 disabled:opacity-40"
+            >
+              <Icon name="plus" size={15} />
+            </button>
+          </>
+        )}
         {hitlLabel && <div className="text-[10.5px] font-semibold uppercase tracking-wide text-[#6b6b73]">{hitlLabel}</div>}
       </div>
+
+      {multiThread && threadListOpen && (
+        <div className="absolute inset-0 z-20 flex flex-col bg-white">
+          <div className="flex items-center gap-2 border-b border-gray-200 px-3 py-3">
+            <button
+              type="button"
+              onClick={() => setThreadListOpen(false)}
+              title="닫기"
+              className="flex h-7 w-7 items-center justify-center rounded-md text-gray-500 hover:bg-gray-50"
+            >
+              <Icon name="chevron-left" size={16} />
+            </button>
+            <div className="flex-1 text-[13px] font-semibold text-gray-900">내 채팅방</div>
+            <button
+              type="button"
+              onClick={newChat}
+              disabled={running}
+              className="flex items-center gap-1 rounded-md bg-[#0d0d0d] px-2.5 py-1.5 text-[12px] font-medium text-white hover:opacity-90 disabled:opacity-40"
+            >
+              <Icon name="plus" size={13} />
+              새 대화
+            </button>
+          </div>
+          <div className="px-3 pt-2.5 pb-1.5">
+            <div className="flex items-center gap-2 rounded-md border border-gray-200 px-2.5 py-1.5">
+              <Icon name="search" size={13} className="text-gray-400" />
+              <input
+                value={threadQuery}
+                onChange={(e) => setThreadQuery(e.target.value)}
+                placeholder="채팅 검색"
+                className="w-full bg-transparent text-[12px] text-gray-800 outline-none placeholder:text-gray-400"
+              />
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto scroll-thin px-2 pb-2">
+            {threads
+              .filter((t) => {
+                const q = threadQuery.trim().toLowerCase()
+                return !q || (t.title ?? '').toLowerCase().includes(q) || (t.preview ?? '').toLowerCase().includes(q)
+              })
+              .map((t) => (
+                <div
+                  key={t.id}
+                  className={cn(
+                    'group flex items-center gap-2 rounded-md px-2.5 py-2',
+                    t.id === activeThreadId ? 'bg-gray-100' : 'hover:bg-gray-50',
+                  )}
+                >
+                  {renamingId === t.id ? (
+                    <input
+                      autoFocus
+                      value={renameText}
+                      onChange={(e) => setRenameText(e.target.value)}
+                      onBlur={() => commitRename(t.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') commitRename(t.id)
+                        else if (e.key === 'Escape') setRenamingId(null)
+                      }}
+                      className="w-full rounded border border-[#0d0d0d] px-1.5 py-0.5 text-[12.5px] font-medium text-gray-800 outline-none"
+                    />
+                  ) : (
+                    <button type="button" onClick={() => switchThread(t.id)} className="min-w-0 flex-1 text-left">
+                      <div className="truncate text-[12.5px] font-medium text-gray-800">{t.title || '새 대화'}</div>
+                      {t.preview && <div className="truncate text-[11px] text-gray-400">{t.preview}</div>}
+                    </button>
+                  )}
+                  {renamingId !== t.id && (
+                    <div className="flex shrink-0 items-center gap-1 opacity-0 group-hover:opacity-100">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRenamingId(t.id)
+                          setRenameText(t.title ?? '')
+                        }}
+                        title="이름 변경"
+                        className="flex h-6 w-6 items-center justify-center rounded text-gray-400 hover:bg-gray-200 hover:text-gray-600"
+                      >
+                        <Icon name="pencil" size={12} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeThread(t.id)}
+                        title="삭제"
+                        className="flex h-6 w-6 items-center justify-center rounded text-gray-400 hover:bg-gray-200 hover:text-[#c0392b]"
+                      >
+                        <Icon name="trash" size={12} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            {threads.length === 0 && (
+              <div className="px-3 py-10 text-center text-[12px] text-gray-400">
+                채팅방이 없습니다. ‘새 대화’로 시작하세요.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div ref={scroll} className="flex-1 space-y-3 overflow-y-auto scroll-thin bg-gray-50 px-4 py-4">
         {msgs.map((m) => {
