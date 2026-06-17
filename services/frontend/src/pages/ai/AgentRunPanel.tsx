@@ -63,19 +63,19 @@ const AGENT_EVENT_TYPES: AgentStreamingEventType[] = [
 ]
 
 const AGENT_LABEL: Record<string, string> = {
-  router: 'Router',
-  correlation: 'Correlation',
-  planner: 'Planner',
-  retrieval: 'Retrieval',
-  classifier: 'Classifier',
-  rca: 'RCA',
-  remediation: 'Remediation',
-  policy_guard: 'Policy Guard',
-  approval_gate: 'Approval Gate',
-  change_gate: 'Change Gate',
-  executor: 'Executor',
-  verifier: 'Verifier',
-  report: 'Report',
+  router: '라우팅',
+  correlation: '상관 분석',
+  planner: '계획 수립',
+  retrieval: '조회',
+  classifier: '분류',
+  rca: '근본 원인 분석',
+  remediation: '권장 조치',
+  policy_guard: '정책 검사',
+  approval_gate: '승인 게이트',
+  change_gate: '변경 게이트',
+  executor: '실행',
+  verifier: '검증',
+  report: '리포트',
 }
 
 const ROLE_LABEL: Record<WorkspaceMemberRole, string> = {
@@ -1718,7 +1718,7 @@ export function AgentRunPanel({
               />
             )
           }
-          if (m.kind === 'toolPanel') return <ToolPanelCard key={m.id} msg={m} />
+          if (m.kind === 'toolPanel') return <ToolPanelCard key={m.id} msg={m} onOpenPipeline={app.openPipeline} />
           if (m.kind === 'approval') {
             return (
               <ApprovalCard
@@ -2706,7 +2706,7 @@ function ProgressDot({ state }: { state: ProgressState }) {
   return <Icon name="check" size={12} strokeWidth={3} className="mt-0.5 text-[#8a8a8a]" />
 }
 
-function ToolPanelCard({ msg }: { msg: ToolPanelMsg }) {
+function ToolPanelCard({ msg, onOpenPipeline }: { msg: ToolPanelMsg; onOpenPipeline?: (id: string) => void }) {
   const result = asRecord(msg.result)
   const resultError = result ? recordString(result, 'error') : null
   const error = msg.error ?? resultError
@@ -2755,7 +2755,7 @@ function ToolPanelCard({ msg }: { msg: ToolPanelMsg }) {
         ) : (error || notice) && msg.result == null ? null : msg.toolName === 'get_consumer_groups' ? (
           <ConsumerGroupsPanel result={result} />
         ) : msg.toolName === 'list_pipelines' || msg.toolName === 'list_project_pipelines' ? (
-          <PipelineStatusPanel result={result} />
+          <PipelineStatusPanel result={result} onOpenPipeline={onOpenPipeline} />
         ) : msg.toolName === 'list_connectors' ? (
           <ConnectorStatusPanel result={result} />
         ) : msg.toolName === 'get_connector_status' ? (
@@ -2947,7 +2947,13 @@ function ConsumerGroupsPanel({ result }: { result: Record<string, unknown> | nul
   )
 }
 
-export function PipelineStatusPanel({ result }: { result: Record<string, unknown> | null }) {
+export function PipelineStatusPanel({
+  result,
+  onOpenPipeline,
+}: {
+  result: Record<string, unknown> | null
+  onOpenPipeline?: (id: string) => void
+}) {
   const rows = recordArray(result, 'pipelines')
   if (rows.length === 0) return <PanelEmpty text="파이프라인 데이터 없음" />
 
@@ -2956,6 +2962,7 @@ export function PipelineStatusPanel({ result }: { result: Record<string, unknown
     const lag = recordNumber(row, 'lag')
     const token = lag != null && lag >= 5000 && semanticToken(status) === 'safe' ? 'warn' : semanticToken(status)
     return {
+      id: recordString(row, 'id', 'pipeline_id', 'pipelineId'),
       name: recordString(row, 'name') ?? recordString(row, 'id') ?? '-',
       statusLabel: pipelineStatusKo(status),
       token,
@@ -2969,17 +2976,37 @@ export function PipelineStatusPanel({ result }: { result: Record<string, unknown
     <div className="text-[12px]">
       <div className="mb-1.5 text-[11px] text-gray-500">{statusCountText(rows.length, counts)}</div>
       <div className="divide-y divide-gray-100 rounded-md border border-gray-100">
-        {items.map((item, index) => (
-          <div key={`${item.name}:${index}`} className="flex items-center justify-between gap-2 px-2.5 py-1.5">
-            <span className="min-w-0 truncate font-medium text-gray-800">{item.name}</span>
-            <span className={cn('inline-flex shrink-0 items-center gap-1', statusTextClass(item.token))}>
-              <span className={cn('h-1.5 w-1.5 rounded-full', semanticDotClass(item.token))} />
-              {item.statusLabel}
-              {item.token === 'warn' && item.lag != null && <span className="font-mono">{item.lag.toLocaleString()}</span>}
-              {item.error && <span className="ml-1 truncate font-mono text-[10px] text-[#c0392b]">{item.error}</span>}
+        {items.map((item, index) => {
+          const clickable = !!(onOpenPipeline && item.id)
+          const right = (
+            <span className="flex shrink-0 items-center gap-1.5">
+              <span className={cn('inline-flex items-center gap-1', statusTextClass(item.token))}>
+                <span className={cn('h-1.5 w-1.5 rounded-full', semanticDotClass(item.token))} />
+                {item.statusLabel}
+                {item.token === 'warn' && item.lag != null && <span className="font-mono">{item.lag.toLocaleString()}</span>}
+                {item.error && <span className="ml-1 truncate font-mono text-[10px] text-[#c0392b]">{item.error}</span>}
+              </span>
+              {clickable && <Icon name="chevron-right" size={12} className="text-gray-300" />}
             </span>
-          </div>
-        ))}
+          )
+          const name = <span className="min-w-0 truncate font-medium text-gray-800">{item.name}</span>
+          return clickable ? (
+            <button
+              key={`${item.name}:${index}`}
+              onClick={() => onOpenPipeline!(item.id!)}
+              title="파이프라인 상세 열기"
+              className="flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left hover:bg-gray-50"
+            >
+              {name}
+              {right}
+            </button>
+          ) : (
+            <div key={`${item.name}:${index}`} className="flex items-center justify-between gap-2 px-2.5 py-1.5">
+              {name}
+              {right}
+            </div>
+          )
+        })}
       </div>
     </div>
   )
@@ -3185,26 +3212,28 @@ function ApprovalCard({
 }) {
   const resolved = msg.state === 'approved' || msg.state === 'rejected'
   const disabled = msg.state === 'submitting' || resolved || !msg.approvalId || roleLoading || !canApprove
+  // 권한이 정상이고 승인 가능한 평상시엔 도움말을 띄우지 않는다(노이즈 제거).
   const help = roleLoading
     ? '승인 권한 확인 중…'
     : roleError
       ? roleError
       : !canApprove
-        ? `OWNER/ADMIN만 승인할 수 있습니다${roleLabel ? ` (현재 ${roleLabel})` : ''}`
+        ? `소유자 또는 관리자만 승인할 수 있습니다${roleLabel ? ` (현재 ${roleLabel})` : ''}`
         : !msg.approvalId
-          ? 'approval id 확인 중…'
-          : `현재 권한: ${roleLabel}`
+          ? '승인 요청 확인 중…'
+          : null
 
   return (
-    <div className="min-w-0 rounded-xl border border-[#ececec] bg-white">
-      <div className="flex min-w-0 items-center gap-1.5 border-b border-[#ececec] bg-[#ededed] px-3 py-2 text-[12px] font-semibold text-[#6b6b73]">
+    <div className="min-w-0 rounded-xl border border-[#e7c9c4] bg-white">
+      <div className="flex min-w-0 items-center gap-1.5 border-b border-[#f0dad6] bg-[#fcf3f2] px-3 py-2 text-[12px] font-semibold text-[#c0392b]">
         <Icon name="shield" size={13} className="shrink-0" />
-        <span className="min-w-0 break-words">승인 필요 · {msg.actionId}</span>
+        <span className="min-w-0 break-words">승인 필요</span>
       </div>
       <div className="space-y-1.5 px-3 py-2.5 text-[12px] text-gray-700">
         <div className="break-words leading-relaxed">{msg.message}</div>
-        <div className="break-words text-[11.5px] text-gray-500">{msg.reason}</div>
-        <div className="break-all font-mono text-[10.5px] text-gray-400">{msg.approvalId ?? 'approval id pending'}</div>
+        {msg.reason && msg.reason !== msg.message && (
+          <div className="break-words text-[11.5px] text-gray-500">{msg.reason}</div>
+        )}
         {(msg.error || help) && <div className={cn('break-words text-[11.5px]', msg.error || roleError ? 'text-[#c0392b]' : 'text-gray-400')}>{msg.error ?? help}</div>}
       </div>
       {resolved ? (
