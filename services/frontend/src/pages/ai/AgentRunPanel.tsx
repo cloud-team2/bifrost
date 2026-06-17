@@ -3523,7 +3523,7 @@ export function semanticToken(value: string): SemanticToken {
   return 'neutral'
 }
 
-function semanticBadgeClass(token: SemanticToken) {
+export function semanticBadgeClass(token: SemanticToken) {
   if (token === 'danger') return 'bg-[#c0392b] text-white'
   if (token === 'warn') return 'bg-amber-100 text-amber-700'
   if (token === 'safe') return 'bg-emerald-100 text-emerald-700'
