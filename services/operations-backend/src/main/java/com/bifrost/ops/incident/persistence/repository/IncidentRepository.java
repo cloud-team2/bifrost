@@ -52,6 +52,35 @@ public interface IncidentRepository extends JpaRepository<IncidentEntity, UUID> 
             SELECT i
             FROM IncidentEntity i
             WHERE i.tenantId = :tenantId
+              AND (:status IS NULL OR i.status = :status)
+              AND (:severity IS NULL OR i.severity = :severity)
+              AND (i.groupingKey IN :groupingKeys OR i.sourceId IN :sourceIds)
+              AND (
+                    i.sourceType IS NULL
+                    OR LOWER(i.sourceType) <> 'database'
+                    OR EXISTS (
+                        SELECT e.id
+                        FROM EventEntity e
+                        WHERE e.tenantId = i.tenantId
+                          AND e.pipelineId = :pipelineId
+                          AND e.incidentId = i.id
+                    )
+                  )
+            ORDER BY i.openedAt DESC
+            """)
+    List<IncidentEntity> findScopedAlertsByTenantIdOrderByOpenedAtDesc(
+            @Param("tenantId") UUID tenantId,
+            @Param("status") String status,
+            @Param("severity") String severity,
+            @Param("groupingKeys") List<String> groupingKeys,
+            @Param("sourceIds") List<UUID> sourceIds,
+            @Param("pipelineId") UUID pipelineId,
+            Pageable pageable);
+
+    @Query("""
+            SELECT i
+            FROM IncidentEntity i
+            WHERE i.tenantId = :tenantId
               AND i.status = :status
               AND i.severity IN :severities
               AND i.openedAt >= :openedAt

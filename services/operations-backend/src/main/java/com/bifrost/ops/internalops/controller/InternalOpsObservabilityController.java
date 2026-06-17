@@ -822,8 +822,14 @@ public class InternalOpsObservabilityController {
             int limit,
             ObservabilityScope scope) {
         if (!scope.allProjects()) {
-            return incidentRepository.findScopedByTenantIdOrderByOpenedAtDesc(
-                    tenantId, status, severity, scope.groupingKeys(), scope.sourceIds(), PageRequest.of(0, limit));
+            return incidentRepository.findScopedAlertsByTenantIdOrderByOpenedAtDesc(
+                    tenantId,
+                    status,
+                    severity,
+                    scope.groupingKeys(),
+                    scope.sourceIds(),
+                    scope.pipelineId(),
+                    PageRequest.of(0, limit));
         }
         PageRequest page = PageRequest.of(0, limit);
         if (status != null && severity != null) {
