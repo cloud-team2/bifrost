@@ -2,6 +2,7 @@ package com.bifrost.ops.internalops.controller;
 
 import com.bifrost.ops.adapters.logstore.LokiClient;
 import com.bifrost.ops.event.EventLevel;
+import com.bifrost.ops.event.persistence.entity.EventEntity;
 import com.bifrost.ops.event.persistence.repository.EventRepository;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
@@ -17,10 +18,12 @@ import com.bifrost.ops.internalops.dto.LogSearchResult;
 import com.bifrost.ops.internalops.dto.MetricsResult;
 import com.bifrost.ops.internalops.dto.OpsEnvelope;
 import com.bifrost.ops.internalops.dto.TraceSummaryResult;
+import com.bifrost.ops.incident.IncidentGroupingKeys;
 import com.bifrost.ops.incident.persistence.entity.IncidentEntity;
 import com.bifrost.ops.incident.persistence.repository.IncidentRepository;
 import com.bifrost.ops.monitoring.query.ObservabilityMetricsQuery;
 import com.bifrost.ops.monitoring.query.TraceQuery;
+import com.bifrost.ops.pipeline.persistence.entity.PipelineEntity;
 import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
 import com.bifrost.ops.provisioning.dto.ConnectorKind;
 import com.bifrost.ops.provisioning.persistence.entity.ConnectorEntity;
@@ -260,6 +263,8 @@ public class InternalOpsObservabilityController {
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String severity,
             @RequestParam(required = false) String limit,
+            @RequestParam(name = "pipeline_id", required = false) String pipelineId,
+            @RequestParam(name = "connector_name", required = false) String connectorName,
             HttpServletRequest request) {
         String requestId = AgentHeaders.requestId(request);
         Optional<WorkspaceEntity> workspace = findWorkspace(projectId);
@@ -285,7 +290,14 @@ public class InternalOpsObservabilityController {
         String normalizedSeverity = normalizeFilter(severity);
         int max = effectiveAlertLimit(parsedLimit);
 
-        List<AlertSummaryResult> alerts = listIncidents(workspace.get().getId(), normalizedStatus, normalizedSeverity, max)
+        ObservabilityScope scope;
+        try {
+            scope = resolveObservabilityScope(workspace.get(), pipelineId, connectorName);
+        } catch (ApiException e) {
+            return apiError(requestId, "list_alerts", e);
+        }
+
+        List<AlertSummaryResult> alerts = listIncidents(workspace.get().getId(), normalizedStatus, normalizedSeverity, max, scope)
                 .stream()
                 .map(AlertSummaryResult::fromIncident)
                 .toList();
@@ -299,6 +311,8 @@ public class InternalOpsObservabilityController {
             @PathVariable String projectId,
             @RequestParam(required = false, defaultValue = "2h") String window,
             @RequestParam(required = false, defaultValue = "warn+") String level,
+            @RequestParam(name = "pipeline_id", required = false) String pipelineId,
+            @RequestParam(name = "connector_name", required = false) String connectorName,
             HttpServletRequest request) {
         String requestId = AgentHeaders.requestId(request);
         WorkspaceEntity workspace;
@@ -310,9 +324,13 @@ public class InternalOpsObservabilityController {
 
         Instant since = Instant.now().minusSeconds(parseWindowSeconds(window));
         EventLevel threshold = parseLevelThreshold(level);
-        List<IncidentEntity> openIncidents = incidentRepository
-                .findByTenantIdAndStatusAndSeverityInAndOpenedAtGreaterThanEqualOrderByOpenedAtDesc(
-                        workspace.getId(), "OPEN", severitiesAtOrAbove(threshold), since);
+        ObservabilityScope scope;
+        try {
+            scope = resolveObservabilityScope(workspace, pipelineId, connectorName);
+        } catch (ApiException e) {
+            return apiError(requestId, "analyze_event_log", e);
+        }
+        List<IncidentEntity> openIncidents = openIncidents(workspace.getId(), scope, threshold, since);
 
         List<IncidentEntity> criticalIncidents = openIncidents.stream()
                 .filter(incident -> severityRank(incident.getSeverity()) >= severityRank("ERROR"))
@@ -328,9 +346,8 @@ public class InternalOpsObservabilityController {
                         incident.getOpenedAt()))
                 .toList();
 
-        List<EventIncidentSummaryResult.WarningEvent> warnings = eventRepository
-                .findByTenantIdAndLevelInAndCreatedAtGreaterThanEqualOrderByCreatedAtDesc(
-                        workspace.getId(), levelsAtOrAbove(threshold), since, PageRequest.of(0, 20))
+        List<EventIncidentSummaryResult.WarningEvent> warnings = warningEvents(
+                        workspace.getId(), scope, threshold, since, openIncidents)
                 .stream()
                 .map(event -> new EventIncidentSummaryResult.WarningEvent(
                         event.getId().toString(),
@@ -543,6 +560,109 @@ public class InternalOpsObservabilityController {
                 .toList();
     }
 
+    private ObservabilityScope resolveObservabilityScope(
+            WorkspaceEntity workspace,
+            String pipelineIdValue,
+            String connectorNameValue) {
+        UUID pipelineId = parseOptionalUuid(pipelineIdValue, "pipeline_id");
+        String connectorName = normalizeOptional(connectorNameValue);
+        if (pipelineId == null && connectorName == null) {
+            return ObservabilityScope.projectWide();
+        }
+
+        PipelineEntity pipeline = pipelineId == null ? null : requireOwnedPipeline(workspace, pipelineId);
+        ConnectorEntity connector = null;
+        if (connectorName != null) {
+            connector = connectorRepository.findByCrName(connectorName)
+                    .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND,
+                            "connector not found: " + connectorName));
+            PipelineEntity connectorPipeline = pipelineRepository
+                    .findByIdAndTenantId(connector.getPipelineId(), workspace.getId())
+                    .orElseThrow(() -> new ApiException(ErrorCode.WORKSPACE_FORBIDDEN,
+                            "connector is not owned by project: " + workspace.getNamespace()));
+            if (pipeline != null && !pipeline.getId().equals(connectorPipeline.getId())) {
+                throw new ApiException(ErrorCode.VALIDATION_FAILED,
+                        "connector_name does not belong to pipeline_id");
+            }
+            pipeline = connectorPipeline;
+        }
+
+        if (connector != null) {
+            return ObservabilityScope.forConnector(pipeline, connector);
+        }
+        return ObservabilityScope.forPipeline(pipeline, connectorRepository.findByPipelineId(pipeline.getId()));
+    }
+
+    private PipelineEntity requireOwnedPipeline(WorkspaceEntity workspace, UUID pipelineId) {
+        return pipelineRepository.findByIdAndTenantId(pipelineId, workspace.getId())
+                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND,
+                        "pipeline not found in project: " + pipelineId));
+    }
+
+    private static UUID parseOptionalUuid(String value, String fieldName) {
+        String normalized = normalizeOptional(value);
+        if (normalized == null) {
+            return null;
+        }
+        try {
+            return UUID.fromString(normalized);
+        } catch (IllegalArgumentException e) {
+            throw new ApiException(ErrorCode.VALIDATION_FAILED, fieldName + " must be a UUID");
+        }
+    }
+
+    private static String normalizeOptional(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private List<IncidentEntity> openIncidents(
+            UUID tenantId,
+            ObservabilityScope scope,
+            EventLevel threshold,
+            Instant since) {
+        if (!scope.allProjects()) {
+            return incidentRepository.findScopedByTenantIdAndStatusAndSeverityInAndOpenedAtGreaterThanEqualOrderByOpenedAtDesc(
+                    tenantId, "OPEN", severitiesAtOrAbove(threshold), since,
+                    scope.groupingKeys(), scope.sourceIds());
+        }
+        return incidentRepository.findByTenantIdAndStatusAndSeverityInAndOpenedAtGreaterThanEqualOrderByOpenedAtDesc(
+                tenantId, "OPEN", severitiesAtOrAbove(threshold), since);
+    }
+
+    private List<EventEntity> warningEvents(
+            UUID tenantId,
+            ObservabilityScope scope,
+            EventLevel threshold,
+            Instant since,
+            List<IncidentEntity> openIncidents) {
+        PageRequest page = PageRequest.of(0, 20);
+        if (scope.connectorName() != null) {
+            return eventRepository.findConnectorScopedEventsOrderByCreatedAtDesc(
+                    tenantId,
+                    scope.pipelineId(),
+                    levelsAtOrAbove(threshold),
+                    since,
+                    scopedIncidentIds(openIncidents),
+                    scope.connectorName(),
+                    scope.consumerGroup(),
+                    page);
+        }
+        if (scope.pipelineId() != null) {
+            return eventRepository.findByTenantIdAndPipelineIdAndLevelInAndCreatedAtGreaterThanEqualOrderByCreatedAtDesc(
+                    tenantId, scope.pipelineId(), levelsAtOrAbove(threshold), since, page);
+        }
+        return eventRepository.findByTenantIdAndLevelInAndCreatedAtGreaterThanEqualOrderByCreatedAtDesc(
+                tenantId, levelsAtOrAbove(threshold), since, page);
+    }
+
+    private static List<UUID> scopedIncidentIds(List<IncidentEntity> incidents) {
+        List<UUID> ids = incidents.stream()
+                .map(IncidentEntity::getId)
+                .filter(id -> id != null)
+                .toList();
+        return ids.isEmpty() ? List.of(new UUID(0L, 0L)) : ids;
+    }
+
     private static String scopedLogQuery(
             WorkspaceEntity workspace,
             String rawQuery,
@@ -672,6 +792,11 @@ public class InternalOpsObservabilityController {
             String requestId,
             String operation,
             ApiException e) {
+        if (e.code() == ErrorCode.VALIDATION_FAILED) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(OpsEnvelope.error(requestId, operation, "VALIDATION_FAILED",
+                            e.getMessage(), false));
+        }
         if (e.code() == ErrorCode.WORKSPACE_FORBIDDEN) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(OpsEnvelope.error(requestId, operation, "RESOURCE_NOT_OWNED_BY_PROJECT",
@@ -694,7 +819,12 @@ public class InternalOpsObservabilityController {
             UUID tenantId,
             String status,
             String severity,
-            int limit) {
+            int limit,
+            ObservabilityScope scope) {
+        if (!scope.allProjects()) {
+            return incidentRepository.findScopedByTenantIdOrderByOpenedAtDesc(
+                    tenantId, status, severity, scope.groupingKeys(), scope.sourceIds(), PageRequest.of(0, limit));
+        }
         PageRequest page = PageRequest.of(0, limit);
         if (status != null && severity != null) {
             return incidentRepository.findByTenantIdAndStatusAndSeverityOrderByOpenedAtDesc(
@@ -707,6 +837,97 @@ public class InternalOpsObservabilityController {
             return incidentRepository.findByTenantIdAndSeverityOrderByOpenedAtDesc(tenantId, severity, page);
         }
         return incidentRepository.findByTenantIdOrderByOpenedAtDesc(tenantId, page);
+    }
+
+    private record ObservabilityScope(
+            UUID pipelineId,
+            List<String> groupingKeys,
+            List<UUID> sourceIds,
+            String connectorName,
+            String consumerGroup,
+            boolean allProjects) {
+
+        static ObservabilityScope projectWide() {
+            return new ObservabilityScope(null, List.of(), List.of(), null, null, true);
+        }
+
+        static ObservabilityScope forPipeline(PipelineEntity pipeline, List<ConnectorEntity> connectors) {
+            List<String> groupingKeys = new ArrayList<>();
+            List<UUID> sourceIds = new ArrayList<>();
+            UUID pipelineId = pipeline.getId();
+            add(sourceIds, pipelineId);
+            add(groupingKeys, IncidentGroupingKeys.pipelineAvailability(pipelineId));
+            add(groupingKeys, IncidentGroupingKeys.pipelineErrorRate(pipelineId));
+            addDatasource(groupingKeys, sourceIds, pipeline.getSourceDatasourceId());
+            addDatasource(groupingKeys, sourceIds, pipeline.getSinkDatasourceId());
+            addTopic(groupingKeys, pipeline.getTopicName());
+            addConnector(groupingKeys, pipeline.getSourceConnectorName());
+            addConnector(groupingKeys, pipeline.getSinkConnectorName());
+            for (ConnectorEntity connector : connectors == null ? List.<ConnectorEntity>of() : connectors) {
+                addConnector(groupingKeys, connector.getCrName());
+            }
+            return new ObservabilityScope(
+                    pipelineId, List.copyOf(groupingKeys), List.copyOf(sourceIds), null, null, false);
+        }
+
+        static ObservabilityScope forConnector(PipelineEntity pipeline, ConnectorEntity connector) {
+            List<String> groupingKeys = new ArrayList<>();
+            List<UUID> sourceIds = new ArrayList<>();
+            add(sourceIds, connector.getId());
+            addConnector(groupingKeys, connector.getCrName());
+            UUID datasourceId = connector.getKind() == ConnectorKind.SINK
+                    ? pipeline.getSinkDatasourceId()
+                    : pipeline.getSourceDatasourceId();
+            addDatasource(groupingKeys, sourceIds, datasourceId);
+            String connectorName = connector.getCrName();
+            return new ObservabilityScope(
+                    pipeline.getId(),
+                    List.copyOf(groupingKeys),
+                    List.copyOf(sourceIds),
+                    connectorName,
+                    connectorName == null || connectorName.isBlank() ? null : "connect-" + connectorName,
+                    false);
+        }
+
+        boolean matches(IncidentEntity incident) {
+            if (allProjects) {
+                return true;
+            }
+            String groupingKey = incident.getGroupingKey();
+            if (groupingKey != null && groupingKeys.contains(groupingKey)) {
+                return true;
+            }
+            UUID sourceId = incident.getSourceId();
+            return sourceId != null && sourceIds.contains(sourceId);
+        }
+
+        private static void addConnector(List<String> groupingKeys, String connectorName) {
+            if (connectorName == null || connectorName.isBlank()) {
+                return;
+            }
+            add(groupingKeys, IncidentGroupingKeys.connectorWorker(connectorName));
+            add(groupingKeys, IncidentGroupingKeys.consumerLag("connect-" + connectorName));
+        }
+
+        private static void addDatasource(List<String> groupingKeys, List<UUID> sourceIds, UUID datasourceId) {
+            if (datasourceId == null) {
+                return;
+            }
+            add(sourceIds, datasourceId);
+            add(groupingKeys, IncidentGroupingKeys.datasource(datasourceId));
+        }
+
+        private static void addTopic(List<String> groupingKeys, String topicName) {
+            if (topicName != null && !topicName.isBlank()) {
+                add(groupingKeys, IncidentGroupingKeys.topicReplication(topicName));
+            }
+        }
+
+        private static <T> void add(List<T> values, T value) {
+            if (value != null && !values.contains(value)) {
+                values.add(value);
+            }
+        }
     }
 
     private static Integer parseAlertLimit(String limit) {

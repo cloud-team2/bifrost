@@ -30,4 +30,39 @@ public interface IncidentRepository extends JpaRepository<IncidentEntity, UUID> 
     Object lockIncidentGroup(@Param("lockKey") String lockKey);
     List<IncidentEntity> findByTenantIdAndStatusAndSeverityInAndOpenedAtGreaterThanEqualOrderByOpenedAtDesc(
             UUID tenantId, String status, List<String> severities, Instant openedAt);
+
+    @Query("""
+            SELECT i
+            FROM IncidentEntity i
+            WHERE i.tenantId = :tenantId
+              AND (:status IS NULL OR i.status = :status)
+              AND (:severity IS NULL OR i.severity = :severity)
+              AND (i.groupingKey IN :groupingKeys OR i.sourceId IN :sourceIds)
+            ORDER BY i.openedAt DESC
+            """)
+    List<IncidentEntity> findScopedByTenantIdOrderByOpenedAtDesc(
+            @Param("tenantId") UUID tenantId,
+            @Param("status") String status,
+            @Param("severity") String severity,
+            @Param("groupingKeys") List<String> groupingKeys,
+            @Param("sourceIds") List<UUID> sourceIds,
+            Pageable pageable);
+
+    @Query("""
+            SELECT i
+            FROM IncidentEntity i
+            WHERE i.tenantId = :tenantId
+              AND i.status = :status
+              AND i.severity IN :severities
+              AND i.openedAt >= :openedAt
+              AND (i.groupingKey IN :groupingKeys OR i.sourceId IN :sourceIds)
+            ORDER BY i.openedAt DESC
+            """)
+    List<IncidentEntity> findScopedByTenantIdAndStatusAndSeverityInAndOpenedAtGreaterThanEqualOrderByOpenedAtDesc(
+            @Param("tenantId") UUID tenantId,
+            @Param("status") String status,
+            @Param("severities") List<String> severities,
+            @Param("openedAt") Instant openedAt,
+            @Param("groupingKeys") List<String> groupingKeys,
+            @Param("sourceIds") List<UUID> sourceIds);
 }

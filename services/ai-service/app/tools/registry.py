@@ -102,6 +102,8 @@ class ListPipelinesParams(ToolParams):
 class AnalyzeEventLogParams(ToolParams):
     window: str = "2h"
     level: str = "warn+"
+    pipeline_id: str | None = None
+    connector_name: str | None = None
 
 
 class PipelineTopologyParams(ToolParams):
@@ -548,6 +550,8 @@ class ToolClientRegistry:
                 None,
             )
 
+        params = _params_with_context_scope(tool_name, params, context)
+
         try:
             validated_params = definition.validate_params(params)
         except ValidationError as exc:
@@ -627,3 +631,20 @@ class ToolClientRegistry:
                 result=sanitized_result,
             )
         return result, response.result
+
+
+_OBSERVABILITY_SCOPE_TOOLS = frozenset({"get_alerts", "analyze_event_log"})
+
+
+def _params_with_context_scope(
+    tool_name: str,
+    params: dict[str, Any],
+    context: ToolContext,
+) -> dict[str, Any]:
+    if tool_name not in _OBSERVABILITY_SCOPE_TOOLS:
+        return params
+    if params.get("pipeline_id") or params.get("connector_name") or not context.pipeline_id:
+        return params
+    scoped = dict(params)
+    scoped["pipeline_id"] = context.pipeline_id
+    return scoped
