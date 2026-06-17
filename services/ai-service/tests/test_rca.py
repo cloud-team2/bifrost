@@ -167,6 +167,36 @@ async def test_normal_operational_evidence_does_not_commit_fault(
 
 
 @pytest.mark.asyncio
+async def test_running_connector_trace_mention_does_not_commit_task_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier("CONNECTOR_TASK_FAILED"),
+        _retrieval("connector status RUNNING. task trace 확인됨. no failed task."),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "UNKNOWN_WITH_EVIDENCE_GAP"
+    assert top.confidence < 0.60
+
+
+@pytest.mark.asyncio
+async def test_normal_auth_evidence_does_not_commit_auth_expired(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier("SOURCE_AUTH_FAILURE"),
+        _retrieval("source auth status normal. auth 변경 없음. token valid. no auth error."),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "UNKNOWN_WITH_EVIDENCE_GAP"
+    assert top.confidence < 0.60
+
+
+@pytest.mark.asyncio
 async def test_knowledge_evidence_does_not_satisfy_required_rules(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

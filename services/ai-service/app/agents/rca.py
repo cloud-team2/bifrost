@@ -22,6 +22,7 @@ LLM_TIE_MARGIN = 0.10
 MAX_CANDIDATES = 5
 
 _TOKEN_RE = re.compile(r"[0-9A-Za-z가-힣]+")
+_CONNECTOR_TASK_FAILED_ID = "CONNECTOR_TASK_FAILED"
 _TOKEN_ALIASES = {
     "상태": "status",
     "커넥터": "connector",
@@ -178,6 +179,8 @@ def _evaluate_candidate(root_cause_id: str, evidence_items: list[EvidenceItem]) 
         supporting_total=len(profile.supporting),
         negative_count=len(negative_ids),
     )
+    if _connector_failed_status_missing(root_cause_id, required_matches):
+        confidence = min(confidence, 0.59)
 
     return _EvaluatedCandidate(
         root_cause=root_cause,
@@ -214,6 +217,11 @@ def _match_rules(rules: tuple[EvidenceRule, ...], evidence_items: list[EvidenceI
 
 def _rule_matches_evidence(rule: EvidenceRule, item: EvidenceItem) -> bool:
     evidence_text = f"{item.type} {item.summary}".casefold()
+    if _connector_failed_status_rule(rule):
+        return _has_connector_failed_status(item.summary)
+    if _connector_trace_rule(rule) and _negates_connector_trace(item.summary):
+        return False
+
     rule_text = rule.evidence.casefold()
     example_text = (rule.example or "").casefold()
     if rule_text and rule_text in evidence_text:
@@ -240,8 +248,61 @@ def _rule_matches_evidence(rule: EvidenceRule, item: EvidenceItem) -> bool:
 
 
 def _split_alternatives(value: str) -> list[str]:
-    parts = re.split(r"[,，]|\s+(?:또는|or)\s+|/", value, flags=re.IGNORECASE)
+    parts = re.split(r"[,，]|\s+(?:또는|or)\s+", value, flags=re.IGNORECASE)
     return [part.strip() for part in parts if part.strip()]
+
+
+def _connector_failed_status_rule(rule: EvidenceRule) -> bool:
+    return (
+        rule.root_cause_id == _CONNECTOR_TASK_FAILED_ID
+        and "status" in rule.evidence.casefold()
+        and "failed" in rule.evidence.casefold()
+    )
+
+
+def _connector_trace_rule(rule: EvidenceRule) -> bool:
+    return (
+        rule.root_cause_id == _CONNECTOR_TASK_FAILED_ID
+        and ("trace" in rule.evidence.casefold() or "worker log" in rule.evidence.casefold())
+    )
+
+
+def _connector_failed_status_missing(
+    root_cause_id: str,
+    required_matches: list[_RuleMatch],
+) -> bool:
+    if root_cause_id != _CONNECTOR_TASK_FAILED_ID:
+        return False
+    return any(
+        _connector_failed_status_rule(match.rule) and not match.evidence_ids
+        for match in required_matches
+    )
+
+
+def _has_connector_failed_status(summary: str) -> bool:
+    normalized = summary.casefold()
+    if re.search(r"(?:status|상태)\s*[:=]?\s*(?:running|ok|healthy|정상)", normalized):
+        return False
+    if re.search(r"\b(?:no|not|without)\s+(?:\w+\s+){0,3}(?:failed|failure)\b", normalized):
+        return False
+    if re.search(r"(?:실패|오류)\s*(?:없음|아님|아닌|없다)", normalized):
+        return False
+    return bool(
+        re.search(
+            r"(?:status|상태)\s*[:=]?\s*(?:failed|failure|error|실패|오류)"
+            r"|(?:task|태스크)\s+(?:status|상태)?\s*[:=]?\s*(?:failed|failure|error|실패|오류)",
+            normalized,
+        )
+    )
+
+
+def _negates_connector_trace(summary: str) -> bool:
+    normalized = summary.casefold()
+    return bool(
+        re.search(r"\bno\s+(?:task\s+)?trace\b", normalized)
+        or re.search(r"\btrace\s+(?:not found|missing|unavailable)\b", normalized)
+        or re.search(r"(?:trace|worker log|트레이스|로그)\s*(?:없음|미확인|누락)", normalized)
+    )
 
 
 def _tokens_match(rule_tokens: set[str], evidence_tokens: set[str]) -> bool:
