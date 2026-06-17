@@ -82,6 +82,7 @@ public class InternalOpsObservabilityController {
     private final EventRepository eventRepository;
     private final ObservabilityMetricsQuery metricsQuery;
     private final TraceQuery traceQuery;
+    private final String kafkaNamespace;
     private final RestClient connectRestClient;
 
     public InternalOpsObservabilityController(
@@ -94,6 +95,7 @@ public class InternalOpsObservabilityController {
             EventRepository eventRepository,
             ObservabilityMetricsQuery metricsQuery,
             TraceQuery traceQuery,
+            @Value("${kafka-cluster.namespace:platform-kafka}") String kafkaNamespace,
             @Value("${kafka-connect.rest-url:http://platform-connect-connect-api.platform-kafka.svc:8083}")
             String connectRestUrl) {
         this.adminClient = adminClient;
@@ -105,6 +107,7 @@ public class InternalOpsObservabilityController {
         this.eventRepository = eventRepository;
         this.metricsQuery = metricsQuery;
         this.traceQuery = traceQuery;
+        this.kafkaNamespace = nonBlankOrDefault(kafkaNamespace, "platform-kafka");
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(2000);
         factory.setReadTimeout(3000);
@@ -203,8 +206,11 @@ public class InternalOpsObservabilityController {
             return apiError(requestId, "search_logs", e);
         }
 
-        String query = scopedLogQuery(workspace,
-                body != null ? String.valueOf(body.getOrDefault("query", "")) : "");
+        String query = scopedLogQuery(
+                workspace,
+                body != null ? String.valueOf(body.getOrDefault("query", "")) : "",
+                ownedConnectorNames(workspace.getId()),
+                kafkaNamespace);
         long endNs = Instant.now().toEpochMilli() * 1_000_000L;
         long startNs = endNs - 3_600_000_000_000L; // 기본 1시간
         int limit = body != null && body.containsKey("limit")
@@ -526,36 +532,83 @@ public class InternalOpsObservabilityController {
         return connector;
     }
 
-    private static String scopedLogQuery(WorkspaceEntity workspace, String rawQuery) {
-        String namespace = workspace.getNamespace() != null && !workspace.getNamespace().isBlank()
-                ? workspace.getNamespace()
-                : workspace.getId().toString();
-        String query = rawQuery == null ? "" : rawQuery.trim();
-        if (query.isBlank()) {
-            return "{namespace=\"" + escapeLogQuery(namespace) + "\"}";
+    private List<String> ownedConnectorNames(UUID workspaceId) {
+        List<ConnectorEntity> connectors = connectorRepository.findByTenantIdOrderByCrName(workspaceId);
+        if (connectors == null) {
+            return List.of();
         }
-        if (query.startsWith("{")) {
-            return mergeNamespaceSelector(namespace, query);
-        }
-        return "{namespace=\"" + escapeLogQuery(namespace) + "\"} |= \"" + escapeLogQuery(query) + "\"";
+        return connectors.stream()
+                .map(ConnectorEntity::getCrName)
+                .filter(name -> name != null && !name.isBlank())
+                .toList();
     }
 
-    private static String mergeNamespaceSelector(String namespace, String query) {
+    private static String scopedLogQuery(
+            WorkspaceEntity workspace,
+            String rawQuery,
+            List<String> connectorNames,
+            String kafkaNamespace) {
+        String projectKey = projectKey(workspace);
+        String scopeFilter = workspaceScopeLineFilter(projectKey, connectorNames);
+        String query = rawQuery == null ? "" : rawQuery.trim();
+        if (query.isBlank()) {
+            return kafkaConnectSelector(kafkaNamespace) + scopeFilter;
+        }
+        if (query.startsWith("{")) {
+            return mergeKafkaConnectSelector(kafkaNamespace, query, scopeFilter);
+        }
+        return kafkaConnectSelector(kafkaNamespace) + scopeFilter + " |= \"" + escapeLogQuery(query) + "\"";
+    }
+
+    private static String mergeKafkaConnectSelector(String kafkaNamespace, String query, String scopeFilter) {
         int end = query.indexOf('}');
         if (end < 0) {
-            return "{namespace=\"" + escapeLogQuery(namespace) + "\"} |= \"" + escapeLogQuery(query) + "\"";
+            return kafkaConnectSelector(kafkaNamespace) + scopeFilter + " |= \"" + escapeLogQuery(query) + "\"";
         }
         String selector = query.substring(1, end);
         String suffix = query.substring(end + 1).trim();
         List<String> matchers = new ArrayList<>();
-        matchers.add("namespace=\"" + escapeLogQuery(namespace) + "\"");
+        matchers.add("namespace=\"" + escapeLogQuery(kafkaNamespace) + "\"");
+        matchers.add("app=\"kafka-connect\"");
         for (String matcher : splitLabelMatchers(selector)) {
             String trimmed = matcher.trim();
-            if (!trimmed.isBlank() && !isNamespaceMatcher(trimmed)) {
+            if (!trimmed.isBlank() && !isEnforcedLogLabelMatcher(trimmed)) {
                 matchers.add(trimmed);
             }
         }
-        return "{" + String.join(",", matchers) + "}" + (suffix.isBlank() ? "" : " " + suffix);
+        return "{" + String.join(",", matchers) + "}" + scopeFilter + (suffix.isBlank() ? "" : " " + suffix);
+    }
+
+    private static String kafkaConnectSelector(String kafkaNamespace) {
+        return "{namespace=\"" + escapeLogQuery(kafkaNamespace) + "\",app=\"kafka-connect\"}";
+    }
+
+    private static String workspaceScopeLineFilter(String projectKey, List<String> connectorNames) {
+        List<String> alternatives = new ArrayList<>();
+        String project = escapeRegex(projectKey);
+        alternatives.add("cdc\\.table\\." + project + "\\.");
+        alternatives.add("eda\\.table\\." + project + "\\.");
+        alternatives.add("bifrost\\." + project + "\\.");
+        alternatives.add(boundedToken("proj-" + projectKey + "-user"));
+        if (connectorNames != null) {
+            connectorNames.stream()
+                    .filter(name -> name != null && !name.isBlank())
+                    .forEach(name -> {
+                        alternatives.add(boundedToken(name));
+                        alternatives.add(boundedToken("connect-" + name));
+                    });
+        }
+        return " |~ \"" + escapeLogQuery(String.join("|", alternatives)) + "\"";
+    }
+
+    private static String boundedToken(String raw) {
+        return "(^|[^A-Za-z0-9._-])" + escapeRegex(raw) + "([^A-Za-z0-9._-]|$)";
+    }
+
+    private static String projectKey(WorkspaceEntity workspace) {
+        return workspace.getNamespace() != null && !workspace.getNamespace().isBlank()
+                ? workspace.getNamespace()
+                : workspace.getId().toString();
     }
 
     private static List<String> splitLabelMatchers(String selector) {
@@ -591,12 +644,28 @@ public class InternalOpsObservabilityController {
         return matchers;
     }
 
-    private static boolean isNamespaceMatcher(String matcher) {
-        return matcher.matches("\\s*namespace\\s*(=|!=|=~|!~).*");
+    private static boolean isEnforcedLogLabelMatcher(String matcher) {
+        return matcher.matches("\\s*(namespace|app)\\s*(=|!=|=~|!~).*");
     }
 
     private static String escapeLogQuery(String value) {
         return value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private static String escapeRegex(String raw) {
+        StringBuilder escaped = new StringBuilder(raw.length());
+        for (int i = 0; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            if ("\\.[]{}()+*?^$|".indexOf(c) >= 0) {
+                escaped.append('\\');
+            }
+            escaped.append(c);
+        }
+        return escaped.toString();
+    }
+
+    private static String nonBlankOrDefault(String value, String fallback) {
+        return value != null && !value.isBlank() ? value : fallback;
     }
 
     private static <T> ResponseEntity<OpsEnvelope<T>> apiError(
