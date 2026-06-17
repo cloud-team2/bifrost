@@ -22,6 +22,11 @@ import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsResult;
+import org.apache.kafka.clients.admin.ListOffsetsResult;
+import org.apache.kafka.clients.consumer.OffsetAndMetadata;
+import org.apache.kafka.common.KafkaFuture;
+import org.apache.kafka.common.TopicPartition;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.data.domain.Pageable;
@@ -35,6 +40,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -528,6 +534,50 @@ class InternalOpsObservabilityControllerTest {
         assertThat(response.getBody().ok()).isFalse();
         assertThat(response.getBody().error().code()).isEqualTo("RESOURCE_NOT_OWNED_BY_PROJECT");
         verifyNoInteractions(adminClient);
+    }
+
+    @Test
+    void consumerLagReturnsPartitionOffsetsP95AndTopPartitions() throws Exception {
+        UUID tenantId = UUID.randomUUID();
+        UUID pipelineId = UUID.randomUUID();
+        when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId, "proj-001")));
+        when(connectorRepository.findByCrName("orders-sink")).thenReturn(Optional.of(connector(pipelineId, "orders-sink")));
+        when(pipelineRepository.findByIdAndTenantId(pipelineId, tenantId))
+                .thenReturn(Optional.of(pipeline(pipelineId, tenantId, "orders-cdc")));
+
+        TopicPartition tp0 = new TopicPartition("cdc.table.proj-001.orders", 0);
+        TopicPartition tp1 = new TopicPartition("cdc.table.proj-001.orders", 1);
+        ListConsumerGroupOffsetsResult offsetsResult = mock(ListConsumerGroupOffsetsResult.class);
+        when(adminClient.listConsumerGroupOffsets("connect-orders-sink")).thenReturn(offsetsResult);
+        when(offsetsResult.partitionsToOffsetAndMetadata()).thenReturn(KafkaFuture.completedFuture(Map.of(
+                tp0, new OffsetAndMetadata(10L),
+                tp1, new OffsetAndMetadata(20L))));
+
+        ListOffsetsResult listOffsetsResult = mock(ListOffsetsResult.class);
+        when(adminClient.listOffsets(any())).thenReturn(listOffsetsResult);
+        when(listOffsetsResult.all()).thenReturn(KafkaFuture.completedFuture(Map.of(
+                tp0, new ListOffsetsResult.ListOffsetsResultInfo(15L, -1L, Optional.empty()),
+                tp1, new ListOffsetsResult.ListOffsetsResultInfo(55L, -1L, Optional.empty()))));
+
+        ResponseEntity<OpsEnvelope<ConsumerLagResult>> response =
+                controller.consumerLag("proj-001", "connect-orders-sink", new MockHttpServletRequest());
+
+        assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
+        ConsumerLagResult result = response.getBody().result();
+        assertThat(result.consumerGroup()).isEqualTo("connect-orders-sink");
+        assertThat(result.totalLag()).isEqualTo(40L);
+        assertThat(result.source()).isEqualTo("kafka-admin");
+        assertThat(result.observedAt()).isNotNull();
+        assertThat(result.partitions()).hasSize(2);
+        assertThat(result.partitions().getFirst().currentOffset()).isEqualTo(10L);
+        assertThat(result.partitions().getFirst().logEndOffset()).isEqualTo(15L);
+        assertThat(result.p95Lag()).isEqualTo(35.0);
+        assertThat(result.topLagPartitions()).hasSize(2);
+        assertThat(result.topLagPartitions().getFirst().partition()).isEqualTo(1);
+        assertThat(result.summary()).contains("lag p95=35.000");
+        assertThat(result.summary()).contains("current committed offsets");
+        assertThat(result.summary()).contains("offset position snapshot");
+        assertThat(result.summary()).doesNotContain("offset progression");
     }
 
     @Test

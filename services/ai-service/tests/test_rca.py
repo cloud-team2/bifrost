@@ -97,6 +97,46 @@ async def test_consumer_lag_spike_partial_evidence(monkeypatch: pytest.MonkeyPat
 
 
 @pytest.mark.asyncio
+async def test_consumer_lag_snapshot_does_not_satisfy_trend_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier("CONSUMER_LAG_SPIKE"),
+        _retrieval(
+            "consumer lag snapshot: total_lag=12345, lag p95=12345.000, "
+            "top lag partitions=[orders-0:12345]; offset position snapshot: "
+            "current committed offsets and log end offsets captured"
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "UNKNOWN_WITH_EVIDENCE_GAP"
+    assert top.required_evidence_satisfied is False
+
+
+@pytest.mark.asyncio
+async def test_consumer_lag_spike_accepts_live_metric_trend_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier("CONSUMER_LAG_SPIKE"),
+        _retrieval(
+            "consumer lag p95 metric: 30 points, latest=12345.000, "
+            "first=42.000, delta=12303.000; lag p95 증가",
+            "offset progression commit rate metric: 30 points, latest=5.000 records/sec, "
+            "first=120.000, delta=-115.000; offset progression 둔화 commit rate 감소",
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "CONSUMER_LAG_SPIKE"
+    assert top.required_evidence_satisfied is True
+    assert top.confidence >= 0.80
+
+
+@pytest.mark.asyncio
 async def test_required_missing_caps_confidence(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_llm(monkeypatch)
     result = await run_rca(

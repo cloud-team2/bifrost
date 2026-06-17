@@ -11,25 +11,14 @@
       "operation": "search_logs",
       "result": {
         "logs": [
-          {"ts": "2026-06-10T09:00:00Z", "line": "consumer lag p95 increased to 12345"},
-          {"ts": "2026-06-10T09:01:00Z", "line": "offset progression 정체 observed"},
-          {"ts": "2026-06-10T09:02:00Z", "line": "consumer lag p95 sustained"},
-          {"ts": "2026-06-10T09:03:00Z", "line": "consumer group rebalance retried"},
-          {"ts": "2026-06-10T09:04:00Z", "line": "offset commit rate drop"}
+          {"ts": "2026-06-10T09:00:00Z", "line": "consumer group lag snapshot collected"},
+          {"ts": "2026-06-10T09:01:00Z", "line": "connector task status RUNNING"},
+          {"ts": "2026-06-10T09:02:00Z", "line": "metric query completed"}
         ],
-        "total": 5,
-        "note": "5 occurrences of consumer lag p95 increase and offset progression 정체"
+        "total": 3,
+        "note": "3 operational log entries matched"
       },
-      "evidence": [
-        {
-          "evidence_id": "ev_log_001",
-          "store_ref": "evidence://e2e/ev_log_001",
-          "summary": "offset progression 둔화: commit rate 감소, offset progression 정체 5건",
-          "redaction_status": "redacted",
-          "type": "log"
-        }
-      ],
-      "audit_event_id": "audit_e2e_002"
+      "evidence": []
     }
   }
 }

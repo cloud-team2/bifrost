@@ -12,18 +12,30 @@
       "result": {
         "consumerGroup": "default-group",
         "totalLag": 12345,
-        "source": "kafka-admin"
+        "source": "kafka-admin",
+        "observedAt": "2026-06-10T09:00:00Z",
+        "p95Lag": 12345.0,
+        "partitions": [
+          {
+            "topic": "cdc.table.demo-team.testdb-69df81e0.public.orders",
+            "partition": 0,
+            "currentOffset": 100,
+            "logEndOffset": 12445,
+            "lag": 12345
+          }
+        ],
+        "topLagPartitions": [
+          {
+            "topic": "cdc.table.demo-team.testdb-69df81e0.public.orders",
+            "partition": 0,
+            "currentOffset": 100,
+            "logEndOffset": 12445,
+            "lag": 12345
+          }
+        ],
+        "summary": "consumer lag snapshot: total_lag=12345, lag p95=12345.000, top lag partitions=[cdc.table.demo-team.testdb-69df81e0.public.orders-0:12345]; offset position snapshot: current committed offsets and log end offsets captured"
       },
-      "evidence": [
-        {
-          "evidence_id": "ev_lag_001",
-          "store_ref": "evidence://e2e/ev_lag_001",
-          "summary": "consumer lag 급증: lag p95 증가 total lag 12345",
-          "redaction_status": "redacted",
-          "type": "metric"
-        }
-      ],
-      "audit_event_id": "audit_e2e_001"
+      "evidence": []
     }
   }
 }

@@ -45,6 +45,30 @@ def test_registry_exposes_read_tool_allowlist_and_risk():
     assert legacy_lag.alias_for == "get_consumer_lag"
 
 
+def test_get_metrics_catalog_description_exposes_live_backed_logical_metrics():
+    registry = ToolClientRegistry(transport=httpx.MockTransport(lambda request: httpx.Response(200)))
+
+    definition = registry.get_definition("get_metrics")
+    assert definition is not None
+    description = definition.description
+    for metric in {
+        "pipeline_lag_seconds",
+        "consumer_lag_p95",
+        "consumer_commit_rate_per_sec",
+        "topic_ingress_messages_per_sec",
+        "source_freshness_delay_ms",
+        "source_watermark_delay_ms",
+        "source_event_rate_per_sec",
+        "broker_cpu_cores",
+        "broker_memory_working_set_bytes",
+        "broker_network_receive_bytes_per_sec",
+        "broker_network_transmit_bytes_per_sec",
+        "broker_fs_read_bytes_per_sec",
+        "broker_fs_write_bytes_per_sec",
+    }:
+        assert metric in description
+
+
 @pytest.mark.asyncio
 async def test_unknown_tool_is_blocked():
     registry = ToolClientRegistry(transport=httpx.MockTransport(lambda request: httpx.Response(200)))
@@ -102,6 +126,17 @@ async def test_read_tool_success_injects_agent_headers_without_idempotency_key()
                         }
                     ],
                     "observed_at": datetime.now(UTC).isoformat(),
+                    "p95_lag": 42.0,
+                    "top_lag_partitions": [
+                        {
+                            "topic": "orders",
+                            "partition": 0,
+                            "current_offset": 100,
+                            "log_end_offset": 142,
+                            "lag": 42,
+                        }
+                    ],
+                    "summary": "consumer lag snapshot: lag p95=42",
                 },
                 "evidence": [
                     {
@@ -138,6 +173,10 @@ async def test_read_tool_success_injects_agent_headers_without_idempotency_key()
     assert result.risk == "read_only"
     assert result.evidence_ids == ["ev_metric_001"]
     assert result.audit_event_id == "audit_001"
+    assert result.result is not None
+    assert result.result["p95Lag"] == 42.0
+    assert result.result["topLagPartitions"][0]["currentOffset"] == 100
+    assert "lag p95=42" in result.summary
 
 
 @pytest.mark.asyncio

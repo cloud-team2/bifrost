@@ -386,6 +386,9 @@ class ConsumerLagData(SpringResponseModel):
     total_lag: int
     partitions: list[ConsumerLagPartition] = Field(default_factory=list)
     observed_at: datetime | None = None
+    p95_lag: float | None = None
+    top_lag_partitions: list[ConsumerLagPartition] = Field(default_factory=list)
+    summary: str | None = None
     source: str | None = None  # Spring ConsumerLagResult.source (kafka-admin 등) — RCA evidence 메모용
 
 

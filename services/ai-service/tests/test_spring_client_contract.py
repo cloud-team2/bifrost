@@ -23,7 +23,7 @@ from app.tools.spring_client import SpringOpsClient
 
 
 def test_consumer_lag_camelcase_spring_response():
-    """Spring ConsumerLagResult{consumerGroup, totalLag, source} → ConsumerLagData."""
+    """Spring ConsumerLagResult camelCase fields → ConsumerLagData."""
     spring_payload = {
         "ok": True,
         "request_id": "req_001",
@@ -32,6 +32,27 @@ def test_consumer_lag_camelcase_spring_response():
             "consumerGroup": "test-group",
             "totalLag": 12345,
             "source": "kafka-admin",
+            "observedAt": "2026-06-17T00:00:00Z",
+            "p95Lag": 42.0,
+            "partitions": [
+                {
+                    "topic": "orders",
+                    "partition": 0,
+                    "currentOffset": 100,
+                    "logEndOffset": 142,
+                    "lag": 42,
+                }
+            ],
+            "topLagPartitions": [
+                {
+                    "topic": "orders",
+                    "partition": 0,
+                    "currentOffset": 100,
+                    "logEndOffset": 142,
+                    "lag": 42,
+                }
+            ],
+            "summary": "consumer lag snapshot: lag p95=42",
         },
     }
     envelope = SpringOpsResponse.model_validate(spring_payload)
@@ -41,8 +62,12 @@ def test_consumer_lag_camelcase_spring_response():
     data = ConsumerLagData.model_validate(envelope.result)
     assert data.consumer_group == "test-group"
     assert data.total_lag == 12345
-    assert data.partitions == []  # 누락 시 default
-    assert data.observed_at is None
+    assert len(data.partitions) == 1
+    assert data.partitions[0].current_offset == 100
+    assert data.observed_at is not None
+    assert data.p95_lag == 42.0
+    assert len(data.top_lag_partitions) == 1
+    assert data.summary == "consumer lag snapshot: lag p95=42"
     assert data.source == "kafka-admin"  # Spring 무관 필드 명시 수용
 
 
