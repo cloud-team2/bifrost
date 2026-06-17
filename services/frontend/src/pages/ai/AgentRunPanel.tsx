@@ -245,11 +245,37 @@ type AgentMsg =
   | RemediationMsg
   | PipelineWizardMsg
 
+// 주의: 이 집합은 백엔드 retrieval.py 의 _STRUCTURED_PANEL_TOOLS 와 동기화되어야 한다.
+// (SSE 에이전트런에서 백엔드가 이 도구들에만 payload.result 를 실어준다.)
+// 슬래시(명령탭) 실행은 executeAgentTool 결과를 직접 받으므로 이 집합과 무관하게 ToolPanelCard 로 렌더된다.
 const STRUCTURED_TOOL_INTRO: Record<string, string> = {
   get_consumer_groups: 'Consumer Group의 lag 현황과 상태를 조회합니다.',
   list_pipelines: '현재 프로젝트의 파이프라인 상태를 조회합니다.',
   list_connectors: 'Kafka Connector 상태 및 Task 정보를 조회합니다.',
   analyze_event_log: '최근 2시간 이벤트 로그와 인시던트 현황을 분석합니다.',
+}
+
+// 헤더에 보일 짧은 한글 기능명. 백엔드 tools 카탈로그의 label_ko를 미러링한다(없으면 toolDescription 폴백).
+const TOOL_LABEL_KO: Record<string, string> = {
+  get_consumer_groups: '컨슈머 그룹 조회',
+  get_consumer_lag: '컨슈머 지연 조회',
+  list_pipelines: '파이프라인 상태 조회',
+  list_project_pipelines: '파이프라인 목록 조회',
+  list_connectors: '커넥터 목록 조회',
+  get_connector_status: '커넥터 상태 조회',
+  get_cluster_info: '클러스터 상태 조회',
+  get_pipeline_topology: '토폴로지 조회',
+  get_incident_summary: '인시던트 요약',
+  get_alerts: '인시던트 목록 조회',
+  get_traces: '트레이스 조회',
+  get_deployments: '배포·변경 이력 조회',
+  get_metrics: '지표 조회',
+  search_logs: '로그 검색',
+  analyze_event_log: '이벤트 로그 분석',
+}
+
+export function toolLabelKo(toolName: string): string {
+  return TOOL_LABEL_KO[toolName] ?? toolDescription(toolName)
 }
 const SLASH_CATALOG_ERROR_MESSAGE = '도구 목록을 불러오지 못했습니다. 잠시 후 다시 시도하세요.'
 const STALE_PIPELINE_WIZARD_MESSAGE = '프로젝트가 변경되어 이 파이프라인 생성 흐름을 계속할 수 없습니다. 현재 프로젝트에서 다시 시작하세요.'
@@ -2503,22 +2529,17 @@ function EvidenceCard({
 export function RcaPreviewCard({ msg }: { msg: RcaPreviewMsg }) {
   return (
     <div className="rounded-xl border border-[#ececec] bg-white px-3 py-2.5 text-[12px] text-gray-700">
-      <div className="mb-2 flex min-w-0 items-center gap-1.5">
+      <div className="mb-2 flex min-w-0 flex-wrap items-center gap-1.5">
         <Icon name="search" size={13} className="shrink-0 text-[#6b6b73]" />
-        <span className="shrink-0 font-semibold text-gray-900">RCA</span>
-        {msg.rootCauseId && (
-          <span className="min-w-0 truncate rounded bg-[#ededed] px-1.5 py-0.5 font-mono text-[10.5px] font-semibold text-[#6b6b73]">
-            {msg.rootCauseId}
-          </span>
-        )}
+        <span className="shrink-0 font-semibold text-gray-900">근본 원인 분석</span>
         {msg.confidence != null && (
-          <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[10.5px] text-gray-500">
-            {Math.round(msg.confidence * 100)}%
+          <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[10.5px] font-medium text-gray-500">
+            신뢰도 {Math.round(msg.confidence * 100)}%
           </span>
         )}
         {msg.verified && (
-          <span className="shrink-0 rounded bg-[#ededed] px-1.5 py-0.5 text-[10.5px] font-semibold text-[#6b6b73]">
-            verified
+          <span className="shrink-0 rounded bg-emerald-50 px-1.5 py-0.5 text-[10.5px] font-semibold text-emerald-700">
+            검증됨
           </span>
         )}
       </div>
@@ -2695,22 +2716,25 @@ function ToolPanelCard({ msg }: { msg: ToolPanelMsg }) {
     <div className="rounded-lg border border-gray-200 bg-white text-[12px] text-gray-700">
       <div className="space-y-2 border-b border-gray-100 px-3 py-2.5">
         <div className="flex items-start gap-2">
-          {msg.state === 'running' ? (
-            <Spinner size={13} />
-          ) : msg.state === 'failed' ? (
-            <Icon name="alert" size={13} className="mt-0.5 text-[#c0392b]" />
-          ) : (
-            <Icon name="table" size={13} className="mt-0.5 text-gray-500" />
-          )}
+          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[#0d0d0d] text-white">
+            {msg.state === 'running' ? (
+              <Spinner size={13} className="text-white" />
+            ) : msg.state === 'failed' ? (
+              <Icon name="alert" size={14} />
+            ) : (
+              <Icon name="table" size={14} />
+            )}
+          </div>
           <div className="min-w-0 flex-1">
-            <div className="break-words leading-relaxed text-gray-700">{toolDescription(msg.toolName)}</div>
-            <div className="mt-1.5 flex flex-wrap gap-1.5">
-              <span className="max-w-full break-all rounded bg-gray-900 px-1.5 py-0.5 font-mono text-[10.5px] text-white">{msg.toolName}</span>
-              {paramChips(msg.toolName, msg.params).map(([key, value]) => (
-                <span key={key} className="max-w-full break-all rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 font-mono text-[10.5px] text-gray-500">
-                  {key}={formatParamValue(value)}
-                </span>
-              ))}
+            <div className="break-words font-semibold text-gray-900">{toolLabelKo(msg.toolName)}</div>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {paramChips(msg.toolName, msg.params)
+                .filter(([key]) => key !== 'scope')
+                .map(([key, value]) => (
+                  <span key={key} className="max-w-full break-all rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[10.5px] text-gray-500">
+                    {paramLabelKo(key)} {formatParamChipValue(value)}
+                  </span>
+                ))}
             </div>
           </div>
         </div>
@@ -2730,10 +2754,12 @@ function ToolPanelCard({ msg }: { msg: ToolPanelMsg }) {
           <PanelEmpty text="조회 중" />
         ) : (error || notice) && msg.result == null ? null : msg.toolName === 'get_consumer_groups' ? (
           <ConsumerGroupsPanel result={result} />
-        ) : msg.toolName === 'list_pipelines' ? (
+        ) : msg.toolName === 'list_pipelines' || msg.toolName === 'list_project_pipelines' ? (
           <PipelineStatusPanel result={result} />
         ) : msg.toolName === 'list_connectors' ? (
           <ConnectorStatusPanel result={result} />
+        ) : msg.toolName === 'get_connector_status' ? (
+          <ConnectorDetailPanel result={result} />
         ) : msg.toolName === 'analyze_event_log' ? (
           <EventSummaryPanel result={result} />
         ) : (
@@ -2764,7 +2790,7 @@ function GenericObjectValue({ record, depth }: { record: Record<string, unknown>
   const entries = Object.entries(record).filter(([, value]) => value !== undefined)
   if (entries.length === 0) return <PanelEmpty text="표시할 결과가 없습니다" />
 
-  const scalarEntries = entries.filter(([, value]) => isGenericScalar(value))
+  const scalarEntries = entries.filter(([, value]) => isGenericScalar(value) && formatGenericScalar(value) !== '-')
   const nestedEntries = entries.filter(([, value]) => !isGenericScalar(value))
 
   return (
@@ -2825,7 +2851,7 @@ function GenericRecordCard({
   const entries = Object.entries(record).filter(
     ([key, value]) => value !== undefined && key !== headline.key && !isGenericBadgeKey(key),
   )
-  const scalarEntries = entries.filter(([, value]) => isGenericScalar(value))
+  const scalarEntries = entries.filter(([, value]) => isGenericScalar(value) && formatGenericScalar(value) !== '-')
   const nestedEntries = entries.filter(([, value]) => !isGenericScalar(value))
 
   return (
@@ -2921,42 +2947,40 @@ function ConsumerGroupsPanel({ result }: { result: Record<string, unknown> | nul
   )
 }
 
-function PipelineStatusPanel({ result }: { result: Record<string, unknown> | null }) {
+export function PipelineStatusPanel({ result }: { result: Record<string, unknown> | null }) {
   const rows = recordArray(result, 'pipelines')
   if (rows.length === 0) return <PanelEmpty text="파이프라인 데이터 없음" />
 
+  const items = rows.map((row) => {
+    const status = (recordString(row, 'status') ?? 'unknown').toLowerCase()
+    const lag = recordNumber(row, 'lag')
+    const token = lag != null && lag >= 5000 && semanticToken(status) === 'safe' ? 'warn' : semanticToken(status)
+    return {
+      name: recordString(row, 'name') ?? recordString(row, 'id') ?? '-',
+      statusLabel: pipelineStatusKo(status),
+      token,
+      lag,
+      error: recordString(row, 'error'),
+    }
+  })
+  const counts = statusCounts(items.map((item) => item.token))
+
   return (
-    <div className="overflow-x-auto">
-      <table className="min-w-full table-fixed font-mono text-[11px]">
-        <thead className="text-left text-gray-400">
-          <tr>
-            <th className="w-[24%] py-1 pr-3 font-medium">id</th>
-            <th className="w-[34%] py-1 pr-3 font-medium">name</th>
-            <th className="w-[20%] py-1 pr-3 font-medium">status</th>
-            <th className="w-[22%] py-1 text-right font-medium">lag</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, index) => {
-            const id = recordString(row, 'id') ?? '-'
-            const status = recordString(row, 'status') ?? 'unknown'
-            const lag = recordNumber(row, 'lag')
-            const rowError = recordString(row, 'error')
-            const warning = status === 'error' || status === 'lag' || (lag != null && lag >= 5000) || !!rowError
-            return (
-              <tr key={`${id}:${index}`} className="border-t border-gray-100 align-top">
-                <td className="break-all py-1.5 pr-3 text-gray-500">{shortId(id)}</td>
-                <td className="break-words py-1.5 pr-3 text-gray-700">{warning ? '⚠ ' : ''}{recordString(row, 'name') ?? '-'}</td>
-                <td className="break-words py-1.5 pr-3 text-gray-600">{status}</td>
-                <td className="py-1.5 text-right text-gray-700">
-                  {lag == null ? '-' : lag.toLocaleString()}
-                  {rowError && <div className="mt-0.5 text-[10px] text-[#c0392b]">{rowError}</div>}
-                </td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
+    <div className="text-[12px]">
+      <div className="mb-1.5 text-[11px] text-gray-500">{statusCountText(rows.length, counts)}</div>
+      <div className="divide-y divide-gray-100 rounded-md border border-gray-100">
+        {items.map((item, index) => (
+          <div key={`${item.name}:${index}`} className="flex items-center justify-between gap-2 px-2.5 py-1.5">
+            <span className="min-w-0 truncate font-medium text-gray-800">{item.name}</span>
+            <span className={cn('inline-flex shrink-0 items-center gap-1', statusTextClass(item.token))}>
+              <span className={cn('h-1.5 w-1.5 rounded-full', semanticDotClass(item.token))} />
+              {item.statusLabel}
+              {item.token === 'warn' && item.lag != null && <span className="font-mono">{item.lag.toLocaleString()}</span>}
+              {item.error && <span className="ml-1 truncate font-mono text-[10px] text-[#c0392b]">{item.error}</span>}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -3006,7 +3030,80 @@ function ConnectorStatusPanel({ result }: { result: Record<string, unknown> | nu
   )
 }
 
-function EventSummaryPanel({ result }: { result: Record<string, unknown> | null }) {
+export interface ConnectorStatusSummary {
+  name: string | null
+  state: string
+  stateLabel: string
+  stateToken: SemanticToken
+  total: number
+  running: number
+  failed: number
+  lastError: string | null
+}
+
+const CONNECTOR_STATE_LABEL: Record<string, string> = {
+  running: '실행 중',
+  paused: '일시정지',
+  failed: '실패',
+  unassigned: '미할당',
+  restarting: '재시작 중',
+  destroyed: '제거됨',
+  stopped: '중지됨',
+}
+
+export function connectorStatusSummary(result: unknown): ConnectorStatusSummary | null {
+  const record = asRecord(result)
+  if (!record) return null
+  const state = (recordString(record, 'state', 'connector_state', 'status') ?? 'UNKNOWN').toUpperCase()
+  const tasks = recordArray(record, 'tasks')
+  const total = tasks.length
+  const running = tasks.filter((task) => (recordString(task, 'state', 'status') ?? '').toUpperCase() === 'RUNNING').length
+  const failed = total - running
+  const lastError =
+    recordString(record, 'last_error', 'lastError', 'trace') ??
+    tasks.map((task) => recordString(task, 'trace', 'last_error')).find((value): value is string => !!value) ??
+    null
+  return {
+    name: recordString(record, 'connector_name', 'connector', 'name'),
+    state,
+    stateLabel: CONNECTOR_STATE_LABEL[state.toLowerCase()] ?? state,
+    stateToken: semanticToken(state),
+    total,
+    running,
+    failed,
+    lastError,
+  }
+}
+
+export function ConnectorDetailPanel({ result }: { result: Record<string, unknown> | null }) {
+  const summary = connectorStatusSummary(result)
+  if (!summary) return <PanelEmpty text="커넥터 상태 데이터 없음" />
+  const taskText =
+    summary.total === 0
+      ? '태스크 없음'
+      : summary.failed > 0
+        ? `태스크 ${summary.running}/${summary.total} 정상 · ${summary.failed}개 실패`
+        : `태스크 ${summary.running}/${summary.total} 정상`
+  return (
+    <div className="space-y-2 text-[12px]">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={cn('inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold', semanticBadgeClass(summary.stateToken))}>
+          <span className={cn('h-1.5 w-1.5 rounded-full', semanticDotClass(summary.stateToken))} />
+          {summary.stateLabel}
+        </span>
+        <span className={summary.failed > 0 ? 'text-[#c0392b]' : 'text-gray-600'}>{taskText}</span>
+      </div>
+      {summary.lastError && (
+        <details className="rounded border border-[#e7c9c4] bg-[#fcf3f2] px-2 py-1.5 text-[11.5px] text-[#c0392b]">
+          <summary className="cursor-pointer select-none">오류 원인 보기</summary>
+          <div className="mt-1 whitespace-pre-wrap break-words font-mono text-[10.5px]">{summary.lastError}</div>
+        </details>
+      )}
+    </div>
+  )
+}
+
+export function EventSummaryPanel({ result }: { result: Record<string, unknown> | null }) {
   if (!result) return <PanelEmpty text="이벤트/인시던트 데이터 없음" />
   const open = recordNumber(result, 'openIncidents', 'open_incidents') ?? 0
   const criticalCount = recordNumber(result, 'criticalIncidents', 'critical_incidents') ?? 0
@@ -3014,35 +3111,48 @@ function EventSummaryPanel({ result }: { result: Record<string, unknown> | null 
   const warnings = recordArray(result, 'warnings')
 
   return (
-    <div className="space-y-3 font-mono text-[11px]">
-      <div className="rounded bg-gray-50 px-2 py-1.5 text-gray-700">
-        인시던트 open:{open.toLocaleString()}건 (critical:{criticalCount.toLocaleString()}건)
+    <div className="space-y-2.5 text-[12px]">
+      <div className="text-gray-600">
+        미해결 <b className="text-gray-800">{open.toLocaleString()}건</b>
+        {criticalCount > 0 && (
+          <>
+            {' · '}긴급 <b className="text-[#c0392b]">{criticalCount.toLocaleString()}건</b>
+          </>
+        )}
       </div>
       <div>
-        <div className="mb-1 text-[10.5px] font-semibold uppercase text-gray-400">critical</div>
+        <div className="mb-1 text-[10.5px] font-semibold text-gray-400">긴급</div>
         {critical.length === 0 ? (
-          <PanelEmpty text="critical 인시던트 없음" />
+          <PanelEmpty text="긴급 인시던트 없음" />
         ) : (
           <div className="space-y-1">
-            {critical.map((item, index) => (
-              <div key={`${recordString(item, 'incidentId', 'incident_id') ?? index}`} className="break-words border-t border-gray-100 pt-1 text-gray-700">
-                ⚠ {recordString(item, 'severity') ?? '-'} · {recordString(item, 'title') ?? '-'} · {shortId(recordString(item, 'incidentId', 'incident_id') ?? '-')}
-              </div>
-            ))}
+            {critical.map((item, index) => {
+              const id = recordString(item, 'incidentId', 'incident_id')
+              return (
+                <div key={`${id ?? index}`} className="break-words rounded border border-rose-100 bg-rose-50 px-2 py-1.5 text-[11.5px] text-gray-700">
+                  ⚠ {recordString(item, 'title') ?? '-'}
+                  {id && <span className="text-gray-400"> · #{shortId(id)}</span>}
+                </div>
+              )
+            })}
           </div>
         )}
       </div>
       <div>
-        <div className="mb-1 text-[10.5px] font-semibold uppercase text-gray-400">warnings</div>
+        <div className="mb-1 text-[10.5px] font-semibold text-gray-400">경고</div>
         {warnings.length === 0 ? (
           <PanelEmpty text="주요 경고 이벤트 없음" />
         ) : (
           <div className="space-y-1">
-            {warnings.map((item, index) => (
-              <div key={`${recordString(item, 'eventId', 'event_id') ?? index}`} className="break-words border-t border-gray-100 pt-1 text-gray-600">
-                {recordString(item, 'level') ?? '-'} · {recordString(item, 'type') ?? '-'} · {recordString(item, 'message') ?? ''}
-              </div>
-            ))}
+            {warnings.map((item, index) => {
+              const id = recordString(item, 'eventId', 'event_id')
+              return (
+                <div key={`${id ?? index}`} className="break-words rounded bg-gray-50 px-2 py-1.5 text-[11.5px] text-gray-600">
+                  {recordString(item, 'message') ?? recordString(item, 'type') ?? '-'}
+                  {id && <span className="text-gray-400"> · #{shortId(id)}</span>}
+                </div>
+              )
+            })}
           </div>
         )}
       </div>
@@ -3382,11 +3492,50 @@ function isGenericBadgeKey(key: string) {
   return GENERIC_BADGE_KEYS.has(key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase())
 }
 
+const FIELD_LABEL_KO: Record<string, string> = {
+  state: '상태',
+  status: '상태',
+  connector_state: '상태',
+  connector_name: '커넥터',
+  connector: '커넥터',
+  pipeline: '파이프라인',
+  pipeline_id: '파이프라인',
+  name: '이름',
+  tasks: '태스크',
+  task_id: '태스크',
+  trace: '오류',
+  last_error: '오류',
+  error: '오류',
+  worker_id: '워커',
+  lag: '지연',
+  partition: '파티션',
+  offset: '오프셋',
+  topic: '토픽',
+  group: '그룹',
+  consumer_group: '컨슈머 그룹',
+  type: '종류',
+  throughput: '처리량',
+  throughput_per_second: '초당 처리량',
+  count: '개수',
+  severity: '심각도',
+  title: '제목',
+  message: '메시지',
+  level: '레벨',
+  incident_id: '인시던트',
+  observed_at: '관측 시각',
+  updated_at: '갱신 시각',
+  created_at: '생성 시각',
+}
+
 function formatGenericLabel(key: string) {
-  return key
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/[_-]+/g, ' ')
-    .trim()
+  const normalized = key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase()
+  return (
+    FIELD_LABEL_KO[normalized] ??
+    key
+      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+      .replace(/[_-]+/g, ' ')
+      .trim()
+  )
 }
 
 function formatGenericScalar(value: unknown) {
@@ -3396,19 +3545,85 @@ function formatGenericScalar(value: unknown) {
   return String(value)
 }
 
+// 의미색 토큰 — 모노크롬 기반 위에 안전(초록)/주의(주황)/위험(빨강)만 선택적으로 입힌다.
+export type SemanticToken = 'safe' | 'warn' | 'danger' | 'neutral'
+
+const SEMANTIC_DANGER = ['critical', 'error', 'failed', 'failure', 'fail', 'blocked', 'down', 'high', 'forbidden', 'unassigned', 'destroyed', 'stopped']
+const SEMANTIC_WARN = ['warning', 'warn', 'degraded', 'pending', 'rebalancing', 'medium', 'lag', 'paused', 'restarting']
+const SEMANTIC_SAFE = ['healthy', 'running', 'success', 'succeeded', 'active', 'resolved', 'closed', 'read_only', 'normal', 'ok', 'low']
+
+export function semanticToken(value: string): SemanticToken {
+  const n = value.toLowerCase()
+  if (SEMANTIC_DANGER.some((token) => n.includes(token))) return 'danger'
+  if (SEMANTIC_WARN.some((token) => n.includes(token))) return 'warn'
+  if (SEMANTIC_SAFE.some((token) => n.includes(token))) return 'safe'
+  return 'neutral'
+}
+
+export function semanticBadgeClass(token: SemanticToken) {
+  if (token === 'danger') return 'bg-[#c0392b] text-white'
+  if (token === 'warn') return 'bg-amber-100 text-amber-700'
+  if (token === 'safe') return 'bg-emerald-100 text-emerald-700'
+  return 'bg-gray-100 text-gray-600'
+}
+
+function semanticDotClass(token: SemanticToken) {
+  if (token === 'danger') return 'bg-[#c0392b]'
+  if (token === 'warn') return 'bg-amber-500'
+  if (token === 'safe') return 'bg-emerald-500'
+  return 'bg-gray-400'
+}
+
+function statusTextClass(token: SemanticToken) {
+  if (token === 'danger') return 'text-[#c0392b]'
+  if (token === 'warn') return 'text-amber-700'
+  if (token === 'safe') return 'text-emerald-700'
+  return 'text-gray-500'
+}
+
+const PIPELINE_STATUS_KO: Record<string, string> = {
+  running: '정상',
+  ok: '정상',
+  healthy: '정상',
+  active: '정상',
+  lag: '지연',
+  degraded: '지연',
+  pending: '지연',
+  error: '오류',
+  failed: '오류',
+  down: '오류',
+  stopped: '중지',
+  paused: '일시정지',
+  unknown: '알 수 없음',
+}
+
+export function pipelineStatusKo(status: string) {
+  return PIPELINE_STATUS_KO[status.toLowerCase()] ?? status
+}
+
+export function statusCounts(tokens: SemanticToken[]): Record<SemanticToken, number> {
+  return tokens.reduce(
+    (acc, token) => {
+      acc[token] += 1
+      return acc
+    },
+    { safe: 0, warn: 0, danger: 0, neutral: 0 } as Record<SemanticToken, number>,
+  )
+}
+
+function statusCountText(total: number, counts: Record<SemanticToken, number>) {
+  const parts = [`전체 ${total}개`]
+  if (counts.safe) parts.push(`정상 ${counts.safe}`)
+  if (counts.warn) parts.push(`지연 ${counts.warn}`)
+  if (counts.danger) parts.push(`오류 ${counts.danger}`)
+  return parts.join(' · ')
+}
+
 function genericBadgeClass(label: string, value: unknown) {
-  const normalized = formatGenericScalar(value).toLowerCase()
-  if (typeof value === 'boolean') return value ? 'bg-[#ededed] text-[#6b6b73]' : 'bg-gray-100 text-gray-600'
-  if (['critical', 'error', 'failed', 'failure', 'blocked', 'down', 'high'].some((token) => normalized.includes(token))) {
-    return 'bg-[#c0392b] text-white'
-  }
-  if (['warning', 'warn', 'degraded', 'pending', 'rebalancing', 'medium'].some((token) => normalized.includes(token))) {
-    return 'bg-[#ededed] text-[#6b6b73]'
-  }
-  if (['ok', 'healthy', 'running', 'success', 'succeeded', 'active', 'resolved', 'closed', 'low'].some((token) => normalized.includes(token))) {
-    return 'bg-[#ededed] text-[#6b6b73]'
-  }
-  return isGenericBadgeKey(label) ? 'bg-[#ededed] text-[#6b6b73]' : 'bg-gray-100 text-gray-600'
+  if (typeof value === 'boolean') return value ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600'
+  const token = semanticToken(formatGenericScalar(value))
+  if (token !== 'neutral') return semanticBadgeClass(token)
+  return 'bg-gray-100 text-gray-600'
 }
 export function remediationCandidatesFromPayload(payload: unknown): RemediationCandidate[] {
   const seen = new Set<string>()
@@ -3466,11 +3681,32 @@ function mergeRemediationCandidates(current: RemediationCandidate[], next: Remed
 }
 
 function riskChipClass(risk: string) {
-  const normalized = risk.toLowerCase()
-  if (normalized === 'read_only' || normalized === 'low') return 'bg-[#ededed] text-[#6b6b73]'
-  if (normalized === 'medium') return 'bg-[#ededed] text-[#6b6b73]'
-  if (normalized === 'high' || normalized === 'forbidden') return 'bg-[#c0392b] text-white'
-  return 'bg-gray-100 text-gray-600'
+  return semanticBadgeClass(semanticToken(risk))
+}
+
+const PARAM_LABEL_KO: Record<string, string> = {
+  connector_name: '커넥터',
+  connector: '커넥터',
+  pipeline_id: '파이프라인',
+  pipelineId: '파이프라인',
+  consumer_group: '컨슈머 그룹',
+  group: '컨슈머 그룹',
+  incident_id: '인시던트',
+  incidentId: '인시던트',
+  database_id: '데이터베이스',
+  table: '테이블',
+  topic: '토픽',
+  query: '검색어',
+  metric: '지표',
+}
+
+function paramLabelKo(key: string) {
+  return PARAM_LABEL_KO[key] ?? formatGenericLabel(key)
+}
+
+function formatParamChipValue(value: unknown) {
+  if (typeof value !== 'string') return formatParamValue(value)
+  return value.length > 22 ? `…${value.slice(-14)}` : value
 }
 
 function paramChips(toolName: string, params: Record<string, unknown>): [string, unknown][] {

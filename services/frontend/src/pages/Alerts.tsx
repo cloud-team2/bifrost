@@ -17,6 +17,19 @@ import {
 import type { Edge } from '../data/types'
 import type { LogLevel } from '../data/types'
 import { cn } from '../lib/format'
+import { semanticBadgeClass, semanticToken } from './ai/AgentRunPanel'
+
+const RISK_LABEL_KO: Record<string, string> = {
+  low: '낮음',
+  read_only: '낮음',
+  medium: '중간',
+  high: '높음',
+  forbidden: '높음',
+}
+
+function riskLabelKo(risk: string) {
+  return RISK_LABEL_KO[risk.toLowerCase()] ?? risk
+}
 
 /* ---------------------------------------------------------------- constants */
 
@@ -1030,6 +1043,8 @@ function IncidentPanel({
       estimatedTime: action.estimatedTime ?? '미정',
       actionCandidate,
     })
+    // 권장 조치 실행 시 AI 패널을 펼쳐 런이 챗봇에 바로 보이게 한다.
+    app.setAIPanel(true)
   }
 
   return (
@@ -1232,26 +1247,29 @@ function IncidentPanel({
                     </div>
                   )}
                   <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-gray-500">
-                    {action.risk && <span>risk {action.risk}</span>}
+                    {action.risk && (
+                      <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-semibold', semanticBadgeClass(semanticToken(action.risk)))}>
+                        위험 {riskLabelKo(action.risk)}
+                      </span>
+                    )}
                     {action.estimatedTime && <span>{action.estimatedTime}</span>}
-                    {action.toolName && <span className="font-mono">{action.toolName}</span>}
                     <button
                       onClick={() => {
                         const report = reports.find((r) => r.id === action.reportId)
                         if (report) openReport(report)
                       }}
-                      className="font-medium text-brand-600 hover:underline"
+                      className="font-medium text-gray-600 hover:underline"
                     >
                       근거 리포트
                     </button>
                     <button
                       onClick={() => runAction(action)}
                       disabled={!runCandidate}
-                      title={runCandidate ? 'AI 채팅에서 실제 조치를 실행합니다' : '지원되는 실행 tool 또는 실제 target을 확인하지 못했습니다'}
-                      className="ml-auto inline-flex items-center gap-1 rounded-md bg-gray-900 px-2 py-1 text-[11px] font-semibold text-white hover:bg-gray-800 disabled:bg-gray-200 disabled:text-gray-400"
+                      title={runCandidate ? 'AI 채팅에서 실제 조치를 실행합니다' : '지원되는 실행 도구 또는 대상을 확인하지 못했습니다'}
+                      className="ml-auto inline-flex items-center gap-1 rounded-md bg-[#0d0d0d] px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-black disabled:bg-gray-200 disabled:text-gray-400"
                     >
                       <Icon name="play" size={11} />
-                      Run
+                      실행
                     </button>
                   </div>
                 </div>
