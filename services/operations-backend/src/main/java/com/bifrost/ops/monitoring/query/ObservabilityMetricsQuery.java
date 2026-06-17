@@ -38,12 +38,15 @@ public class ObservabilityMetricsQuery {
 
     private final boolean enabled;
     private final PrometheusClient client;
+    private final String kafkaNamespace;
 
     public ObservabilityMetricsQuery(
             @Value("${prometheus.enabled:false}") boolean enabled,
-            PrometheusClient client) {
+            PrometheusClient client,
+            @Value("${kafka-cluster.namespace:platform-kafka}") String kafkaNamespace) {
         this.enabled = enabled;
         this.client = client;
+        this.kafkaNamespace = nonBlankOrDefault(kafkaNamespace, "platform-kafka");
     }
 
     public boolean isEnabled() {
@@ -55,7 +58,7 @@ public class ObservabilityMetricsQuery {
         if (!enabled) {
             return MetricsResult.stub(metric, "Prometheus 비활성화 — stub 응답 (metric=" + metric + ")");
         }
-        String promql = promqlFor(metric, workspace.getNamespace());
+        String promql = promqlFor(metric, projectKey(workspace), kafkaNamespace);
         if (promql == null) {
             return MetricsResult.stub(metric, "지원하지 않는 metric: " + metric);
         }
@@ -76,15 +79,47 @@ public class ObservabilityMetricsQuery {
     }
 
     /** 알려진 logical metric → PromQL. 미지원이면 null(호출부에서 stub). */
-    private static String promqlFor(String metric, String namespace) {
+    private static String promqlFor(String metric, String projectKey, String kafkaNamespace) {
         if (metric == null) {
             return null;
         }
         return switch (metric) {
             case "pipeline_lag_seconds" ->
-                    "sum(kafka_consumergroup_lag{namespace=\"" + namespace + "\"})";
+                    "sum(kafka_consumergroup_lag{namespace=\"" + labelValue(kafkaNamespace)
+                            + "\",topic=~\"(cdc|eda)\\\\.table\\\\."
+                            + regexLabelValue(projectKey) + "\\\\..*\"})";
             default -> null;
         };
+    }
+
+    private static String projectKey(WorkspaceEntity workspace) {
+        return workspace.getNamespace() != null && !workspace.getNamespace().isBlank()
+                ? workspace.getNamespace()
+                : workspace.getId().toString();
+    }
+
+    private static String nonBlankOrDefault(String value, String fallback) {
+        return value != null && !value.isBlank() ? value : fallback;
+    }
+
+    private static String regexLabelValue(String raw) {
+        return labelValue(escapeRegex(raw));
+    }
+
+    private static String escapeRegex(String raw) {
+        StringBuilder escaped = new StringBuilder(raw.length());
+        for (int i = 0; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            if ("\\.[]{}()+*?^$|".indexOf(c) >= 0) {
+                escaped.append('\\');
+            }
+            escaped.append(c);
+        }
+        return escaped.toString();
+    }
+
+    private static String labelValue(String raw) {
+        return raw.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     private static String summarize(String metric, List<MetricsDataPoint> points) {
