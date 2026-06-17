@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
+  AlertsPanel,
   ConnectorDetailPanel,
   EventSummaryPanel,
   GenericToolResultPanel,
@@ -8,6 +9,7 @@ import {
   connectorStatusSummary,
   pipelineStatusKo,
   semanticToken,
+  severityKo,
   statusCounts,
   toolLabelKo,
 } from './AgentRunPanel'
@@ -142,6 +144,34 @@ describe('EventSummaryPanel', () => {
     expect(html).toContain('주문 파이프라인 지연')
     expect(html).not.toContain('critical')
     expect(html).not.toContain('warnings')
+  })
+})
+
+describe('severityKo / AlertsPanel', () => {
+  it('maps severities to Korean', () => {
+    expect(severityKo('CRITICAL')).toBe('긴급')
+    expect(severityKo('warning')).toBe('경고')
+    expect(severityKo('info')).toBe('정보')
+  })
+
+  it('renders alerts as a Korean list, clickable when incident_id exists', () => {
+    const opened: string[] = []
+    const html = renderToStaticMarkup(
+      <AlertsPanel
+        result={{
+          alerts: [
+            { alert_id: 'a1', severity: 'CRITICAL', status: 'open', summary: '주문 파이프라인 지연', incident_id: 'INC-1' },
+            { alert_id: 'a2', severity: 'WARNING', status: 'open', summary: '재시작 반복' },
+          ],
+        }}
+        onOpenIncident={(id) => opened.push(id)}
+      />,
+    )
+    expect(html).toContain('긴급')
+    expect(html).toContain('경고')
+    expect(html).toContain('주문 파이프라인 지연')
+    expect(html).toContain('<button') // incident_id 있는 항목은 클릭 가능
+    expect(html).not.toContain('CRITICAL')
   })
 })
 

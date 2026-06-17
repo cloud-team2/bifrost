@@ -1718,7 +1718,7 @@ export function AgentRunPanel({
               />
             )
           }
-          if (m.kind === 'toolPanel') return <ToolPanelCard key={m.id} msg={m} onOpenPipeline={app.openPipeline} />
+          if (m.kind === 'toolPanel') return <ToolPanelCard key={m.id} msg={m} onOpenPipeline={app.openPipeline} onOpenIncident={app.openIncident} />
           if (m.kind === 'approval') {
             return (
               <ApprovalCard
@@ -2706,7 +2706,15 @@ function ProgressDot({ state }: { state: ProgressState }) {
   return <Icon name="check" size={12} strokeWidth={3} className="mt-0.5 text-[#8a8a8a]" />
 }
 
-function ToolPanelCard({ msg, onOpenPipeline }: { msg: ToolPanelMsg; onOpenPipeline?: (id: string) => void }) {
+function ToolPanelCard({
+  msg,
+  onOpenPipeline,
+  onOpenIncident,
+}: {
+  msg: ToolPanelMsg
+  onOpenPipeline?: (id: string) => void
+  onOpenIncident?: (id: string) => void
+}) {
   const result = asRecord(msg.result)
   const resultError = result ? recordString(result, 'error') : null
   const error = msg.error ?? resultError
@@ -2760,6 +2768,8 @@ function ToolPanelCard({ msg, onOpenPipeline }: { msg: ToolPanelMsg; onOpenPipel
           <ConnectorStatusPanel result={result} />
         ) : msg.toolName === 'get_connector_status' ? (
           <ConnectorDetailPanel result={result} />
+        ) : msg.toolName === 'get_alerts' ? (
+          <AlertsPanel result={result} onOpenIncident={onOpenIncident} />
         ) : msg.toolName === 'analyze_event_log' ? (
           <EventSummaryPanel result={result} />
         ) : (
@@ -3126,6 +3136,66 @@ export function ConnectorDetailPanel({ result }: { result: Record<string, unknow
           <div className="mt-1 whitespace-pre-wrap break-words font-mono text-[10.5px]">{summary.lastError}</div>
         </details>
       )}
+    </div>
+  )
+}
+
+const SEVERITY_KO: Record<string, string> = {
+  critical: '긴급',
+  fatal: '긴급',
+  error: '오류',
+  high: '높음',
+  warning: '경고',
+  warn: '경고',
+  medium: '중간',
+  info: '정보',
+  low: '낮음',
+}
+
+export function severityKo(severity: string) {
+  return SEVERITY_KO[severity.toLowerCase()] ?? severity
+}
+
+export function AlertsPanel({
+  result,
+  onOpenIncident,
+}: {
+  result: Record<string, unknown> | null
+  onOpenIncident?: (id: string) => void
+}) {
+  const rows = recordArray(result, 'alerts')
+  if (rows.length === 0) return <PanelEmpty text="인시던트 없음" />
+  return (
+    <div className="space-y-1.5 text-[12px]">
+      {rows.map((row, index) => {
+        const severity = (recordString(row, 'severity') ?? '').toLowerCase()
+        const token = semanticToken(severity)
+        const incidentId = recordString(row, 'incident_id', 'incidentId')
+        const clickable = !!(onOpenIncident && incidentId)
+        const inner = (
+          <>
+            <span className={cn('inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10.5px] font-semibold', semanticBadgeClass(token))}>
+              {severityKo(severity)}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-gray-700">{recordString(row, 'summary', 'title') ?? '-'}</span>
+            {clickable && <Icon name="chevron-right" size={12} className="shrink-0 text-gray-300" />}
+          </>
+        )
+        return clickable ? (
+          <button
+            key={index}
+            onClick={() => onOpenIncident!(incidentId!)}
+            title="인시던트 상세 열기"
+            className="flex w-full items-center gap-2 rounded-md border border-gray-100 px-2 py-1.5 text-left hover:bg-gray-50"
+          >
+            {inner}
+          </button>
+        ) : (
+          <div key={index} className="flex items-center gap-2 rounded-md border border-gray-100 px-2 py-1.5">
+            {inner}
+          </div>
+        )
+      })}
     </div>
   )
 }
