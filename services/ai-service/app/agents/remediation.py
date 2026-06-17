@@ -18,6 +18,42 @@ _CUSTOMER_ESCALATION_ROOT_CAUSES = {
 }
 _OPERATOR_ESCALATION_ACTION = "escalate_to_operator"
 _CUSTOMER_ESCALATION_ACTION = "escalate_to_customer_owner"
+_CONNECTOR_TASK_FAILED = "CONNECTOR_TASK_FAILED"
+_CONNECTOR_TRACE_ACTION = "collect_connector_trace"
+_CONNECTOR_RESTART_ACTION = "restart_connector"
+_CONNECTOR_PAUSE_ACTION = "pause_connector"
+_CONNECTOR_RESUME_ACTION = "resume_connector"
+_PAUSE_HINTS = (
+    "repeated",
+    "recurring",
+    "repeat",
+    "loop",
+    "flap",
+    "downstream noise",
+    "customer impact",
+    "반복",
+    "계속",
+    "영향",
+    "확산",
+    "노이즈",
+)
+_RESUME_HINTS = (
+    "resolved",
+    "recovered",
+    "fixed",
+    "cleared",
+    "resume",
+    "복구",
+    "해소",
+    "조치 완료",
+    "재개",
+)
+_TRACE_GAP_HINTS = (
+    "task trace",
+    "worker log",
+    "trace",
+    "worker",
+)
 
 
 async def run_remediation(rca_out: RcaOutput | None) -> RemediationOutput:
@@ -53,16 +89,82 @@ async def run_remediation(rca_out: RcaOutput | None) -> RemediationOutput:
             continue
 
         candidates.extend(
-            _runbook_action_to_candidate(action, root_cause)
-            for action in runbook_actions
+            _runbook_action_to_candidate(action, root_cause, reason_suffix=reason_suffix)
+            for action, reason_suffix in _select_runbook_actions(runbook_actions, root_cause)
         )
 
     return RemediationOutput(action_candidates=candidates)
 
 
+def _select_runbook_actions(
+    actions: tuple[RunbookActionTemplate, ...],
+    root_cause: RootCauseCandidate,
+) -> list[tuple[RunbookActionTemplate, str]]:
+    if root_cause.root_cause_id == _CONNECTOR_TASK_FAILED:
+        return _select_connector_task_actions(actions, root_cause)
+    return [(action, f"runbook: {action.action_name}") for action in actions]
+
+
+def _select_connector_task_actions(
+    actions: tuple[RunbookActionTemplate, ...],
+    root_cause: RootCauseCandidate,
+) -> list[tuple[RunbookActionTemplate, str]]:
+    by_name = {action.action_name: action for action in actions}
+    context = _candidate_context(root_cause)
+
+    if _has_hint(context, _RESUME_HINTS) and _CONNECTOR_RESUME_ACTION in by_name:
+        return [(
+            by_name[_CONNECTOR_RESUME_ACTION],
+            "runbook: resume_connector; selected because context indicates the cause is resolved",
+        )]
+
+    if _has_hint(context, _PAUSE_HINTS) and _CONNECTOR_PAUSE_ACTION in by_name:
+        return [(
+            by_name[_CONNECTOR_PAUSE_ACTION],
+            "runbook: pause_connector; selected because context indicates repeated impact",
+        )]
+
+    if (
+        not root_cause.required_evidence_satisfied
+        and _gap_has_hint(root_cause.evidence_gap, _TRACE_GAP_HINTS)
+        and _CONNECTOR_TRACE_ACTION in by_name
+    ):
+        return [(
+            by_name[_CONNECTOR_TRACE_ACTION],
+            "runbook: collect_connector_trace; selected because trace evidence is still missing",
+        )]
+
+    if _CONNECTOR_RESTART_ACTION in by_name:
+        return [(
+            by_name[_CONNECTOR_RESTART_ACTION],
+            "runbook: restart_connector; selected for failed connector task recovery",
+        )]
+
+    return [(action, f"runbook: {action.action_name}") for action in actions[:1]]
+
+
+def _candidate_context(root_cause: RootCauseCandidate) -> str:
+    return " ".join(
+        part
+        for part in [root_cause.explanation, *root_cause.evidence_gap]
+        if part
+    ).casefold()
+
+
+def _has_hint(context: str, hints: tuple[str, ...]) -> bool:
+    return any(hint.casefold() in context for hint in hints)
+
+
+def _gap_has_hint(evidence_gap: list[str], hints: tuple[str, ...]) -> bool:
+    gap_context = " ".join(evidence_gap).casefold()
+    return _has_hint(gap_context, hints)
+
+
 def _runbook_action_to_candidate(
     action: RunbookActionTemplate,
     root_cause: RootCauseCandidate,
+    *,
+    reason_suffix: str | None = None,
 ) -> ActionCandidateOutput:
     return ActionCandidateOutput(
         action_id=_new_action_id(),
@@ -70,7 +172,7 @@ def _runbook_action_to_candidate(
         action_name=action.action_name,
         root_cause_id=root_cause.root_cause_id,
         risk=RiskLevel(action.risk),
-        reason=_reason(root_cause, f"runbook: {action.action_name}"),
+        reason=_reason(root_cause, reason_suffix or f"runbook: {action.action_name}"),
         expected_effect=action.description,
         rollback_plan=action.rollback_plan,
         estimated_duration=action.estimated_duration,
