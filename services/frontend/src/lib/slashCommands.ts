@@ -7,6 +7,9 @@ export interface ToolCatalogLike {
   params_schema?: {
     required?: string[]
   }
+  // 그룹형 명령 팔레트 메타(백엔드). group이 비면 팔레트 미노출.
+  group?: string
+  labelKo?: string
 }
 
 export interface SlashToolCommand {
@@ -18,6 +21,9 @@ export interface SlashToolCommand {
   pathParams: string[]
   argParams: string[]
   usage: string
+  // 팔레트 그룹핑/표시용(없으면 빈 문자열).
+  group: string
+  labelKo: string
 }
 
 export interface ParsedSlashCommand {
@@ -55,6 +61,8 @@ export function buildSlashCommands(
         pathParams,
         argParams,
         usage: `/${slug}${argParams.map((param) => ` <${param}>`).join('')}`,
+        group: tool.group ?? '',
+        labelKo: tool.labelKo ?? '',
       }]
     })
     .sort((a, b) => a.slug.localeCompare(b.slug))
