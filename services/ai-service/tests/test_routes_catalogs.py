@@ -87,6 +87,36 @@ def test_tools_expose_descriptions():
     assert by_name["list_connectors"] == "Kafka Connector 상태 및 Task 정보를 조회합니다."
 
 
+def test_tools_expose_command_palette_group_metadata():
+    # 그룹형 명령 팔레트(#599 후속): 노출 tool에 group/label_ko가 내려가고
+    # group은 pipeline|cluster|incident 중 하나, 미노출 tool은 빈 문자열이다.
+    data = _data("/api/v1/tools")
+    by_name = {tool["name"]: tool for tool in data["tools"]}
+
+    expected = {
+        "list_project_pipelines": ("pipeline", "파이프라인 목록"),
+        "get_pipeline_topology": ("pipeline", "토폴로지"),
+        "get_deployments": ("pipeline", "배포·변경 이력"),
+        "get_connector_status": ("cluster", "커넥터 상태"),
+        "get_consumer_lag": ("cluster", "컨슈머 lag"),
+        "get_traces": ("cluster", "트레이스"),
+        "get_cluster_info": ("cluster", "클러스터 상태"),
+        "get_alerts": ("incident", "인시던트 목록"),
+        "get_incident_summary": ("incident", "인시던트 요약"),
+        "search_logs": ("incident", "로그 검색"),
+        "get_metrics": ("incident", "지표 조회"),
+    }
+    for name, (group, label_ko) in expected.items():
+        assert by_name[name]["group"] == group, name
+        assert by_name[name]["label_ko"] == label_ko, name
+
+    for tool in data["tools"]:
+        assert tool["group"] in {"", "pipeline", "cluster", "incident"}, tool["name"]
+        # group이 있으면 label_ko도 반드시 있다.
+        if tool["group"]:
+            assert tool["label_ko"], tool["name"]
+
+
 def test_tools_expose_required_params_in_catalog_and_detail():
     # #741: slash command argument hints depend on params_schema.required.
     expected = {

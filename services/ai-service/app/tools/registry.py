@@ -144,6 +144,10 @@ class ToolDefinition:
     structured_result: bool = False
     # 사용자 노출용 한 문장 설명 — 카탈로그 API·슬래시 커맨드 드롭다운(#599).
     description: str = ""
+    # 그룹형 명령 팔레트(한국어) 메타 — group이 빈 문자열이면 팔레트에 노출하지 않는다.
+    # group ∈ {pipeline, cluster, incident}, label_ko = 팔레트 칩에 보일 기능명.
+    group: str = ""
+    label_ko: str = ""
 
     def validate_params(self, params: dict[str, Any]) -> BaseModel:
         return self.params_model.model_validate(params)
@@ -177,6 +181,8 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ToolDefinition(
             name="search_logs",
             description="파이프라인 로그를 키워드·기간 조건으로 검색합니다.",
+            group="incident",
+            label_ko="로그 검색",
             operation="search_logs",
             method="POST",
             path_template="/internal/ops/projects/{project_id}/observability/logs/search",
@@ -188,6 +194,8 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ToolDefinition(
             name="get_metrics",
             description="프로젝트 운영 메트릭(처리량·지연 등)을 조회합니다.",
+            group="incident",
+            label_ko="지표 조회",
             operation="query_metrics",
             method="GET",
             path_template="/internal/ops/projects/{project_id}/observability/metrics",
@@ -199,6 +207,8 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ToolDefinition(
             name="get_deployments",
             description="최근 파이프라인 배포·설정 변경 이력을 조회합니다.",
+            group="pipeline",
+            label_ko="배포·변경 이력",
             operation="get_recent_changes",
             method="GET",
             path_template="/internal/ops/projects/{project_id}/pipelines/changes",
@@ -210,6 +220,8 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ToolDefinition(
             name="get_connector_status",
             description="지정 Connector의 상태와 Task 정보를 조회합니다.",
+            group="cluster",
+            label_ko="커넥터 상태",
             operation="get_connector_status",
             method="GET",
             path_template="/internal/ops/projects/{project_id}/kafka/connectors/{connector_name}/status",
@@ -245,6 +257,8 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ToolDefinition(
             name="get_cluster_info",
             description="Kafka 클러스터의 브로커·컨트롤러와 토픽 파티션(ISR/leader) 상세를 조회합니다.",
+            group="cluster",
+            label_ko="클러스터 상태",
             operation="get_cluster_info",
             method="GET",
             path_template="/internal/ops/projects/{project_id}/kafka/cluster",
@@ -270,6 +284,8 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ToolDefinition(
             name="get_consumer_lag",
             description="지정 Consumer Group의 파티션별 lag을 조회합니다.",
+            group="cluster",
+            label_ko="컨슈머 lag",
             operation="get_consumer_lag",
             method="GET",
             path_template="/internal/ops/projects/{project_id}/kafka/consumer-groups/{consumer_group}/lag",
@@ -305,6 +321,8 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ToolDefinition(
             name="list_project_pipelines",
             description="프로젝트의 파이프라인 목록을 조회합니다.",
+            group="pipeline",
+            label_ko="파이프라인 목록",
             operation="list_project_pipelines",
             method="GET",
             path_template="/internal/ops/projects/{project_id}/pipelines",
@@ -326,6 +344,8 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ToolDefinition(
             name="get_pipeline_topology",
             description="지정 파이프라인의 토폴로지(source→topic→sink 구성)를 조회합니다.",
+            group="pipeline",
+            label_ko="토폴로지",
             operation="get_pipeline_topology",
             method="GET",
             path_template="/internal/ops/projects/{project_id}/pipelines/{pipeline_id}/topology",
@@ -340,6 +360,8 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ToolDefinition(
             name="get_incident_summary",
             description="지정 인시던트의 요약 정보를 조회합니다.",
+            group="incident",
+            label_ko="인시던트 요약",
             operation="get_incident_summary",
             method="GET",
             path_template="/internal/ops/projects/{project_id}/incidents/{incident_id}/summary",
@@ -400,6 +422,8 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ToolDefinition(
             name="get_traces",
             description="지정 Connector의 최근 trace 이벤트를 조회합니다.",
+            group="cluster",
+            label_ko="트레이스",
             operation="query_traces",
             method="GET",
             path_template="/internal/ops/projects/{project_id}/connectors/{connector_name}/traces",
@@ -424,6 +448,8 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ToolDefinition(
             name="get_alerts",
             description="프로젝트의 최근 알림(alert) 목록을 조회합니다.",
+            group="incident",
+            label_ko="인시던트 목록",
             operation="list_alerts",
             method="GET",
             path_template="/internal/ops/projects/{project_id}/observability/alerts",
