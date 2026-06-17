@@ -1823,6 +1823,12 @@ export function AgentRunPanel({
                   .clusterConnect()
                   .then((c) => c.connectors.map((row) => ({ value: row.name, label: row.name })))
               }
+              if (param === 'incident_id') {
+                // 인시던트 ID 는 자유 입력 대신 프로젝트 인시던트 목록에서 선택.
+                return Promise.resolve(
+                  app.incidents.map((inc) => ({ value: inc.id, label: inc.title || inc.id })),
+                )
+              }
               return null
             }}
             onRunTool={(command, args) => {
@@ -2770,7 +2776,7 @@ function ToolPanelCard({
           <ConnectorDetailPanel result={result} />
         ) : msg.toolName === 'get_alerts' ? (
           <AlertsPanel result={result} onOpenIncident={onOpenIncident} />
-        ) : msg.toolName === 'analyze_event_log' ? (
+        ) : msg.toolName === 'analyze_event_log' || msg.toolName === 'get_incident_summary' ? (
           <EventSummaryPanel result={result} />
         ) : (
           <GenericToolResultPanel result={msg.result} />
@@ -3156,6 +3162,48 @@ export function severityKo(severity: string) {
   return SEVERITY_KO[severity.toLowerCase()] ?? severity
 }
 
+const INCIDENT_STATUS_KO: Record<string, string> = {
+  open: '미해결',
+  active: '진행 중',
+  investigating: '조사 중',
+  acknowledged: '확인됨',
+  mitigated: '완화됨',
+  resolved: '해결',
+  closed: '종료',
+}
+
+function incidentStatusKo(status: string) {
+  return INCIDENT_STATUS_KO[status.toLowerCase()] ?? status
+}
+
+// get_incident_summary 는 단일 인시던트(IncidentSummaryData)를 반환할 수 있다.
+function IncidentSummaryCard({ result }: { result: Record<string, unknown> }) {
+  const id = recordString(result, 'incident_id', 'incidentId')
+  const status = recordString(result, 'status') ?? ''
+  const severity = recordString(result, 'severity')
+  const summary = recordString(result, 'summary', 'note', 'root_cause_summary', 'rootCauseSummary')
+  const rootCause = recordString(result, 'root_cause_summary', 'rootCauseSummary')
+  return (
+    <div className="space-y-2 text-[12px]">
+      <div className="flex flex-wrap items-center gap-2">
+        {status && (
+          <span className={cn('inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-semibold', semanticBadgeClass(semanticToken(status)))}>
+            {incidentStatusKo(status)}
+          </span>
+        )}
+        {severity && <span className="text-gray-500">심각도 {severityKo(severity)}</span>}
+        {id && <span className="font-mono text-[10.5px] text-gray-400">#{shortId(id)}</span>}
+      </div>
+      {summary && <div className="leading-relaxed text-gray-700">{summary}</div>}
+      {rootCause && rootCause !== summary && (
+        <div className="rounded bg-gray-50 px-2 py-1.5 text-[11.5px] text-gray-600">
+          <span className="font-semibold">근본 원인</span> · {rootCause}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function AlertsPanel({
   result,
   onOpenIncident,
@@ -3206,6 +3254,11 @@ export function EventSummaryPanel({ result }: { result: Record<string, unknown> 
   const criticalCount = recordNumber(result, 'criticalIncidents', 'critical_incidents') ?? 0
   const critical = recordArray(result, 'critical')
   const warnings = recordArray(result, 'warnings')
+
+  // 현황(집계/목록) 데이터가 아니고 단일 인시던트 요약이면 요약 카드로 폴백.
+  const hasOverview = open > 0 || criticalCount > 0 || critical.length > 0 || warnings.length > 0
+  const isSingleIncident = !hasOverview && !!recordString(result, 'incident_id', 'incidentId', 'summary', 'note')
+  if (isSingleIncident) return <IncidentSummaryCard result={result} />
 
   return (
     <div className="space-y-2.5 text-[12px]">

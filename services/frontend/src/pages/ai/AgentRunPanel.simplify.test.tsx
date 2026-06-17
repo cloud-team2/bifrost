@@ -175,6 +175,20 @@ describe('severityKo / AlertsPanel', () => {
   })
 })
 
+describe('EventSummaryPanel single-incident fallback (get_incident_summary)', () => {
+  it('renders a single incident summary in Korean when no overview counts', () => {
+    const html = renderToStaticMarkup(
+      <EventSummaryPanel
+        result={{ incident_id: 'INC-9', status: 'open', severity: 'CRITICAL', summary: '복제 슬롯 중복', root_cause_summary: '슬롯 중복 활성화' }}
+      />,
+    )
+    expect(html).toContain('미해결') // status open → 미해결
+    expect(html).toContain('복제 슬롯 중복')
+    expect(html).toContain('근본 원인')
+    expect(html).not.toContain('open')
+  })
+})
+
 describe('ConnectorDetailPanel rendering', () => {
   it('renders Korean state and task summary without raw English field labels', () => {
     const html = renderToStaticMarkup(
