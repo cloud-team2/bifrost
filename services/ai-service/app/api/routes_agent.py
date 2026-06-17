@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from app.persistence.message_repository import get_message_repo
 from app.persistence.run_repository import get_run_repo
+from app.persistence.thread_repository import get_thread_repo
 from app.schemas import ApiResponse, ErrorCode
 from app.schemas.outputs import ActionCandidateOutput
 from app.streaming.event_bus import get_event_bus
@@ -31,6 +32,7 @@ class CreateRunRequest(BaseModel):
     message: str | None = None
     incident_id: str | None = None
     thread_id: str | None = None
+    owner: str | None = None  # #821 멀티 채팅방 소유자(자유 채팅 스레드 lazy 생성용)
     remediation_requested: bool = False
     stream: bool = True
     action_candidate: ActionCandidateOutput | None = None
@@ -66,6 +68,17 @@ async def create_run(req: CreateRunRequest, background_tasks: BackgroundTasks) -
     # #712 대화 메모리: 인시던트 채팅은 incident_id가 thread, 그 외는 명시 thread_id.
     # 멀티턴 컨텍스트 유지를 위해 workflow에 thread를 넘긴다(저장·주입은 workflow가 담당).
     thread_id = req.thread_id or req.incident_id
+
+    # #821 멀티 채팅방: 자유 채팅(chat-*) 스레드면 방을 보장(lazy 생성)·활동시각 갱신하고,
+    # 아직 제목이 없으면 첫 사용자 메시지로 임시 제목을 단다. (인시던트 thread는 제외.)
+    if thread_id and thread_id.startswith("chat-"):
+        thread_repo = get_thread_repo()
+        if req.owner:
+            await thread_repo.ensure(id=thread_id, project_id=req.project_id, owner=req.owner)
+        else:
+            await thread_repo.touch(thread_id)
+        if user_message.strip():
+            await thread_repo.set_title_if_empty(thread_id, _preview(user_message, 40) or "새 대화")
 
     background_tasks.add_task(
         run_workflow,
@@ -111,3 +124,75 @@ async def list_thread_messages(thread_id: str, limit: int = 50) -> ApiResponse:
         "thread_id": thread_id,
         "messages": [m.model_dump(mode="json") for m in messages],
     })
+
+
+# ---------------------------------------------------------------- #821 멀티 채팅방(세션)
+
+class CreateThreadRequest(BaseModel):
+    project_id: str
+    owner: str
+    title: str | None = None
+
+
+class RenameThreadRequest(BaseModel):
+    title: str
+
+
+def _preview(text: str | None, cap: int = 80) -> str | None:
+    if not text:
+        return None
+    text = text.strip().replace("\n", " ")
+    return f"{text[:cap]}…" if len(text) > cap else text
+
+
+@router.get("/threads")
+async def list_threads(project_id: str, owner: str, limit: int = 100) -> ApiResponse:
+    """#821 멀티 채팅방: 내(owner) 채팅방을 최근 수정순으로 반환(제목·시간·마지막 답변 미리보기)."""
+    request_id = _request_id()
+    threads = await get_thread_repo().list(project_id=project_id, owner=owner, limit=limit)
+    msg_repo = get_message_repo()
+    items = []
+    for thread in threads:
+        last = await msg_repo.list_by_thread(thread.id, limit=1)
+        data = thread.model_dump(mode="json")
+        data["preview"] = _preview(last[-1].content if last else None)
+        items.append(data)
+    return ApiResponse.success(request_id, {"threads": items})
+
+
+@router.post("/threads")
+async def create_thread(req: CreateThreadRequest) -> ApiResponse:
+    """#821 새 채팅방 생성. id는 백엔드가 부여한다(chat-<uuid>)."""
+    request_id = _request_id()
+    try:
+        uuid.UUID(req.project_id)
+    except ValueError:
+        return ApiResponse.failure(
+            request_id, ErrorCode.VALIDATION_FAILED, f"project_id must be a UUID: {req.project_id}"
+        )
+    thread_id = f"chat-{uuid.uuid4().hex}"
+    thread = await get_thread_repo().create(
+        id=thread_id, project_id=req.project_id, owner=req.owner, title=(req.title or None)
+    )
+    return ApiResponse.success(request_id, thread.model_dump(mode="json"))
+
+
+@router.patch("/threads/{thread_id}")
+async def rename_thread(thread_id: str, req: RenameThreadRequest) -> ApiResponse:
+    """#821 채팅방 제목 변경."""
+    request_id = _request_id()
+    title = (req.title or "").strip()
+    if not title:
+        return ApiResponse.failure(request_id, ErrorCode.VALIDATION_FAILED, "title must not be empty")
+    thread = await get_thread_repo().rename(thread_id, title[:200])
+    if not thread:
+        return ApiResponse.failure(request_id, ErrorCode.THREAD_NOT_FOUND, "thread not found")
+    return ApiResponse.success(request_id, thread.model_dump(mode="json"))
+
+
+@router.delete("/threads/{thread_id}")
+async def delete_thread(thread_id: str) -> ApiResponse:
+    """#821 채팅방 삭제(그 방의 대화 turn 포함)."""
+    request_id = _request_id()
+    await get_thread_repo().delete(thread_id)
+    return ApiResponse.success(request_id, {"id": thread_id, "deleted": True})
