@@ -22,6 +22,23 @@ LLM_TIE_MARGIN = 0.10
 MAX_CANDIDATES = 5
 
 _TOKEN_RE = re.compile(r"[0-9A-Za-z가-힣]+")
+_TOKEN_ALIASES = {
+    "상태": "status",
+    "커넥터": "connector",
+    "오류": "error",
+    "에러": "error",
+    "인증": "auth",
+    "권한": "permission",
+    "토큰": "token",
+    "만료": "expired",
+    "연결": "connection",
+    "네트워크": "network",
+    "도달": "reachability",
+    "호스트": "host",
+    "스키마": "schema",
+    "불일치": "mismatch",
+    "역직렬화": "deserialization",
+}
 _GENERIC_TOKENS = {
     "and",
     "or",
@@ -223,7 +240,7 @@ def _rule_matches_evidence(rule: EvidenceRule, item: EvidenceItem) -> bool:
 
 
 def _split_alternatives(value: str) -> list[str]:
-    parts = re.split(r"[,，]", value)
+    parts = re.split(r"[,，]|\s+(?:또는|or)\s+|/", value, flags=re.IGNORECASE)
     return [part.strip() for part in parts if part.strip()]
 
 
@@ -236,7 +253,7 @@ def _tokens_match(rule_tokens: set[str], evidence_tokens: set[str]) -> bool:
 
 
 def _tokens(value: str) -> list[str]:
-    return [token.casefold() for token in _TOKEN_RE.findall(value)]
+    return [_TOKEN_ALIASES.get(token.casefold(), token.casefold()) for token in _TOKEN_RE.findall(value)]
 
 
 def _meaningful_tokens(value: str) -> set[str]:

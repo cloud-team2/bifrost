@@ -112,6 +112,61 @@ async def test_required_missing_caps_confidence(monkeypatch: pytest.MonkeyPatch)
 
 
 @pytest.mark.asyncio
+async def test_connector_status_and_trace_commit_without_logs_or_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier("CONNECTOR_TASK_FAILED"),
+        _retrieval_items(
+            (
+                "커넥터 orders-source 상태 FAILED. task trace 확인됨. search_logs=0, get_metrics=0",
+                EvidenceType.TOOL_RESULT,
+            ),
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "CONNECTOR_TASK_FAILED"
+    assert top.confidence >= 0.60
+
+
+@pytest.mark.asyncio
+async def test_source_auth_trace_commits_with_partial_observability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier("SOURCE_AUTH_FAILURE"),
+        _retrieval_items(
+            (
+                "connector task trace: source 토큰 만료로 인증 실패. search_logs=0, get_metrics=0",
+                EvidenceType.TRACE,
+            ),
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "SOURCE_AUTH_EXPIRED"
+    assert top.confidence >= 0.60
+
+
+@pytest.mark.asyncio
+async def test_normal_operational_evidence_does_not_commit_fault(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier("SOURCE_CONNECTION_TIMEOUT"),
+        _retrieval("정상 범위 메트릭. connector status RUNNING. source endpoint reachable."),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "UNKNOWN_WITH_EVIDENCE_GAP"
+    assert top.confidence < 0.60
+
+
+@pytest.mark.asyncio
 async def test_knowledge_evidence_does_not_satisfy_required_rules(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
