@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
   ConnectorDetailPanel,
+  GenericToolResultPanel,
   connectorStatusSummary,
   semanticToken,
   toolLabelKo,
@@ -70,6 +71,18 @@ describe('connectorStatusSummary', () => {
   it('returns null for non-object results', () => {
     expect(connectorStatusSummary(null)).toBeNull()
     expect(connectorStatusSummary('nope')).toBeNull()
+  })
+})
+
+describe('GenericToolResultPanel', () => {
+  it('uses Korean field labels and hides empty fields', () => {
+    const html = renderToStaticMarkup(
+      <GenericToolResultPanel result={{ lag: 0, worker_id: null, trace: '' }} />,
+    )
+    expect(html).toContain('지연') // lag → 지연 (value 0 kept)
+    expect(html).not.toContain('worker') // worker_id is null → hidden
+    expect(html).not.toContain('워커')
+    expect(html).not.toContain('TRACE') // no raw English labels
   })
 })
 

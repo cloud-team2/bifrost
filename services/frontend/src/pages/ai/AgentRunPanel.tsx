@@ -2803,7 +2803,7 @@ function GenericObjectValue({ record, depth }: { record: Record<string, unknown>
   const entries = Object.entries(record).filter(([, value]) => value !== undefined)
   if (entries.length === 0) return <PanelEmpty text="표시할 결과가 없습니다" />
 
-  const scalarEntries = entries.filter(([, value]) => isGenericScalar(value))
+  const scalarEntries = entries.filter(([, value]) => isGenericScalar(value) && formatGenericScalar(value) !== '-')
   const nestedEntries = entries.filter(([, value]) => !isGenericScalar(value))
 
   return (
@@ -2864,7 +2864,7 @@ function GenericRecordCard({
   const entries = Object.entries(record).filter(
     ([key, value]) => value !== undefined && key !== headline.key && !isGenericBadgeKey(key),
   )
-  const scalarEntries = entries.filter(([, value]) => isGenericScalar(value))
+  const scalarEntries = entries.filter(([, value]) => isGenericScalar(value) && formatGenericScalar(value) !== '-')
   const nestedEntries = entries.filter(([, value]) => !isGenericScalar(value))
 
   return (
@@ -3494,11 +3494,50 @@ function isGenericBadgeKey(key: string) {
   return GENERIC_BADGE_KEYS.has(key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase())
 }
 
+const FIELD_LABEL_KO: Record<string, string> = {
+  state: '상태',
+  status: '상태',
+  connector_state: '상태',
+  connector_name: '커넥터',
+  connector: '커넥터',
+  pipeline: '파이프라인',
+  pipeline_id: '파이프라인',
+  name: '이름',
+  tasks: '태스크',
+  task_id: '태스크',
+  trace: '오류',
+  last_error: '오류',
+  error: '오류',
+  worker_id: '워커',
+  lag: '지연',
+  partition: '파티션',
+  offset: '오프셋',
+  topic: '토픽',
+  group: '그룹',
+  consumer_group: '컨슈머 그룹',
+  type: '종류',
+  throughput: '처리량',
+  throughput_per_second: '초당 처리량',
+  count: '개수',
+  severity: '심각도',
+  title: '제목',
+  message: '메시지',
+  level: '레벨',
+  incident_id: '인시던트',
+  observed_at: '관측 시각',
+  updated_at: '갱신 시각',
+  created_at: '생성 시각',
+}
+
 function formatGenericLabel(key: string) {
-  return key
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/[_-]+/g, ' ')
-    .trim()
+  const normalized = key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase()
+  return (
+    FIELD_LABEL_KO[normalized] ??
+    key
+      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+      .replace(/[_-]+/g, ' ')
+      .trim()
+  )
 }
 
 function formatGenericScalar(value: unknown) {
