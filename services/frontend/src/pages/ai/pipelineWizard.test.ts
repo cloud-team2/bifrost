@@ -72,12 +72,25 @@ describe('pipeline wizard helpers', () => {
 
     expect(buildPipelineCreateInput(selections)).toEqual({
       name: 'order mirror',
+      alias: null,
       pattern: 'direct',
       sourceDbId: 'db-source',
       sinkDbId: 'db-sink',
       schema: 'public',
       table: 'orders',
     })
+  })
+
+  it('includes a trimmed Korean alias when provided', () => {
+    const selections: PipelineWizardSelections = {
+      pattern: 'fan-out',
+      sourceDbId: 'db-source',
+      sinkDbId: null,
+      table: { schema: 'public', name: 'orders' },
+      name: 'orders-events',
+      alias: '  주문 이벤트  ',
+    }
+    expect(buildPipelineCreateInput(selections).alias).toBe('주문 이벤트')
   })
 
   it('omits sinkDbId for fan-out payloads', () => {

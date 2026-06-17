@@ -282,6 +282,7 @@ def test_spring_ops_envelope_and_read_tool_payloads():
     lag = ConsumerLagData(
         consumer_group="orders-consumer",
         total_lag=42,
+        p95_lag=42.0,
         partitions=[
             ConsumerLagPartition(
                 topic="orders",
@@ -291,6 +292,16 @@ def test_spring_ops_envelope_and_read_tool_payloads():
                 lag=42,
             )
         ],
+        top_lag_partitions=[
+            ConsumerLagPartition(
+                topic="orders",
+                partition=0,
+                current_offset=100,
+                log_end_offset=142,
+                lag=42,
+            )
+        ],
+        summary="consumer lag snapshot: lag p95=42",
     )
     logs_request = LogSearchRequest(
         query="timeout",
@@ -319,6 +330,7 @@ def test_spring_ops_envelope_and_read_tool_payloads():
     assert topology.connectors[0].state == "RUNNING"
     assert logs_request.time_range.from_ == "2026-06-01T00:00:00Z"
     assert response.result["total_lag"] == 42
+    assert response.result["p95_lag"] == 42.0
     assert response.evidence[0].store_ref == "evidence://run_001/ev_metric_001"
 
 

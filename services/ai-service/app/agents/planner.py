@@ -52,7 +52,13 @@ _READ_TOOL_DESCRIPTIONS: dict[str, str] = {
     "get_consumer_groups": "프로젝트 Kafka consumer group 목록·lag 요약 조회",
     "analyze_event_log": "프로젝트 이벤트·인시던트 경고 요약 조회",
     "search_logs": "파이프라인/에러 로그 검색",
-    "get_metrics": "메트릭·지표·성능 수치 조회",
+    "get_metrics": (
+        "메트릭·지표·성능 수치 조회"
+        " (pipeline_lag_seconds, consumer_lag_p95, consumer_commit_rate_per_sec,"
+        " topic_ingress_messages_per_sec, source_freshness_delay_ms,"
+        " source_watermark_delay_ms, source_event_rate_per_sec, broker_cpu_cores,"
+        " broker_fs_read_bytes_per_sec 등)"
+    ),
     "get_deployments": "최근 배포·변경 이력 조회",
     "get_connector_status": "특정 Kafka Connect 커넥터 상태 조회",
     "get_consumer_lag": "특정 Kafka consumer group lag(지연) 조회",
@@ -182,12 +188,16 @@ def _keyword_select_tools(user_message: str) -> list[tuple[str, dict]]:
     """LLM 미가용 시 fallback — 기존 keyword→tool 매칭(회귀 보존)."""
     msg = user_message.lower()
     selected: list[tuple[str, dict]] = []
-    seen_tools: set[str] = set()
+    seen_tools: set[tuple[str, str]] = set()
 
     def add(tool: str, params: dict) -> None:
-        if tool not in seen_tools:
+        dedupe_key = (
+            tool,
+            json.dumps(params, sort_keys=True) if tool == "get_metrics" else "",
+        )
+        if dedupe_key not in seen_tools:
             selected.append((tool, params))
-            seen_tools.add(tool)
+            seen_tools.add(dedupe_key)
 
     has_stack = _has_any(msg, {"스택", "스택트레이스", "stacktrace", "예외", "exception"})
     has_trace = _has_any(msg, {"trace", "span", "latency", "분산추적", "지연추적"})
@@ -230,10 +240,11 @@ def _keyword_select_tools(user_message: str) -> list[tuple[str, dict]]:
             add("get_consumer_groups", _PROJECT_SCOPE_PARAMS)
     if _has_any(msg, {"로그", "log"}) and not has_event_summary:
         add("search_logs", _LOG_PARAMS)
-    if _has_any(msg, {"오류", "에러"}) and not has_event_summary and "search_logs" not in seen_tools:
+    if _has_any(msg, {"오류", "에러"}) and not has_event_summary and ("search_logs", "") not in seen_tools:
         add("search_logs", _INCIDENT_LOG_PARAMS)
     if _has_any(msg, {"메트릭", "metric", "지표", "수치", "성능"}):
-        add("get_metrics", {"metric": "pipeline_lag_seconds", "time_range": "last_30m"})
+        for params in _metric_param_list_for_message(msg):
+            add("get_metrics", params)
     if _has_any(msg, {"배포", "deploy", "변경", "change", "토폴로지", "topology"}):
         add("get_deployments", {})
 
@@ -259,7 +270,57 @@ async def _llm_select_tools(user_message: str) -> list[tuple[str, dict]] | None:
     if not tools:
         return None
     # catalog 기본 params 로 step 구성 — 식별자 해석은 downstream(#489) 에 위임.
-    return [(tool, dict(_READ_TOOL_DEFAULT_PARAMS[tool])) for tool in tools]
+    selected: list[tuple[str, dict]] = []
+    for tool in tools:
+        if tool == "get_metrics":
+            selected.extend(("get_metrics", params) for params in _metric_param_list_for_message(user_message.lower()))
+        else:
+            selected.append((tool, dict(_READ_TOOL_DEFAULT_PARAMS[tool])))
+    return selected
+
+
+def _metric_params_for_message(msg: str) -> dict:
+    """Map metric intent to the first live-backed logical metric name supported by Spring."""
+    return _metric_param_list_for_message(msg)[0]
+
+
+def _metric_param_list_for_message(msg: str) -> list[dict]:
+    """Map metric intent to live-backed logical metric names supported by Spring."""
+    metrics: list[str] = []
+
+    def add_metric(metric: str) -> None:
+        if metric not in metrics:
+            metrics.append(metric)
+
+    if _has_any(msg, {"p95", "lag p95", "lag 급증", "지연 p95"}):
+        add_metric("consumer_lag_p95")
+    if _has_any(msg, {"commit rate", "offset progression", "offset 진행", "오프셋", "커밋"}):
+        add_metric("consumer_commit_rate_per_sec")
+    if _has_any(msg, {"ingress", "incoming", "messages in", "유입", "토픽 유입", "topic ingress"}):
+        add_metric("topic_ingress_messages_per_sec")
+    if _has_any(msg, {"watermark", "워터마크"}):
+        add_metric("source_watermark_delay_ms")
+    if _has_any(msg, {"freshness", "behind source", "신선도"}):
+        add_metric("source_freshness_delay_ms")
+    if _has_any(msg, {"source event", "source volume", "event rate", "소스 이벤트", "소스 볼륨"}):
+        add_metric("source_event_rate_per_sec")
+    if _has_any(msg, {"broker", "브로커"}):
+        if _has_any(msg, {"memory", "mem", "메모리"}):
+            add_metric("broker_memory_working_set_bytes")
+        if _has_any(msg, {"transmit", "tx", "송신"}):
+            add_metric("broker_network_transmit_bytes_per_sec")
+        if _has_any(msg, {"network", "receive", "rx", "네트워크", "수신"}):
+            add_metric("broker_network_receive_bytes_per_sec")
+        if _has_any(msg, {"read", "reads", "읽기"}):
+            add_metric("broker_fs_read_bytes_per_sec")
+        if _has_any(msg, {"disk", "fs", "write", "writes", "디스크", "쓰기"}):
+            add_metric("broker_fs_write_bytes_per_sec")
+        if not any(metric.startswith("broker_") for metric in metrics):
+            add_metric("broker_cpu_cores")
+
+    if not metrics:
+        add_metric("pipeline_lag_seconds")
+    return [{"metric": metric, "time_range": "last_30m"} for metric in metrics]
 
 
 def _validate_tool_selection(parsed: dict[str, Any]) -> list[str] | None:
@@ -283,7 +344,7 @@ def _validate_tool_selection(parsed: dict[str, Any]) -> list[str] | None:
 
 def _fallback_to_project_scope_tools(selected: list[tuple[str, dict]]) -> list[tuple[str, dict]]:
     fallback: list[tuple[str, dict]] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for tool, params in selected:
         if tool in _CONNECTOR_PARAM_TOOLS:
             next_tool, next_params = "list_connectors", _PROJECT_SCOPE_PARAMS
@@ -291,9 +352,13 @@ def _fallback_to_project_scope_tools(selected: list[tuple[str, dict]]) -> list[t
             next_tool, next_params = "get_consumer_groups", _PROJECT_SCOPE_PARAMS
         else:
             next_tool, next_params = tool, params
-        if next_tool not in seen:
+        dedupe_key = (
+            next_tool,
+            json.dumps(next_params, sort_keys=True) if next_tool == "get_metrics" else "",
+        )
+        if dedupe_key not in seen:
             fallback.append((next_tool, next_params))
-            seen.add(next_tool)
+            seen.add(dedupe_key)
     return fallback
 
 

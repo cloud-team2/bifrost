@@ -138,7 +138,12 @@ public class InternalOpsObservabilityController {
                     .body(OpsEnvelope.error(requestId, "get_consumer_lag", "UPSTREAM_UNAVAILABLE",
                             lag.error(), true, "retry_kafka_admin"));
         }
-        ConsumerLagResult result = new ConsumerLagResult(consumerGroup, lag.lag() == null ? 0L : lag.lag(), "kafka-admin");
+        ConsumerLagResult result = ConsumerLagResult.fromSnapshot(
+                consumerGroup,
+                lag.lag() == null ? 0L : lag.lag(),
+                "kafka-admin",
+                lag.partitions(),
+                Instant.now());
         return ResponseEntity.ok(OpsEnvelope.ok(requestId, "get_consumer_lag", result));
     }
 
@@ -178,7 +183,7 @@ public class InternalOpsObservabilityController {
         for (ConnectorEntity connector : sinkConnectors) {
             String group = "connect-" + connector.getCrName();
             ConsumerGroupDescription description = described.groups().get(group);
-            LagSnapshot lag = describeError == null ? fetchLagSnapshot(group) : new LagSnapshot(null, describeError);
+            LagSnapshot lag = describeError == null ? fetchLagSnapshot(group) : new LagSnapshot(null, List.of(), describeError);
             if (resultError == null && lag.error() != null) {
                 resultError = lag.error();
             }
@@ -969,7 +974,7 @@ public class InternalOpsObservabilityController {
                     .listConsumerGroupOffsets(groupId)
                     .partitionsToOffsetAndMetadata()
                     .get(ADMIN_TIMEOUT_SEC, TimeUnit.SECONDS);
-            if (committed.isEmpty()) return new LagSnapshot(0L, null);
+            if (committed.isEmpty()) return new LagSnapshot(0L, List.of(), null);
 
             Map<TopicPartition, OffsetSpec> endReqs = committed.keySet().stream()
                     .collect(Collectors.toMap(tp -> tp, tp -> OffsetSpec.latest()));
@@ -977,14 +982,25 @@ public class InternalOpsObservabilityController {
                     .listOffsets(endReqs).all().get(ADMIN_TIMEOUT_SEC, TimeUnit.SECONDS);
 
             long lag = 0L;
+            List<ConsumerLagResult.PartitionLag> partitions = new ArrayList<>();
             for (Map.Entry<TopicPartition, OffsetAndMetadata> e : committed.entrySet()) {
                 long end = ends.containsKey(e.getKey()) ? ends.get(e.getKey()).offset() : 0L;
-                lag += Math.max(0L, end - e.getValue().offset());
+                long committedOffset = e.getValue().offset();
+                long partitionLag = Math.max(0L, end - committedOffset);
+                lag += partitionLag;
+                partitions.add(new ConsumerLagResult.PartitionLag(
+                        e.getKey().topic(),
+                        e.getKey().partition(),
+                        committedOffset,
+                        end,
+                        partitionLag));
             }
-            return new LagSnapshot(lag, null);
+            partitions.sort(java.util.Comparator.comparing(ConsumerLagResult.PartitionLag::topic)
+                    .thenComparingInt(ConsumerLagResult.PartitionLag::partition));
+            return new LagSnapshot(lag, partitions, null);
         } catch (Exception e) {
             log.warn("[InternalOps] consumer lag 조회 실패: group={} cause={}", groupId, e.getMessage());
-            return new LagSnapshot(null, e.getMessage());
+            return new LagSnapshot(null, List.of(), e.getMessage());
         }
     }
 
@@ -1065,7 +1081,7 @@ public class InternalOpsObservabilityController {
         };
     }
 
-    private record LagSnapshot(Long lag, String error) {}
+    private record LagSnapshot(Long lag, List<ConsumerLagResult.PartitionLag> partitions, String error) {}
 
     private record DescribeGroupsSnapshot(Map<String, ConsumerGroupDescription> groups, String error) {}
 }

@@ -231,6 +231,7 @@ public class PipelineService {
         PipelineEntity p = new PipelineEntity();
         p.setTenantId(wsId);
         p.setName(req.name());
+        p.setAlias(req.alias() != null && !req.alias().isBlank() ? req.alias().trim() : null);
         p.setPattern(pattern);
         p.setType(pattern == PipelinePattern.FAN_OUT ? "CDC" : "SYNC");
         p.setSourceDatasourceId(source.getId());

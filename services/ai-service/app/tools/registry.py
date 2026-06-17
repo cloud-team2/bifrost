@@ -195,7 +195,14 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ),
         ToolDefinition(
             name="get_metrics",
-            description="프로젝트 운영 메트릭(처리량·지연 등)을 조회합니다.",
+            description=(
+                "프로젝트 운영 메트릭을 조회합니다. metric 예: pipeline_lag_seconds, "
+                "consumer_lag_p95, consumer_commit_rate_per_sec, topic_ingress_messages_per_sec, "
+                "source_freshness_delay_ms, source_watermark_delay_ms, source_event_rate_per_sec, "
+                "broker_cpu_cores, broker_memory_working_set_bytes, "
+                "broker_network_receive_bytes_per_sec, broker_network_transmit_bytes_per_sec, "
+                "broker_fs_read_bytes_per_sec, broker_fs_write_bytes_per_sec."
+            ),
             group="incident",
             label_ko="지표 조회",
             operation="query_metrics",
@@ -204,6 +211,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
             risk=RiskLevel.READ_ONLY,
             params_model=GetMetricsParams,
             result_model=MetricsData,
+            structured_result=True,
         ),
         # ── catalog §8.2 Pipeline / Change ──────────────────────────────────
         ToolDefinition(
@@ -295,6 +303,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
             params_model=ConsumerLagParams,
             result_model=ConsumerLagData,
             path_params=("consumer_group",),
+            structured_result=True,
         ),
         ToolDefinition(
             name="get_consumer_groups",
@@ -318,6 +327,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
             result_model=ConsumerLagData,
             path_params=("consumer_group",),
             alias_for="get_consumer_lag",
+            structured_result=True,
         ),
         # ── catalog §8.4 Pipeline read (Spring PR #154) ──────────────────────
         ToolDefinition(

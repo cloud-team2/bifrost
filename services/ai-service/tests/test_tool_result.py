@@ -71,6 +71,32 @@ def test_count_field_included() -> None:
     assert summary == "search_logs completed (total=42)"
 
 
+def test_consumer_lag_summary_includes_partition_p95_and_offset_progression() -> None:
+    summary = _summary_for(
+        {
+            "consumerGroup": "connect-orders-sink",
+            "totalLag": 40,
+            "partitions": [
+                {"topic": "orders", "partition": 0, "currentOffset": 10, "logEndOffset": 15, "lag": 5},
+                {"topic": "orders", "partition": 1, "currentOffset": 20, "logEndOffset": 55, "lag": 35},
+            ],
+            "p95Lag": 35.0,
+            "topLagPartitions": [
+                {"topic": "orders", "partition": 1, "currentOffset": 20, "logEndOffset": 55, "lag": 35},
+            ],
+            "observedAt": "2026-06-17T00:00:00Z",
+            "source": "kafka-admin",
+        },
+        operation="get_consumer_lag",
+    )
+
+    assert "consumer lag snapshot" in summary
+    assert "lag p95=35.0" in summary
+    assert "top lag partitions=1" in summary
+    assert "offset position snapshot" in summary
+    assert "current committed offsets" in summary
+
+
 def test_empty_dict_falls_back() -> None:
     """빈 result 는 안전 폴백."""
     assert _summary_for({}, operation="restart_connector") == "restart_connector completed"

@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 # 운영 조회 의도를 뜻하므로, knowledge 근거가 있어도 실제 운영 데이터를 조회한다 (#478).
 _FALLBACK_ONLY_TOOLS = frozenset({"search_logs"})
 _STRUCTURED_PANEL_TOOLS = frozenset({
+    "get_metrics",
+    "get_consumer_lag",
     "get_consumer_groups",
     "list_pipelines",
     "list_connectors",

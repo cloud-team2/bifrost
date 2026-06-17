@@ -61,7 +61,11 @@ def build_tool_schemas(registry: ToolClientRegistry) -> list[dict]:
                 "type": "function",
                 "function": {
                     "name": definition.name,
-                    "description": f"{definition.operation} — Bifrost internal-ops read-only 조회",
+                    "description": (
+                        f"{definition.operation} — {definition.description}"
+                        if definition.description
+                        else f"{definition.operation} — Bifrost internal-ops read-only 조회"
+                    ),
                     "parameters": params_schema,
                 },
             }

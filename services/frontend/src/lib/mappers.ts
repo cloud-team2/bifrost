@@ -110,7 +110,7 @@ export function pipelineToEdge(p: PipelineResponse): Edge {
   return {
     id: p.id,
     name: p.name,
-    alias: p.name,
+    alias: p.alias ?? undefined,
     pattern: p.pattern,
     source: p.sourceDbId,
     sink: p.sinkDbId,
