@@ -149,6 +149,7 @@ class InternalOpsToolCatalogTest {
                 mock(com.bifrost.ops.event.persistence.repository.EventRepository.class),
                 mock(com.bifrost.ops.monitoring.query.ObservabilityMetricsQuery.class),
                 mock(com.bifrost.ops.monitoring.query.TraceQuery.class),
+                "platform-kafka",
                 "http://connect.invalid");
     }
 
