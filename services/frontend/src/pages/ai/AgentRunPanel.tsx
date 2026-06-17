@@ -247,9 +247,43 @@ type AgentMsg =
 
 const STRUCTURED_TOOL_INTRO: Record<string, string> = {
   get_consumer_groups: 'Consumer Group의 lag 현황과 상태를 조회합니다.',
+  get_consumer_lag: '컨슈머 그룹의 지연(lag)을 조회합니다.',
   list_pipelines: '현재 프로젝트의 파이프라인 상태를 조회합니다.',
+  list_project_pipelines: '현재 프로젝트의 파이프라인 목록을 조회합니다.',
   list_connectors: 'Kafka Connector 상태 및 Task 정보를 조회합니다.',
+  get_connector_status: '단일 커넥터의 상태와 태스크를 조회합니다.',
+  get_cluster_info: '클러스터 상태를 조회합니다.',
+  get_pipeline_topology: '파이프라인 토폴로지를 조회합니다.',
+  get_incident_summary: '인시던트 요약을 조회합니다.',
+  get_alerts: '인시던트 목록을 조회합니다.',
+  get_traces: '트레이스를 조회합니다.',
+  get_deployments: '배포·변경 이력을 조회합니다.',
+  get_metrics: '지표를 조회합니다.',
+  search_logs: '로그를 검색합니다.',
   analyze_event_log: '최근 2시간 이벤트 로그와 인시던트 현황을 분석합니다.',
+}
+
+// 헤더에 보일 짧은 한글 기능명. 백엔드 tools 카탈로그의 label_ko를 미러링한다(없으면 toolDescription 폴백).
+const TOOL_LABEL_KO: Record<string, string> = {
+  get_consumer_groups: '컨슈머 그룹 조회',
+  get_consumer_lag: '컨슈머 지연 조회',
+  list_pipelines: '파이프라인 상태 조회',
+  list_project_pipelines: '파이프라인 목록 조회',
+  list_connectors: '커넥터 목록 조회',
+  get_connector_status: '커넥터 상태 조회',
+  get_cluster_info: '클러스터 상태 조회',
+  get_pipeline_topology: '토폴로지 조회',
+  get_incident_summary: '인시던트 요약',
+  get_alerts: '인시던트 목록 조회',
+  get_traces: '트레이스 조회',
+  get_deployments: '배포·변경 이력 조회',
+  get_metrics: '지표 조회',
+  search_logs: '로그 검색',
+  analyze_event_log: '이벤트 로그 분석',
+}
+
+export function toolLabelKo(toolName: string): string {
+  return TOOL_LABEL_KO[toolName] ?? toolDescription(toolName)
 }
 const SLASH_CATALOG_ERROR_MESSAGE = '도구 목록을 불러오지 못했습니다. 잠시 후 다시 시도하세요.'
 const STALE_PIPELINE_WIZARD_MESSAGE = '프로젝트가 변경되어 이 파이프라인 생성 흐름을 계속할 수 없습니다. 현재 프로젝트에서 다시 시작하세요.'
@@ -2695,22 +2729,25 @@ function ToolPanelCard({ msg }: { msg: ToolPanelMsg }) {
     <div className="rounded-lg border border-gray-200 bg-white text-[12px] text-gray-700">
       <div className="space-y-2 border-b border-gray-100 px-3 py-2.5">
         <div className="flex items-start gap-2">
-          {msg.state === 'running' ? (
-            <Spinner size={13} />
-          ) : msg.state === 'failed' ? (
-            <Icon name="alert" size={13} className="mt-0.5 text-[#c0392b]" />
-          ) : (
-            <Icon name="table" size={13} className="mt-0.5 text-gray-500" />
-          )}
+          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[#0d0d0d] text-white">
+            {msg.state === 'running' ? (
+              <Spinner size={13} className="text-white" />
+            ) : msg.state === 'failed' ? (
+              <Icon name="alert" size={14} />
+            ) : (
+              <Icon name="table" size={14} />
+            )}
+          </div>
           <div className="min-w-0 flex-1">
-            <div className="break-words leading-relaxed text-gray-700">{toolDescription(msg.toolName)}</div>
-            <div className="mt-1.5 flex flex-wrap gap-1.5">
-              <span className="max-w-full break-all rounded bg-gray-900 px-1.5 py-0.5 font-mono text-[10.5px] text-white">{msg.toolName}</span>
-              {paramChips(msg.toolName, msg.params).map(([key, value]) => (
-                <span key={key} className="max-w-full break-all rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 font-mono text-[10.5px] text-gray-500">
-                  {key}={formatParamValue(value)}
-                </span>
-              ))}
+            <div className="break-words font-semibold text-gray-900">{toolLabelKo(msg.toolName)}</div>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {paramChips(msg.toolName, msg.params)
+                .filter(([key]) => key !== 'scope')
+                .map(([key, value]) => (
+                  <span key={key} className="max-w-full break-all rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[10.5px] text-gray-500">
+                    {paramLabelKo(key)} {formatParamChipValue(value)}
+                  </span>
+                ))}
             </div>
           </div>
         </div>
@@ -2734,6 +2771,8 @@ function ToolPanelCard({ msg }: { msg: ToolPanelMsg }) {
           <PipelineStatusPanel result={result} />
         ) : msg.toolName === 'list_connectors' ? (
           <ConnectorStatusPanel result={result} />
+        ) : msg.toolName === 'get_connector_status' ? (
+          <ConnectorDetailPanel result={result} />
         ) : msg.toolName === 'analyze_event_log' ? (
           <EventSummaryPanel result={result} />
         ) : (
@@ -3002,6 +3041,79 @@ function ConnectorStatusPanel({ result }: { result: Record<string, unknown> | nu
           })}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+export interface ConnectorStatusSummary {
+  name: string | null
+  state: string
+  stateLabel: string
+  stateToken: SemanticToken
+  total: number
+  running: number
+  failed: number
+  lastError: string | null
+}
+
+const CONNECTOR_STATE_LABEL: Record<string, string> = {
+  running: '실행 중',
+  paused: '일시정지',
+  failed: '실패',
+  unassigned: '미할당',
+  restarting: '재시작 중',
+  destroyed: '제거됨',
+  stopped: '중지됨',
+}
+
+export function connectorStatusSummary(result: unknown): ConnectorStatusSummary | null {
+  const record = asRecord(result)
+  if (!record) return null
+  const state = (recordString(record, 'state', 'connector_state', 'status') ?? 'UNKNOWN').toUpperCase()
+  const tasks = recordArray(record, 'tasks')
+  const total = tasks.length
+  const running = tasks.filter((task) => (recordString(task, 'state', 'status') ?? '').toUpperCase() === 'RUNNING').length
+  const failed = total - running
+  const lastError =
+    recordString(record, 'last_error', 'lastError', 'trace') ??
+    tasks.map((task) => recordString(task, 'trace', 'last_error')).find((value): value is string => !!value) ??
+    null
+  return {
+    name: recordString(record, 'connector_name', 'connector', 'name'),
+    state,
+    stateLabel: CONNECTOR_STATE_LABEL[state.toLowerCase()] ?? state,
+    stateToken: semanticToken(state),
+    total,
+    running,
+    failed,
+    lastError,
+  }
+}
+
+export function ConnectorDetailPanel({ result }: { result: Record<string, unknown> | null }) {
+  const summary = connectorStatusSummary(result)
+  if (!summary) return <PanelEmpty text="커넥터 상태 데이터 없음" />
+  const taskText =
+    summary.total === 0
+      ? '태스크 없음'
+      : summary.failed > 0
+        ? `태스크 ${summary.running}/${summary.total} 정상 · ${summary.failed}개 실패`
+        : `태스크 ${summary.running}/${summary.total} 정상`
+  return (
+    <div className="space-y-2 text-[12px]">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={cn('inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold', semanticBadgeClass(summary.stateToken))}>
+          <span className={cn('h-1.5 w-1.5 rounded-full', semanticDotClass(summary.stateToken))} />
+          {summary.stateLabel}
+        </span>
+        <span className={summary.failed > 0 ? 'text-[#c0392b]' : 'text-gray-600'}>{taskText}</span>
+      </div>
+      {summary.lastError && (
+        <details className="rounded border border-[#e7c9c4] bg-[#fcf3f2] px-2 py-1.5 text-[11.5px] text-[#c0392b]">
+          <summary className="cursor-pointer select-none">오류 원인 보기</summary>
+          <div className="mt-1 whitespace-pre-wrap break-words font-mono text-[10.5px]">{summary.lastError}</div>
+        </details>
+      )}
     </div>
   )
 }
@@ -3396,19 +3508,40 @@ function formatGenericScalar(value: unknown) {
   return String(value)
 }
 
+// 의미색 토큰 — 모노크롬 기반 위에 안전(초록)/주의(주황)/위험(빨강)만 선택적으로 입힌다.
+export type SemanticToken = 'safe' | 'warn' | 'danger' | 'neutral'
+
+const SEMANTIC_DANGER = ['critical', 'error', 'failed', 'failure', 'fail', 'blocked', 'down', 'high', 'forbidden', 'unassigned', 'destroyed', 'stopped']
+const SEMANTIC_WARN = ['warning', 'warn', 'degraded', 'pending', 'rebalancing', 'medium', 'lag', 'paused', 'restarting']
+const SEMANTIC_SAFE = ['healthy', 'running', 'success', 'succeeded', 'active', 'resolved', 'closed', 'read_only', 'normal', 'ok', 'low']
+
+export function semanticToken(value: string): SemanticToken {
+  const n = value.toLowerCase()
+  if (SEMANTIC_DANGER.some((token) => n.includes(token))) return 'danger'
+  if (SEMANTIC_WARN.some((token) => n.includes(token))) return 'warn'
+  if (SEMANTIC_SAFE.some((token) => n.includes(token))) return 'safe'
+  return 'neutral'
+}
+
+function semanticBadgeClass(token: SemanticToken) {
+  if (token === 'danger') return 'bg-[#c0392b] text-white'
+  if (token === 'warn') return 'bg-amber-100 text-amber-700'
+  if (token === 'safe') return 'bg-emerald-100 text-emerald-700'
+  return 'bg-gray-100 text-gray-600'
+}
+
+function semanticDotClass(token: SemanticToken) {
+  if (token === 'danger') return 'bg-[#c0392b]'
+  if (token === 'warn') return 'bg-amber-500'
+  if (token === 'safe') return 'bg-emerald-500'
+  return 'bg-gray-400'
+}
+
 function genericBadgeClass(label: string, value: unknown) {
-  const normalized = formatGenericScalar(value).toLowerCase()
-  if (typeof value === 'boolean') return value ? 'bg-[#ededed] text-[#6b6b73]' : 'bg-gray-100 text-gray-600'
-  if (['critical', 'error', 'failed', 'failure', 'blocked', 'down', 'high'].some((token) => normalized.includes(token))) {
-    return 'bg-[#c0392b] text-white'
-  }
-  if (['warning', 'warn', 'degraded', 'pending', 'rebalancing', 'medium'].some((token) => normalized.includes(token))) {
-    return 'bg-[#ededed] text-[#6b6b73]'
-  }
-  if (['ok', 'healthy', 'running', 'success', 'succeeded', 'active', 'resolved', 'closed', 'low'].some((token) => normalized.includes(token))) {
-    return 'bg-[#ededed] text-[#6b6b73]'
-  }
-  return isGenericBadgeKey(label) ? 'bg-[#ededed] text-[#6b6b73]' : 'bg-gray-100 text-gray-600'
+  if (typeof value === 'boolean') return value ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600'
+  const token = semanticToken(formatGenericScalar(value))
+  if (token !== 'neutral') return semanticBadgeClass(token)
+  return 'bg-gray-100 text-gray-600'
 }
 export function remediationCandidatesFromPayload(payload: unknown): RemediationCandidate[] {
   const seen = new Set<string>()
@@ -3466,11 +3599,32 @@ function mergeRemediationCandidates(current: RemediationCandidate[], next: Remed
 }
 
 function riskChipClass(risk: string) {
-  const normalized = risk.toLowerCase()
-  if (normalized === 'read_only' || normalized === 'low') return 'bg-[#ededed] text-[#6b6b73]'
-  if (normalized === 'medium') return 'bg-[#ededed] text-[#6b6b73]'
-  if (normalized === 'high' || normalized === 'forbidden') return 'bg-[#c0392b] text-white'
-  return 'bg-gray-100 text-gray-600'
+  return semanticBadgeClass(semanticToken(risk))
+}
+
+const PARAM_LABEL_KO: Record<string, string> = {
+  connector_name: '커넥터',
+  connector: '커넥터',
+  pipeline_id: '파이프라인',
+  pipelineId: '파이프라인',
+  consumer_group: '컨슈머 그룹',
+  group: '컨슈머 그룹',
+  incident_id: '인시던트',
+  incidentId: '인시던트',
+  database_id: '데이터베이스',
+  table: '테이블',
+  topic: '토픽',
+  query: '검색어',
+  metric: '지표',
+}
+
+function paramLabelKo(key: string) {
+  return PARAM_LABEL_KO[key] ?? formatGenericLabel(key)
+}
+
+function formatParamChipValue(value: unknown) {
+  if (typeof value !== 'string') return formatParamValue(value)
+  return value.length > 22 ? `…${value.slice(-14)}` : value
 }
 
 function paramChips(toolName: string, params: Record<string, unknown>): [string, unknown][] {
