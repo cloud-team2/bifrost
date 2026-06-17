@@ -36,6 +36,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -72,6 +73,7 @@ class InternalOpsObservabilityControllerTest {
             eventRepository,
             metricsQuery,
             traceQuery,
+            "platform-kafka",
             "http://connect.invalid");
 
     @Test
@@ -349,9 +351,12 @@ class InternalOpsObservabilityControllerTest {
     }
 
     @Test
-    void searchLogsScopesPlainTextQueryToProjectNamespace() {
+    void searchLogsScopesPlainTextQueryToProjectKafkaConnectLogs() {
         UUID tenantId = UUID.randomUUID();
         when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId, "proj-001")));
+        when(connectorRepository.findByTenantIdOrderByCrName(tenantId))
+                .thenReturn(List.of(connector(UUID.randomUUID(), "orders-source", ConnectorKind.SOURCE),
+                        connector(UUID.randomUUID(), "orders-sink", ConnectorKind.SINK)));
         when(lokiClient.queryRange(any(), anyLong(), anyLong(), eq(10))).thenReturn(List.of());
 
         MockHttpServletRequest request = new MockHttpServletRequest();
@@ -362,7 +367,16 @@ class InternalOpsObservabilityControllerTest {
         assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
         ArgumentCaptor<String> queryCaptor = ArgumentCaptor.forClass(String.class);
         verify(lokiClient).queryRange(queryCaptor.capture(), anyLong(), anyLong(), eq(10));
-        assertThat(queryCaptor.getValue()).isEqualTo("{namespace=\"proj-001\"} |= \"pipeline events\"");
+        assertThat(queryCaptor.getValue()).isEqualTo(
+                "{namespace=\"platform-kafka\",app=\"kafka-connect\"}"
+                        + " |~ \"cdc\\\\.table\\\\.proj-001\\\\.|eda\\\\.table\\\\.proj-001\\\\."
+                        + "|bifrost\\\\.proj-001\\\\."
+                        + "|(^|[^A-Za-z0-9._-])proj-proj-001-user([^A-Za-z0-9._-]|$)"
+                        + "|(^|[^A-Za-z0-9._-])orders-source([^A-Za-z0-9._-]|$)"
+                        + "|(^|[^A-Za-z0-9._-])connect-orders-source([^A-Za-z0-9._-]|$)"
+                        + "|(^|[^A-Za-z0-9._-])orders-sink([^A-Za-z0-9._-]|$)"
+                        + "|(^|[^A-Za-z0-9._-])connect-orders-sink([^A-Za-z0-9._-]|$)\""
+                        + " |= \"pipeline events\"");
     }
 
     @Test
@@ -380,7 +394,12 @@ class InternalOpsObservabilityControllerTest {
         assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
         ArgumentCaptor<String> queryCaptor = ArgumentCaptor.forClass(String.class);
         verify(lokiClient).queryRange(queryCaptor.capture(), anyLong(), anyLong(), eq(10));
-        assertThat(queryCaptor.getValue()).isEqualTo("{namespace=\"proj-001\"} |= \"pipeline events\"");
+        assertThat(queryCaptor.getValue()).isEqualTo(
+                "{namespace=\"platform-kafka\",app=\"kafka-connect\"}"
+                        + " |~ \"cdc\\\\.table\\\\.proj-001\\\\.|eda\\\\.table\\\\.proj-001\\\\."
+                        + "|bifrost\\\\.proj-001\\\\."
+                        + "|(^|[^A-Za-z0-9._-])proj-proj-001-user([^A-Za-z0-9._-]|$)\""
+                        + " |= \"pipeline events\"");
     }
 
     @Test
@@ -391,12 +410,80 @@ class InternalOpsObservabilityControllerTest {
 
         controller.searchLogs(
                 "proj-001",
-                java.util.Map.of("query", "{namespace=~\"proj-001|other-project\",app=\"worker\"} |= \"error\"", "limit", 10),
+                java.util.Map.of("query", "{namespace=~\"proj-001|other-project\",app=\"worker\",stream=\"stderr\"} |= \"error\"", "limit", 10),
                 new MockHttpServletRequest());
 
         ArgumentCaptor<String> queryCaptor = ArgumentCaptor.forClass(String.class);
         verify(lokiClient).queryRange(queryCaptor.capture(), anyLong(), anyLong(), eq(10));
-        assertThat(queryCaptor.getValue()).isEqualTo("{namespace=\"proj-001\",app=\"worker\"} |= \"error\"");
+        assertThat(queryCaptor.getValue()).isEqualTo(
+                "{namespace=\"platform-kafka\",app=\"kafka-connect\",stream=\"stderr\"}"
+                        + " |~ \"cdc\\\\.table\\\\.proj-001\\\\.|eda\\\\.table\\\\.proj-001\\\\."
+                        + "|bifrost\\\\.proj-001\\\\."
+                        + "|(^|[^A-Za-z0-9._-])proj-proj-001-user([^A-Za-z0-9._-]|$)\""
+                        + " |= \"error\"");
+    }
+
+    @Test
+    void searchLogsKeepsMandatoryProjectFilterWithCallerProvidedBroadSelector() {
+        UUID tenantId = UUID.randomUUID();
+        when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId, "proj-001")));
+        when(lokiClient.queryRange(any(), anyLong(), anyLong(), eq(10))).thenReturn(List.of());
+
+        controller.searchLogs(
+                "proj-001",
+                java.util.Map.of("query", "{job=~\".*\"} |= \"error\"", "limit", 10),
+                new MockHttpServletRequest());
+
+        ArgumentCaptor<String> queryCaptor = ArgumentCaptor.forClass(String.class);
+        verify(lokiClient).queryRange(queryCaptor.capture(), anyLong(), anyLong(), eq(10));
+        assertThat(queryCaptor.getValue()).startsWith("{namespace=\"platform-kafka\",app=\"kafka-connect\",job=~\".*\"}");
+        assertThat(queryCaptor.getValue()).contains(" |~ \"cdc\\\\.table\\\\.proj-001\\\\.");
+        assertThat(queryCaptor.getValue()).contains("(^|[^A-Za-z0-9._-])proj-proj-001-user([^A-Za-z0-9._-]|$)");
+        assertThat(queryCaptor.getValue()).endsWith(" |= \"error\"");
+    }
+
+    @Test
+    void searchLogsLineFilterDoesNotMatchOverlappingProjectsOrConnectorNames() {
+        UUID tenantId = UUID.randomUUID();
+        when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId, "proj-001")));
+        when(connectorRepository.findByTenantIdOrderByCrName(tenantId))
+                .thenReturn(List.of(connector(UUID.randomUUID(), "abc-source", ConnectorKind.SOURCE)));
+        when(lokiClient.queryRange(any(), anyLong(), anyLong(), eq(10))).thenReturn(List.of());
+
+        controller.searchLogs("proj-001", java.util.Map.of("limit", 10), new MockHttpServletRequest());
+
+        ArgumentCaptor<String> queryCaptor = ArgumentCaptor.forClass(String.class);
+        verify(lokiClient).queryRange(queryCaptor.capture(), anyLong(), anyLong(), eq(10));
+        Pattern lineFilter = Pattern.compile(lineFilterRegex(queryCaptor.getValue()));
+        assertThat(lineFilter.matcher("topic cdc.table.proj-001.orders").find()).isTrue();
+        assertThat(lineFilter.matcher("topic cdc.table.proj-001-a.orders").find()).isFalse();
+        assertThat(lineFilter.matcher("principal proj-proj-001-user connected").find()).isTrue();
+        assertThat(lineFilter.matcher("principal proj-proj-001-user-extra connected").find()).isFalse();
+        assertThat(lineFilter.matcher("connector abc-source failed").find()).isTrue();
+        assertThat(lineFilter.matcher("connector abc-source-extra failed").find()).isFalse();
+        assertThat(lineFilter.matcher("group connect-abc-source rebalanced").find()).isTrue();
+        assertThat(lineFilter.matcher("group connect-abc-source-extra rebalanced").find()).isFalse();
+    }
+
+    @Test
+    void searchLogsEscapesRegexScopeAndRawTextQuery() {
+        UUID tenantId = UUID.randomUUID();
+        when(workspaceRepository.findByNamespace("proj.001+blue"))
+                .thenReturn(Optional.of(workspace(tenantId, "proj.001+blue")));
+        when(connectorRepository.findByTenantIdOrderByCrName(tenantId))
+                .thenReturn(List.of(connector(UUID.randomUUID(), "orders.sink+1", ConnectorKind.SINK)));
+        when(lokiClient.queryRange(any(), anyLong(), anyLong(), eq(10))).thenReturn(List.of());
+
+        controller.searchLogs(
+                "proj.001+blue",
+                java.util.Map.of("query", "path \"quoted\"\\tail", "limit", 10),
+                new MockHttpServletRequest());
+
+        ArgumentCaptor<String> queryCaptor = ArgumentCaptor.forClass(String.class);
+        verify(lokiClient).queryRange(queryCaptor.capture(), anyLong(), anyLong(), eq(10));
+        assertThat(queryCaptor.getValue()).contains("cdc\\\\.table\\\\.proj\\\\.001\\\\+blue\\\\.");
+        assertThat(queryCaptor.getValue()).contains("orders\\\\.sink\\\\+1");
+        assertThat(queryCaptor.getValue()).endsWith(" |= \"path \\\"quoted\\\"\\\\tail\"");
     }
 
     @Test
@@ -468,6 +555,22 @@ class InternalOpsObservabilityControllerTest {
                                 .featuresToDisable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
                                 .build()))
                 .build();
+    }
+
+    private static String lineFilterRegex(String logQl) {
+        String marker = " |~ \"";
+        int start = logQl.indexOf(marker);
+        if (start < 0) {
+            throw new AssertionError("missing line regex filter: " + logQl);
+        }
+        start += marker.length();
+        int end = logQl.indexOf('"', start);
+        if (end < 0) {
+            throw new AssertionError("unterminated line regex filter: " + logQl);
+        }
+        return logQl.substring(start, end)
+                .replace("\\\"", "\"")
+                .replace("\\\\", "\\");
     }
 
     private static WorkspaceEntity workspace(UUID id, String namespace) {
