@@ -68,6 +68,7 @@ _TOOL_CATALOG = [
 
 _CONNECTOR_PARAM_TOOLS = frozenset({"get_connector_status", "get_traces", "get_connector_task_trace"})
 _CONSUMER_GROUP_PARAM_TOOLS = frozenset({"get_consumer_lag", "get_kafka_lag"})
+_OBSERVABILITY_TARGET_TOOLS = frozenset({"get_alerts", "analyze_event_log"})
 # discovery tool — 파이프라인/커넥터 식별자를 산출한다. 식별자에 의존하는 조회는
 # 이 step들이 끝난 뒤 실행돼야 정확하므로 retrieval에서 순차 chain으로 풀린다 (#481).
 _DISCOVERY_TOOLS = frozenset({"list_project_pipelines", "get_pipeline_topology"})
@@ -88,6 +89,12 @@ _IDENTIFIER_STOPWORDS = {
     "task",
     "stacktrace",
     "exception",
+    "alert",
+    "alerts",
+    "event",
+    "events",
+    "log",
+    "logs",
     "default-connector",
     "default-group",
 }
@@ -131,6 +138,14 @@ async def run_planner(
                 )
             selected = _fallback_to_project_scope_tools(selected)
         else:
+            selected = [
+                (tool, _params_with_identifier(tool, params, identifier))
+                for tool, params in selected
+            ]
+
+    if selected_tools & _OBSERVABILITY_TARGET_TOOLS:
+        identifier = _extract_identifier(user_message)
+        if identifier is not None:
             selected = [
                 (tool, _params_with_identifier(tool, params, identifier))
                 for tool, params in selected
@@ -294,6 +309,11 @@ def _params_with_identifier(tool: str, params: dict, identifier: _Identifier) ->
             next_params["consumer_group"] = identifier.value
         else:
             next_params["consumer_group"] = f"connect-{identifier.value}"
+    elif tool in _OBSERVABILITY_TARGET_TOOLS:
+        connector_name = identifier.value
+        if identifier.kind == "consumer_group" and connector_name.lower().startswith("connect-"):
+            connector_name = connector_name[len("connect-"):]
+        next_params["connector_name"] = connector_name
     return next_params
 
 
