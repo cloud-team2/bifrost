@@ -5,6 +5,8 @@
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from app.agents.planner import run_planner
@@ -12,6 +14,18 @@ from app.agents.planner import run_planner
 
 def _tool_names(plan) -> list[str]:
     return [step.tool_name for step in plan.retrieval_plan]
+
+
+def _tool_params(plan) -> list[tuple[str, dict]]:
+    return [(step.tool_name, step.params) for step in plan.retrieval_plan]
+
+
+def _assert_no_duplicate_step_specs(plan) -> None:
+    specs = [
+        (step.tool_name, json.dumps(step.params, sort_keys=True))
+        for step in plan.retrieval_plan
+    ]
+    assert len(specs) == len(set(specs))
 
 
 @pytest.mark.asyncio
@@ -121,21 +135,21 @@ async def test_mixed_existing_intents_remain_additive():
 async def test_metric_keyword_routes_to_live_backed_logical_metric():
     plan = await run_planner("topic ingress 메트릭 확인", "proj_001")
 
-    step = next(step for step in plan.retrieval_plan if step.tool_name == "get_metrics")
-    assert step.params == {"metric": "topic_ingress_messages_per_sec", "time_range": "last_30m"}
+    assert _tool_params(plan) == [
+        ("get_metrics", {"metric": "topic_ingress_messages_per_sec", "time_range": "last_30m"})
+    ]
+    _assert_no_duplicate_step_specs(plan)
 
 
 @pytest.mark.asyncio
 async def test_metric_keyword_can_request_lag_p95_and_commit_rate_together():
     plan = await run_planner("lag p95와 offset progression commit rate 지표 확인", "proj_001")
 
-    metric_params = [
-        step.params for step in plan.retrieval_plan if step.tool_name == "get_metrics"
+    assert _tool_params(plan) == [
+        ("get_metrics", {"metric": "consumer_lag_p95", "time_range": "last_30m"}),
+        ("get_metrics", {"metric": "consumer_commit_rate_per_sec", "time_range": "last_30m"}),
     ]
-    assert metric_params == [
-        {"metric": "consumer_lag_p95", "time_range": "last_30m"},
-        {"metric": "consumer_commit_rate_per_sec", "time_range": "last_30m"},
-    ]
+    _assert_no_duplicate_step_specs(plan)
 
 
 @pytest.mark.asyncio
@@ -158,6 +172,7 @@ async def test_incident_analysis_prompt_expands_cross_lever_metrics_and_tools():
     assert {"metric": "source_freshness_delay_ms", "time_range": "last_30m"} in metric_params
     assert {"metric": "broker_cpu_cores", "time_range": "last_30m"} in metric_params
 
+    _assert_no_duplicate_step_specs(plan)
     steps = {step.tool_name: step for step in plan.retrieval_plan}
     assert steps["get_pipeline_topology"].params == {"pipeline_id": "pipe-123"}
     assert steps["get_consumer_lag"].params == {"consumer_group": "connect-orders-sink"}
@@ -187,27 +202,36 @@ async def test_pipeline_incident_phrase_does_not_invent_pipeline_id():
 async def test_broker_transmit_metric_intent_is_not_captured_by_generic_network():
     plan = await run_planner("broker network transmit metric 확인", "proj_001")
 
-    step = next(step for step in plan.retrieval_plan if step.tool_name == "get_metrics")
-    assert step.params == {
-        "metric": "broker_network_transmit_bytes_per_sec",
-        "time_range": "last_30m",
-    }
+    assert _tool_params(plan) == [
+        (
+            "get_metrics",
+            {
+                "metric": "broker_network_transmit_bytes_per_sec",
+                "time_range": "last_30m",
+            },
+        )
+    ]
+    _assert_no_duplicate_step_specs(plan)
 
 
 @pytest.mark.asyncio
 async def test_watermark_metric_routes_to_watermark_logical_metric():
     plan = await run_planner("source watermark metric 확인", "proj_001")
 
-    step = next(step for step in plan.retrieval_plan if step.tool_name == "get_metrics")
-    assert step.params == {"metric": "source_watermark_delay_ms", "time_range": "last_30m"}
+    assert _tool_params(plan) == [
+        ("get_metrics", {"metric": "source_watermark_delay_ms", "time_range": "last_30m"})
+    ]
+    _assert_no_duplicate_step_specs(plan)
 
 
 @pytest.mark.asyncio
 async def test_broker_fs_read_metric_routes_to_read_logical_metric():
     plan = await run_planner("broker fs read metric 확인", "proj_001")
 
-    step = next(step for step in plan.retrieval_plan if step.tool_name == "get_metrics")
-    assert step.params == {"metric": "broker_fs_read_bytes_per_sec", "time_range": "last_30m"}
+    assert _tool_params(plan) == [
+        ("get_metrics", {"metric": "broker_fs_read_bytes_per_sec", "time_range": "last_30m"})
+    ]
+    _assert_no_duplicate_step_specs(plan)
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,7 @@ import json
 import pytest
 
 from app.agents.rca import run_rca
+from app.catalogs.evidence_matrix import get_evidence_profile
 from app.catalogs.root_causes import root_cause_ids
 from app.core.config import Settings, settings
 from app.schemas.outputs import Classification, ClassifierOutput, IncidentTypeOutput, RcaOutput, RetrievalOutput
@@ -60,6 +61,33 @@ class _SemanticEmbedder:
             or "delta condition observed" in normalized
         ):
             return [0.0, 0.0, 1.0]
+        if (
+            "pod last state oomkilled" in normalized
+            or "container exceeded memory limit and was killed by kubernetes" in normalized
+        ):
+            return [1.0, 1.0, 0.0]
+        return [0.0, 0.0, 0.0]
+
+
+class _MalformedEmbedder:
+    dimensions = 3
+
+    def __init__(self, mode: str) -> None:
+        self.mode = mode
+
+    async def embed_texts(self, texts: list[str]) -> object:
+        if self.mode == "none":
+            return None
+        if self.mode == "short":
+            return [[1.0, 0.0, 0.0] for _ in texts[:-1]]
+        if self.mode == "non_vector":
+            return ["not-a-vector" for _ in texts]
+        return [
+            [1.0, 0.0, 0.0] if index % 2 == 0 else [1.0, 0.0]
+            for index, _ in enumerate(texts)
+        ]
+
+    async def embed_text(self, text: str) -> list[float]:
         return [0.0, 0.0, 0.0]
 
 
@@ -353,8 +381,8 @@ async def test_embedding_assist_can_bridge_required_evidence_vocabulary(
         _classifier("SOURCE_CONNECTION_TIMEOUT"),
         _retrieval_items(
             (
-                "sink write 단계 정상, no sink-side latency regression observed",
-                EvidenceType.SNAPSHOT,
+                "source connection timeout 증가 pipeline_source_connection_timeout_total 증가",
+                EvidenceType.METRIC,
             ),
             (
                 "upstream source dependency stopped responding",
@@ -367,6 +395,33 @@ async def test_embedding_assist_can_bridge_required_evidence_vocabulary(
     assert top.root_cause_id == "SOURCE_DB_CONNECTION_TIMEOUT"
     assert top.required_evidence_satisfied is True
     assert top.confidence >= 0.60
+
+
+@pytest.mark.asyncio
+async def test_embedding_assist_does_not_bridge_required_from_supporting_anchor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    _patch_semantic_embedder(monkeypatch)
+
+    result = await run_rca(
+        _classifier("SOURCE_CONNECTION_TIMEOUT"),
+        _retrieval_items(
+            (
+                "sink write 단계 정상, no sink-side latency regression observed",
+                EvidenceType.SNAPSHOT,
+            ),
+            (
+                "upstream source dependency stopped responding",
+                EvidenceType.TRACE,
+            ),
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "UNKNOWN_WITH_EVIDENCE_GAP"
+    assert top.required_evidence_satisfied is False
+    assert top.confidence < 0.60
 
 
 @pytest.mark.asyncio
@@ -426,6 +481,39 @@ async def test_embedding_assist_respects_similarity_threshold(
         _classifier("SOURCE_CONNECTION_TIMEOUT"),
         _retrieval_items(
             (
+                "source connection timeout 증가 pipeline_source_connection_timeout_total 증가",
+                EvidenceType.METRIC,
+            ),
+            (
+                "upstream source dependency stopped responding",
+                EvidenceType.TRACE,
+            ),
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "SOURCE_DB_CONNECTION_TIMEOUT"
+    assert top.required_evidence_satisfied is False
+    assert top.confidence < 0.80
+    assert top.evidence_gap
+
+
+@pytest.mark.parametrize("mode", ["none", "short", "non_vector", "dimension_mismatch"])
+@pytest.mark.asyncio
+async def test_embedding_assist_falls_back_when_embedder_returns_malformed(
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    _patch_llm(monkeypatch)
+    monkeypatch.setattr(settings, "rca_embedding_match_enabled", True)
+    monkeypatch.setattr(settings, "rca_embedding_match_threshold", 0.8)
+    monkeypatch.setattr(settings, "rca_embedding_match_prefer_openai", False)
+    monkeypatch.setattr("app.knowledge.embedder.get_embedder", lambda **_: _MalformedEmbedder(mode))
+
+    result = await run_rca(
+        _classifier("SOURCE_CONNECTION_TIMEOUT"),
+        _retrieval_items(
+            (
                 "sink write 단계 정상, no sink-side latency regression observed",
                 EvidenceType.SNAPSHOT,
             ),
@@ -473,6 +561,52 @@ async def test_embedding_assist_falls_back_when_embedder_fails(
     assert top.root_cause_id == "UNKNOWN_WITH_EVIDENCE_GAP"
     assert top.required_evidence_satisfied is False
     assert top.confidence < 0.60
+
+
+def test_structured_required_rules_opt_out_of_semantic_matching() -> None:
+    structured_rules = {
+        ("CONNECTOR_TASK_FAILED", "connector task status `FAILED`"),
+        ("CONSUMER_LAG_SPIKE", "consumer lag 급증"),
+        ("CONSUMER_LAG_SPIKE", "offset progression 둔화"),
+        ("POD_OOM_KILLED", "pod last state OOMKilled"),
+        ("DEPLOYMENT_REGRESSION", "배포 이후 error/latency 증가"),
+        ("RECENT_SCHEMA_CHANGE_REGRESSION", "schema version 변경 이후 schema/serialization error 증가"),
+        ("PIPELINE_FRESHNESS_DELAY", "pipeline stage 중 병목 단계 식별"),
+    }
+
+    for root_cause_id, evidence in structured_rules:
+        profile = get_evidence_profile(root_cause_id)
+        assert profile is not None
+        rule = next(rule for rule in profile.required if rule.evidence == evidence)
+        assert rule.semantic_allowed is False
+
+
+@pytest.mark.asyncio
+async def test_structured_semantic_opt_out_blocks_embedding_only_required_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    _patch_semantic_embedder(monkeypatch)
+
+    result = await run_rca(
+        _classifier("POD_OOM_KILLED"),
+        _retrieval_items(
+            (
+                "restart count 증가 restart count delta",
+                EvidenceType.METRIC,
+            ),
+            (
+                "container exceeded memory limit and was killed by Kubernetes",
+                EvidenceType.TRACE,
+            ),
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "POD_OOM_KILLED"
+    assert top.required_evidence_satisfied is False
+    assert "pod last state OOMKilled" in top.evidence_gap
+    assert top.confidence < 0.80
 
 
 @pytest.mark.asyncio

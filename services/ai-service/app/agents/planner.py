@@ -243,6 +243,7 @@ def _keyword_select_tools(user_message: str) -> list[tuple[str, dict]]:
     has_pipeline = _has_any(msg, {"파이프라인", "pipeline"})
     has_pipeline_list = _has_any(msg, {"리스트", "목록", "연결"})
     has_lag = _has_any(msg, {"lag", "지연"})
+    metrics_requested = _has_any(msg, {"메트릭", "metric", "지표", "수치", "성능"})
     has_connector = _has_any(msg, {"커넥터", "connector"})
     identifier = _extract_identifier(msg)
 
@@ -273,7 +274,9 @@ def _keyword_select_tools(user_message: str) -> list[tuple[str, dict]]:
             add("list_pipelines", _PIPELINE_STATUS_PARAMS)
         else:
             add("list_project_pipelines", _PIPELINE_LIST_PARAMS)
-    if _has_any(msg, {"consumer group", "consumer-group", "컨슈머", "consumer"}) or (has_lag and not has_pipeline):
+    if _has_any(msg, {"consumer group", "consumer-group", "컨슈머", "consumer"}) or (
+        has_lag and not has_pipeline and not metrics_requested
+    ):
         if has_lag:
             add("get_consumer_lag", {})
         else:
@@ -282,7 +285,7 @@ def _keyword_select_tools(user_message: str) -> list[tuple[str, dict]]:
         add("search_logs", _LOG_PARAMS)
     if _has_any(msg, {"오류", "에러"}) and not has_event_summary and ("search_logs", "") not in seen_tools:
         add("search_logs", _INCIDENT_LOG_PARAMS)
-    if _has_any(msg, {"메트릭", "metric", "지표", "수치", "성능"}):
+    if metrics_requested:
         for params in _metric_param_list_for_message(msg):
             add("get_metrics", params)
     if _has_any(msg, {"배포", "deploy", "변경", "change", "토폴로지", "topology"}):
@@ -334,9 +337,6 @@ def _augment_hypothesis_routes(selected: list[tuple[str, dict]], msg: str) -> li
     broad_metric_probe = incidentish and metrics_requested
 
     has_lag = _has_any(msg, {"consumer lag", "consumer_group", "lag", "지연", "offset progression"})
-    has_freshness = _has_any(msg, {"freshness", "watermark", "신선도", "워터마크"})
-    has_ingress = _has_any(msg, {"ingress", "incoming", "messages", "topic", "유입", "토픽"})
-    has_broker = _has_any(msg, {"broker", "브로커", "cluster", "클러스터"})
     has_auth = _has_any(
         msg,
         {"auth", "authentication", "permission", "credential", "token", "인증", "권한", "비밀번호"},
@@ -348,17 +348,15 @@ def _augment_hypothesis_routes(selected: list[tuple[str, dict]], msg: str) -> li
 
     if "pipeline_id=" in msg:
         add("get_pipeline_topology", {})
-    if (has_lag and not _has_any(msg, {"pipeline", "파이프라인"})) or broad_metric_probe:
+    if has_lag and not _has_any(msg, {"pipeline", "파이프라인"}) and not metrics_requested:
         add("get_consumer_lag", {})
+    if broad_metric_probe:
         add("get_metrics", {"metric": "consumer_lag_p95", "time_range": "last_30m"})
         add("get_metrics", {"metric": "consumer_commit_rate_per_sec", "time_range": "last_30m"})
-    if has_freshness or broad_metric_probe:
         add("get_metrics", {"metric": "source_freshness_delay_ms", "time_range": "last_30m"})
         add("get_metrics", {"metric": "source_watermark_delay_ms", "time_range": "last_30m"})
-    if has_ingress or broad_metric_probe:
         add("get_metrics", {"metric": "topic_ingress_messages_per_sec", "time_range": "last_30m"})
         add("get_metrics", {"metric": "source_event_rate_per_sec", "time_range": "last_30m"})
-    if has_broker or broad_metric_probe:
         add("get_cluster_info", _PROJECT_SCOPE_PARAMS)
         add("get_metrics", {"metric": "broker_cpu_cores", "time_range": "last_30m"})
         add("get_metrics", {"metric": "broker_fs_read_bytes_per_sec", "time_range": "last_30m"})
@@ -427,13 +425,19 @@ def _metric_param_list_for_message(msg: str) -> list[dict]:
     if _has_any(msg, {"broker", "브로커"}):
         if _has_any(msg, {"memory", "mem", "메모리"}):
             add_metric("broker_memory_working_set_bytes")
-        if _has_any(msg, {"transmit", "tx", "송신"}):
+        has_transmit = _has_any(msg, {"transmit", "tx", "송신"})
+        has_read = _has_any(msg, {"read", "reads", "읽기"})
+        if has_transmit:
             add_metric("broker_network_transmit_bytes_per_sec")
-        if _has_any(msg, {"network", "receive", "rx", "네트워크", "수신"}):
+        if _has_any(msg, {"receive", "rx", "수신"}) or (
+            _has_any(msg, {"network", "네트워크"}) and not has_transmit
+        ):
             add_metric("broker_network_receive_bytes_per_sec")
-        if _has_any(msg, {"read", "reads", "읽기"}):
+        if has_read:
             add_metric("broker_fs_read_bytes_per_sec")
-        if _has_any(msg, {"disk", "fs", "write", "writes", "디스크", "쓰기"}):
+        if _has_any(msg, {"write", "writes", "쓰기"}) or (
+            _has_any(msg, {"disk", "fs", "디스크"}) and not has_read
+        ):
             add_metric("broker_fs_write_bytes_per_sec")
         if not any(metric.startswith("broker_") for metric in metrics):
             add_metric("broker_cpu_cores")

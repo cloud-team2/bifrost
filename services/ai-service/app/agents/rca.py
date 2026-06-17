@@ -5,8 +5,9 @@ import json
 import logging
 import math
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Sequence
+from typing import Any
 
 from app.catalogs.evidence_matrix import get_evidence_profile
 from app.catalogs.incident_rootcause_map import get_root_cause_candidates
@@ -135,6 +136,7 @@ class _SemanticEvidenceMatcher:
 
             embedder = get_embedder(prefer_openai=settings.rca_embedding_match_prefer_openai)
             embeddings = await embedder.embed_texts(texts)
+            vectors = _validated_embedding_vectors(texts, embeddings)
         except Exception as exc:
             logger.warning("RCA semantic evidence matcher disabled after embedder failure: %s", exc)
             return cls(enabled=False, threshold=settings.rca_embedding_match_threshold)
@@ -142,7 +144,7 @@ class _SemanticEvidenceMatcher:
         return cls(
             enabled=True,
             threshold=settings.rca_embedding_match_threshold,
-            vectors={text: vector for text, vector in zip(texts, embeddings, strict=True)},
+            vectors=vectors,
         )
 
     def matches(self, rule: EvidenceRule, item: EvidenceItem) -> bool:
@@ -239,9 +241,16 @@ async def _evaluate_candidate(
     supporting_matches = _match_rules(profile.supporting, evidence_items, matcher)
     negative_matches = _match_rules(profile.negative, evidence_items, matcher)
     negative_ids = _matched_evidence_ids(negative_matches)
-    if negative_ids or not _has_lexical_positive_anchor(required_matches, supporting_matches):
+    has_required_lexical_anchor = _has_lexical_required_anchor(required_matches)
+    has_positive_lexical_anchor = has_required_lexical_anchor or _has_lexical_anchor(supporting_matches)
+    if negative_ids:
         required_matches = _discard_semantic_only_matches(required_matches)
         supporting_matches = _discard_semantic_only_matches(supporting_matches)
+    else:
+        if not has_required_lexical_anchor:
+            required_matches = _discard_semantic_only_matches(required_matches)
+        if not has_positive_lexical_anchor:
+            supporting_matches = _discard_semantic_only_matches(supporting_matches)
 
     matched_required = [item for item in required_matches if item.evidence_ids]
     evidence_gap = [item.rule.evidence for item in required_matches if not item.evidence_ids]
@@ -326,11 +335,12 @@ def _discard_semantic_only_matches(matches: list[_RuleMatch]) -> list[_RuleMatch
     ]
 
 
-def _has_lexical_positive_anchor(
-    required_matches: list[_RuleMatch],
-    supporting_matches: list[_RuleMatch],
-) -> bool:
-    return any(match.lexical_evidence_ids for match in (*required_matches, *supporting_matches))
+def _has_lexical_required_anchor(required_matches: list[_RuleMatch]) -> bool:
+    return _has_lexical_anchor(required_matches)
+
+
+def _has_lexical_anchor(matches: list[_RuleMatch]) -> bool:
+    return any(match.lexical_evidence_ids for match in matches)
 
 
 def _allows_semantic_rule_match(rule: EvidenceRule, item: EvidenceItem) -> bool:
@@ -342,11 +352,32 @@ def _allows_semantic_rule_match(rule: EvidenceRule, item: EvidenceItem) -> bool:
 
 
 def _allows_semantic_rule(rule: EvidenceRule) -> bool:
-    # These rules deliberately require structured trend/status evidence. Do not
-    # let an embedding-only near miss satisfy them.
-    if _connector_failed_status_rule(rule) or _consumer_lag_trend_rule(rule):
+    if not rule.semantic_allowed:
         return False
     return any(_semantic_phrase_allowed(phrase) for phrase in _semantic_rule_phrases(rule))
+
+
+def _validated_embedding_vectors(texts: list[str], embeddings: object) -> dict[str, list[float]]:
+    if not isinstance(embeddings, Sequence) or isinstance(embeddings, (str, bytes)):
+        raise ValueError("embedder returned a non-sequence response")
+    if len(embeddings) != len(texts):
+        raise ValueError("embedder returned a different number of vectors than inputs")
+
+    vectors: dict[str, list[float]] = {}
+    expected_dimensions: int | None = None
+    for text, vector in zip(texts, embeddings, strict=True):
+        if not isinstance(vector, Sequence) or isinstance(vector, (str, bytes)) or not vector:
+            raise ValueError("embedder returned a non-vector item")
+        try:
+            normalized = [float(value) for value in vector]
+        except (TypeError, ValueError) as exc:
+            raise ValueError("embedder returned a non-numeric vector item") from exc
+        if expected_dimensions is None:
+            expected_dimensions = len(normalized)
+        elif len(normalized) != expected_dimensions:
+            raise ValueError("embedder returned vectors with inconsistent dimensions")
+        vectors[text] = normalized
+    return vectors
 
 
 def _semantic_texts(candidate_ids: list[str], evidence_items: list[EvidenceItem]) -> list[str]:
