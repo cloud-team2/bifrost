@@ -159,7 +159,9 @@ function PipelineCard({ edge, consumerGroups }: { edge: Edge; consumerGroups?: C
         <div className="truncate text-[14px] font-semibold text-gray-900">
           {pipelineLabel(edge)}
         </div>
-        <div className="truncate font-mono text-[11px] text-gray-400">{edge.name}</div>
+        {edge.alias && edge.alias !== edge.name && (
+          <div className="truncate font-mono text-[11px] text-gray-400">{edge.name}</div>
+        )}
       </div>
 
       {/* 2. source */}

@@ -221,6 +221,7 @@ export interface DatabaseMetricsResponse {
 export interface PipelineResponse {
   id: string
   name: string
+  alias?: string | null
   pattern: 'fan-out' | 'direct'
   status: 'creating' | 'active' | 'lag' | 'error' | 'paused'
   statusMessage: string | null

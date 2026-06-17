@@ -73,6 +73,7 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
   const [sinkId, setSinkId] = useState('')
   const [selTable, setSelTable] = useState<SelectedTable | null>(null)
   const [name, setName] = useState('')
+  const [alias, setAlias] = useState('')
   const [tables, setTables] = useState<SchemaTable[]>([])
   const [tablesLoading, setTablesLoading] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -120,6 +121,7 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
     setSinkId('')
     setSelTable(null)
     setName('')
+    setAlias('')
     setTables([])
     setBusy(false)
     setError('')
@@ -149,6 +151,7 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
     setError('')
     const created = await app.createPipeline({
       name: name.trim(),
+      alias: alias.trim() || null,
       pattern,
       sourceDbId: sourceId,
       sinkDbId: pattern === 'direct' ? sinkId : null,
@@ -404,6 +407,15 @@ export function CreatePipelineModal({ open, onClose }: { open: boolean; onClose:
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="예: 주문 이벤트 스트림"
+              className="h-10 w-full rounded-md border border-gray-300 px-3 text-sm outline-none focus:border-brand-600 focus:ring-1 focus:ring-brand-600"
+            />
+            <label className="mb-1 mt-3 block text-[12px] font-medium text-gray-600">
+              표시 이름 <span className="font-normal text-gray-400">(선택 · 한글)</span>
+            </label>
+            <input
+              value={alias}
+              onChange={(e) => setAlias(e.target.value)}
+              placeholder="예: 주문 동기화"
               className="h-10 w-full rounded-md border border-gray-300 px-3 text-sm outline-none focus:border-brand-600 focus:ring-1 focus:ring-brand-600"
             />
             {error && (
