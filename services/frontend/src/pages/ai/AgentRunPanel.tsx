@@ -2529,22 +2529,17 @@ function EvidenceCard({
 export function RcaPreviewCard({ msg }: { msg: RcaPreviewMsg }) {
   return (
     <div className="rounded-xl border border-[#ececec] bg-white px-3 py-2.5 text-[12px] text-gray-700">
-      <div className="mb-2 flex min-w-0 items-center gap-1.5">
+      <div className="mb-2 flex min-w-0 flex-wrap items-center gap-1.5">
         <Icon name="search" size={13} className="shrink-0 text-[#6b6b73]" />
-        <span className="shrink-0 font-semibold text-gray-900">RCA</span>
-        {msg.rootCauseId && (
-          <span className="min-w-0 truncate rounded bg-[#ededed] px-1.5 py-0.5 font-mono text-[10.5px] font-semibold text-[#6b6b73]">
-            {msg.rootCauseId}
-          </span>
-        )}
+        <span className="shrink-0 font-semibold text-gray-900">근본 원인 분석</span>
         {msg.confidence != null && (
-          <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[10.5px] text-gray-500">
-            {Math.round(msg.confidence * 100)}%
+          <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[10.5px] font-medium text-gray-500">
+            신뢰도 {Math.round(msg.confidence * 100)}%
           </span>
         )}
         {msg.verified && (
-          <span className="shrink-0 rounded bg-[#ededed] px-1.5 py-0.5 text-[10.5px] font-semibold text-[#6b6b73]">
-            verified
+          <span className="shrink-0 rounded bg-emerald-50 px-1.5 py-0.5 text-[10.5px] font-semibold text-emerald-700">
+            검증됨
           </span>
         )}
       </div>
@@ -2759,7 +2754,7 @@ function ToolPanelCard({ msg }: { msg: ToolPanelMsg }) {
           <PanelEmpty text="조회 중" />
         ) : (error || notice) && msg.result == null ? null : msg.toolName === 'get_consumer_groups' ? (
           <ConsumerGroupsPanel result={result} />
-        ) : msg.toolName === 'list_pipelines' ? (
+        ) : msg.toolName === 'list_pipelines' || msg.toolName === 'list_project_pipelines' ? (
           <PipelineStatusPanel result={result} />
         ) : msg.toolName === 'list_connectors' ? (
           <ConnectorStatusPanel result={result} />
@@ -2952,42 +2947,40 @@ function ConsumerGroupsPanel({ result }: { result: Record<string, unknown> | nul
   )
 }
 
-function PipelineStatusPanel({ result }: { result: Record<string, unknown> | null }) {
+export function PipelineStatusPanel({ result }: { result: Record<string, unknown> | null }) {
   const rows = recordArray(result, 'pipelines')
   if (rows.length === 0) return <PanelEmpty text="파이프라인 데이터 없음" />
 
+  const items = rows.map((row) => {
+    const status = (recordString(row, 'status') ?? 'unknown').toLowerCase()
+    const lag = recordNumber(row, 'lag')
+    const token = lag != null && lag >= 5000 && semanticToken(status) === 'safe' ? 'warn' : semanticToken(status)
+    return {
+      name: recordString(row, 'name') ?? recordString(row, 'id') ?? '-',
+      statusLabel: pipelineStatusKo(status),
+      token,
+      lag,
+      error: recordString(row, 'error'),
+    }
+  })
+  const counts = statusCounts(items.map((item) => item.token))
+
   return (
-    <div className="overflow-x-auto">
-      <table className="min-w-full table-fixed font-mono text-[11px]">
-        <thead className="text-left text-gray-400">
-          <tr>
-            <th className="w-[24%] py-1 pr-3 font-medium">id</th>
-            <th className="w-[34%] py-1 pr-3 font-medium">name</th>
-            <th className="w-[20%] py-1 pr-3 font-medium">status</th>
-            <th className="w-[22%] py-1 text-right font-medium">lag</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, index) => {
-            const id = recordString(row, 'id') ?? '-'
-            const status = recordString(row, 'status') ?? 'unknown'
-            const lag = recordNumber(row, 'lag')
-            const rowError = recordString(row, 'error')
-            const warning = status === 'error' || status === 'lag' || (lag != null && lag >= 5000) || !!rowError
-            return (
-              <tr key={`${id}:${index}`} className="border-t border-gray-100 align-top">
-                <td className="break-all py-1.5 pr-3 text-gray-500">{shortId(id)}</td>
-                <td className="break-words py-1.5 pr-3 text-gray-700">{warning ? '⚠ ' : ''}{recordString(row, 'name') ?? '-'}</td>
-                <td className="break-words py-1.5 pr-3 text-gray-600">{status}</td>
-                <td className="py-1.5 text-right text-gray-700">
-                  {lag == null ? '-' : lag.toLocaleString()}
-                  {rowError && <div className="mt-0.5 text-[10px] text-[#c0392b]">{rowError}</div>}
-                </td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
+    <div className="text-[12px]">
+      <div className="mb-1.5 text-[11px] text-gray-500">{statusCountText(rows.length, counts)}</div>
+      <div className="divide-y divide-gray-100 rounded-md border border-gray-100">
+        {items.map((item, index) => (
+          <div key={`${item.name}:${index}`} className="flex items-center justify-between gap-2 px-2.5 py-1.5">
+            <span className="min-w-0 truncate font-medium text-gray-800">{item.name}</span>
+            <span className={cn('inline-flex shrink-0 items-center gap-1', statusTextClass(item.token))}>
+              <span className={cn('h-1.5 w-1.5 rounded-full', semanticDotClass(item.token))} />
+              {item.statusLabel}
+              {item.token === 'warn' && item.lag != null && <span className="font-mono">{item.lag.toLocaleString()}</span>}
+              {item.error && <span className="ml-1 truncate font-mono text-[10px] text-[#c0392b]">{item.error}</span>}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -3110,7 +3103,7 @@ export function ConnectorDetailPanel({ result }: { result: Record<string, unknow
   )
 }
 
-function EventSummaryPanel({ result }: { result: Record<string, unknown> | null }) {
+export function EventSummaryPanel({ result }: { result: Record<string, unknown> | null }) {
   if (!result) return <PanelEmpty text="이벤트/인시던트 데이터 없음" />
   const open = recordNumber(result, 'openIncidents', 'open_incidents') ?? 0
   const criticalCount = recordNumber(result, 'criticalIncidents', 'critical_incidents') ?? 0
@@ -3118,35 +3111,48 @@ function EventSummaryPanel({ result }: { result: Record<string, unknown> | null 
   const warnings = recordArray(result, 'warnings')
 
   return (
-    <div className="space-y-3 font-mono text-[11px]">
-      <div className="rounded bg-gray-50 px-2 py-1.5 text-gray-700">
-        인시던트 open:{open.toLocaleString()}건 (critical:{criticalCount.toLocaleString()}건)
+    <div className="space-y-2.5 text-[12px]">
+      <div className="text-gray-600">
+        미해결 <b className="text-gray-800">{open.toLocaleString()}건</b>
+        {criticalCount > 0 && (
+          <>
+            {' · '}긴급 <b className="text-[#c0392b]">{criticalCount.toLocaleString()}건</b>
+          </>
+        )}
       </div>
       <div>
-        <div className="mb-1 text-[10.5px] font-semibold uppercase text-gray-400">critical</div>
+        <div className="mb-1 text-[10.5px] font-semibold text-gray-400">긴급</div>
         {critical.length === 0 ? (
-          <PanelEmpty text="critical 인시던트 없음" />
+          <PanelEmpty text="긴급 인시던트 없음" />
         ) : (
           <div className="space-y-1">
-            {critical.map((item, index) => (
-              <div key={`${recordString(item, 'incidentId', 'incident_id') ?? index}`} className="break-words border-t border-gray-100 pt-1 text-gray-700">
-                ⚠ {recordString(item, 'severity') ?? '-'} · {recordString(item, 'title') ?? '-'} · {shortId(recordString(item, 'incidentId', 'incident_id') ?? '-')}
-              </div>
-            ))}
+            {critical.map((item, index) => {
+              const id = recordString(item, 'incidentId', 'incident_id')
+              return (
+                <div key={`${id ?? index}`} className="break-words rounded border border-rose-100 bg-rose-50 px-2 py-1.5 text-[11.5px] text-gray-700">
+                  ⚠ {recordString(item, 'title') ?? '-'}
+                  {id && <span className="text-gray-400"> · #{shortId(id)}</span>}
+                </div>
+              )
+            })}
           </div>
         )}
       </div>
       <div>
-        <div className="mb-1 text-[10.5px] font-semibold uppercase text-gray-400">warnings</div>
+        <div className="mb-1 text-[10.5px] font-semibold text-gray-400">경고</div>
         {warnings.length === 0 ? (
           <PanelEmpty text="주요 경고 이벤트 없음" />
         ) : (
           <div className="space-y-1">
-            {warnings.map((item, index) => (
-              <div key={`${recordString(item, 'eventId', 'event_id') ?? index}`} className="break-words border-t border-gray-100 pt-1 text-gray-600">
-                {recordString(item, 'level') ?? '-'} · {recordString(item, 'type') ?? '-'} · {recordString(item, 'message') ?? ''}
-              </div>
-            ))}
+            {warnings.map((item, index) => {
+              const id = recordString(item, 'eventId', 'event_id')
+              return (
+                <div key={`${id ?? index}`} className="break-words rounded bg-gray-50 px-2 py-1.5 text-[11.5px] text-gray-600">
+                  {recordString(item, 'message') ?? recordString(item, 'type') ?? '-'}
+                  {id && <span className="text-gray-400"> · #{shortId(id)}</span>}
+                </div>
+              )
+            })}
           </div>
         )}
       </div>
@@ -3566,6 +3572,51 @@ function semanticDotClass(token: SemanticToken) {
   if (token === 'warn') return 'bg-amber-500'
   if (token === 'safe') return 'bg-emerald-500'
   return 'bg-gray-400'
+}
+
+function statusTextClass(token: SemanticToken) {
+  if (token === 'danger') return 'text-[#c0392b]'
+  if (token === 'warn') return 'text-amber-700'
+  if (token === 'safe') return 'text-emerald-700'
+  return 'text-gray-500'
+}
+
+const PIPELINE_STATUS_KO: Record<string, string> = {
+  running: '정상',
+  ok: '정상',
+  healthy: '정상',
+  active: '정상',
+  lag: '지연',
+  degraded: '지연',
+  pending: '지연',
+  error: '오류',
+  failed: '오류',
+  down: '오류',
+  stopped: '중지',
+  paused: '일시정지',
+  unknown: '알 수 없음',
+}
+
+export function pipelineStatusKo(status: string) {
+  return PIPELINE_STATUS_KO[status.toLowerCase()] ?? status
+}
+
+export function statusCounts(tokens: SemanticToken[]): Record<SemanticToken, number> {
+  return tokens.reduce(
+    (acc, token) => {
+      acc[token] += 1
+      return acc
+    },
+    { safe: 0, warn: 0, danger: 0, neutral: 0 } as Record<SemanticToken, number>,
+  )
+}
+
+function statusCountText(total: number, counts: Record<SemanticToken, number>) {
+  const parts = [`전체 ${total}개`]
+  if (counts.safe) parts.push(`정상 ${counts.safe}`)
+  if (counts.warn) parts.push(`지연 ${counts.warn}`)
+  if (counts.danger) parts.push(`오류 ${counts.danger}`)
+  return parts.join(' · ')
 }
 
 function genericBadgeClass(label: string, value: unknown) {

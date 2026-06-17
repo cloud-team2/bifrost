@@ -119,9 +119,10 @@ describe('incident analysis cards', () => {
 
     const html = renderToStaticMarkup(<RcaPreviewCard msg={msg} />)
 
-    expect(html).toContain('RCA')
-    expect(html).toContain('CONNECTOR_TASK_FAILED')
-    expect(html).toContain('82%')
+    expect(html).toContain('근본 원인 분석')
+    expect(html).not.toContain('>RCA<')
+    expect(html).toContain('CONNECTOR_TASK_FAILED') // 원인 후보 메시지 본문에 포함
+    expect(html).toContain('신뢰도 82%')
   })
 
   it('extracts remediation candidates from nested SSE payload shapes', () => {

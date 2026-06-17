@@ -2,9 +2,13 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
   ConnectorDetailPanel,
+  EventSummaryPanel,
   GenericToolResultPanel,
+  PipelineStatusPanel,
   connectorStatusSummary,
+  pipelineStatusKo,
   semanticToken,
+  statusCounts,
   toolLabelKo,
 } from './AgentRunPanel'
 
@@ -83,6 +87,61 @@ describe('GenericToolResultPanel', () => {
     expect(html).not.toContain('worker') // worker_id is null → hidden
     expect(html).not.toContain('워커')
     expect(html).not.toContain('TRACE') // no raw English labels
+  })
+})
+
+describe('pipelineStatusKo / statusCounts', () => {
+  it('maps pipeline statuses to Korean', () => {
+    expect(pipelineStatusKo('running')).toBe('정상')
+    expect(pipelineStatusKo('lag')).toBe('지연')
+    expect(pipelineStatusKo('error')).toBe('오류')
+  })
+
+  it('counts tokens by bucket', () => {
+    expect(statusCounts(['safe', 'safe', 'warn', 'danger'])).toMatchObject({ safe: 2, warn: 1, danger: 1 })
+  })
+})
+
+describe('PipelineStatusPanel', () => {
+  it('renders a Korean status list with counts and no English column headers', () => {
+    const html = renderToStaticMarkup(
+      <PipelineStatusPanel
+        result={{
+          pipelines: [
+            { id: 'a', name: '주문 파이프라인', status: 'running' },
+            { id: 'b', name: '결제 파이프라인', status: 'lag', lag: 12400 },
+            { id: 'c', name: '재고 파이프라인', status: 'error' },
+          ],
+        }}
+      />,
+    )
+    expect(html).toContain('전체 3개')
+    expect(html).toContain('정상 1')
+    expect(html).toContain('지연 1')
+    expect(html).toContain('오류 1')
+    expect(html).toContain('주문 파이프라인')
+    expect(html).not.toMatch(/>id<|>name<|>status<|>lag</) // no raw table headers
+  })
+})
+
+describe('EventSummaryPanel', () => {
+  it('renders incidents in Korean (미해결/긴급/경고) without English labels', () => {
+    const html = renderToStaticMarkup(
+      <EventSummaryPanel
+        result={{
+          open_incidents: 2,
+          critical_incidents: 1,
+          critical: [{ incident_id: 'A1B2', title: '주문 파이프라인 지연', severity: 'CRITICAL' }],
+          warnings: [{ event_id: 'C3D4', message: '회원 DB 커넥터 재시작 반복' }],
+        }}
+      />,
+    )
+    expect(html).toContain('미해결')
+    expect(html).toContain('긴급')
+    expect(html).toContain('경고')
+    expect(html).toContain('주문 파이프라인 지연')
+    expect(html).not.toContain('critical')
+    expect(html).not.toContain('warnings')
   })
 })
 
