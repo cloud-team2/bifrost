@@ -118,6 +118,54 @@ async def test_mixed_existing_intents_remain_additive():
 
 
 @pytest.mark.asyncio
+async def test_metric_keyword_routes_to_live_backed_logical_metric():
+    plan = await run_planner("topic ingress 메트릭 확인", "proj_001")
+
+    step = next(step for step in plan.retrieval_plan if step.tool_name == "get_metrics")
+    assert step.params == {"metric": "topic_ingress_messages_per_sec", "time_range": "last_30m"}
+
+
+@pytest.mark.asyncio
+async def test_metric_keyword_can_request_lag_p95_and_commit_rate_together():
+    plan = await run_planner("lag p95와 offset progression commit rate 지표 확인", "proj_001")
+
+    metric_params = [
+        step.params for step in plan.retrieval_plan if step.tool_name == "get_metrics"
+    ]
+    assert metric_params == [
+        {"metric": "consumer_lag_p95", "time_range": "last_30m"},
+        {"metric": "consumer_commit_rate_per_sec", "time_range": "last_30m"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_broker_transmit_metric_intent_is_not_captured_by_generic_network():
+    plan = await run_planner("broker network transmit metric 확인", "proj_001")
+
+    step = next(step for step in plan.retrieval_plan if step.tool_name == "get_metrics")
+    assert step.params == {
+        "metric": "broker_network_transmit_bytes_per_sec",
+        "time_range": "last_30m",
+    }
+
+
+@pytest.mark.asyncio
+async def test_watermark_metric_routes_to_watermark_logical_metric():
+    plan = await run_planner("source watermark metric 확인", "proj_001")
+
+    step = next(step for step in plan.retrieval_plan if step.tool_name == "get_metrics")
+    assert step.params == {"metric": "source_watermark_delay_ms", "time_range": "last_30m"}
+
+
+@pytest.mark.asyncio
+async def test_broker_fs_read_metric_routes_to_read_logical_metric():
+    plan = await run_planner("broker fs read metric 확인", "proj_001")
+
+    step = next(step for step in plan.retrieval_plan if step.tool_name == "get_metrics")
+    assert step.params == {"metric": "broker_fs_read_bytes_per_sec", "time_range": "last_30m"}
+
+
+@pytest.mark.asyncio
 async def test_no_duplicate_tool_steps():
     # "에러 로그" 는 incident·log 버킷 둘 다에 매칭되지만 search_logs step 은 1개여야 한다.
     plan = await run_planner("에러 로그 보여줘", "proj_001")

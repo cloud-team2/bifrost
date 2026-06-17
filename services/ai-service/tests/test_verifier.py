@@ -280,6 +280,53 @@ async def test_incident_verifier_ignores_knowledge_for_required_evidence() -> No
 
 
 @pytest.mark.asyncio
+async def test_incident_verifier_accepts_live_metric_trend_evidence() -> None:
+    output = await run_verifier(
+        AgentMode.INCIDENT_ANALYSIS,
+        rca_out=RcaOutput(root_cause_candidates=[_candidate("CONSUMER_LAG_SPIKE")]),
+        retrieval_out=RetrievalOutput(
+            evidence_items=[
+                _evidence(
+                    "ev-lag-p95",
+                    "consumer lag p95 metric: 30 points, latest=12345.000, "
+                    "first=42.000, delta=12303.000; lag p95 증가",
+                ),
+                _evidence(
+                    "ev-commit-rate",
+                    "offset progression commit rate metric: 30 points, latest=5.000 records/sec, "
+                    "first=120.000, delta=-115.000; offset progression 둔화 commit rate 감소",
+                ),
+            ]
+        ),
+    )
+
+    result = output.verification_results[0]
+    assert result.status == VerificationStatus.PASS
+
+
+@pytest.mark.asyncio
+async def test_incident_verifier_rejects_single_consumer_lag_snapshot_as_trend_evidence() -> None:
+    output = await run_verifier(
+        AgentMode.INCIDENT_ANALYSIS,
+        rca_out=RcaOutput(root_cause_candidates=[_candidate("CONSUMER_LAG_SPIKE")]),
+        retrieval_out=RetrievalOutput(
+            evidence_items=[
+                _evidence(
+                    "ev-lag-snapshot",
+                    "consumer lag snapshot: total_lag=12345, lag p95=12345.000, "
+                    "top lag partitions=[orders-0:12345]; offset position snapshot: "
+                    "current committed offsets and log end offsets captured",
+                ),
+            ]
+        ),
+    )
+
+    result = output.verification_results[0]
+    assert result.status == VerificationStatus.NEEDS_REVISION
+    assert "consumer lag 급증" in result.reason
+
+
+@pytest.mark.asyncio
 async def test_incident_low_confidence_fail() -> None:
     output = await run_verifier(
         AgentMode.INCIDENT_ANALYSIS,

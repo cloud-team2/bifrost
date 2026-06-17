@@ -60,6 +60,31 @@ async def test_llm_selects_metrics_for_keywordless_query(monkeypatch: pytest.Mon
     assert "get_metrics" in _tool_names(plan)
 
 
+@pytest.mark.asyncio
+async def test_llm_selected_metrics_preserves_metric_intent(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_llm(monkeypatch, _tools_response("get_metrics"))
+
+    plan = await run_planner("offset progression commit rate 지표를 보고 싶어", "proj_001")
+
+    step = next(step for step in plan.retrieval_plan if step.tool_name == "get_metrics")
+    assert step.params == {"metric": "consumer_commit_rate_per_sec", "time_range": "last_30m"}
+
+
+@pytest.mark.asyncio
+async def test_llm_selected_metrics_preserves_multiple_metric_intents(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_llm(monkeypatch, _tools_response("get_metrics"))
+
+    plan = await run_planner("lag p95와 offset progression commit rate 지표를 보고 싶어", "proj_001")
+
+    metric_params = [
+        step.params for step in plan.retrieval_plan if step.tool_name == "get_metrics"
+    ]
+    assert metric_params == [
+        {"metric": "consumer_lag_p95", "time_range": "last_30m"},
+        {"metric": "consumer_commit_rate_per_sec", "time_range": "last_30m"},
+    ]
+
+
 # ── allowlist 강제: catalog 밖 tool 미선택 ──────────────────────────────────
 @pytest.mark.asyncio
 async def test_made_up_tool_is_not_selected(monkeypatch: pytest.MonkeyPatch) -> None:

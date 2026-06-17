@@ -10,27 +10,14 @@
       "request_id": "req_e2e_005",
       "operation": "query_traces",
       "result": {
-        "connector": "orders-source",
-        "traces": [
-          {
-            "taskId": 0,
-            "state": "RUNNING",
-            "trace": "poll loop slowed by consumer pod resource pressure; commit rate 감소"
-          }
-        ],
-        "summary": "consumer pod resource pressure caused offset progression 둔화",
-        "note": "trace contains no broker 장애 evidence"
+        "traceId": null,
+        "pipelineId": "orders-source",
+        "status": "unknown",
+        "durationMs": 0,
+        "spans": [],
+        "note": "구간 내 trace 없음"
       },
-      "evidence": [
-        {
-          "evidence_id": "ev_trace_001",
-          "store_ref": "evidence://e2e/ev_trace_001",
-          "summary": "consumer pod resource pressure: commit rate 감소와 offset progression 둔화",
-          "redaction_status": "redacted",
-          "type": "trace"
-        }
-      ],
-      "audit_event_id": "audit_e2e_005"
+      "evidence": []
     }
   }
 }

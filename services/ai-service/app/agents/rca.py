@@ -221,6 +221,8 @@ def _rule_matches_evidence(rule: EvidenceRule, item: EvidenceItem) -> bool:
         return _has_connector_failed_status(item.summary)
     if _connector_trace_rule(rule) and _negates_connector_trace(item.summary):
         return False
+    if _consumer_lag_trend_rule(rule):
+        return _has_consumer_lag_trend_evidence(rule, item.summary)
 
     rule_text = rule.evidence.casefold()
     example_text = (rule.example or "").casefold()
@@ -265,6 +267,39 @@ def _connector_trace_rule(rule: EvidenceRule) -> bool:
         rule.root_cause_id == _CONNECTOR_TASK_FAILED_ID
         and ("trace" in rule.evidence.casefold() or "worker log" in rule.evidence.casefold())
     )
+
+
+def _consumer_lag_trend_rule(rule: EvidenceRule) -> bool:
+    return rule.root_cause_id == "CONSUMER_LAG_SPIKE" and rule.kind == "required"
+
+
+def _has_consumer_lag_trend_evidence(rule: EvidenceRule, summary: str) -> bool:
+    normalized = _normalize_text(summary)
+    if "consumer lag" in rule.evidence.casefold():
+        has_lag_signal = "consumer lag" in normalized or "lag p95" in normalized
+        has_increase_signal = bool(
+            re.search(r"\b(?:spike|increas(?:e|ed|ing)|surge|jump)\b", normalized)
+            or re.search(r"(?:급증|증가|상승|치솟)", normalized)
+        )
+        return has_lag_signal and has_increase_signal
+
+    if "offset progression" in rule.evidence.casefold():
+        has_offset_signal = (
+            "offset progression" in normalized
+            or "commit rate" in normalized
+            or "committed offsets" in normalized
+        )
+        has_slowing_signal = bool(
+            re.search(
+                r"\b(?:slow(?:ed|ing)?|decreas(?:e|ed|ing)|"
+                r"drop(?:ped|ping)?|declin(?:e|ed|ing))\b",
+                normalized,
+            )
+            or re.search(r"(?:둔화|감소|하락|저하)", normalized)
+        )
+        return has_offset_signal and has_slowing_signal
+
+    return False
 
 
 def _connector_failed_status_missing(
@@ -315,6 +350,10 @@ def _tokens_match(rule_tokens: set[str], evidence_tokens: set[str]) -> bool:
 
 def _tokens(value: str) -> list[str]:
     return [_TOKEN_ALIASES.get(token.casefold(), token.casefold()) for token in _TOKEN_RE.findall(value)]
+
+
+def _normalize_text(value: str) -> str:
+    return " ".join(_tokens(value))
 
 
 def _meaningful_tokens(value: str) -> set[str]:

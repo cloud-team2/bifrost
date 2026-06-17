@@ -144,6 +144,8 @@ def _success_summary(response: SpringOpsResponse) -> str:
     summary = result.get("summary")
     if isinstance(summary, str) and summary:
         return summary
+    if response.operation == "get_consumer_lag":
+        return _consumer_lag_summary(base, result)
 
     parts: list[str] = []
     # 리스트-값 키: 항목 수만 보고 (내용 미노출).
@@ -165,6 +167,38 @@ def _success_summary(response: SpringOpsResponse) -> str:
     if not parts:
         return base
     return f"{base} ({', '.join(parts[:_MAX_SUMMARY_PARTS])})"
+
+
+def _consumer_lag_summary(base: str, result: dict) -> str:
+    total_lag = _first_present(result, "total_lag", "totalLag")
+    partitions = result.get("partitions")
+    top = _first_present(result, "top_lag_partitions", "topLagPartitions")
+    p95_lag = _first_present(result, "p95_lag", "p95Lag")
+    observed_at = _first_present(result, "observed_at", "observedAt")
+    source = result.get("source")
+
+    parts: list[str] = ["consumer lag snapshot"]
+    if total_lag is not None:
+        parts.append(f"total_lag={total_lag}")
+    if isinstance(partitions, list):
+        parts.append(f"partition_count={len(partitions)}")
+    if p95_lag is not None:
+        parts.append(f"lag p95={p95_lag}")
+    if isinstance(top, list) and top:
+        parts.append(f"top lag partitions={len(top)}")
+    if observed_at:
+        parts.append(f"observed_at={observed_at}")
+    if source:
+        parts.append(f"source={source}")
+    parts.append("offset position snapshot: current committed offsets and log end offsets captured")
+    return f"{base} ({', '.join(parts)})"
+
+
+def _first_present(result: dict, *keys: str):
+    for key in keys:
+        if key in result:
+            return result[key]
+    return None
 
 
 def _is_blocking_error(error: ToolError) -> bool:
