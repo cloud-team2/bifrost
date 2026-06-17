@@ -260,8 +260,7 @@ export function cdcStatusToNodeStatus(
   status: CdcReadinessResponse['overallStatus'] | null | undefined,
 ): Node['status'] | null {
   if (status === 'OK') return 'healthy'
-  if (status === 'WARNING') return 'warning'
-  if (status === 'BLOCKED') return 'error'
+  if (status === 'WARNING' || status === 'BLOCKED') return 'warning' // #807: readiness 문제는 warning(빨강 아님)
   return null
 }
 
@@ -636,23 +635,14 @@ function readinessTone(status: CdcReadinessResponse['overallStatus']) {
       text: 'text-[#6b6b73]',
     }
   }
-  if (status === 'WARNING') {
-    return {
-      box: 'border-[#ececec] bg-[#ededed]',
-      badge: 'bg-[#ededed]',
-      dot: 'bg-[#c8c8c8]',
-      icon: 'text-[#6b6b73]',
-      title: 'text-[#6b6b73]',
-      text: 'text-[#6b6b73]',
-    }
-  }
+  // WARNING·BLOCKED → 주황(경고). readiness 문제는 error(빨강)가 아니다 — error는 연결 끊김만(#807).
   return {
-    box: 'border-[#c0392b] bg-[#fcf3f2]',
-    badge: 'bg-[#c0392b] text-white',
-    dot: 'bg-[#c0392b]',
-    icon: 'text-[#c0392b]',
-    title: 'text-[#c0392b]',
-    text: 'text-[#c0392b]',
+    box: 'border-[#d97316] bg-[#fdf4e9]',
+    badge: 'bg-[#d97316] text-white',
+    dot: 'bg-[#d97316]',
+    icon: 'text-[#d97316]',
+    title: 'text-[#d97316]',
+    text: 'text-[#d97316]',
   }
 }
 

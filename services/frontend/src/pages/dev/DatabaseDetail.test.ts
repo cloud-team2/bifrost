@@ -19,7 +19,7 @@ describe('DatabaseDetail helpers', () => {
   it('maps readiness status to database status without treating unknown data as healthy', () => {
     expect(cdcStatusToNodeStatus('OK')).toBe('healthy')
     expect(cdcStatusToNodeStatus('WARNING')).toBe('warning')
-    expect(cdcStatusToNodeStatus('BLOCKED')).toBe('error')
+    expect(cdcStatusToNodeStatus('BLOCKED')).toBe('warning') // #807: readiness 문제는 warning
     expect(cdcStatusToNodeStatus(null)).toBeNull()
   })
 
@@ -38,7 +38,7 @@ describe('DatabaseDetail helpers', () => {
       { status: 'healthy', connectionStatus: 'HEALTHY' },
       { data: ok, loading: false, error: null, loaded: true },
       { data: blocked, loading: false, error: null, loaded: true },
-    )).toBe('error')
+    )).toBe('warning') // #807: sink BLOCKED도 warning (연결 끊김만 error)
     expect(databaseStatusFromReadinessResources(
       { status: 'healthy', connectionStatus: 'HEALTHY' },
       { data: ok, loading: false, error: null, loaded: true },
