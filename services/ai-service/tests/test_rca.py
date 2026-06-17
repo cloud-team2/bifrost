@@ -6,7 +6,9 @@ import json
 import pytest
 
 from app.agents.rca import run_rca
+from app.catalogs.evidence_matrix import get_evidence_profile
 from app.catalogs.root_causes import root_cause_ids
+from app.core.config import Settings, settings
 from app.schemas.outputs import Classification, ClassifierOutput, IncidentTypeOutput, RcaOutput, RetrievalOutput
 from app.schemas.state import EvidenceItem, EvidenceType, IncidentScope
 
@@ -21,6 +23,91 @@ class _DummyLLMProvider:
 
 def _patch_llm(monkeypatch: pytest.MonkeyPatch, response: str = "") -> None:
     monkeypatch.setattr("app.llm.provider.get_llm_provider", lambda: _DummyLLMProvider(response))
+
+
+class _SemanticEmbedder:
+    dimensions = 3
+
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        return [self._embed(text) for text in texts]
+
+    async def embed_text(self, text: str) -> list[float]:
+        return self._embed(text)
+
+    def _embed(self, text: str) -> list[float]:
+        normalized = text.casefold()
+        if (
+            "auth/permission error log" in normalized
+            or "login was rejected" in normalized
+            or "stored secret is stale" in normalized
+        ):
+            return [1.0, 0.0, 0.0]
+        if (
+            "source connection timeout 증가" in normalized
+            or "pipeline extract/read 단계 timeout log" in normalized
+            or "pipeline read latency 증가" in normalized
+            or "upstream source dependency stopped responding" in normalized
+            or "extract stage exceeded its read deadline" in normalized
+            or "read duration breached the p95 threshold" in normalized
+            or "alpha condition observed" in normalized
+            or "beta condition observed" in normalized
+            or "gamma condition observed" in normalized
+        ):
+            return [0.0, 1.0, 0.0]
+        if (
+            "source metric 정상" in normalized
+            or "source timeout 후보 약화" in normalized
+            or "source database metrics stayed healthy" in normalized
+            or "delta condition observed" in normalized
+        ):
+            return [0.0, 0.0, 1.0]
+        if (
+            "pod last state oomkilled" in normalized
+            or "container exceeded memory limit and was killed by kubernetes" in normalized
+        ):
+            return [1.0, 1.0, 0.0]
+        return [0.0, 0.0, 0.0]
+
+
+class _MalformedEmbedder:
+    dimensions = 3
+
+    def __init__(self, mode: str) -> None:
+        self.mode = mode
+
+    async def embed_texts(self, texts: list[str]) -> object:
+        if self.mode == "none":
+            return None
+        if self.mode == "short":
+            return [[1.0, 0.0, 0.0] for _ in texts[:-1]]
+        if self.mode == "non_vector":
+            return ["not-a-vector" for _ in texts]
+        return [
+            [1.0, 0.0, 0.0] if index % 2 == 0 else [1.0, 0.0]
+            for index, _ in enumerate(texts)
+        ]
+
+    async def embed_text(self, text: str) -> list[float]:
+        return [0.0, 0.0, 0.0]
+
+
+def _patch_semantic_embedder(monkeypatch: pytest.MonkeyPatch, *, enabled: bool = True) -> None:
+    monkeypatch.setattr(settings, "rca_embedding_match_enabled", enabled)
+    monkeypatch.setattr(settings, "rca_embedding_match_threshold", 0.8)
+    monkeypatch.setattr(settings, "rca_embedding_match_prefer_openai", False)
+    monkeypatch.setattr("app.knowledge.embedder.get_embedder", lambda **_: _SemanticEmbedder())
+
+
+def test_rca_embedding_match_defaults_to_guarded_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AI_RCA_EMBEDDING_MATCH_ENABLED", raising=False)
+    monkeypatch.delenv("AI_RCA_EMBEDDING_MATCH_THRESHOLD", raising=False)
+    monkeypatch.delenv("AI_RCA_EMBEDDING_MATCH_PREFER_OPENAI", raising=False)
+
+    config = Settings(_env_file=None)
+
+    assert config.rca_embedding_match_enabled is False
+    assert config.rca_embedding_match_threshold == 0.86
+    assert config.rca_embedding_match_prefer_openai is True
 
 
 def _classifier(*incident_types: str) -> ClassifierOutput:
@@ -281,6 +368,267 @@ async def test_user_request_snapshot_can_satisfy_schema_mismatch(
     assert top.root_cause_id == "SCHEMA_MISMATCH"
     assert top.required_evidence_satisfied is True
     assert top.confidence >= 0.60
+
+
+@pytest.mark.asyncio
+async def test_embedding_assist_can_bridge_required_evidence_vocabulary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    _patch_semantic_embedder(monkeypatch)
+
+    result = await run_rca(
+        _classifier("SOURCE_CONNECTION_TIMEOUT"),
+        _retrieval_items(
+            (
+                "source connection timeout 증가 pipeline_source_connection_timeout_total 증가",
+                EvidenceType.METRIC,
+            ),
+            (
+                "upstream source dependency stopped responding",
+                EvidenceType.TRACE,
+            ),
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "SOURCE_DB_CONNECTION_TIMEOUT"
+    assert top.required_evidence_satisfied is True
+    assert top.confidence >= 0.60
+
+
+@pytest.mark.asyncio
+async def test_embedding_assist_does_not_bridge_required_from_supporting_anchor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    _patch_semantic_embedder(monkeypatch)
+
+    result = await run_rca(
+        _classifier("SOURCE_CONNECTION_TIMEOUT"),
+        _retrieval_items(
+            (
+                "sink write 단계 정상, no sink-side latency regression observed",
+                EvidenceType.SNAPSHOT,
+            ),
+            (
+                "upstream source dependency stopped responding",
+                EvidenceType.TRACE,
+            ),
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "UNKNOWN_WITH_EVIDENCE_GAP"
+    assert top.required_evidence_satisfied is False
+    assert top.confidence < 0.60
+
+
+@pytest.mark.asyncio
+async def test_embedding_assist_does_not_commit_without_lexical_anchor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    _patch_semantic_embedder(monkeypatch)
+
+    result = await run_rca(
+        _classifier("SOURCE_AUTH_FAILURE"),
+        _retrieval_items(
+            (
+                "upstream database login was rejected because the stored secret is stale",
+                EvidenceType.TRACE,
+            ),
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "UNKNOWN_WITH_EVIDENCE_GAP"
+    assert top.required_evidence_satisfied is False
+    assert top.confidence < 0.60
+
+
+@pytest.mark.asyncio
+async def test_embedding_assist_can_be_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    _patch_semantic_embedder(monkeypatch, enabled=False)
+
+    result = await run_rca(
+        _classifier("SOURCE_AUTH_FAILURE"),
+        _retrieval_items(
+            (
+                "upstream database login was rejected because the stored secret is stale",
+                EvidenceType.TRACE,
+            ),
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "UNKNOWN_WITH_EVIDENCE_GAP"
+    assert top.confidence < 0.60
+
+
+@pytest.mark.asyncio
+async def test_embedding_assist_respects_similarity_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    _patch_semantic_embedder(monkeypatch)
+    monkeypatch.setattr(settings, "rca_embedding_match_threshold", 1.01)
+
+    result = await run_rca(
+        _classifier("SOURCE_CONNECTION_TIMEOUT"),
+        _retrieval_items(
+            (
+                "source connection timeout 증가 pipeline_source_connection_timeout_total 증가",
+                EvidenceType.METRIC,
+            ),
+            (
+                "upstream source dependency stopped responding",
+                EvidenceType.TRACE,
+            ),
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "SOURCE_DB_CONNECTION_TIMEOUT"
+    assert top.required_evidence_satisfied is False
+    assert top.confidence < 0.80
+    assert top.evidence_gap
+
+
+@pytest.mark.parametrize("mode", ["none", "short", "non_vector", "dimension_mismatch"])
+@pytest.mark.asyncio
+async def test_embedding_assist_falls_back_when_embedder_returns_malformed(
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    _patch_llm(monkeypatch)
+    monkeypatch.setattr(settings, "rca_embedding_match_enabled", True)
+    monkeypatch.setattr(settings, "rca_embedding_match_threshold", 0.8)
+    monkeypatch.setattr(settings, "rca_embedding_match_prefer_openai", False)
+    monkeypatch.setattr("app.knowledge.embedder.get_embedder", lambda **_: _MalformedEmbedder(mode))
+
+    result = await run_rca(
+        _classifier("SOURCE_CONNECTION_TIMEOUT"),
+        _retrieval_items(
+            (
+                "sink write 단계 정상, no sink-side latency regression observed",
+                EvidenceType.SNAPSHOT,
+            ),
+            (
+                "upstream source dependency stopped responding",
+                EvidenceType.TRACE,
+            ),
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "UNKNOWN_WITH_EVIDENCE_GAP"
+    assert top.required_evidence_satisfied is False
+    assert top.confidence < 0.60
+
+
+@pytest.mark.asyncio
+async def test_embedding_assist_falls_back_when_embedder_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    monkeypatch.setattr(settings, "rca_embedding_match_enabled", True)
+    monkeypatch.setattr(settings, "rca_embedding_match_threshold", 0.8)
+
+    def raise_embedder(**_: object) -> object:
+        raise RuntimeError("embedding provider unavailable")
+
+    monkeypatch.setattr("app.knowledge.embedder.get_embedder", raise_embedder)
+
+    result = await run_rca(
+        _classifier("SOURCE_CONNECTION_TIMEOUT"),
+        _retrieval_items(
+            (
+                "sink write 단계 정상, no sink-side latency regression observed",
+                EvidenceType.SNAPSHOT,
+            ),
+            (
+                "upstream source dependency stopped responding",
+                EvidenceType.TRACE,
+            ),
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "UNKNOWN_WITH_EVIDENCE_GAP"
+    assert top.required_evidence_satisfied is False
+    assert top.confidence < 0.60
+
+
+def test_structured_required_rules_opt_out_of_semantic_matching() -> None:
+    structured_rules = {
+        ("CONNECTOR_TASK_FAILED", "connector task status `FAILED`"),
+        ("CONSUMER_LAG_SPIKE", "consumer lag 급증"),
+        ("CONSUMER_LAG_SPIKE", "offset progression 둔화"),
+        ("POD_OOM_KILLED", "pod last state OOMKilled"),
+        ("DEPLOYMENT_REGRESSION", "배포 이후 error/latency 증가"),
+        ("RECENT_SCHEMA_CHANGE_REGRESSION", "schema version 변경 이후 schema/serialization error 증가"),
+        ("PIPELINE_FRESHNESS_DELAY", "pipeline stage 중 병목 단계 식별"),
+    }
+
+    for root_cause_id, evidence in structured_rules:
+        profile = get_evidence_profile(root_cause_id)
+        assert profile is not None
+        rule = next(rule for rule in profile.required if rule.evidence == evidence)
+        assert rule.semantic_allowed is False
+
+
+@pytest.mark.asyncio
+async def test_structured_semantic_opt_out_blocks_embedding_only_required_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    _patch_semantic_embedder(monkeypatch)
+
+    result = await run_rca(
+        _classifier("POD_OOM_KILLED"),
+        _retrieval_items(
+            (
+                "restart count 증가 restart count delta",
+                EvidenceType.METRIC,
+            ),
+            (
+                "container exceeded memory limit and was killed by Kubernetes",
+                EvidenceType.TRACE,
+            ),
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "POD_OOM_KILLED"
+    assert top.required_evidence_satisfied is False
+    assert "pod last state OOMKilled" in top.evidence_gap
+    assert top.confidence < 0.80
+
+
+@pytest.mark.asyncio
+async def test_negative_evidence_voids_embedding_only_positive_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    _patch_semantic_embedder(monkeypatch)
+
+    result = await run_rca(
+        _classifier("SOURCE_CONNECTION_TIMEOUT"),
+        _retrieval_items(
+            ("alpha condition observed", EvidenceType.TRACE),
+            ("beta condition observed", EvidenceType.TRACE),
+            ("gamma condition observed", EvidenceType.METRIC),
+            ("delta condition observed", EvidenceType.METRIC),
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "UNKNOWN_WITH_EVIDENCE_GAP"
+    assert top.confidence < 0.60
 
 
 @pytest.mark.asyncio
