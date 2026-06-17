@@ -47,26 +47,22 @@ export function workspaceToProject(
   }
 }
 
-function cdcToNodeStatus(status: string | null): NodeStatus {
-  if (status === 'BLOCKED') return 'error'
-  if (status === 'WARNING') return 'warning'
-  if (status === 'OK') return 'healthy'
-  // null/미확인(아직 체크 안 됨)을 '정상'(초록)으로 칠하지 않는다 — 연결 끊김을 못 보던 원인.
-  return 'warning'
-}
-
 /**
- * DB 노드 상태(#179): 라이브 연결이 끊기면(UNREACHABLE) error 우선, 아니면 CDC readiness 기준.
- *
- * (#734) 단, CDC(소스) 준비 미충족(BLOCKED)은 '고장'이 아니라 '소스로는 못 씀'이다 — 이 DB가
- * sink 전용이면 멀쩡하다. 따라서 DB 목록 배지에선 BLOCKED를 error가 아닌 warning으로 낮춰
- * sink 전용 DB가 거짓 'error'로 뜨지 않게 한다. (파이프라인 생성 시 소스 선택 차단은
- * cdcReadinessStatus로 별도 처리되므로 영향 없음.)
+ * DB 표시 상태 단일 규칙(#807): 모든 화면(목록·상세·파이프라인)이 이 함수 하나로 통일한다.
+ *  - error  : 연결이 끊겼을 때만 (connectionStatus === 'UNREACHABLE')
+ *  - warning: source/sink readiness 중 WARNING 또는 BLOCKED가 하나라도 있을 때
+ *  - healthy: 그 외 (전부 OK, 또는 아직 미점검 null — 알려진 문제 없음)
+ * (#547·#734의 화면별 BLOCKED 분기 처리를 대체 — readiness 문제는 error가 아니라 warning.)
  */
-function dbNodeStatus(db: DatabaseResponse): NodeStatus {
-  if (db.connectionStatus === 'UNREACHABLE') return 'error'
-  if (db.cdcReadinessStatus === 'BLOCKED') return 'warning'
-  return cdcToNodeStatus(db.cdcReadinessStatus)
+export function dbDisplayStatus(
+  connectionStatus?: string | null,
+  cdcReadinessStatus?: string | null,
+  sinkReadinessStatus?: string | null,
+): NodeStatus {
+  if (connectionStatus === 'UNREACHABLE') return 'error'
+  const hasIssue = (s?: string | null) => s === 'WARNING' || s === 'BLOCKED'
+  if (hasIssue(cdcReadinessStatus) || hasIssue(sinkReadinessStatus)) return 'warning'
+  return 'healthy'
 }
 
 export function datasourceToNode(db: DatabaseResponse, index = 0): Node {
@@ -79,7 +75,7 @@ export function datasourceToNode(db: DatabaseResponse, index = 0): Node {
     tech,
     techLabel: db.engine,
     host: `${db.host}:${db.port}`,
-    status: dbNodeStatus(db),
+    status: dbDisplayStatus(db.connectionStatus, db.cdcReadinessStatus, db.sinkReadinessStatus),
     connectionStatus: db.connectionStatus,
     cdcReadinessStatus: db.cdcReadinessStatus,
     sinkReadinessStatus: db.sinkReadinessStatus,
@@ -89,16 +85,11 @@ export function datasourceToNode(db: DatabaseResponse, index = 0): Node {
 }
 
 /**
- * sink 역할에서 보여줄 상태(#547). 소스 노드는 {@code cdcReadinessStatus}(소스 준비도)를 쓰지만,
- * sink는 역할에 맞는 {@code sinkReadinessStatus}(INSERT 등 쓰기 권한)를 기준으로 한다.
- * 즉 error = 연결 끊김(UNREACHABLE) 또는 sink 필수요건 미충족(BLOCKED, 예: INSERT 권한 없음).
- * 미점검(null)이고 연결돼 있으면 알려진 문제가 없으므로 healthy로 본다.
+ * sink 노드 표시 상태(#807). 통일 규칙({@link dbDisplayStatus})에 위임한다 — error는 연결 끊김만,
+ * source/sink readiness 문제(WARNING·BLOCKED)는 warning.
  */
 export function sinkDisplayStatus(node: Node): NodeStatus {
-  if (node.connectionStatus === 'UNREACHABLE') return 'error'
-  if (node.sinkReadinessStatus === 'BLOCKED') return 'error'
-  if (node.sinkReadinessStatus === 'WARNING') return 'warning'
-  return 'healthy' // OK 또는 null(미점검·연결됨)
+  return dbDisplayStatus(node.connectionStatus, node.cdcReadinessStatus, node.sinkReadinessStatus)
 }
 
 const CDC_STATE: Record<string, CapabilityCheck['state']> = {
