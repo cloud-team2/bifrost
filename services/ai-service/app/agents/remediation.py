@@ -1,6 +1,7 @@
 """Remediation agent - builds action candidates from the runbook catalog."""
 from __future__ import annotations
 
+import re
 from uuid import uuid4
 
 from app.catalogs.root_causes import get_root_cause
@@ -53,6 +54,17 @@ _TRACE_GAP_HINTS = (
     "worker log",
     "trace",
     "worker",
+)
+_FAILED_STATUS_GAP_HINTS = (
+    "connector task status",
+    "status `failed`",
+    "task 상태",
+)
+_NEGATED_RESUME_PATTERNS = (
+    r"\b(?:do\s+not|don't|should\s+not|cannot|can't|never|not)\s+(?:\w+\s+){0,3}resume\b",
+    r"\bnot\s+(?:resolved|recovered|fixed|cleared)\b",
+    r"(?:복구|해소)(?:되지|되지 않| 안| 미완| 전)",
+    r"재개\s*(?:금지|불가|보류|하지\s*마|하면\s*안)",
 )
 
 
@@ -112,16 +124,26 @@ def _select_connector_task_actions(
     by_name = {action.action_name: action for action in actions}
     context = _candidate_context(root_cause)
 
-    if _has_hint(context, _RESUME_HINTS) and _CONNECTOR_RESUME_ACTION in by_name:
+    if (
+        not root_cause.required_evidence_satisfied
+        and _gap_has_hint(root_cause.evidence_gap, _FAILED_STATUS_GAP_HINTS)
+        and _CONNECTOR_TRACE_ACTION in by_name
+    ):
         return [(
-            by_name[_CONNECTOR_RESUME_ACTION],
-            "runbook: resume_connector; selected because context indicates the cause is resolved",
+            by_name[_CONNECTOR_TRACE_ACTION],
+            "runbook: collect_connector_trace; selected because failed status evidence is still missing",
         )]
 
     if _has_hint(context, _PAUSE_HINTS) and _CONNECTOR_PAUSE_ACTION in by_name:
         return [(
             by_name[_CONNECTOR_PAUSE_ACTION],
             "runbook: pause_connector; selected because context indicates repeated impact",
+        )]
+
+    if _has_resume_context(context) and _CONNECTOR_RESUME_ACTION in by_name:
+        return [(
+            by_name[_CONNECTOR_RESUME_ACTION],
+            "runbook: resume_connector; selected because context indicates the cause is resolved",
         )]
 
     if (
@@ -153,6 +175,12 @@ def _candidate_context(root_cause: RootCauseCandidate) -> str:
 
 def _has_hint(context: str, hints: tuple[str, ...]) -> bool:
     return any(hint.casefold() in context for hint in hints)
+
+
+def _has_resume_context(context: str) -> bool:
+    if any(re.search(pattern, context, flags=re.IGNORECASE) for pattern in _NEGATED_RESUME_PATTERNS):
+        return False
+    return _has_hint(context, _RESUME_HINTS)
 
 
 def _gap_has_hint(evidence_gap: list[str], hints: tuple[str, ...]) -> bool:

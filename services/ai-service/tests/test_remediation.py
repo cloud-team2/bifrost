@@ -21,6 +21,23 @@ def _root_cause(root_cause_id: str, explanation: str = "test explanation") -> Ro
     )
 
 
+def _partial_root_cause(
+    root_cause_id: str,
+    *,
+    evidence_gap: list[str],
+    explanation: str = "test explanation",
+) -> RootCauseCandidate:
+    return RootCauseCandidate(
+        root_cause_id=root_cause_id,
+        confidence=0.68,
+        required_evidence_satisfied=False,
+        supporting_evidence_ids=["ev1"],
+        negative_evidence_ids=[],
+        evidence_gap=evidence_gap,
+        explanation=explanation,
+    )
+
+
 def _rca_out(*root_cause_ids: str) -> RcaOutput:
     return RcaOutput(root_cause_candidates=[_root_cause(root_cause_id) for root_cause_id in root_cause_ids])
 
@@ -95,6 +112,44 @@ async def test_connector_task_failed_resume_requires_resolved_context() -> None:
 
     assert [candidate.action_name for candidate in output.action_candidates] == ["resume_connector"]
     assert "cause is resolved" in output.action_candidates[0].reason
+
+
+@pytest.mark.asyncio
+async def test_connector_task_failed_negated_resume_prefers_pause_context() -> None:
+    output = await remediation.run_remediation(
+        RcaOutput(
+            root_cause_candidates=[
+                _root_cause(
+                    "CONNECTOR_TASK_FAILED",
+                    explanation=(
+                        "CONNECTOR_TASK_FAILED: not recovered; repeated failures continue "
+                        "downstream impact; do not resume yet"
+                    ),
+                )
+            ]
+        )
+    )
+
+    assert [candidate.action_name for candidate in output.action_candidates] == ["pause_connector"]
+    assert output.action_candidates[0].tool_name == "pause_connector"
+
+
+@pytest.mark.asyncio
+async def test_connector_task_failed_missing_failed_status_does_not_restart() -> None:
+    output = await remediation.run_remediation(
+        RcaOutput(
+            root_cause_candidates=[
+                _partial_root_cause(
+                    "CONNECTOR_TASK_FAILED",
+                    evidence_gap=["connector task status `FAILED`"],
+                    explanation="CONNECTOR_TASK_FAILED: task trace exists but failed status is not confirmed",
+                )
+            ]
+        )
+    )
+
+    assert [candidate.action_name for candidate in output.action_candidates] == ["collect_connector_trace"]
+    assert output.action_candidates[0].action_type == ActionType.WORKFLOW_ACTION
 
 
 @pytest.mark.asyncio
