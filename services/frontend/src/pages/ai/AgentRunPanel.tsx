@@ -245,21 +245,13 @@ type AgentMsg =
   | RemediationMsg
   | PipelineWizardMsg
 
+// 주의: 이 집합은 백엔드 retrieval.py 의 _STRUCTURED_PANEL_TOOLS 와 동기화되어야 한다.
+// (SSE 에이전트런에서 백엔드가 이 도구들에만 payload.result 를 실어준다.)
+// 슬래시(명령탭) 실행은 executeAgentTool 결과를 직접 받으므로 이 집합과 무관하게 ToolPanelCard 로 렌더된다.
 const STRUCTURED_TOOL_INTRO: Record<string, string> = {
   get_consumer_groups: 'Consumer Group의 lag 현황과 상태를 조회합니다.',
-  get_consumer_lag: '컨슈머 그룹의 지연(lag)을 조회합니다.',
   list_pipelines: '현재 프로젝트의 파이프라인 상태를 조회합니다.',
-  list_project_pipelines: '현재 프로젝트의 파이프라인 목록을 조회합니다.',
   list_connectors: 'Kafka Connector 상태 및 Task 정보를 조회합니다.',
-  get_connector_status: '단일 커넥터의 상태와 태스크를 조회합니다.',
-  get_cluster_info: '클러스터 상태를 조회합니다.',
-  get_pipeline_topology: '파이프라인 토폴로지를 조회합니다.',
-  get_incident_summary: '인시던트 요약을 조회합니다.',
-  get_alerts: '인시던트 목록을 조회합니다.',
-  get_traces: '트레이스를 조회합니다.',
-  get_deployments: '배포·변경 이력을 조회합니다.',
-  get_metrics: '지표를 조회합니다.',
-  search_logs: '로그를 검색합니다.',
   analyze_event_log: '최근 2시간 이벤트 로그와 인시던트 현황을 분석합니다.',
 }
 
