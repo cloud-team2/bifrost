@@ -476,6 +476,12 @@ export interface IncidentDetailResponse {
   impactPipelineIds: string[]
   reports: IncidentReportResponse[]
 }
+/** #865 범용 시계열(monitoring/metrics/series) — ops-backend MetricsResult 대응. */
+export interface MetricSeriesResponse {
+  metric: string
+  summary: string
+  dataPoints: { timestamp: string; value: number }[]
+}
 /** KRaft/리소스 이벤트(S5). operations-backend ResourceEventResponse record와 동일 필드. */
 export interface ResourceEventResponse {
   eventType: string
@@ -572,7 +578,7 @@ export interface ThreadMessage {
   id: string
   thread_id: string
   project_id?: string | null
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'tool' // #860 tool: 슬래시 커맨드 결과(JSON content) — 복원 시 패널 재구성
   content: string
   run_id?: string | null
   created_at?: string | null
@@ -840,6 +846,15 @@ export const api = {
     request<IncidentReportResponse[]>('GET', `/api/v1/workspaces/${wsId}/monitoring/incidents/${incidentId}/reports`),
   getIncidentReport: (wsId: string, incidentId: string, reportId: string) =>
     request<IncidentReportResponse>('GET', `/api/v1/workspaces/${wsId}/monitoring/incidents/${incidentId}/reports/${reportId}`),
+  // #865 인시던트 상태 전이(OPEN↔INVESTIGATING→RESOLVED). 조치 완료 시 RESOLVED.
+  transitionIncident: (wsId: string, incidentId: string, status: string) =>
+    request<IncidentResponse>('PATCH', `/api/v1/workspaces/${wsId}/monitoring/incidents/${incidentId}`, { status }),
+  // #865 종류별 차트용 범용 시계열(카탈로그 metric → PromQL).
+  metricSeries: (wsId: string, metric: string, minutes = 30) =>
+    request<MetricSeriesResponse>(
+      'GET',
+      `/api/v1/workspaces/${wsId}/monitoring/metrics/series?metric=${encodeURIComponent(metric)}&minutes=${minutes}`,
+    ),
   listResourceEvents: (wsId: string) =>
     request<ResourceEventResponse[]>('GET', `/api/v1/workspaces/${wsId}/monitoring/resource-events`),
 
@@ -876,6 +891,23 @@ export const api = {
     agentRequest<AgentThreadSummary>('PATCH', `/api/v1/agent/threads/${encodeURIComponent(threadId)}`, { title }),
   deleteThread: (threadId: string) =>
     agentRequest<{ id: string; deleted: boolean }>('DELETE', `/api/v1/agent/threads/${encodeURIComponent(threadId)}`),
+  // #860 명령 버튼(슬래시 커맨드) 결과를 thread에 저장(복원 전용). user 요청 + tool 결과(role=tool).
+  saveToolTurn: (
+    threadId: string,
+    body: {
+      project_id: string
+      owner?: string | null
+      request_text: string
+      tool_name: string
+      params?: Record<string, unknown>
+      result?: unknown
+    },
+  ) =>
+    agentRequest<{ saved: boolean }>(
+      'POST',
+      `/api/v1/agent/threads/${encodeURIComponent(threadId)}/tool-turn`,
+      body,
+    ),
   listAgentRunApprovals: (runId: string) =>
     agentRequest<AgentRunApprovalsResponse>('GET', `/api/v1/agent/runs/${runId}/approvals`),
   approvalDecision: (approvalId: string, body: ApprovalDecisionInput) =>

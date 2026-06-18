@@ -8,10 +8,16 @@ import com.bifrost.ops.incident.IncidentService;
 import com.bifrost.ops.incident.dto.IncidentDetailResponse;
 import com.bifrost.ops.incident.dto.IncidentReportResponse;
 import com.bifrost.ops.incident.dto.IncidentResponse;
+import com.bifrost.ops.global.common.error.ApiException;
+import com.bifrost.ops.global.common.error.ErrorCode;
+import com.bifrost.ops.internalops.dto.MetricsResult;
 import com.bifrost.ops.monitoring.dto.OverviewResponse;
 import com.bifrost.ops.monitoring.dto.ResourceEventResponse;
+import com.bifrost.ops.monitoring.query.ObservabilityMetricsQuery;
 import com.bifrost.ops.monitoring.service.MonitoringReadService;
 import com.bifrost.ops.workspace.WorkspaceAccessGuard;
+import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
+import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -38,17 +44,23 @@ public class MonitoringController {
     private final EventService eventService;
     private final IncidentReportService incidentReportService;
     private final WorkspaceAccessGuard accessGuard;
+    private final ObservabilityMetricsQuery metricsQuery;
+    private final WorkspaceRepository workspaceRepository;
 
     public MonitoringController(MonitoringReadService monitoringReadService,
                                 IncidentService incidentService,
                                 EventService eventService,
                                 IncidentReportService incidentReportService,
-                                WorkspaceAccessGuard accessGuard) {
+                                WorkspaceAccessGuard accessGuard,
+                                ObservabilityMetricsQuery metricsQuery,
+                                WorkspaceRepository workspaceRepository) {
         this.monitoringReadService = monitoringReadService;
         this.incidentService = incidentService;
         this.eventService = eventService;
         this.incidentReportService = incidentReportService;
         this.accessGuard = accessGuard;
+        this.metricsQuery = metricsQuery;
+        this.workspaceRepository = workspaceRepository;
     }
 
     /** 워크스페이스 전체 health 집계. */
@@ -98,6 +110,20 @@ public class MonitoringController {
             @AuthenticationPrincipal AuthenticatedUser principal) {
         accessGuard.requireAccess(wsId, principal);
         return ResponseEntity.ok(incidentService.transitionStatus(wsId, incidentId, request.status()));
+    }
+
+    /** 지표성 인시던트 차트용 범용 시계열(#865). 카탈로그 metric을 ObservabilityMetricsQuery(PromQL)로 조회. */
+    @GetMapping("/metrics/series")
+    public ResponseEntity<MetricsResult> metricsSeries(
+            @PathVariable UUID wsId,
+            @RequestParam String metric,
+            @RequestParam(defaultValue = "30") int minutes,
+            @AuthenticationPrincipal AuthenticatedUser principal) {
+        accessGuard.requireAccess(wsId, principal);
+        WorkspaceEntity workspace = workspaceRepository.findById(wsId)
+                .orElseThrow(() -> new ApiException(ErrorCode.INTERNAL_ERROR, "workspace not found: " + wsId));
+        int win = Math.max(5, Math.min(minutes, 360));
+        return ResponseEntity.ok(metricsQuery.query(workspace, metric, "last_" + win + "m"));
     }
 
     /** incident 상세 facade: 기본 정보·관련 이벤트·영향 pipeline id·리포트 목록. */
