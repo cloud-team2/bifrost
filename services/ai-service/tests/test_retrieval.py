@@ -162,6 +162,20 @@ async def test_incident_analysis_includes_redacted_request_evidence(monkeypatch)
 @pytest.mark.asyncio
 async def test_retrieval_emits_params_and_result_only_for_structured_panel_tools() -> None:
     async def call_tool(tool_name, params, context):
+        if tool_name == "search_logs":
+            return ToolResult(
+                tool_name=tool_name,
+                status=ToolStatus.SUCCESS,
+                risk=RiskLevel.READ_ONLY,
+                summary="log summary",
+                evidence_ids=[],
+                result={
+                    "matchCount": 1,
+                    "summary": "structured log evidence: auth/permission error log",
+                    "logs": [{"line": "password=hunter2 token=abc123"}],
+                    "evidence": [{"errorClass": "auth", "count": 1}],
+                },
+            )
         if tool_name == "analyze_event_log":
             return ToolResult(
                 tool_name=tool_name,
@@ -215,10 +229,60 @@ async def test_retrieval_emits_params_and_result_only_for_structured_panel_tools
     }
     assert "params" not in started["logs"]
     assert "params" not in completed["logs"]
-    assert "result" not in completed["logs"]
+    assert completed["logs"]["result"]["matchCount"] == 1
+    assert completed["logs"]["result"]["evidence"] == [{"errorClass": "auth", "count": 1}]
+    assert "logs" not in completed["logs"]["result"]
+    assert "hunter2" not in str(completed["logs"])
+    assert "abc123" not in str(completed["logs"])
     assert started["events"]["params"] == {"window": "2h", "level": "warn+"}
     assert completed["events"]["params"] == {"window": "2h", "level": "warn+"}
     assert completed["events"]["result"]["openIncidents"] == 0
+
+
+@pytest.mark.asyncio
+async def test_retrieval_does_not_stream_raw_connector_task_trace() -> None:
+    registry = AsyncMock()
+    registry.call_tool.return_value = ToolResult(
+        tool_name="get_connector_task_trace",
+        status=ToolStatus.SUCCESS,
+        risk=RiskLevel.READ_ONLY,
+        summary="connector task status FAILED; connector=orders-source traces=1 failedTasks=1",
+        evidence_ids=[],
+        result={
+            "connector": "orders-source",
+            "summary": "connector task status FAILED; classes=['auth']",
+            "traces": [
+                {
+                    "taskId": 0,
+                    "state": "FAILED",
+                    "traceClass": "auth",
+                    "hasTrace": True,
+                    "trace": "PSQLException password=hunter2 token=abc123 jdbc:postgresql://db",
+                }
+            ],
+        },
+    )
+    bus = EventBus()
+    published = []
+    bus.publish = AsyncMock(side_effect=lambda run_id, evt: published.append(evt))
+
+    await run_retrieval(
+        "r1",
+        _plan("get_connector_task_trace"),
+        _context(),
+        registry,
+        bus,
+        InMemoryEventRepository(),
+    )
+
+    completed = next(e for e in published if e.type == StreamingEventType.TOOL_CALL_COMPLETED)
+    assert completed.payload["result"]["traces"] == [
+        {"taskId": 0, "state": "FAILED", "traceClass": "auth", "hasTrace": True}
+    ]
+    assert "trace" not in completed.payload["result"]["traces"][0]
+    assert "hunter2" not in str(completed.payload)
+    assert "abc123" not in str(completed.payload)
+    assert "jdbc:postgresql" not in str(completed.payload)
 
 
 @pytest.mark.asyncio

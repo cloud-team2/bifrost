@@ -145,11 +145,21 @@ def test_search_logs_spring_native_response_normalize():
         "logs": [{"line": "ERROR connection timeout"}],
         "total": 5,
         "note": "5 occurrences of consumer lag p95 increase",
+        "evidence": [
+            {
+                "errorClass": "auth",
+                "stage": "source",
+                "connector": "orders-source",
+                "matchedRequiredToken": "auth/permission error log",
+                "count": 1,
+            }
+        ],
     }
     data = LogSearchData.model_validate(spring_payload)
     assert data.match_count == 5  # total → match_count normalize
     assert data.summary == "5 occurrences of consumer lag p95 increase"  # note → summary normalize
     assert data.logs == [{"line": "ERROR connection timeout"}]
+    assert data.evidence[0]["matchedRequiredToken"] == "auth/permission error log"
 
 
 def test_search_logs_explicit_match_count_wins():

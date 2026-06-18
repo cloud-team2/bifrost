@@ -158,7 +158,12 @@ class InternalOpsToolCatalogTest {
                 mock(WorkspaceRepository.class),
                 mock(PipelineRepository.class),
                 mock(ConnectorRepository.class),
-                mock(AdminClient.class));
+                mock(AdminClient.class),
+                mock(com.bifrost.ops.governance.changemanagement.persistence.repository.ChangeTicketRepository.class),
+                mock(com.bifrost.ops.governance.audit.persistence.repository.AuditEventRepository.class),
+                mock(io.fabric8.kubernetes.client.KubernetesClient.class),
+                "platform-kafka",
+                "platform-connect");
     }
 
     private InternalOpsDatasourceController datasourceController() {
