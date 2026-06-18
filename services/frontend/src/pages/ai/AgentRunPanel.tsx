@@ -281,6 +281,18 @@ const TOOL_LABEL_KO: Record<string, string> = {
 export function toolLabelKo(toolName: string): string {
   return TOOL_LABEL_KO[toolName] ?? toolDescription(toolName)
 }
+
+// #848: 팔레트에서 명령을 실행했을 때 내 채팅 버블에 보일 텍스트.
+// raw '/slug <uuid>' 대신 사용자가 말한 듯한 자연어 요청문으로 표기한다.
+// - 백엔드 label_ko는 "커넥터 상태"·"컨슈머 lag"처럼 짧고 불일치하므로, 프론트가 관리하는
+//   일관된 toolLabelKo("커넥터 상태 조회" 등)를 사용한다(결과 패널 헤더와도 동일).
+// - 파이프라인 생성을 제외한 조회성 명령은 모두 "…조회해줘"로 끝맺는다.
+// - 리소스 id(커넥터/컨슈머 그룹 등)는 바로 아래 결과 패널 칩에 이미 나오므로 버블에선 생략.
+export function slashCommandUserText(command: SlashToolCommand): string {
+  const label = toolLabelKo(command.toolName).trim()
+  const base = label.endsWith('조회') ? label : `${label} 조회`
+  return `${base}해줘`
+}
 const SLASH_CATALOG_ERROR_MESSAGE = '도구 목록을 불러오지 못했습니다. 잠시 후 다시 시도하세요.'
 const STALE_PIPELINE_WIZARD_MESSAGE = '프로젝트가 변경되어 이 파이프라인 생성 흐름을 계속할 수 없습니다. 현재 프로젝트에서 다시 시작하세요.'
 // #839: get_metrics의 metric enum 한글 라벨. 미정의 값은 원문 폴백.
@@ -1163,7 +1175,7 @@ export function AgentRunPanel({
     const params = slashCommandParams(command, args)
     setRunning(true)
     runningRef.current = true
-    appendText('user', [command.label, ...args].join(' '))
+    appendText('user', slashCommandUserText(command))
     updateMsgs((m) => [
       ...m,
       {
