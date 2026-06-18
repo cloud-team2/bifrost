@@ -456,10 +456,7 @@ public class InternalOpsObservabilityController {
 
             List<Map<String, Object>> traces = tasks == null ? List.of() : tasks.stream()
                     .filter(t -> t.containsKey("trace"))
-                    .map(t -> Map.of(
-                            "taskId", t.get("id"),
-                            "state", t.get("state"),
-                            "trace", t.get("trace")))
+                    .map(t -> taskTraceSummaryEntry(t.get("id"), t.get("state"), t.get("trace")))
                     .collect(Collectors.toList());
 
             Map<String, Object> body = new java.util.LinkedHashMap<>();
@@ -482,18 +479,45 @@ public class InternalOpsObservabilityController {
             return "connector task trace: no task trace available for connector " + connectorName;
         }
         List<String> classes = traces.stream()
-                .map(t -> classifyTrace(String.valueOf(t.getOrDefault("trace", ""))))
+                .map(InternalOpsObservabilityController::traceClass)
                 .filter(Objects::nonNull)
                 .distinct()
                 .toList();
         long failedTasks = traces.stream()
                 .filter(t -> "FAILED".equalsIgnoreCase(String.valueOf(t.get("state"))))
                 .count();
+        if (failedTasks == 0) {
+            return "connector task trace available; no failed task confirmed"
+                    + " connector=" + connectorName
+                    + " traces=" + traces.size()
+                    + " failedTasks=0"
+                    + (!classes.isEmpty() ? " classes=" + classes : "");
+        }
         return "connector task status FAILED; task trace 또는 worker log exception stack summary"
                 + " connector=" + connectorName
                 + " traces=" + traces.size()
                 + " failedTasks=" + failedTasks
                 + (!classes.isEmpty() ? " classes=" + classes : "");
+    }
+
+    private static Map<String, Object> taskTraceSummaryEntry(Object taskId, Object state, Object trace) {
+        Map<String, Object> entry = new java.util.LinkedHashMap<>();
+        entry.put("taskId", taskId);
+        entry.put("state", state);
+        entry.put("hasTrace", trace != null && !String.valueOf(trace).isBlank());
+        String traceClass = classifyTrace(String.valueOf(trace == null ? "" : trace));
+        if (traceClass != null) {
+            entry.put("traceClass", traceClass);
+        }
+        return entry;
+    }
+
+    private static String traceClass(Map<String, Object> traceEntry) {
+        Object existing = traceEntry.get("traceClass");
+        if (existing != null && !String.valueOf(existing).isBlank()) {
+            return String.valueOf(existing);
+        }
+        return classifyTrace(String.valueOf(traceEntry.getOrDefault("trace", "")));
     }
 
     private static String classifyTrace(String trace) {

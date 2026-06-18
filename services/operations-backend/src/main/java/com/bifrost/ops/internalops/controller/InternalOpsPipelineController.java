@@ -139,14 +139,15 @@ public class InternalOpsPipelineController {
         List<PipelineEntity> pipelines = pipelineRepository
                 .findByTenantIdOrderByCreatedAtDesc(ws.getId());
         List<ConnectorEntity> connectors = connectorRepository.findByTenantIdOrderByCrName(ws.getId());
-        List<RecentChangesResult.Change> runtimeChanges = runtimeChanges(connectors);
+        RuntimeChanges runtimeChanges = runtimeChanges(connectors);
 
         RecentChangesResult result = RecentChangesResult.of(
                 pipelines,
                 connectors,
                 changeTicketRepository.findByTenantIdOrderByCreatedAtDesc(ws.getId()),
                 auditEventRepository.findByTenantIdOrderByCreatedAtDesc(ws.getId()),
-                runtimeChanges,
+                runtimeChanges.changes(),
+                runtimeChanges.unavailableSources(),
                 limit);
         return ResponseEntity.ok(OpsEnvelope.ok(requestId, "get_recent_changes", result));
     }
@@ -246,26 +247,28 @@ public class InternalOpsPipelineController {
         }
     }
 
-    private List<RecentChangesResult.Change> runtimeChanges(List<ConnectorEntity> connectors) {
+    private RuntimeChanges runtimeChanges(List<ConnectorEntity> connectors) {
         if (k8s == null) {
-            return List.of();
+            return new RuntimeChanges(List.of(),
+                    List.of("kubernetes:strimzi-runtime unavailable (client not configured)"));
         }
         List<RecentChangesResult.Change> changes = new ArrayList<>();
-        kafkaConnectImageChange().ifPresent(changes::add);
+        List<String> unavailableSources = new ArrayList<>();
+        addRuntimeProbe(changes, unavailableSources, kafkaConnectImageChange());
         for (ConnectorEntity connector : connectors == null ? List.<ConnectorEntity>of() : connectors) {
-            kafkaConnectorConfigSnapshot(connector).ifPresent(changes::add);
+            addRuntimeProbe(changes, unavailableSources, kafkaConnectorConfigSnapshot(connector));
         }
-        return changes;
+        return new RuntimeChanges(List.copyOf(changes), List.copyOf(unavailableSources));
     }
 
-    private java.util.Optional<RecentChangesResult.Change> kafkaConnectImageChange() {
+    private RuntimeChangeProbe kafkaConnectImageChange() {
         try {
             GenericKubernetesResource cr = k8s.genericKubernetesResources("kafka.strimzi.io/v1", "KafkaConnect")
                     .inNamespace(kafkaNamespace)
                     .withName(connectCluster)
                     .get();
             if (cr == null || cr.getMetadata() == null) {
-                return java.util.Optional.empty();
+                return RuntimeChangeProbe.empty();
             }
             Map<String, Object> spec = asMap(cr.getAdditionalProperties().get("spec"));
             Map<String, Object> status = asMap(cr.getAdditionalProperties().get("status"));
@@ -281,19 +284,19 @@ public class InternalOpsPipelineController {
             if (changedAt == null) {
                 changedAt = parseInstant(cr.getMetadata().getCreationTimestamp());
             }
-            return java.util.Optional.of(new RecentChangesResult.Change(
+            return RuntimeChangeProbe.change(new RecentChangesResult.Change(
                     "kafkaconnect:" + connectCluster + ":image",
                     "CONNECT_IMAGE_SNAPSHOT",
                     description,
                     changedAt));
         } catch (RuntimeException e) {
-            return java.util.Optional.empty();
+            return RuntimeChangeProbe.unavailable(sourceUnavailable("KafkaConnect", connectCluster, e));
         }
     }
 
-    private java.util.Optional<RecentChangesResult.Change> kafkaConnectorConfigSnapshot(ConnectorEntity connector) {
+    private RuntimeChangeProbe kafkaConnectorConfigSnapshot(ConnectorEntity connector) {
         if (connector == null || connector.getCrName() == null || connector.getCrName().isBlank()) {
-            return java.util.Optional.empty();
+            return RuntimeChangeProbe.empty();
         }
         try {
             GenericKubernetesResource cr = k8s.genericKubernetesResources("kafka.strimzi.io/v1", "KafkaConnector")
@@ -301,7 +304,7 @@ public class InternalOpsPipelineController {
                     .withName(connector.getCrName())
                     .get();
             if (cr == null || cr.getMetadata() == null) {
-                return java.util.Optional.empty();
+                return RuntimeChangeProbe.empty();
             }
             Map<String, Object> spec = asMap(cr.getAdditionalProperties().get("spec"));
             Map<String, Object> status = asMap(cr.getAdditionalProperties().get("status"));
@@ -310,31 +313,64 @@ public class InternalOpsPipelineController {
             String tasksMax = stringValue(spec.get("tasksMax"));
             Long generation = cr.getMetadata().getGeneration();
             String observedGeneration = stringValue(status.get("observedGeneration"));
-            String description = "최근 pipeline/connector config 변경 evidence: KafkaConnector CR config snapshot for connector '"
+            String description = "KafkaConnector CR config snapshot for connector '"
                     + connector.getCrName() + "'"
                     + " (kind=" + connector.getKind()
                     + (connectorClass != null ? ", class=" + connectorClass : "")
                     + (tasksMax != null ? ", tasksMax=" + tasksMax : "")
                     + (generation != null ? ", generation=" + generation : "")
                     + (observedGeneration != null ? ", observedGeneration=" + observedGeneration : "")
-                    + ", configKeys=" + config.keySet().stream()
+                    + ", configKeyCount=" + config.keySet().stream()
                             .filter(Objects::nonNull)
-                            .map(String::valueOf)
-                            .filter(key -> !key.toLowerCase().contains("password"))
-                            .sorted()
-                            .toList()
+                            .count()
                     + ")";
             Instant changedAt = latestConditionTime(status);
             if (changedAt == null) {
                 changedAt = parseInstant(cr.getMetadata().getCreationTimestamp());
             }
-            return java.util.Optional.of(new RecentChangesResult.Change(
+            return RuntimeChangeProbe.change(new RecentChangesResult.Change(
                     connector.getCrName() + ":kafkaconnector-config",
                     "CONNECTOR_CONFIG_SNAPSHOT",
                     description,
                     changedAt));
         } catch (RuntimeException e) {
-            return java.util.Optional.empty();
+            return RuntimeChangeProbe.unavailable(sourceUnavailable("KafkaConnector", connector.getCrName(), e));
+        }
+    }
+
+    private static void addRuntimeProbe(
+            List<RecentChangesResult.Change> changes,
+            List<String> unavailableSources,
+            RuntimeChangeProbe probe) {
+        if (probe.change() != null) {
+            changes.add(probe.change());
+        }
+        if (probe.unavailableSource() != null && !probe.unavailableSource().isBlank()) {
+            unavailableSources.add(probe.unavailableSource());
+        }
+    }
+
+    private static String sourceUnavailable(String kind, String name, RuntimeException e) {
+        return "kubernetes:" + kind + "/" + name + " unavailable (" + e.getClass().getSimpleName() + ")";
+    }
+
+    private record RuntimeChanges(
+            List<RecentChangesResult.Change> changes,
+            List<String> unavailableSources) {}
+
+    private record RuntimeChangeProbe(
+            RecentChangesResult.Change change,
+            String unavailableSource) {
+        private static RuntimeChangeProbe empty() {
+            return new RuntimeChangeProbe(null, null);
+        }
+
+        private static RuntimeChangeProbe change(RecentChangesResult.Change change) {
+            return new RuntimeChangeProbe(change, null);
+        }
+
+        private static RuntimeChangeProbe unavailable(String unavailableSource) {
+            return new RuntimeChangeProbe(null, unavailableSource);
         }
     }
 

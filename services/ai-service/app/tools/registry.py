@@ -634,7 +634,13 @@ class ToolClientRegistry:
                 None,
             )
         if definition.structured_result:
-            sanitized_result = validated_result.model_dump(mode="json", by_alias=True, exclude_none=True)
+            exclude = {"logs"} if definition.name == "search_logs" else None
+            sanitized_result = validated_result.model_dump(
+                mode="json",
+                by_alias=True,
+                exclude_none=True,
+                exclude=exclude,
+            )
 
             result = result_from_spring_response(
                 tool_name=tool_name,

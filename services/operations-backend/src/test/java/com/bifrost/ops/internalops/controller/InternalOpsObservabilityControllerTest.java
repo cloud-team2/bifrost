@@ -30,13 +30,17 @@ import org.apache.kafka.common.TopicPartition;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.client.RestClient;
 
 import java.time.Instant;
 import java.util.List;
@@ -56,6 +60,9 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -706,6 +713,49 @@ class InternalOpsObservabilityControllerTest {
     }
 
     @Test
+    void searchLogsDoesNotClassifyBenignSchemaRegistryConfigLines() {
+        UUID tenantId = UUID.randomUUID();
+        when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId, "proj-001")));
+        when(connectorRepository.findByTenantIdOrderByCrName(tenantId))
+                .thenReturn(List.of(connector(UUID.randomUUID(), "orders-source", ConnectorKind.SOURCE)));
+        when(lokiClient.queryRange(any(), anyLong(), anyLong(), eq(10))).thenReturn(List.of(Map.of(
+                "ts", "1780000000000000000",
+                "line", "INFO Schema Registry converter config loaded for orders-source",
+                "labels", Map.of("namespace", "platform-kafka"))));
+
+        ResponseEntity<OpsEnvelope<com.bifrost.ops.internalops.dto.LogSearchResult>> response =
+                controller.searchLogs("proj-001", java.util.Map.of("query", "schema", "limit", 10),
+                        new MockHttpServletRequest());
+
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().result().evidence()).isEmpty();
+        assertThat(response.getBody().result().summary()).contains("0 classified matches");
+    }
+
+    @Test
+    void searchLogsPrefersLongestTokenBoundaryConnectorMatch() {
+        UUID tenantId = UUID.randomUUID();
+        when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId, "proj-001")));
+        when(connectorRepository.findByTenantIdOrderByCrName(tenantId))
+                .thenReturn(List.of(
+                        connector(UUID.randomUUID(), "orders-source", ConnectorKind.SOURCE),
+                        connector(UUID.randomUUID(), "orders-source-v2", ConnectorKind.SOURCE)));
+        when(lokiClient.queryRange(any(), anyLong(), anyLong(), eq(10))).thenReturn(List.of(Map.of(
+                "ts", "1780000000000000000",
+                "line", "orders-source-v2 task 0 FAILED: AccessDenied token expired",
+                "labels", Map.of("namespace", "platform-kafka"))));
+
+        ResponseEntity<OpsEnvelope<com.bifrost.ops.internalops.dto.LogSearchResult>> response =
+                controller.searchLogs("proj-001", java.util.Map.of("query", "AccessDenied", "limit", 10),
+                        new MockHttpServletRequest());
+
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().result().evidence()).hasSize(1);
+        assertThat(response.getBody().result().evidence().getFirst().connector())
+                .isEqualTo("orders-source-v2");
+    }
+
+    @Test
     void searchLogsResolvesProjectByWorkspaceUuid() {
         // #423: 프론트 챗봇은 project_id로 workspace UUID를 보낸다. findById로 해석해 namespace로 스코프해야 한다.
         UUID tenantId = UUID.randomUUID();
@@ -872,6 +922,49 @@ class InternalOpsObservabilityControllerTest {
                 .andExpect(jsonPath("$.operation").value("get_connector_task_trace"))
                 .andExpect(jsonPath("$.result.connector").value("pipe-conn"))
                 .andExpect(jsonPath("$.result.traces").isArray());
+    }
+
+    @Test
+    void getConnectorTaskTraceEndpointReturnsClassifiedTraceWithoutRawTrace() throws Exception {
+        UUID tenantId = UUID.randomUUID();
+        UUID pipelineId = UUID.randomUUID();
+        when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId, "proj-001")));
+        when(connectorRepository.findByCrName("orders-source"))
+                .thenReturn(Optional.of(connector(pipelineId, "orders-source")));
+        when(pipelineRepository.findByIdAndTenantId(pipelineId, tenantId))
+                .thenReturn(Optional.of(mock(com.bifrost.ops.pipeline.persistence.entity.PipelineEntity.class)));
+
+        RestClient.Builder builder = RestClient.builder().baseUrl("http://connect.test");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        ReflectionTestUtils.setField(controller, "connectRestClient", builder.build());
+        server.expect(requestTo("http://connect.test/connectors/orders-source/status"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess("""
+                        {
+                          "name": "orders-source",
+                          "tasks": [
+                            {
+                              "id": 0,
+                              "state": "FAILED",
+                              "trace": "org.postgresql.util.PSQLException: authentication failed password=hunter2 token=abc123"
+                            }
+                          ]
+                        }
+                        """, MediaType.APPLICATION_JSON));
+
+        mockMvc().perform(get("/internal/ops/projects/{projectId}/connectors/{connectorName}/task-trace",
+                        "proj-001", "orders-source")
+                        .header("X-Request-Id", "req-ctt-002"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.operation").value("get_connector_task_trace"))
+                .andExpect(jsonPath("$.result.traces[0].taskId").value(0))
+                .andExpect(jsonPath("$.result.traces[0].state").value("FAILED"))
+                .andExpect(jsonPath("$.result.traces[0].traceClass").value("auth"))
+                .andExpect(jsonPath("$.result.traces[0].hasTrace").value(true))
+                .andExpect(jsonPath("$.result.traces[0].trace").doesNotExist())
+                .andExpect(jsonPath("$.result.summary").value(org.hamcrest.Matchers.containsString("failedTasks=1")))
+                .andExpect(jsonPath("$.result.summary").value(org.hamcrest.Matchers.containsString("classes=[auth]")));
+        server.verify();
     }
 
     private MockMvc mockMvc() {

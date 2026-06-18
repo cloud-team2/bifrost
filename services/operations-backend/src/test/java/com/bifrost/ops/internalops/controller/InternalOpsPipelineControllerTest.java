@@ -195,6 +195,55 @@ class InternalOpsPipelineControllerTest {
     }
 
     @Test
+    void changesSurfacesUnavailableKubernetesRuntimeSource() {
+        InternalOpsPipelineController noK8sController =
+                new InternalOpsPipelineController(
+                        workspaceRepository,
+                        pipelineRepository,
+                        connectorRepository,
+                        adminClient,
+                        changeTicketRepository,
+                        auditEventRepository,
+                        null,
+                        "platform-kafka",
+                        "platform-connect");
+
+        when(workspaceRepository.findByNamespace(PROJECT_ID)).thenReturn(Optional.of(workspace()));
+        when(pipelineRepository.findByTenantIdOrderByCreatedAtDesc(tenantId)).thenReturn(List.of());
+        when(connectorRepository.findByTenantIdOrderByCrName(tenantId)).thenReturn(List.of());
+        when(changeTicketRepository.findByTenantIdOrderByCreatedAtDesc(tenantId)).thenReturn(List.of());
+        when(auditEventRepository.findByTenantIdOrderByCreatedAtDesc(tenantId)).thenReturn(List.of());
+
+        RecentChangesResult result = noK8sController.changes(PROJECT_ID, null, request()).getBody().result();
+
+        assertThat(result.changes()).isEmpty();
+        assertThat(result.unavailableSources())
+                .contains("kubernetes:strimzi-runtime unavailable (client not configured)");
+        assertThat(result.summary())
+                .contains("0 changes matched")
+                .contains("unavailable live sources");
+    }
+
+    @Test
+    void recentChangesDoesNotCountRuntimeSnapshotsAsConfigChangeEvidence() {
+        RecentChangesResult result = RecentChangesResult.of(
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(new RecentChangesResult.Change(
+                        "orders-source:kafkaconnector-config",
+                        "CONNECTOR_CONFIG_SNAPSHOT",
+                        "KafkaConnector CR config snapshot for connector 'orders-source'",
+                        Instant.parse("2026-06-06T00:00:00Z"))),
+                null);
+
+        assertThat(result.summary())
+                .contains("CONNECTOR_CONFIG_SNAPSHOT")
+                .doesNotContain("최근 pipeline/connector config 변경 evidence count");
+    }
+
+    @Test
     void listPipelineStatusesIncludesRealPipelineRowsAndLeavesLagEmptyOnKafkaFailure() throws Exception {
         when(workspaceRepository.findByNamespace(PROJECT_ID)).thenReturn(Optional.of(workspace()));
         Instant created = Instant.parse("2026-06-01T00:00:00Z");

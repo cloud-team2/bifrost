@@ -28,7 +28,8 @@ logger = logging.getLogger(__name__)
 # 그 외 도구(list_project_pipelines·get_connector_status·get_consumer_lag 등)는 명시적
 # 운영 조회 의도를 뜻하므로, knowledge 근거가 있어도 실제 운영 데이터를 조회한다 (#478).
 _FALLBACK_ONLY_TOOLS = frozenset({"search_logs"})
-_STRUCTURED_PANEL_TOOLS = frozenset({
+_STRUCTURED_RESULT_TOOLS = frozenset({
+    "search_logs",
     "get_metrics",
     "get_deployments",
     "get_consumer_lag",
@@ -38,6 +39,7 @@ _STRUCTURED_PANEL_TOOLS = frozenset({
     "analyze_event_log",
     "get_connector_task_trace",
 })
+_STRUCTURED_PARAM_TOOLS = _STRUCTURED_RESULT_TOOLS - {"search_logs"}
 
 
 def _tool_event_payload(
@@ -47,10 +49,47 @@ def _tool_event_payload(
     **extra: Any,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {"tool": tool_name, "step_id": step_id}
-    if tool_name in _STRUCTURED_PANEL_TOOLS:
+    if tool_name in _STRUCTURED_PARAM_TOOLS:
         payload["params"] = params
     payload.update({key: value for key, value in extra.items() if value is not None})
     return payload
+
+
+def _structured_event_result(tool_name: str, result: Any) -> Any:
+    if tool_name not in _STRUCTURED_RESULT_TOOLS:
+        return None
+    payload = getattr(result, "result", None)
+    if not isinstance(payload, dict):
+        return redact_payload(payload)
+    if tool_name == "search_logs":
+        return {
+            key: redact_payload(payload[key])
+            for key in ("matchCount", "match_count", "total", "summary", "note", "evidence")
+            if key in payload
+        }
+    if tool_name == "get_connector_task_trace":
+        traces = payload.get("traces")
+        return {
+            key: value
+            for key, value in {
+                "connector": payload.get("connector"),
+                "summary": redact_text(str(payload["summary"])) if payload.get("summary") else None,
+                "note": redact_text(str(payload["note"])) if payload.get("note") else None,
+                "traces": [_safe_task_trace_entry(entry) for entry in traces] if isinstance(traces, list) else None,
+            }.items()
+            if value is not None
+        }
+    return redact_payload(payload)
+
+
+def _safe_task_trace_entry(entry: Any) -> dict[str, Any]:
+    if not isinstance(entry, dict):
+        return {}
+    return {
+        key: redact_payload(entry[key])
+        for key in ("taskId", "task_id", "state", "traceClass", "trace_class", "hasTrace", "has_trace")
+        if key in entry
+    }
 
 
 def _has_operational_tool(plan: PlannerOutput) -> bool:
@@ -100,7 +139,7 @@ async def _evidence_from_executed(
         agent="retrieval", message=summary,
         payload=_tool_event_payload(
             tool_name, step_id, record.params, summary=summary,
-            result=result.result if tool_name in _STRUCTURED_PANEL_TOOLS else None),
+            result=_structured_event_result(tool_name, result)),
     ))
     evidence = EvidenceItem(
         evidence_id=evidence_id, type=EvidenceType.TOOL_RESULT, store_ref=store_ref,
@@ -205,7 +244,7 @@ async def run_retrieval(
                     step.step_id,
                     step.params,
                     summary=summary,
-                    result=result.result if step.tool_name in _STRUCTURED_PANEL_TOOLS else None,
+                    result=_structured_event_result(step.tool_name, result),
                 ),
             ))
             await _pub(bus, event_repo, run_id, StreamingEvent(

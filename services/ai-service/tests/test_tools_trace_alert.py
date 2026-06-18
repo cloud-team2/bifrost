@@ -167,7 +167,8 @@ async def test_get_connector_task_trace_call_to_spring_mocked():
     assert captured_request.method == "GET"
     assert captured_request.url.path == "/internal/ops/projects/proj_001/connectors/orders-sink/task-trace"
     assert result.status == ToolStatus.SUCCESS
-    assert result.summary == "1 connector task trace collected"
+    assert "connector task status FAILED" in result.summary
+    assert "failedTasks=1" in result.summary
     assert result.evidence_ids == ["ev_tasktrace_001"]
 
 

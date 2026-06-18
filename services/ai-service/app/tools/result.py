@@ -39,7 +39,7 @@ def result_from_spring_response(
             status=ToolStatus.SUCCESS,
             risk=risk,
             requires_approval=requires_approval,
-            summary=_success_summary(response),
+            summary=_success_summary(response, result),
             result=result,
             evidence_ids=evidence_ids,
             audit_event_id=response.audit_event_id,
@@ -123,17 +123,18 @@ _SAFE_COUNT_KEYS = (
 _MAX_SUMMARY_PARTS = 4
 
 
-def _success_summary(response: SpringOpsResponse) -> str:
+def _success_summary(response: SpringOpsResponse, result_override: dict | list | None = None) -> str:
     """Spring 응답에서 민감정보 없이 유의미한 성공 요약을 생성.
 
     우선순위:
-    1) Spring 가 직접 준 ``summary`` 문자열 (기존 동작 유지).
-    2) result(dict/list) 의 구조적 요약 — 리스트 항목 수·열거형 상태·집계 카운트만.
+    1) 정직성 검증이 필요한 operation 은 구조화 필드에서 재요약한다.
+    2) Spring 가 직접 준 ``summary`` 문자열 (기존 동작 유지).
+    3) result(dict/list) 의 구조적 요약 — 리스트 항목 수·열거형 상태·집계 카운트만.
        raw 로그·secret·connection string 등 값 덤프는 일절 하지 않음(redaction 보존).
-    3) 위 어느 것도 추출 불가하면 기존 ``"{op} completed"`` 안전 폴백.
+    4) 위 어느 것도 추출 불가하면 기존 ``"{op} completed"`` 안전 폴백.
     """
     base = f"{response.operation} completed"
-    result = response.result
+    result = result_override if result_override is not None else response.result
 
     if isinstance(result, list):
         return f"{base} ({len(result)} items)"
@@ -141,17 +142,17 @@ def _success_summary(response: SpringOpsResponse) -> str:
     if not isinstance(result, dict) or not result:
         return base
 
-    summary = result.get("summary")
-    if isinstance(summary, str) and summary:
-        return summary
-    if response.operation == "get_consumer_lag":
-        return _consumer_lag_summary(base, result)
-    if response.operation == "search_logs" and isinstance(result.get("evidence"), list) and result.get("evidence"):
+    if response.operation == "search_logs":
         return _log_search_summary(base, result)
     if response.operation == "get_recent_changes":
         return _recent_changes_summary(base, result)
     if response.operation == "get_connector_task_trace":
         return _connector_task_trace_summary(base, result)
+    summary = result.get("summary")
+    if isinstance(summary, str) and summary:
+        return summary
+    if response.operation == "get_consumer_lag":
+        return _consumer_lag_summary(base, result)
 
     parts: list[str] = []
     # 리스트-값 키: 항목 수만 보고 (내용 미노출).
@@ -202,6 +203,8 @@ def _consumer_lag_summary(base: str, result: dict) -> str:
 
 def _log_search_summary(base: str, result: dict) -> str:
     total = _first_present(result, "total", "match_count", "matchCount")
+    if total is None and isinstance(result.get("logs"), list):
+        total = len(result["logs"])
     evidence = result.get("evidence")
     if isinstance(evidence, list) and evidence:
         parts: list[str] = []
@@ -228,7 +231,8 @@ def _log_search_summary(base: str, result: dict) -> str:
 def _recent_changes_summary(base: str, result: dict) -> str:
     changes = result.get("changes")
     if not isinstance(changes, list) or not changes:
-        return f"{base} (changes=0)"
+        unavailable = _unavailable_sources_part(result)
+        return f"{base} (changes=0{unavailable})"
     types: dict[str, int] = {}
     config_evidence = 0
     for change in changes:
@@ -236,14 +240,21 @@ def _recent_changes_summary(base: str, result: dict) -> str:
             change_type = str(change.get("type") or "UNKNOWN")
             types[change_type] = types.get(change_type, 0) + 1
             description = str(change.get("description") or "")
-            if "CONFIG" in change_type.upper() or "pipeline/connector config 변경" in description:
+            upper_type = change_type.upper()
+            if (
+                "SNAPSHOT" not in upper_type
+                and ("CONFIG" in upper_type or "pipeline/connector config 변경" in description)
+            ):
                 config_evidence += 1
     config_part = (
         f", 최근 pipeline/connector config 변경 evidence count={config_evidence}"
         if config_evidence
         else ""
     )
-    return f"{base} (live change evidence: changes={len(changes)}, types={types}{config_part})"
+    return (
+        f"{base} (live change evidence: changes={len(changes)}, types={types}"
+        f"{config_part}{_unavailable_sources_part(result)})"
+    )
 
 
 def _connector_task_trace_summary(base: str, result: dict) -> str:
@@ -259,10 +270,22 @@ def _connector_task_trace_summary(base: str, result: dict) -> str:
             for trace in traces
             if isinstance(trace, dict) and str(trace.get("state", "")).casefold() == "failed"
         )
+    if failed == 0:
+        return (
+            f"{base} (connector task trace available; no failed task confirmed "
+            f"connector={connector}, traces={trace_count}, failedTasks=0)"
+        )
     return (
         f"{base} (connector task status FAILED; task trace 또는 worker log "
         f"connector={connector}, traces={trace_count}, failedTasks={failed})"
     )
+
+
+def _unavailable_sources_part(result: dict) -> str:
+    unavailable = _first_present(result, "unavailable_sources", "unavailableSources")
+    if isinstance(unavailable, list) and unavailable:
+        return f", unavailableSources={len(unavailable)}"
+    return ""
 
 
 def _first_present(result: dict, *keys: str):

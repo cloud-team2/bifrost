@@ -189,14 +189,34 @@ async def test_structured_change_and_log_summaries_satisfy_config_required_evide
     retrieval = _retrieval(
         "structured log evidence: config validation error 또는 invalid option log worker log "
         "class=config connector=orders-source task=0 count=2",
-        "live change evidence: 최근 pipeline/connector config 변경 evidence: "
-        "KafkaConnector CR config snapshot for connector orders-source",
+        "live change evidence: 1 changes from metadb live sources "
+        "(types={CONNECTOR_CONFIG_CREATED=1}, 최근 pipeline/connector config 변경 evidence count=1)",
     )
 
     result = await run_rca(_classifier("CONNECTOR_TASK_FAILED"), retrieval)
 
     assert result.root_cause_candidates[0].root_cause_id == "PIPELINE_CONFIG_INVALID"
     assert result.root_cause_candidates[0].confidence >= 0.60
+
+
+@pytest.mark.asyncio
+async def test_snapshot_only_config_summary_does_not_satisfy_config_change_evidence() -> None:
+    retrieval = _retrieval(
+        "structured log evidence: config validation error 또는 invalid option log worker log "
+        "class=config connector=orders-source task=0 count=2",
+        "live change evidence: changes=1, types={CONNECTOR_CONFIG_SNAPSHOT=1}; "
+        "KafkaConnector CR config snapshot for connector orders-source",
+    )
+
+    result = await run_rca(_classifier("CONNECTOR_TASK_FAILED"), retrieval)
+
+    config_candidate = next(
+        candidate
+        for candidate in result.root_cause_candidates
+        if candidate.root_cause_id == "PIPELINE_CONFIG_INVALID"
+    )
+    assert config_candidate.required_evidence_satisfied is False
+    assert "최근 pipeline/connector config 변경" in config_candidate.evidence_gap
 
 
 @pytest.mark.asyncio

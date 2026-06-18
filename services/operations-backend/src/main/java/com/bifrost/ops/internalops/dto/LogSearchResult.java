@@ -80,8 +80,7 @@ public record LogSearchResult(
                 "sasl authentication", "인증 실패", "권한 거부", "비밀번호 인증 실패")) {
             return new ErrorSignal("auth", "auth/permission error log");
         }
-        if (containsAny(line, "deserialization", "serialization", "schema", "incompatible schema",
-                "converter", "스키마", "역직렬화")) {
+        if (hasSchemaFailureSignal(line)) {
             return new ErrorSignal("schema", "serialization/deserialization/schema error");
         }
         if (containsAny(line, "constraint", "duplicate key", "not-null", "not null",
@@ -147,9 +146,29 @@ public record LogSearchResult(
         return connectorNames.stream()
                 .filter(Objects::nonNull)
                 .filter(name -> !name.isBlank())
-                .filter(name -> normalized.contains(name.toLowerCase()))
+                .sorted(Comparator.comparingInt(String::length).reversed())
+                .filter(name -> tokenBoundaryMatch(normalized, name))
                 .findFirst()
                 .orElse(null);
+    }
+
+    private static boolean hasSchemaFailureSignal(String line) {
+        boolean schemaContext = containsAny(line, "deserialization", "serialization", "schema",
+                "converter", "스키마", "역직렬화");
+        boolean failureToken = containsAny(line, "error", "exception", "failed", "failure",
+                "mismatch", "incompatible", "invalid", "unable", "cannot", "not found",
+                "unavailable", "오류", "실패", "불일치");
+        boolean schemaFault = containsAny(line, "deserialization", "serialization", "schema mismatch",
+                "incompatible schema", "schema error", "converter error", "invalid converter",
+                "스키마 불일치", "역직렬화");
+        return schemaContext && failureToken && schemaFault;
+    }
+
+    private static boolean tokenBoundaryMatch(String normalizedLine, String connectorName) {
+        Pattern pattern = Pattern.compile("(?i)(^|[^A-Za-z0-9._-])"
+                + Pattern.quote(connectorName)
+                + "([^A-Za-z0-9._-]|$)");
+        return pattern.matcher(normalizedLine).find();
     }
 
     private static Integer findTaskId(String line) {

@@ -25,7 +25,8 @@ import java.util.Map;
  */
 public record RecentChangesResult(
         List<Change> changes,
-        String summary
+        String summary,
+        List<String> unavailableSources
 ) {
 
     /** 변경 이벤트 1건. */
@@ -60,6 +61,17 @@ public record RecentChangesResult(
             List<AuditEventEntity> auditEvents,
             List<Change> runtimeChanges,
             Integer limit) {
+        return of(pipelines, connectors, changeTickets, auditEvents, runtimeChanges, List.of(), limit);
+    }
+
+    public static RecentChangesResult of(
+            List<PipelineEntity> pipelines,
+            List<ConnectorEntity> connectors,
+            List<ChangeTicketEntity> changeTickets,
+            List<AuditEventEntity> auditEvents,
+            List<Change> runtimeChanges,
+            List<String> unavailableSources,
+            Integer limit) {
         List<Change> changes = new ArrayList<>();
         for (PipelineEntity p : nullSafe(pipelines)) {
             changes.addAll(toChanges(p));
@@ -81,7 +93,8 @@ public record RecentChangesResult(
             changes = changes.subList(0, limit);
         }
         List<Change> immutable = List.copyOf(changes);
-        return new RecentChangesResult(immutable, summarize(immutable));
+        List<String> unavailable = List.copyOf(nullSafe(unavailableSources));
+        return new RecentChangesResult(immutable, summarize(immutable, unavailable), unavailable);
     }
 
     /** 단일 파이프라인 → 생성·상태전이 변경 이벤트. */
@@ -159,9 +172,9 @@ public record RecentChangesResult(
                 audit.getCreatedAt());
     }
 
-    private static String summarize(List<Change> changes) {
+    private static String summarize(List<Change> changes, List<String> unavailableSources) {
         if (changes.isEmpty()) {
-            return "live change evidence: 0 changes matched";
+            return "live change evidence: 0 changes matched" + unavailableSummary(unavailableSources);
         }
         Map<String, Integer> byType = new LinkedHashMap<>();
         int configEvidence = 0;
@@ -177,13 +190,24 @@ public record RecentChangesResult(
                 + (configEvidence > 0
                         ? ", 최근 pipeline/connector config 변경 evidence count=" + configEvidence
                         : "")
-                + ")";
+                + ")"
+                + unavailableSummary(unavailableSources);
     }
 
     private static boolean isConfigEvidence(Change change) {
         String type = change.type() == null ? "" : change.type().toUpperCase();
         String description = change.description() == null ? "" : change.description();
+        if (type.contains("SNAPSHOT")) {
+            return false;
+        }
         return type.contains("CONFIG") || description.contains("pipeline/connector config 변경");
+    }
+
+    private static String unavailableSummary(List<String> unavailableSources) {
+        if (unavailableSources == null || unavailableSources.isEmpty()) {
+            return "";
+        }
+        return "; unavailable live sources=" + unavailableSources;
     }
 
     private static String sanitizeDetail(String raw) {
