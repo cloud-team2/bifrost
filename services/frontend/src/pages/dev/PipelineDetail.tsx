@@ -1154,8 +1154,9 @@ function SyncTab({ edge }: { edge: Edge }) {
     <div className="space-y-4">
       <Panel>
         {/* ── Source ↔ Sink 시각 ─────────────────────────────────── */}
-        <div className="px-8 py-8">
-          <div className="grid grid-cols-[1fr_180px_1fr] items-center gap-6">
+        {/* #861: 좁은 폭에선 세로 스택, lg 이상에서 source·중앙·sink 3열. */}
+        <div className="px-4 py-6 sm:px-8 sm:py-8">
+          <div className="grid grid-cols-1 items-center gap-6 lg:grid-cols-[1fr_180px_1fr]">
 
             {/* Source DB */}
             <DBNodeCard node={sourceNode} role="Source" />
@@ -1216,7 +1217,7 @@ function SyncTab({ edge }: { edge: Edge }) {
             불러오는 중…
           </div>
         ) : (
-          <div className="grid grid-cols-4 divide-x divide-gray-100 border-t border-gray-100">
+          <div className="grid grid-cols-2 divide-gray-100 border-t border-gray-100 sm:grid-cols-4 sm:divide-x">
             <SyncStat label="Source rows"  value={sync.sourceRows < 0 ? '—' : formatNum(sync.sourceRows)} />
             <SyncStat label="Sink rows"    value={sync.sinkRows < 0 ? '준비중' : formatNum(sync.sinkRows)}
               tone={sync.sinkRows < 0 ? 'warn' : undefined} />
@@ -1299,12 +1300,12 @@ function DBNodeCard({ node, role }: { node: Node | null; role: 'Source' | 'Sink'
     </div>
   )
   return (
-    <div className="flex flex-col items-center gap-2.5 rounded-xl border border-gray-200 bg-white px-5 py-6 text-center shadow-sm">
+    <div className="flex min-w-0 flex-col items-center gap-2.5 rounded-xl border border-gray-200 bg-white px-5 py-6 text-center shadow-sm">
       <TechIcon kind={nodeKind(node)} size={44} />
-      <div>
-        <div className="text-[14px] font-semibold text-gray-900">{node.alias ?? node.label}</div>
+      <div className="min-w-0 max-w-full">
+        <div className="break-words text-[14px] font-semibold text-gray-900">{node.alias ?? node.label}</div>
         <div className="mt-0.5 text-[11.5px] text-gray-500">{node.techLabel}</div>
-        <div className="mt-0.5 font-mono text-[10.5px] text-gray-400">{node.host}</div>
+        <div className="mt-0.5 break-all font-mono text-[10.5px] text-gray-400">{node.host}</div>
       </div>
       <span className="rounded bg-[#0d0d0d] px-2 py-0.5 text-[9.5px] font-bold uppercase text-white">
         {role}
