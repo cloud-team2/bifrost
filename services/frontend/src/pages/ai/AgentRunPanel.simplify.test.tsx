@@ -15,6 +15,7 @@ import {
   slashCommandUserText,
   statusCounts,
   toolLabelKo,
+  toolTurnFromContent,
 } from './AgentRunPanel'
 import type { SlashToolCommand } from '../../lib/slashCommands'
 
@@ -50,6 +51,26 @@ describe('slashCommandUserText (#848)', () => {
       '컨슈머 지연 조회해줘',
     )
     expect(slashCommandUserText({ ...command, labelKo: '지표 조회', toolName: 'get_metrics' })).toBe('지표 조회해줘')
+  })
+})
+
+describe('toolTurnFromContent (#860)', () => {
+  it('parses a stored tool turn back into toolName/params/result', () => {
+    const content = JSON.stringify({
+      tool_name: 'get_connector_status',
+      params: { connector_name: 'orders-sink' },
+      result: { state: 'RUNNING' },
+    })
+    expect(toolTurnFromContent(content)).toEqual({
+      toolName: 'get_connector_status',
+      params: { connector_name: 'orders-sink' },
+      result: { state: 'RUNNING' },
+    })
+  })
+
+  it('returns null for non-JSON or missing tool_name (skipped on restore)', () => {
+    expect(toolTurnFromContent('이전 대화')).toBeNull()
+    expect(toolTurnFromContent('{"params":{}}')).toBeNull()
   })
 })
 

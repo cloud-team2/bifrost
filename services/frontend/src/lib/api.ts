@@ -572,7 +572,7 @@ export interface ThreadMessage {
   id: string
   thread_id: string
   project_id?: string | null
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'tool' // #860 tool: 슬래시 커맨드 결과(JSON content) — 복원 시 패널 재구성
   content: string
   run_id?: string | null
   created_at?: string | null
@@ -876,6 +876,23 @@ export const api = {
     agentRequest<AgentThreadSummary>('PATCH', `/api/v1/agent/threads/${encodeURIComponent(threadId)}`, { title }),
   deleteThread: (threadId: string) =>
     agentRequest<{ id: string; deleted: boolean }>('DELETE', `/api/v1/agent/threads/${encodeURIComponent(threadId)}`),
+  // #860 명령 버튼(슬래시 커맨드) 결과를 thread에 저장(복원 전용). user 요청 + tool 결과(role=tool).
+  saveToolTurn: (
+    threadId: string,
+    body: {
+      project_id: string
+      owner?: string | null
+      request_text: string
+      tool_name: string
+      params?: Record<string, unknown>
+      result?: unknown
+    },
+  ) =>
+    agentRequest<{ saved: boolean }>(
+      'POST',
+      `/api/v1/agent/threads/${encodeURIComponent(threadId)}/tool-turn`,
+      body,
+    ),
   listAgentRunApprovals: (runId: string) =>
     agentRequest<AgentRunApprovalsResponse>('GET', `/api/v1/agent/runs/${runId}/approvals`),
   approvalDecision: (approvalId: string, body: ApprovalDecisionInput) =>

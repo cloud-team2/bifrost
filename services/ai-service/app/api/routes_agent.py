@@ -1,7 +1,9 @@
 """Agent Run API — POST /runs 생성, GET /runs/{id} 조회."""
 from __future__ import annotations
 
+import json
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks
 from pydantic import BaseModel
@@ -196,3 +198,46 @@ async def delete_thread(thread_id: str) -> ApiResponse:
     request_id = _request_id()
     await get_thread_repo().delete(thread_id)
     return ApiResponse.success(request_id, {"id": thread_id, "deleted": True})
+
+
+class SaveToolTurnRequest(BaseModel):
+    project_id: str
+    owner: str | None = None
+    request_text: str
+    tool_name: str
+    params: dict[str, Any] = {}
+    result: Any = None
+
+
+@router.post("/threads/{thread_id}/tool-turn")
+async def save_tool_turn(thread_id: str, req: SaveToolTurnRequest) -> ApiResponse:
+    """#860 명령 버튼(슬래시 커맨드) 결과를 thread에 저장(복원 전용).
+
+    슬래시 커맨드는 agent run을 거치지 않아 대화가 저장되지 않았다. 여기서 사용자 요청(role=user)과
+    툴 결과(role=tool, JSON)를 직접 append한다. role='tool'은 `_format_history`에서 제외되어 LLM
+    컨텍스트를 오염시키지 않고 복원에만 쓰인다. 자유 채팅(chat-*) 스레드만 대상.
+    """
+    request_id = _request_id()
+    if not thread_id.startswith("chat-"):
+        return ApiResponse.success(request_id, {"saved": False})
+
+    thread_repo = get_thread_repo()
+    msg_repo = get_message_repo()
+    if req.owner:
+        await thread_repo.ensure(id=thread_id, project_id=req.project_id, owner=req.owner)
+
+    request_text = (req.request_text or "").strip()
+    if request_text:
+        # 1) 사용자 요청(자연어) — LLM 히스토리에 포함된다.
+        await msg_repo.append(thread_id, "user", request_text, project_id=req.project_id, run_id=None)
+    # 2) 툴 결과 — role='tool'(복원 전용, _format_history에서 제외)로 구조 보존 저장.
+    payload = json.dumps(
+        {"tool_name": req.tool_name, "params": req.params, "result": req.result},
+        ensure_ascii=False,
+        default=str,
+    )
+    await msg_repo.append(thread_id, "tool", payload, project_id=req.project_id, run_id=None)
+    await thread_repo.touch(thread_id)
+    if request_text:
+        await thread_repo.set_title_if_empty(thread_id, _preview(request_text, 40) or "새 대화")
+    return ApiResponse.success(request_id, {"saved": True})
