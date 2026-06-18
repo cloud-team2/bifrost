@@ -45,13 +45,16 @@ def test_registry_exposes_read_tool_allowlist_and_risk():
     assert legacy_lag.alias_for == "get_consumer_lag"
 
 
-def test_get_metrics_catalog_description_exposes_live_backed_logical_metrics():
+def test_get_metrics_catalog_enum_exposes_live_backed_logical_metrics():
+    # #843: metric이 select box(enum)로 바뀌어 설명의 예시 나열은 제거됨.
+    # 13종 논리 메트릭의 discoverability는 이제 params_schema enum이 보장한다.
     registry = ToolClientRegistry(transport=httpx.MockTransport(lambda request: httpx.Response(200)))
 
     definition = registry.get_definition("get_metrics")
     assert definition is not None
-    description = definition.description
-    for metric in {
+    metric_schema = definition.params_model.model_json_schema()["properties"]["metric"]
+    enum_values = set(metric_schema["enum"])
+    assert enum_values == {
         "pipeline_lag_seconds",
         "consumer_lag_p95",
         "consumer_commit_rate_per_sec",
@@ -65,8 +68,7 @@ def test_get_metrics_catalog_description_exposes_live_backed_logical_metrics():
         "broker_network_transmit_bytes_per_sec",
         "broker_fs_read_bytes_per_sec",
         "broker_fs_write_bytes_per_sec",
-    }:
-        assert metric in description
+    }
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -54,7 +54,21 @@ class GetPipelineLogsParams(ToolParams):
 
 
 class GetMetricsParams(ToolParams):
-    metric: str
+    metric: Literal[
+        "pipeline_lag_seconds",
+        "consumer_lag_p95",
+        "consumer_commit_rate_per_sec",
+        "topic_ingress_messages_per_sec",
+        "source_freshness_delay_ms",
+        "source_watermark_delay_ms",
+        "source_event_rate_per_sec",
+        "broker_cpu_cores",
+        "broker_memory_working_set_bytes",
+        "broker_network_receive_bytes_per_sec",
+        "broker_network_transmit_bytes_per_sec",
+        "broker_fs_read_bytes_per_sec",
+        "broker_fs_write_bytes_per_sec",
+    ]
     time_range: str | None = None
 
 
@@ -195,14 +209,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
         ),
         ToolDefinition(
             name="get_metrics",
-            description=(
-                "프로젝트 운영 메트릭을 조회합니다. metric 예: pipeline_lag_seconds, "
-                "consumer_lag_p95, consumer_commit_rate_per_sec, topic_ingress_messages_per_sec, "
-                "source_freshness_delay_ms, source_watermark_delay_ms, source_event_rate_per_sec, "
-                "broker_cpu_cores, broker_memory_working_set_bytes, "
-                "broker_network_receive_bytes_per_sec, broker_network_transmit_bytes_per_sec, "
-                "broker_fs_read_bytes_per_sec, broker_fs_write_bytes_per_sec."
-            ),
+            description="프로젝트 운영 메트릭을 조회합니다.",
             group="incident",
             label_ko="지표 조회",
             operation="query_metrics",

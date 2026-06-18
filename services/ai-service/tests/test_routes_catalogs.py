@@ -135,6 +135,33 @@ def test_tools_expose_required_params_in_catalog_and_detail():
         assert _data(f"/api/v1/tools/{name}")["params_schema"]["required"] == required
 
 
+def test_get_metrics_exposes_metric_enum_in_catalog_and_detail():
+    # #839: metric is a Literal so params_schema carries an enum for the FE dropdown.
+    expected = {
+        "pipeline_lag_seconds",
+        "consumer_lag_p95",
+        "consumer_commit_rate_per_sec",
+        "topic_ingress_messages_per_sec",
+        "source_freshness_delay_ms",
+        "source_watermark_delay_ms",
+        "source_event_rate_per_sec",
+        "broker_cpu_cores",
+        "broker_memory_working_set_bytes",
+        "broker_network_receive_bytes_per_sec",
+        "broker_network_transmit_bytes_per_sec",
+        "broker_fs_read_bytes_per_sec",
+        "broker_fs_write_bytes_per_sec",
+    }
+    catalog = _data("/api/v1/tools")
+    by_name = {tool["name"]: tool for tool in catalog["tools"]}
+    catalog_enum = by_name["get_metrics"]["params_schema"]["properties"]["metric"]["enum"]
+    detail_enum = _data("/api/v1/tools/get_metrics")["params_schema"]["properties"]["metric"]["enum"]
+
+    assert isinstance(catalog_enum, list) and catalog_enum
+    assert set(catalog_enum) == expected
+    assert set(detail_enum) == expected
+
+
 def test_get_tool_by_name():
     data = _data("/api/v1/tools/search_logs")
 
