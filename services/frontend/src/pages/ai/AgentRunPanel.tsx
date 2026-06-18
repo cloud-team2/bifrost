@@ -2162,6 +2162,12 @@ export function AgentRunPanel({
                   app.incidents.map((inc) => ({ value: inc.id, label: inc.title || inc.id })),
                 )
               }
+              if (param === 'incident_id') {
+                // 인시던트 ID 는 자유 입력 대신 프로젝트 인시던트 목록에서 선택.
+                return Promise.resolve(
+                  app.incidents.map((inc) => ({ value: inc.id, label: inc.title || inc.id })),
+                )
+              }
               return null
             }}
             onRunTool={(command, args) => {
