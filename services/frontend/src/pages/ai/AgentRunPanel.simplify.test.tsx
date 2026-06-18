@@ -220,6 +220,26 @@ describe('ConnectorDetailPanel rendering', () => {
     // #844: 오류 원인에 복사 버튼 제공
     expect(html).toContain('복사')
   })
+
+  it('reads camelCase connectorState from the real by_alias payload (#845)', () => {
+    // ai-service가 by_alias=True로 직렬화하면 커넥터 state는 connectorState, task의 id는 id로 온다.
+    const html = renderToStaticMarkup(
+      <ConnectorDetailPanel
+        result={{
+          connectorName: 'orders-sink',
+          connectorState: 'RUNNING',
+          tasks: [
+            { id: 0, state: 'RUNNING' },
+            { id: 1, state: 'RUNNING' },
+            { id: 2, state: 'RUNNING' },
+          ],
+        }}
+      />,
+    )
+    expect(html).toContain('실행 중')
+    expect(html).toContain('태스크 3/3 정상')
+    expect(html).not.toContain('UNKNOWN')
+  })
 })
 
 describe('parseClusterInfo (#837)', () => {

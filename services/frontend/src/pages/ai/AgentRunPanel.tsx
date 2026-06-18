@@ -3440,7 +3440,8 @@ const CONNECTOR_STATE_LABEL: Record<string, string> = {
 export function connectorStatusSummary(result: unknown): ConnectorStatusSummary | null {
   const record = asRecord(result)
   if (!record) return null
-  const state = (recordString(record, 'state', 'connector_state', 'status') ?? 'UNKNOWN').toUpperCase()
+  // #845: ai-service는 결과를 by_alias=True(camelCase)로 직렬화 → 커넥터 state는 `connectorState`로 옴.
+  const state = (recordString(record, 'state', 'connectorState', 'connector_state', 'status') ?? 'UNKNOWN').toUpperCase()
   const tasks = recordArray(record, 'tasks')
   const total = tasks.length
   const running = tasks.filter((task) => (recordString(task, 'state', 'status') ?? '').toUpperCase() === 'RUNNING').length
@@ -3450,7 +3451,7 @@ export function connectorStatusSummary(result: unknown): ConnectorStatusSummary 
     tasks.map((task) => recordString(task, 'trace', 'last_error')).find((value): value is string => !!value) ??
     null
   return {
-    name: recordString(record, 'connector_name', 'connector', 'name'),
+    name: recordString(record, 'connector_name', 'connectorName', 'connector', 'name'),
     state,
     stateLabel: CONNECTOR_STATE_LABEL[state.toLowerCase()] ?? state,
     stateToken: semanticToken(state),
