@@ -16,6 +16,7 @@ import {
   type ApprovalDecisionValue,
   type CdcReadinessResponse,
   type ConnectorInfo,
+  type ConsumerGroupInfo,
   type DatabaseResponse,
   type PipelineResponse,
   type SchemaTable,
@@ -2103,6 +2104,24 @@ export function AgentRunPanel({
                     if (seen.has(conn.name)) continue
                     seen.add(conn.name)
                     options.push({ value: conn.name, label: conn.name })
+                  }
+                  return options
+                })
+              }
+              if (param === 'consumer_group') {
+                // #838: 현재 프로젝트 파이프라인의 컨슈머 그룹만 노출.
+                return api.listPipelines(wsId).then(async (pipelines) => {
+                  const perPipeline = await Promise.all(
+                    pipelines.map((p) =>
+                      api.pipelineConsumerGroups(wsId, p.id).catch(() => [] as ConsumerGroupInfo[]),
+                    ),
+                  )
+                  const seen = new Set<string>()
+                  const options: { value: string; label: string }[] = []
+                  for (const group of perPipeline.flat()) {
+                    if (seen.has(group.name)) continue
+                    seen.add(group.name)
+                    options.push({ value: group.name, label: group.name })
                   }
                   return options
                 })
