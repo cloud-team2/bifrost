@@ -12,9 +12,46 @@ import {
   pipelineStatusKo,
   semanticToken,
   severityKo,
+  slashCommandUserText,
   statusCounts,
   toolLabelKo,
 } from './AgentRunPanel'
+import type { SlashToolCommand } from '../../lib/slashCommands'
+
+describe('slashCommandUserText (#848)', () => {
+  const command: SlashToolCommand = {
+    slug: 'incidents-summary',
+    label: '/incidents-summary',
+    toolName: 'get_incident_summary',
+    path: '/internal/ops/projects/{project_id}/incidents/{incident_id}/summary',
+    description: '',
+    pathParams: ['incident_id'],
+    argParams: ['incident_id'],
+    usage: '/incidents-summary <incident_id>',
+    group: 'incident',
+    labelKo: '인시던트 요약',
+    argEnums: {},
+  }
+
+  it('renders a natural Korean request sentence without the raw slash command or id', () => {
+    const text = slashCommandUserText(command)
+    expect(text).toBe('인시던트 요약 조회해줘')
+    expect(text).not.toContain('/incidents-summary')
+    expect(text).not.toContain('da3ca175fb05')
+  })
+
+  it('uses the frontend toolLabelKo (not backend label_ko) and ends in 조회해줘', () => {
+    // 백엔드 label_ko는 "커넥터 상태"/"컨슈머 lag"처럼 짧고 영어가 섞여 있어도,
+    // 프론트 toolLabelKo로 일관되게 "…조회해줘"가 된다.
+    expect(slashCommandUserText({ ...command, labelKo: '커넥터 상태', toolName: 'get_connector_status' })).toBe(
+      '커넥터 상태 조회해줘',
+    )
+    expect(slashCommandUserText({ ...command, labelKo: '컨슈머 lag', toolName: 'get_consumer_lag' })).toBe(
+      '컨슈머 지연 조회해줘',
+    )
+    expect(slashCommandUserText({ ...command, labelKo: '지표 조회', toolName: 'get_metrics' })).toBe('지표 조회해줘')
+  })
+})
 
 describe('toolLabelKo', () => {
   it('maps command-tab tools to Korean labels (no raw English tool name)', () => {
