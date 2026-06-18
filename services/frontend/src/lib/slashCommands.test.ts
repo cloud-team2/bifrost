@@ -109,6 +109,33 @@ describe('slashCommands', () => {
     expect(missingSlashArgs(command, [])).toEqual(['connector_name'])
   })
 
+  it('populates argEnums from params_schema.properties.*.enum (#839)', () => {
+    const commands = buildSlashCommands([
+      {
+        name: 'get_metrics',
+        method: 'GET',
+        risk: 'read_only',
+        path: '/internal/ops/projects/{project_id}/observability/metrics',
+        params_schema: {
+          required: ['metric'],
+          properties: {
+            metric: { enum: ['pipeline_lag_seconds', 'consumer_lag_p95'] },
+          },
+        },
+      },
+    ])
+    const metrics = commands.find((command) => command.toolName === 'get_metrics')
+
+    expect(metrics?.argEnums.metric).toEqual(['pipeline_lag_seconds', 'consumer_lag_p95'])
+  })
+
+  it('leaves argEnums empty when no enum is provided (#839)', () => {
+    const commands = buildSlashCommands(catalog)
+    const connectorStatus = commands.find((command) => command.toolName === 'get_connector_status')
+
+    expect(connectorStatus?.argEnums).toEqual({})
+  })
+
   it('prefers catalog description, then fallback map, then humanized name (#599)', () => {
     const commands = buildSlashCommands(
       [

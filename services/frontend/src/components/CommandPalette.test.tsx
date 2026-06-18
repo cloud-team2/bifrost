@@ -11,6 +11,7 @@ const cmd = (over: Partial<SlashToolCommand>): SlashToolCommand => ({
   description: 'd',
   pathParams: [],
   argParams: [],
+  argEnums: {},
   usage: '/s',
   group: '',
   labelKo: '',

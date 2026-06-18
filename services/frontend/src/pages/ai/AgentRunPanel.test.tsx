@@ -24,6 +24,7 @@ describe('SlashCommandOptionContent', () => {
     description: 'Connector status',
     pathParams: ['connector_name'],
     argParams: ['connector_name'],
+    argEnums: {},
     usage: '/connectors-status <connector_name>',
     group: 'cluster',
     labelKo: '커넥터 상태',

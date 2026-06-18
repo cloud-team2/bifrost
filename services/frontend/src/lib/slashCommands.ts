@@ -6,6 +6,7 @@ export interface ToolCatalogLike {
   risk?: string
   params_schema?: {
     required?: string[]
+    properties?: Record<string, { enum?: string[] }>
   }
   // 그룹형 명령 팔레트 메타(백엔드). group이 비면 팔레트 미노출.
   group?: string
@@ -20,6 +21,8 @@ export interface SlashToolCommand {
   description: string
   pathParams: string[]
   argParams: string[]
+  // #839: argParam별 카탈로그 enum(있을 때만 채움). 팔레트가 select로 렌더.
+  argEnums: Record<string, string[]>
   usage: string
   // 팔레트 그룹핑/표시용(없으면 빈 문자열).
   group: string
@@ -51,6 +54,11 @@ export function buildSlashCommands(
         usedSlugs,
       )
       usedSlugs.add(slug)
+      const argEnums: Record<string, string[]> = {}
+      for (const param of argParams) {
+        const values = tool.params_schema?.properties?.[param]?.enum
+        if (values && values.length > 0) argEnums[param] = values
+      }
       return [{
         slug,
         label: `/${slug}`,
@@ -60,6 +68,7 @@ export function buildSlashCommands(
         description: tool.description || descriptions[tool.name] || humanizeToolName(tool.name),
         pathParams,
         argParams,
+        argEnums,
         usage: `/${slug}${argParams.map((param) => ` <${param}>`).join('')}`,
         group: tool.group ?? '',
         labelKo: tool.labelKo ?? '',
