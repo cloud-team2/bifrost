@@ -668,16 +668,16 @@ function ConnectorCard({ c, topic }: { c: ConnectorInfo; topic: string }) {
 
   return (
     <div className="overflow-hidden rounded-xl border-2 border-[#ececec]">
-      {/* ── connector header (검정 배경·흰 글자/아이콘) ─────────────────────── */}
-      <div className="flex items-center gap-3 bg-[#0d0d0d] px-5 py-3">
-        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-white">
+      {/* ── connector header (흰 배경·검정 글자/아이콘, #857) ─────────────────── */}
+      <div className="flex items-center gap-3 border-b border-[#ececec] bg-white px-5 py-3">
+        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#f4f4f5]">
           <Icon name={isSource ? 'database' : 'layers'} size={14} className="text-[#0d0d0d]" />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[13px] font-bold text-white">{c.name}</div>
-          <div className="truncate font-mono text-[11px] text-white/70">{c.connectorClass}</div>
+          <div className="truncate text-[13px] font-bold text-[#0d0d0d]">{c.name}</div>
+          <div className="truncate font-mono text-[11px] text-[#6b6b73]">{c.connectorClass}</div>
         </div>
-        <span className="rounded-full bg-white px-2.5 py-0.5 text-[10.5px] font-bold uppercase text-[#0d0d0d]">
+        <span className="rounded-full border border-[#0d0d0d] bg-white px-2.5 py-0.5 text-[10.5px] font-bold uppercase text-[#0d0d0d]">
           {c.kind}
         </span>
       </div>
