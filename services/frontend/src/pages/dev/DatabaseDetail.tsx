@@ -746,7 +746,7 @@ function MetricsTab({ state }: { state: ResourceState<DatabaseMetricsResponse> }
       <MetricCard
         label="P95 response"
         value={metrics.queryResponseP95Ms == null ? '—' : formatMetric(metrics.queryResponseP95Ms)}
-        sub={metrics.queryResponseP95Ms == null ? 'stat source 없음' : 'ms p95'}
+        sub={metrics.queryResponseP95Ms == null ? '통계 출처 없음' : 'ms p95'}
         tone={metrics.queryResponseP95Ms != null && metrics.queryResponseP95Ms > 1000 ? 'warn' : 'default'}
       />
       <MetricCard label="Active connections" value={formatMetric(metrics.activeConnections)} />
@@ -802,7 +802,7 @@ function SchemaTab({ state }: { state: ResourceState<{ tables: SchemaTable[] }> 
                 <span className="min-w-0 flex-1 truncate font-mono text-[13px] font-medium text-gray-800">{t.schema}.{t.name}</span>
                 <span className="font-mono text-[11.5px] tabular-nums text-gray-400">{formatRows(t.approximateRowCount)} rows</span>
                 <span className="font-mono text-[11.5px] tabular-nums text-gray-400">{formatBytes(t.totalSizeBytes)}</span>
-                {statsUnavailable && <span className="text-[11px] text-gray-400">stat source 없음</span>}
+                {statsUnavailable && <span className="text-[11px] text-gray-400">통계 출처 없음</span>}
                 <span className="text-[12px] text-gray-400">{t.columns.length} cols</span>
               </button>
               {open === key && (

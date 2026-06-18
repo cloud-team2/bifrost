@@ -347,9 +347,9 @@ function TopicTab({ edge }: { edge: Edge }) {
       <Panel title="Topic & Partitions">
         {/* header row */}
         <div className="flex items-center gap-3 border-b border-gray-100 px-5 py-3.5">
-          <span className="font-mono text-[13.5px] font-semibold text-gray-900">{edge.topic}</span>
-          <StatusBadge status={edge.status} />
-          <div className="ml-auto flex items-center gap-4 text-[12px] text-gray-500">
+          <span className="min-w-0 truncate font-mono text-[13.5px] font-semibold text-gray-900" title={edge.topic}>{edge.topic}</span>
+          <div className="shrink-0"><StatusBadge status={edge.status} /></div>
+          <div className="ml-auto flex shrink-0 items-center gap-4 whitespace-nowrap text-[12px] text-gray-500">
             <span>{topicInfoErr ? '파티션 조회 실패' : <><span className="font-semibold text-gray-700">{partitions.length}</span> 파티션</>}</span>
             <span className={cn('font-semibold', topicInfoErr ? 'text-[#c0392b]' : isrOk ? 'text-[#6b6b73]' : 'text-[#6b6b73]')}>
               ISR {topicInfoErr ? '조회 실패' : isrOk ? '정상' : `${Math.round(isrPct)}%`}
@@ -1161,8 +1161,8 @@ function SyncTab({ edge }: { edge: Edge }) {
             <DBNodeCard node={sourceNode} role="Source" />
 
             {/* Center: 동기화율 (선형) */}
-            <div className="flex flex-col items-center gap-3">
-              <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-0.5 font-mono text-[10.5px] font-semibold text-gray-500">
+            <div className="flex min-w-0 flex-col items-center gap-3">
+              <span className="max-w-full truncate rounded-full border border-gray-200 bg-gray-50 px-2.5 py-0.5 font-mono text-[10.5px] font-semibold text-gray-500" title={tableName}>
                 {tableName}
               </span>
 
