@@ -217,6 +217,8 @@ describe('ConnectorDetailPanel rendering', () => {
     expect(html).toContain('실패')
     expect(html).toContain('오류 원인 보기')
     expect(html).toContain('boom')
+    // #844: 오류 원인에 복사 버튼 제공
+    expect(html).toContain('복사')
   })
 })
 

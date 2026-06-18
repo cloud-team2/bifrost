@@ -3461,6 +3461,36 @@ export function connectorStatusSummary(result: unknown): ConnectorStatusSummary 
   }
 }
 
+// 스택트레이스 등 텍스트를 클립보드로 복사하는 작은 버튼. <details>/<summary> 안에서도
+// 클릭이 토글로 새지 않도록 기본 동작을 막는다.
+export function CopyButton({ text, className }: { text: string; className?: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        const done = () => {
+          setCopied(true)
+          window.setTimeout(() => setCopied(false), 1500)
+        }
+        if (navigator.clipboard?.writeText) {
+          void navigator.clipboard.writeText(text).then(done).catch(() => undefined)
+        } else {
+          done()
+        }
+      }}
+      className={cn(
+        'shrink-0 rounded border border-[#e7c9c4] bg-white/70 px-1.5 py-0.5 text-[10.5px] font-medium text-[#c0392b] hover:bg-white',
+        className,
+      )}
+    >
+      {copied ? '복사됨' : '복사'}
+    </button>
+  )
+}
+
 export function ConnectorDetailPanel({ result }: { result: Record<string, unknown> | null }) {
   const summary = connectorStatusSummary(result)
   if (!summary) return <PanelEmpty text="커넥터 상태 데이터 없음" />
@@ -3481,7 +3511,10 @@ export function ConnectorDetailPanel({ result }: { result: Record<string, unknow
       </div>
       {summary.lastError && (
         <details className="rounded border border-[#e7c9c4] bg-[#fcf3f2] px-2 py-1.5 text-[11.5px] text-[#c0392b]">
-          <summary className="cursor-pointer select-none">오류 원인 보기</summary>
+          <summary className="flex cursor-pointer select-none items-center gap-2">
+            <span>오류 원인 보기</span>
+            <CopyButton text={summary.lastError} className="ml-auto" />
+          </summary>
           <div className="mt-1 whitespace-pre-wrap break-words font-mono text-[10.5px]">{summary.lastError}</div>
         </details>
       )}
