@@ -283,6 +283,22 @@ export function toolLabelKo(toolName: string): string {
 }
 const SLASH_CATALOG_ERROR_MESSAGE = '도구 목록을 불러오지 못했습니다. 잠시 후 다시 시도하세요.'
 const STALE_PIPELINE_WIZARD_MESSAGE = '프로젝트가 변경되어 이 파이프라인 생성 흐름을 계속할 수 없습니다. 현재 프로젝트에서 다시 시작하세요.'
+// #839: get_metrics의 metric enum 한글 라벨. 미정의 값은 원문 폴백.
+const METRIC_LABELS_KO: Record<string, string> = {
+  pipeline_lag_seconds: '파이프라인 지연(초)',
+  consumer_lag_p95: '컨슈머 지연 p95',
+  consumer_commit_rate_per_sec: '컨슈머 커밋 속도/초',
+  topic_ingress_messages_per_sec: '토픽 유입 메시지/초',
+  source_freshness_delay_ms: '소스 신선도 지연(ms)',
+  source_watermark_delay_ms: '소스 워터마크 지연(ms)',
+  source_event_rate_per_sec: '소스 이벤트 속도/초',
+  broker_cpu_cores: '브로커 CPU 코어',
+  broker_memory_working_set_bytes: '브로커 메모리 사용량(B)',
+  broker_network_receive_bytes_per_sec: '브로커 수신(B/초)',
+  broker_network_transmit_bytes_per_sec: '브로커 송신(B/초)',
+  broker_fs_read_bytes_per_sec: '브로커 디스크 읽기(B/초)',
+  broker_fs_write_bytes_per_sec: '브로커 디스크 쓰기(B/초)',
+}
 
 type ThemeName = keyof typeof THEMES
 
@@ -2125,6 +2141,15 @@ export function AgentRunPanel({
                   }
                   return options
                 })
+              }
+              if (param === 'metric') {
+                // #839: 카탈로그 enum이 있으면 select, 없으면(BE 미배포) 자유 입력 폴백.
+                const metricCmd = slashState.commands.find((cmd) => cmd.toolName === 'get_metrics')
+                const enumValues = metricCmd?.argEnums?.metric
+                if (!enumValues || enumValues.length === 0) return null
+                return Promise.resolve(
+                  enumValues.map((value) => ({ value, label: METRIC_LABELS_KO[value] ?? value })),
+                )
               }
               if (param === 'incident_id') {
                 // 인시던트 ID 는 자유 입력 대신 프로젝트 인시던트 목록에서 선택.
