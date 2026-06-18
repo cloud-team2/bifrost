@@ -51,8 +51,13 @@ class MonitoringControllerTest {
     private final EventService eventService = mock(EventService.class);
     private final IncidentReportService incidentReportService = mock(IncidentReportService.class);
     private final WorkspaceAccessGuard accessGuard = mock(WorkspaceAccessGuard.class);
+    private final com.bifrost.ops.monitoring.query.ObservabilityMetricsQuery metricsQuery =
+            mock(com.bifrost.ops.monitoring.query.ObservabilityMetricsQuery.class);
+    private final com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository workspaceRepository =
+            mock(com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository.class);
     private final MonitoringController controller =
-            new MonitoringController(monitoringReadService, incidentService, eventService, incidentReportService, accessGuard);
+            new MonitoringController(monitoringReadService, incidentService, eventService, incidentReportService,
+                    accessGuard, metricsQuery, workspaceRepository);
 
     private final UUID wsId = UUID.randomUUID();
     private final AuthenticatedUser principal = new AuthenticatedUser(UUID.randomUUID(), wsId, "u@bifrost.io");

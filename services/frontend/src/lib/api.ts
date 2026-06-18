@@ -476,6 +476,12 @@ export interface IncidentDetailResponse {
   impactPipelineIds: string[]
   reports: IncidentReportResponse[]
 }
+/** #865 범용 시계열(monitoring/metrics/series) — ops-backend MetricsResult 대응. */
+export interface MetricSeriesResponse {
+  metric: string
+  summary: string
+  dataPoints: { timestamp: string; value: number }[]
+}
 /** KRaft/리소스 이벤트(S5). operations-backend ResourceEventResponse record와 동일 필드. */
 export interface ResourceEventResponse {
   eventType: string
@@ -840,6 +846,15 @@ export const api = {
     request<IncidentReportResponse[]>('GET', `/api/v1/workspaces/${wsId}/monitoring/incidents/${incidentId}/reports`),
   getIncidentReport: (wsId: string, incidentId: string, reportId: string) =>
     request<IncidentReportResponse>('GET', `/api/v1/workspaces/${wsId}/monitoring/incidents/${incidentId}/reports/${reportId}`),
+  // #865 인시던트 상태 전이(OPEN↔INVESTIGATING→RESOLVED). 조치 완료 시 RESOLVED.
+  transitionIncident: (wsId: string, incidentId: string, status: string) =>
+    request<IncidentResponse>('PATCH', `/api/v1/workspaces/${wsId}/monitoring/incidents/${incidentId}`, { status }),
+  // #865 종류별 차트용 범용 시계열(카탈로그 metric → PromQL).
+  metricSeries: (wsId: string, metric: string, minutes = 30) =>
+    request<MetricSeriesResponse>(
+      'GET',
+      `/api/v1/workspaces/${wsId}/monitoring/metrics/series?metric=${encodeURIComponent(metric)}&minutes=${minutes}`,
+    ),
   listResourceEvents: (wsId: string) =>
     request<ResourceEventResponse[]>('GET', `/api/v1/workspaces/${wsId}/monitoring/resource-events`),
 

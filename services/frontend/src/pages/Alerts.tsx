@@ -802,9 +802,20 @@ function EventRow({
 /* ---------------------------------------------------------------- 상세 화면 공통 (#864) */
 
 // 상세는 모달이 아니라 목록 자리를 채우는 전용 화면. ← 목록으로 복귀.
-function DetailShell({ onBack, children }: { onBack: () => void; children: React.ReactNode }) {
+function DetailShell({
+  onBack,
+  accent,
+  children,
+}: {
+  onBack: () => void
+  accent?: string
+  children: React.ReactNode
+}) {
   return (
-    <div className="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white">
+    <div
+      className="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white"
+      style={accent ? { borderLeftWidth: 4, borderLeftColor: accent } : undefined}
+    >
       <div className="border-b border-gray-100 px-5 py-2.5">
         <button
           onClick={onBack}
@@ -949,6 +960,90 @@ function isRecoveryEvent(label: string): boolean {
   return /recover|resolved|정상|복구|normal/i.test(label)
 }
 
+// #865 인시던트 종류 → 주 신호. 지표성(차트)·상태성(상태+타임라인)으로 나눈다.
+type IncidentSignal =
+  | { kind: 'metric'; metric: string; label: string }
+  | { kind: 'state'; label: string }
+  | null
+
+function sevRank(level: LogLevel | null): number {
+  return level === 'error' ? 3 : level === 'warning' ? 2 : level === 'info' ? 1 : 0
+}
+
+function incidentSignal(events: UnifiedEvent[]): IncidentSignal {
+  const ranked = [...events].sort((a, b) => sevRank(b.level) - sevRank(a.level))
+  for (const e of ranked) {
+    const t = (e.label || '').toUpperCase()
+    if (/LAG/.test(t)) return { kind: 'metric', metric: 'consumer_lag_p95', label: '컨슈머 지연' }
+    if (/FRESHNESS|WATERMARK|SOURCE.*DELAY/.test(t))
+      return { kind: 'metric', metric: 'source_freshness_delay_ms', label: '소스 지연(ms)' }
+    if (/THROUGHPUT|INGRESS/.test(t))
+      return { kind: 'metric', metric: 'topic_ingress_messages_per_sec', label: '토픽 유입(msg/s)' }
+    if (/CONNECTOR|TASK_FAILED|FAILED|PARTIALLY/.test(t)) return { kind: 'state', label: '커넥터 상태' }
+    if (/UNREACHABLE|CONNECTION/.test(t)) return { kind: 'state', label: '연결 상태' }
+    if (/PARTITION|REASSIGN|REBALANCE/.test(t)) return { kind: 'state', label: '파티션·리밸런스' }
+  }
+  return null
+}
+
+function fmtNum(v: number): string {
+  if (!Number.isFinite(v)) return '—'
+  return Math.abs(v) >= 1000 ? Math.round(v).toLocaleString() : Math.round(v * 10) / 10 + ''
+}
+
+// 지표성 인시던트의 주 지표 시계열(범용 /metrics/series). 실패·빈 데이터는 조용히 처리.
+function IncidentChart({ wsId, metric, label }: { wsId: string; metric: string; label: string }) {
+  const [points, setPoints] = useState<{ timestamp: string; value: number }[] | null>(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    let alive = true
+    setPoints(null)
+    setFailed(false)
+    api
+      .metricSeries(wsId, metric, 30)
+      .then((res) => alive && setPoints(res.dataPoints ?? []))
+      .catch(() => alive && setFailed(true))
+    return () => {
+      alive = false
+    }
+  }, [wsId, metric])
+
+  if (failed) return null
+  const vals = (points ?? []).map((p) => p.value)
+  const n = vals.length
+  const max = Math.max(1, ...vals)
+  const linePath =
+    n > 1 ? 'M ' + vals.map((v, i) => `${(i / (n - 1)) * 560},${66 - (v / max) * 58}`).join(' L ') : ''
+  return (
+    <div className="border-b border-gray-100 px-5 py-4">
+      <div className="mb-2 flex items-center justify-between">
+        <div className="text-[10.5px] font-bold uppercase tracking-wide text-gray-400">{label} · 추이</div>
+        <span className="font-mono text-[10.5px] text-gray-400">최근 30분</span>
+      </div>
+      {points === null ? (
+        <div className="flex h-[70px] items-center justify-center rounded-lg border border-dashed border-gray-200 text-[12px] text-gray-400">
+          시계열을 불러오는 중…
+        </div>
+      ) : n === 0 ? (
+        <div className="flex h-[70px] items-center justify-center rounded-lg border border-dashed border-gray-200 text-[12px] text-gray-400">
+          시계열 데이터가 없습니다
+        </div>
+      ) : (
+        <>
+          <div className="rounded-lg border border-gray-200 bg-white p-1.5">
+            <svg viewBox="0 0 560 70" width="100%" height="70" preserveAspectRatio="none">
+              <path d={linePath} fill="none" stroke="#c0392b" strokeWidth="2" />
+            </svg>
+          </div>
+          <div className="mt-1 font-mono text-[10.5px] text-gray-400">
+            현재 {fmtNum(vals[n - 1])} · 최고 {fmtNum(max)}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 function IncidentDetailScreen({
   incident,
   relatedEvents,
@@ -1075,10 +1170,12 @@ function IncidentDetailScreen({
   const isOpen = isOpenIncident(panelIncident)
   const recoveredEvent = timelineEvents.find((event) => isRecoveryEvent(event.label))
   const durationEnd = panelIncident.resolvedAt ?? recoveredEvent?.occurredAt ?? null
+  const signal = incidentSignal(timelineEvents)
+  const accent = isOpen ? '#c0392b' : '#157f4a'
 
   return (
     <>
-      <DetailShell onBack={onBack}>
+      <DetailShell onBack={onBack} accent={accent}>
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_260px]">
           {/* MAIN */}
           <div className="min-w-0 lg:border-r lg:border-gray-100">
@@ -1109,15 +1206,43 @@ function IncidentDetailScreen({
               </div>
             )}
 
+            {/* 해결됨: 조치 완료/회복으로 RESOLVED */}
+            {!isOpen && (
+              <div className="flex items-center gap-2.5 border-b border-[#d4e8dc] bg-[#eef6f1] px-5 py-2.5 text-[12px] text-[#1c6b44]">
+                <Icon name="info" size={14} className="shrink-0 text-[#157f4a]" />
+                <span>
+                  이 인시던트는 <b className="font-semibold">해결됨</b>입니다
+                  {panelIncident.resolvedAt ? ` · ${fmtDateTime(panelIncident.resolvedAt)}` : ''}.
+                </span>
+              </div>
+            )}
+
+            {/* 주 신호: 지표성=시계열 차트 / 상태성=경위 타임라인 참고 */}
+            {signal?.kind === 'metric' && wsId ? (
+              <IncidentChart wsId={wsId} metric={signal.metric} label={signal.label} />
+            ) : signal?.kind === 'state' ? (
+              <div className="border-b border-gray-100 px-5 py-3 text-[12px] text-gray-500">
+                주 신호 · <b className="text-gray-700">{signal.label}</b> — 시간 흐름은 아래 경위(타임라인)를 참고하세요.
+              </div>
+            ) : null}
+
             {/* RCA (자동 분석) */}
             <div className="border-b border-gray-100 px-5 py-4">
               <div className="mb-2 text-[10.5px] font-bold uppercase tracking-wide text-gray-400">근본 원인 · RCA</div>
               {panelIncident.rca?.trim() ? (
                 <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-gray-700">{panelIncident.rca}</p>
               ) : (
-                <div className="rounded-lg bg-gray-50 px-3.5 py-3 text-[12.5px] leading-relaxed text-gray-500">
-                  원인 분석이 아직 없습니다. 인시던트 발생 시 <b className="text-gray-700">자동 분석</b>이 실행되며, 완료되면
-                  RCA와 권장 조치가 여기에 표시됩니다.
+                <div className="flex items-center gap-3 rounded-lg bg-gray-50 px-3.5 py-3">
+                  <span className="flex-1 text-[12.5px] leading-relaxed text-gray-500">
+                    원인 분석이 아직 없습니다. 인시던트 발생 시 <b className="text-gray-700">자동 분석</b>이 실행됩니다 —
+                    실패했거나 미완료면 다시 실행하세요. (채팅에서 진행)
+                  </span>
+                  <button
+                    onClick={() => app.dispatchIncidentAnalysis(panelIncident.id, panelIncident.title)}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-[#0d0d0d] px-2.5 py-1.5 text-[11.5px] font-semibold text-white hover:bg-black"
+                  >
+                    <Icon name="play" size={11} /> 다시 분석
+                  </button>
                 </div>
               )}
             </div>
