@@ -3611,10 +3611,10 @@ export function ClusterInfoPanel({ result }: { result: Record<string, unknown> |
           ) : (
             <div className="space-y-0.5">
               {data.brokers.map((broker, index) => (
-                <div key={broker.id ?? index} className="flex items-center gap-1.5 text-gray-700">
-                  <span className="font-mono text-[11px]">{formatBroker(broker)}</span>
+                <div key={broker.id ?? index} className="flex items-start gap-1.5 text-gray-700">
+                  <span className="min-w-0 break-all font-mono text-[11px]">{formatBroker(broker)}</span>
                   {broker.controller && (
-                    <span className="rounded bg-gray-100 px-1 py-0.5 text-[10px] text-gray-500">컨트롤러</span>
+                    <span className="shrink-0 whitespace-nowrap rounded bg-gray-100 px-1 py-0.5 text-[10px] text-gray-500">컨트롤러</span>
                   )}
                 </div>
               ))}
