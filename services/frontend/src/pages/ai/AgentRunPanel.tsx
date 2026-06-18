@@ -365,7 +365,7 @@ export function AgentRunPanel({
   const threadIdRef = useRef<string>(
     `chat-${(globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`)}`,
   )
-  const threadRestored = useRef(false)
+  const threadRestoredFor = useRef<string | null>(null) // #846: wsId별로 1회 복원(전환 시 재로드)
   // #821 멀티 채팅방(세션) — multiThread일 때만 사용.
   const [threads, setThreads] = useState<AgentThreadSummary[]>([])
   const [threadListOpen, setThreadListOpen] = useState(false)
@@ -546,9 +546,9 @@ export function AgentRunPanel({
   // #712 대화 메모리: 워크스페이스·패널별 thread_id를 localStorage에 고정하고, 이 thread의
   // 이전 대화를 불러와 transcript를 복원한다(리마운트·새로고침 후에도 대화가 이어져 보이게).
   useEffect(() => {
-    if (!wsId || threadRestored.current) return
+    if (!wsId || threadRestoredFor.current === wsId) return // #846: wsId 바뀌면 재로드
     if (multiThread && !myEmail) return // 소유자(이메일) 준비 후 진행
-    threadRestored.current = true
+    threadRestoredFor.current = wsId
 
     // #821 멀티 채팅방: 내 스레드 목록 로드 + 마지막 활성(없으면 최근) 스레드 복원.
     if (multiThread) {
@@ -565,9 +565,14 @@ export function AgentRunPanel({
           if (cancelled) return
           setThreads(res.threads)
           const has = (id: string | null): id is string => !!id && res.threads.some((t) => t.id === id)
-          const target = has(last) ? last : res.threads[0]?.id ?? threadIdRef.current
-          activateThread(target)
-          if (has(target)) restoreTranscript(target)
+          const target = has(last) ? last : res.threads[0]?.id ?? null
+          if (target) {
+            activateThread(target)
+            restoreTranscript(target)
+          } else {
+            // 이 워크스페이스엔 방이 없음 → 새 대화로 초기화(이전 워크스페이스 잔상 제거)
+            newChat()
+          }
         })
         .catch(() => {
           /* 목록 로드 실패는 무시 — 새 대화로 시작 */
