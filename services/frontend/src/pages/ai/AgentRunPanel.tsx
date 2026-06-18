@@ -15,6 +15,8 @@ import {
   type AgentStreamingEventType,
   type ApprovalDecisionValue,
   type CdcReadinessResponse,
+  type ConnectorInfo,
+  type ConsumerGroupInfo,
   type DatabaseResponse,
   type PipelineResponse,
   type SchemaTable,
@@ -281,6 +283,22 @@ export function toolLabelKo(toolName: string): string {
 }
 const SLASH_CATALOG_ERROR_MESSAGE = '도구 목록을 불러오지 못했습니다. 잠시 후 다시 시도하세요.'
 const STALE_PIPELINE_WIZARD_MESSAGE = '프로젝트가 변경되어 이 파이프라인 생성 흐름을 계속할 수 없습니다. 현재 프로젝트에서 다시 시작하세요.'
+// #839: get_metrics의 metric enum 한글 라벨. 미정의 값은 원문 폴백.
+const METRIC_LABELS_KO: Record<string, string> = {
+  pipeline_lag_seconds: '파이프라인 지연(초)',
+  consumer_lag_p95: '컨슈머 지연 p95',
+  consumer_commit_rate_per_sec: '컨슈머 커밋 속도/초',
+  topic_ingress_messages_per_sec: '토픽 유입 메시지/초',
+  source_freshness_delay_ms: '소스 신선도 지연(ms)',
+  source_watermark_delay_ms: '소스 워터마크 지연(ms)',
+  source_event_rate_per_sec: '소스 이벤트 속도/초',
+  broker_cpu_cores: '브로커 CPU 코어',
+  broker_memory_working_set_bytes: '브로커 메모리 사용량(B)',
+  broker_network_receive_bytes_per_sec: '브로커 수신(B/초)',
+  broker_network_transmit_bytes_per_sec: '브로커 송신(B/초)',
+  broker_fs_read_bytes_per_sec: '브로커 디스크 읽기(B/초)',
+  broker_fs_write_bytes_per_sec: '브로커 디스크 쓰기(B/초)',
+}
 
 type ThemeName = keyof typeof THEMES
 
@@ -347,7 +365,7 @@ export function AgentRunPanel({
   const threadIdRef = useRef<string>(
     `chat-${(globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`)}`,
   )
-  const threadRestored = useRef(false)
+  const threadRestoredFor = useRef<string | null>(null) // #846: wsId별로 1회 복원(전환 시 재로드)
   // #821 멀티 채팅방(세션) — multiThread일 때만 사용.
   const [threads, setThreads] = useState<AgentThreadSummary[]>([])
   const [threadListOpen, setThreadListOpen] = useState(false)
@@ -528,9 +546,9 @@ export function AgentRunPanel({
   // #712 대화 메모리: 워크스페이스·패널별 thread_id를 localStorage에 고정하고, 이 thread의
   // 이전 대화를 불러와 transcript를 복원한다(리마운트·새로고침 후에도 대화가 이어져 보이게).
   useEffect(() => {
-    if (!wsId || threadRestored.current) return
+    if (!wsId || threadRestoredFor.current === wsId) return // #846: wsId 바뀌면 재로드
     if (multiThread && !myEmail) return // 소유자(이메일) 준비 후 진행
-    threadRestored.current = true
+    threadRestoredFor.current = wsId
 
     // #821 멀티 채팅방: 내 스레드 목록 로드 + 마지막 활성(없으면 최근) 스레드 복원.
     if (multiThread) {
@@ -547,9 +565,14 @@ export function AgentRunPanel({
           if (cancelled) return
           setThreads(res.threads)
           const has = (id: string | null): id is string => !!id && res.threads.some((t) => t.id === id)
-          const target = has(last) ? last : res.threads[0]?.id ?? threadIdRef.current
-          activateThread(target)
-          if (has(target)) restoreTranscript(target)
+          const target = has(last) ? last : res.threads[0]?.id ?? null
+          if (target) {
+            activateThread(target)
+            restoreTranscript(target)
+          } else {
+            // 이 워크스페이스엔 방이 없음 → 새 대화로 초기화(이전 워크스페이스 잔상 제거)
+            newChat()
+          }
         })
         .catch(() => {
           /* 목록 로드 실패는 무시 — 새 대화로 시작 */
@@ -2089,9 +2112,55 @@ export function AgentRunPanel({
                   .then((items) => items.map((p) => ({ value: p.id, label: p.name || p.id })))
               }
               if (param === 'connector_name') {
-                return api
-                  .clusterConnect()
-                  .then((c) => c.connectors.map((row) => ({ value: row.name, label: row.name })))
+                // #836: 클러스터 전체가 아니라 현재 프로젝트 파이프라인의 커넥터만 노출.
+                return api.listPipelines(wsId).then(async (pipelines) => {
+                  const perPipeline = await Promise.all(
+                    pipelines.map((p) =>
+                      api.listPipelineConnectors(wsId, p.id).catch(() => [] as ConnectorInfo[]),
+                    ),
+                  )
+                  const seen = new Set<string>()
+                  const options: { value: string; label: string }[] = []
+                  for (const conn of perPipeline.flat()) {
+                    if (seen.has(conn.name)) continue
+                    seen.add(conn.name)
+                    options.push({ value: conn.name, label: conn.name })
+                  }
+                  return options
+                })
+              }
+              if (param === 'consumer_group') {
+                // #838: 현재 프로젝트 파이프라인의 컨슈머 그룹만 노출.
+                return api.listPipelines(wsId).then(async (pipelines) => {
+                  const perPipeline = await Promise.all(
+                    pipelines.map((p) =>
+                      api.pipelineConsumerGroups(wsId, p.id).catch(() => [] as ConsumerGroupInfo[]),
+                    ),
+                  )
+                  const seen = new Set<string>()
+                  const options: { value: string; label: string }[] = []
+                  for (const group of perPipeline.flat()) {
+                    if (seen.has(group.name)) continue
+                    seen.add(group.name)
+                    options.push({ value: group.name, label: group.name })
+                  }
+                  return options
+                })
+              }
+              if (param === 'metric') {
+                // #839: 카탈로그 enum이 있으면 select, 없으면(BE 미배포) 자유 입력 폴백.
+                const metricCmd = slashState.commands.find((cmd) => cmd.toolName === 'get_metrics')
+                const enumValues = metricCmd?.argEnums?.metric
+                if (!enumValues || enumValues.length === 0) return null
+                return Promise.resolve(
+                  enumValues.map((value) => ({ value, label: METRIC_LABELS_KO[value] ?? value })),
+                )
+              }
+              if (param === 'incident_id') {
+                // 인시던트 ID 는 자유 입력 대신 프로젝트 인시던트 목록에서 선택.
+                return Promise.resolve(
+                  app.incidents.map((inc) => ({ value: inc.id, label: inc.title || inc.id })),
+                )
               }
               if (param === 'incident_id') {
                 // 인시던트 ID 는 자유 입력 대신 프로젝트 인시던트 목록에서 선택.
@@ -3061,6 +3130,8 @@ function ToolPanelCard({
           <AlertsPanel result={result} onOpenIncident={onOpenIncident} />
         ) : msg.toolName === 'analyze_event_log' || msg.toolName === 'get_incident_summary' ? (
           <EventSummaryPanel result={result} />
+        ) : msg.toolName === 'get_cluster_info' ? (
+          <ClusterInfoPanel result={result} />
         ) : (
           <GenericToolResultPanel result={msg.result} />
         )}
@@ -3380,7 +3451,8 @@ const CONNECTOR_STATE_LABEL: Record<string, string> = {
 export function connectorStatusSummary(result: unknown): ConnectorStatusSummary | null {
   const record = asRecord(result)
   if (!record) return null
-  const state = (recordString(record, 'state', 'connector_state', 'status') ?? 'UNKNOWN').toUpperCase()
+  // #845: ai-service는 결과를 by_alias=True(camelCase)로 직렬화 → 커넥터 state는 `connectorState`로 옴.
+  const state = (recordString(record, 'state', 'connectorState', 'connector_state', 'status') ?? 'UNKNOWN').toUpperCase()
   const tasks = recordArray(record, 'tasks')
   const total = tasks.length
   const running = tasks.filter((task) => (recordString(task, 'state', 'status') ?? '').toUpperCase() === 'RUNNING').length
@@ -3390,7 +3462,7 @@ export function connectorStatusSummary(result: unknown): ConnectorStatusSummary 
     tasks.map((task) => recordString(task, 'trace', 'last_error')).find((value): value is string => !!value) ??
     null
   return {
-    name: recordString(record, 'connector_name', 'connector', 'name'),
+    name: recordString(record, 'connector_name', 'connectorName', 'connector', 'name'),
     state,
     stateLabel: CONNECTOR_STATE_LABEL[state.toLowerCase()] ?? state,
     stateToken: semanticToken(state),
@@ -3399,6 +3471,36 @@ export function connectorStatusSummary(result: unknown): ConnectorStatusSummary 
     failed,
     lastError,
   }
+}
+
+// 스택트레이스 등 텍스트를 클립보드로 복사하는 작은 버튼. <details>/<summary> 안에서도
+// 클릭이 토글로 새지 않도록 기본 동작을 막는다.
+export function CopyButton({ text, className }: { text: string; className?: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        const done = () => {
+          setCopied(true)
+          window.setTimeout(() => setCopied(false), 1500)
+        }
+        if (navigator.clipboard?.writeText) {
+          void navigator.clipboard.writeText(text).then(done).catch(() => undefined)
+        } else {
+          done()
+        }
+      }}
+      className={cn(
+        'shrink-0 rounded border border-[#e7c9c4] bg-white/70 px-1.5 py-0.5 text-[10.5px] font-medium text-[#c0392b] hover:bg-white',
+        className,
+      )}
+    >
+      {copied ? '복사됨' : '복사'}
+    </button>
+  )
 }
 
 export function ConnectorDetailPanel({ result }: { result: Record<string, unknown> | null }) {
@@ -3421,8 +3523,111 @@ export function ConnectorDetailPanel({ result }: { result: Record<string, unknow
       </div>
       {summary.lastError && (
         <details className="rounded border border-[#e7c9c4] bg-[#fcf3f2] px-2 py-1.5 text-[11.5px] text-[#c0392b]">
-          <summary className="cursor-pointer select-none">오류 원인 보기</summary>
+          <summary className="flex cursor-pointer select-none items-center gap-2">
+            <span>오류 원인 보기</span>
+            <CopyButton text={summary.lastError} className="ml-auto" />
+          </summary>
           <div className="mt-1 whitespace-pre-wrap break-words font-mono text-[10.5px]">{summary.lastError}</div>
+        </details>
+      )}
+    </div>
+  )
+}
+
+export interface ClusterInfoData {
+  clusterId: string | null
+  controllerId: number | null
+  brokerCount: number | null
+  brokers: { id: number | null; host: string | null; port: number | null; controller: boolean }[]
+  topics: { name: string | null; partitionCount: number }[]
+}
+
+// get_cluster_info(ClusterInfoResult) 파싱. BE는 camelCase지만 snake_case도 허용.
+export function parseClusterInfo(result: unknown): ClusterInfoData | null {
+  const record = asRecord(result)
+  if (!record) return null
+  const brokers = recordArray(record, 'brokers').map((broker) => ({
+    id: recordNumber(broker, 'id'),
+    host: recordString(broker, 'host'),
+    port: recordNumber(broker, 'port'),
+    controller: broker.controller === true,
+  }))
+  const topics = recordArray(record, 'topics').map((topic) => ({
+    name: recordString(topic, 'name'),
+    partitionCount: recordNumber(topic, 'partitionCount', 'partition_count') ?? 0,
+  }))
+  return {
+    clusterId: recordString(record, 'clusterId', 'cluster_id'),
+    controllerId: recordNumber(record, 'controllerId', 'controller_id'),
+    brokerCount: recordNumber(record, 'brokerCount', 'broker_count'),
+    brokers,
+    topics,
+  }
+}
+
+export function ClusterInfoPanel({ result }: { result: Record<string, unknown> | null }) {
+  const data = parseClusterInfo(result)
+  if (!data) return <PanelEmpty text="클러스터 상태 데이터 없음" />
+  // brokerCount가 비면 brokers 배열 길이로 보정.
+  const brokerCount = data.brokerCount ?? (data.brokers.length || null)
+  const statusToken: SemanticToken = brokerCount && brokerCount > 0 ? 'safe' : 'neutral'
+  const statusLabel = brokerCount && brokerCount > 0 ? `브로커 ${brokerCount}대 정상` : '브로커 정보 없음'
+  const controllerBroker =
+    data.brokers.find((broker) => broker.controller) ??
+    (data.controllerId != null ? data.brokers.find((broker) => broker.id === data.controllerId) : undefined)
+  const topicCount = data.topics.length
+  const partitionTotal = data.topics.reduce((sum, topic) => sum + topic.partitionCount, 0)
+  const formatBroker = (broker: ClusterInfoData['brokers'][number]) =>
+    broker.host ? `${broker.host}:${broker.port ?? '-'}` : `브로커 #${broker.id ?? '-'}`
+  return (
+    <div className="space-y-2 text-[12px]">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={cn('inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold', semanticBadgeClass(statusToken))}>
+          <span className={cn('h-1.5 w-1.5 rounded-full', semanticDotClass(statusToken))} />
+          {statusLabel}
+        </span>
+        {controllerBroker && (
+          <span className="text-gray-600">컨트롤러 {formatBroker(controllerBroker)}</span>
+        )}
+        {data.clusterId && <span className="font-mono text-[10.5px] text-gray-400">#{data.clusterId}</span>}
+      </div>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+        <div className="space-y-1">
+          <div className="text-[10.5px] font-semibold text-gray-400">브로커</div>
+          {data.brokers.length === 0 ? (
+            <PanelEmpty text="브로커 없음" />
+          ) : (
+            <div className="space-y-0.5">
+              {data.brokers.map((broker, index) => (
+                <div key={broker.id ?? index} className="flex items-center gap-1.5 text-gray-700">
+                  <span className="font-mono text-[11px]">{formatBroker(broker)}</span>
+                  {broker.controller && (
+                    <span className="rounded bg-gray-100 px-1 py-0.5 text-[10px] text-gray-500">컨트롤러</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="space-y-1">
+          <div className="text-[10.5px] font-semibold text-gray-400">토픽 / 파티션</div>
+          <div className="text-gray-700">
+            토픽 <b className="text-gray-900">{topicCount.toLocaleString()}개</b>
+            {' · '}파티션 <b className="text-gray-900">{partitionTotal.toLocaleString()}개</b>
+          </div>
+        </div>
+      </div>
+      {data.topics.length > 0 && (
+        <details className="rounded border border-gray-100 bg-gray-50 px-2 py-1.5 text-[11.5px] text-gray-600">
+          <summary className="cursor-pointer select-none">토픽 전체 보기</summary>
+          <div className="mt-1 space-y-0.5">
+            {data.topics.map((topic, index) => (
+              <div key={topic.name ?? index} className="flex items-center justify-between gap-2">
+                <span className="min-w-0 truncate font-mono text-[10.5px] text-gray-700">{topic.name ?? '-'}</span>
+                <span className="shrink-0 text-gray-400">파티션 {topic.partitionCount.toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
         </details>
       )}
     </div>

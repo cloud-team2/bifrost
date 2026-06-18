@@ -2,11 +2,13 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
   AlertsPanel,
+  ClusterInfoPanel,
   ConnectorDetailPanel,
   EventSummaryPanel,
   GenericToolResultPanel,
   PipelineStatusPanel,
   connectorStatusSummary,
+  parseClusterInfo,
   pipelineStatusKo,
   semanticToken,
   severityKo,
@@ -215,5 +217,100 @@ describe('ConnectorDetailPanel rendering', () => {
     expect(html).toContain('실패')
     expect(html).toContain('오류 원인 보기')
     expect(html).toContain('boom')
+    // #844: 오류 원인에 복사 버튼 제공
+    expect(html).toContain('복사')
+  })
+
+  it('reads camelCase connectorState from the real by_alias payload (#845)', () => {
+    // ai-service가 by_alias=True로 직렬화하면 커넥터 state는 connectorState, task의 id는 id로 온다.
+    const html = renderToStaticMarkup(
+      <ConnectorDetailPanel
+        result={{
+          connectorName: 'orders-sink',
+          connectorState: 'RUNNING',
+          tasks: [
+            { id: 0, state: 'RUNNING' },
+            { id: 1, state: 'RUNNING' },
+            { id: 2, state: 'RUNNING' },
+          ],
+        }}
+      />,
+    )
+    expect(html).toContain('실행 중')
+    expect(html).toContain('태스크 3/3 정상')
+    expect(html).not.toContain('UNKNOWN')
+  })
+})
+
+describe('parseClusterInfo (#837)', () => {
+  const sample = {
+    clusterId: 'kafka-1',
+    controllerId: 2,
+    brokerCount: 3,
+    brokers: [
+      { id: 1, host: 'broker-1', port: 9092, controller: false },
+      { id: 2, host: 'broker-2', port: 9092, controller: true },
+      { id: 3, host: 'broker-3', port: 9092, controller: false },
+    ],
+    topics: [
+      { name: 'orders', partitionCount: 6 },
+      { name: 'payments', partitionCount: 4 },
+    ],
+  }
+
+  it('parses broker count and broker list', () => {
+    const data = parseClusterInfo(sample)
+    expect(data?.brokerCount).toBe(3)
+    expect(data?.brokers).toHaveLength(3)
+    expect(data?.clusterId).toBe('kafka-1')
+  })
+
+  it('detects the controller broker', () => {
+    const data = parseClusterInfo(sample)
+    const controller = data?.brokers.find((broker) => broker.controller)
+    expect(controller?.id).toBe(2)
+  })
+
+  it('computes topic totals (count + summed partitions)', () => {
+    const data = parseClusterInfo(sample)
+    expect(data?.topics).toHaveLength(2)
+    const partitionTotal = data!.topics.reduce((sum, topic) => sum + topic.partitionCount, 0)
+    expect(partitionTotal).toBe(10)
+  })
+
+  it('accepts snake_case partition_count and returns null for non-objects', () => {
+    const data = parseClusterInfo({ topics: [{ name: 't', partition_count: 5 }] })
+    expect(data?.topics[0]?.partitionCount).toBe(5)
+    expect(parseClusterInfo(null)).toBeNull()
+  })
+})
+
+describe('ClusterInfoPanel rendering (#837)', () => {
+  it('renders broker summary, controller, topic totals, and topic drilldown', () => {
+    const html = renderToStaticMarkup(
+      <ClusterInfoPanel
+        result={{
+          clusterId: 'kafka-1',
+          controllerId: 2,
+          brokerCount: 2,
+          brokers: [
+            { id: 1, host: 'broker-1', port: 9092, controller: false },
+            { id: 2, host: 'broker-2', port: 9092, controller: true },
+          ],
+          topics: [{ name: 'orders', partitionCount: 6 }],
+        }}
+      />,
+    )
+    expect(html).toContain('브로커 2대 정상')
+    expect(html).toContain('컨트롤러')
+    expect(html).toContain('토픽 전체 보기')
+    expect(html).toContain('orders')
+  })
+
+  it('falls back to a neutral status when there are no brokers', () => {
+    const html = renderToStaticMarkup(
+      <ClusterInfoPanel result={{ brokerCount: 0, brokers: [], topics: [] }} />,
+    )
+    expect(html).toContain('브로커 정보 없음')
   })
 })

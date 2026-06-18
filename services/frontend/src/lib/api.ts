@@ -667,7 +667,8 @@ export interface AgentToolCatalogItem {
 export interface AgentToolDetail extends AgentToolCatalogItem {
   params_schema: {
     required?: string[]
-    properties?: Record<string, unknown>
+    // #839: 파라미터별 JSON 스키마(enum 등). enum이 있으면 팔레트가 select로 렌더.
+    properties?: Record<string, { enum?: string[] } & Record<string, unknown>>
   }
   result_schema: Record<string, unknown>
 }
