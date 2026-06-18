@@ -32,7 +32,7 @@ def _summary_for(result, operation: str = "search_logs") -> str:
 
 def test_explicit_summary_preserved() -> None:
     """summary 필드가 있으면 그 값을 그대로 사용 (기존 동작 유지)."""
-    summary = _summary_for({"summary": "12 matching log lines"})
+    summary = _summary_for({"summary": "12 matching log lines"}, operation="query_custom")
     assert summary == "12 matching log lines"
 
 
@@ -49,7 +49,7 @@ def test_dict_list_key_reports_count_without_dumping_contents() -> None:
         {"logs": [secret_log, secret_log]},
         operation="search_logs",
     )
-    assert summary == "search_logs completed (logs: 2)"
+    assert summary == "search_logs completed (logs=2, structured_matches=0)"
     assert "hunter2" not in summary
     assert "password" not in summary
 
@@ -68,7 +68,21 @@ def test_status_and_count_scalars_included() -> None:
 
 def test_count_field_included() -> None:
     summary = _summary_for({"total": 42}, operation="search_logs")
-    assert summary == "search_logs completed (total=42)"
+    assert summary == "search_logs completed (logs=42, structured_matches=0)"
+
+
+def test_search_logs_ignores_overclaiming_summary_and_recomputes_from_evidence() -> None:
+    summary = _summary_for(
+        {
+            "summary": "structured log evidence: schema error observed",
+            "total": 1,
+            "evidence": [],
+        },
+        operation="search_logs",
+    )
+
+    assert summary == "search_logs completed (logs=1, structured_matches=0)"
+    assert "schema error observed" not in summary
 
 
 def test_consumer_lag_summary_includes_partition_p95_and_offset_progression() -> None:
@@ -95,6 +109,52 @@ def test_consumer_lag_summary_includes_partition_p95_and_offset_progression() ->
     assert "top lag partitions=1" in summary
     assert "offset position snapshot" in summary
     assert "current committed offsets" in summary
+
+
+def test_connector_task_trace_summary_does_not_claim_failed_without_failed_task() -> None:
+    summary = _summary_for(
+        {
+            "connector": "orders-source",
+            "traces": [{"taskId": 0, "state": "RUNNING", "traceClass": "timeout", "hasTrace": True}],
+        },
+        operation="get_connector_task_trace",
+    )
+
+    assert "no failed task confirmed" in summary
+    assert "failedTasks=0" in summary
+    assert "connector task status FAILED" not in summary
+
+
+def test_connector_task_trace_summary_claims_failed_only_for_failed_task() -> None:
+    summary = _summary_for(
+        {
+            "connector": "orders-source",
+            "traces": [{"taskId": 0, "state": "FAILED", "traceClass": "auth", "hasTrace": True}],
+        },
+        operation="get_connector_task_trace",
+    )
+
+    assert "connector task status FAILED" in summary
+    assert "failedTasks=1" in summary
+
+
+def test_recent_changes_summary_does_not_count_snapshots_as_config_change_evidence() -> None:
+    summary = _summary_for(
+        {
+            "changes": [
+                {
+                    "type": "CONNECTOR_CONFIG_SNAPSHOT",
+                    "description": "KafkaConnector CR config snapshot for connector 'orders-source'",
+                }
+            ],
+            "unavailableSources": ["kubernetes:KafkaConnect/platform-connect unavailable (KubernetesClientException)"],
+        },
+        operation="get_recent_changes",
+    )
+
+    assert "CONNECTOR_CONFIG_SNAPSHOT" in summary
+    assert "unavailableSources=1" in summary
+    assert "최근 pipeline/connector config 변경 evidence count" not in summary
 
 
 def test_empty_dict_falls_back() -> None:

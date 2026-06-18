@@ -45,13 +45,16 @@ def test_registry_exposes_read_tool_allowlist_and_risk():
     assert legacy_lag.alias_for == "get_consumer_lag"
 
 
-def test_get_metrics_catalog_description_exposes_live_backed_logical_metrics():
+def test_get_metrics_catalog_enum_exposes_live_backed_logical_metrics():
+    # #843: metric이 select box(enum)로 바뀌어 설명의 예시 나열은 제거됨.
+    # 13종 논리 메트릭의 discoverability는 이제 params_schema enum이 보장한다.
     registry = ToolClientRegistry(transport=httpx.MockTransport(lambda request: httpx.Response(200)))
 
     definition = registry.get_definition("get_metrics")
     assert definition is not None
-    description = definition.description
-    for metric in {
+    metric_schema = definition.params_model.model_json_schema()["properties"]["metric"]
+    enum_values = set(metric_schema["enum"])
+    assert enum_values == {
         "pipeline_lag_seconds",
         "consumer_lag_p95",
         "consumer_commit_rate_per_sec",
@@ -65,8 +68,7 @@ def test_get_metrics_catalog_description_exposes_live_backed_logical_metrics():
         "broker_network_transmit_bytes_per_sec",
         "broker_fs_read_bytes_per_sec",
         "broker_fs_write_bytes_per_sec",
-    }:
-        assert metric in description
+    }
 
 
 @pytest.mark.asyncio
@@ -98,6 +100,37 @@ async def test_schema_validation_failure_does_not_call_spring():
     assert result.status == ToolStatus.FAILED
     assert result.error is not None
     assert result.error.code == SpringErrorCode.VALIDATION_FAILED
+
+
+@pytest.mark.asyncio
+async def test_search_logs_structured_tool_result_excludes_raw_logs() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "request_id": "req_001",
+                "operation": "search_logs",
+                "result": {
+                    "logs": [{"line": "password=hunter2 token=abc123"}],
+                    "total": 1,
+                    "summary": "structured log evidence: auth/permission error log",
+                    "evidence": [{"errorClass": "auth", "count": 1}],
+                },
+            },
+        )
+
+    registry = ToolClientRegistry(transport=httpx.MockTransport(handler))
+
+    result = await registry.call_tool("search_logs", {"query": "error", "limit": 10}, _context())
+
+    assert result.status == ToolStatus.SUCCESS
+    assert result.result is not None
+    assert result.result["matchCount"] == 1
+    assert result.result["evidence"] == [{"errorClass": "auth", "count": 1}]
+    assert "logs" not in result.result
+    assert "hunter2" not in str(result.result)
+    assert "abc123" not in str(result.result)
 
 
 @pytest.mark.asyncio
@@ -448,7 +481,23 @@ def _deployments_response(request: httpx.Request) -> httpx.Response:
             "ok": True,
             "request_id": "req_001",
             "operation": "get_recent_changes",
-            "result": {"changes": []},
+            "result": {
+                "summary": (
+                    "live change evidence: 1 changes from metadb/kubernetes live sources "
+                    "(최근 pipeline/connector config 변경 evidence count=1)"
+                ),
+                "changes": [
+                    {
+                        "changeId": "orders-source:kafkaconnector-config",
+                        "type": "CONNECTOR_CONFIG_SNAPSHOT",
+                        "description": (
+                            "최근 pipeline/connector config 변경 evidence: "
+                            "KafkaConnector CR config snapshot"
+                        ),
+                        "changedAt": "2026-06-15T05:07:29Z",
+                    }
+                ],
+            },
         },
     )
 
@@ -471,6 +520,11 @@ async def test_get_deployments_forwards_limit_as_query_param():
     assert captured_request.url.path == "/internal/ops/projects/proj_001/pipelines/changes"
     assert captured_request.url.params["limit"] == "5"
     assert result.status == ToolStatus.SUCCESS
+    assert "live change evidence" in result.summary
+    assert "CONNECTOR_CONFIG_SNAPSHOT" in result.summary
+    assert "최근 pipeline/connector config 변경 evidence count" not in result.summary
+    assert result.result is not None
+    assert result.result["changes"][0]["type"] == "CONNECTOR_CONFIG_SNAPSHOT"
 
 
 @pytest.mark.asyncio
