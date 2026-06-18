@@ -182,3 +182,45 @@ async def test_raw_e2_user_evidence_drives_classifier_and_rca(case_name: str) ->
         f"candidates={[c.root_cause_id for c in result.root_cause_candidates]})"
     )
     assert top.confidence >= 0.60
+
+
+@pytest.mark.asyncio
+async def test_structured_change_and_log_summaries_satisfy_config_required_evidence() -> None:
+    retrieval = _retrieval(
+        "structured log evidence: config validation error 또는 invalid option log worker log "
+        "class=config connector=orders-source task=0 count=2",
+        "live change evidence: 최근 pipeline/connector config 변경 evidence: "
+        "KafkaConnector CR config snapshot for connector orders-source",
+    )
+
+    result = await run_rca(_classifier("CONNECTOR_TASK_FAILED"), retrieval)
+
+    assert result.root_cause_candidates[0].root_cause_id == "PIPELINE_CONFIG_INVALID"
+    assert result.root_cause_candidates[0].confidence >= 0.60
+
+
+@pytest.mark.asyncio
+async def test_structured_auth_log_summary_satisfies_auth_required_evidence() -> None:
+    retrieval = _retrieval(
+        "structured log evidence: auth/permission error log worker log class=auth "
+        "stage=source connector=orders-source task=0 count=3"
+    )
+
+    result = await run_rca(_classifier("SOURCE_AUTH_FAILURE"), retrieval)
+
+    assert result.root_cause_candidates[0].root_cause_id == "SOURCE_AUTH_EXPIRED"
+    assert result.root_cause_candidates[0].confidence >= 0.60
+
+
+@pytest.mark.asyncio
+async def test_structured_reachability_log_summary_satisfies_network_required_evidence() -> None:
+    retrieval = _retrieval(
+        "structured log evidence: Bifrost에서 source endpoint reachability 실패 "
+        "connection refused no route to host 네트워크 도달 실패 worker log "
+        "class=timeout stage=source connector=orders-source count=2"
+    )
+
+    result = await run_rca(_classifier("SOURCE_CONNECTION_TIMEOUT"), retrieval)
+
+    assert result.root_cause_candidates[0].root_cause_id == "SOURCE_NETWORK_REACHABILITY"
+    assert result.root_cause_candidates[0].confidence >= 0.60

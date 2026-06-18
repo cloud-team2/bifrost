@@ -192,6 +192,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
             params_model=GetPipelineLogsParams,
             result_model=LogSearchData,
             sends_body=True,
+            structured_result=True,
         ),
         ToolDefinition(
             name="get_metrics",
@@ -225,6 +226,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
             risk=RiskLevel.READ_ONLY,
             params_model=GetDeploymentsParams,
             result_model=DeploymentsData,
+            structured_result=True,
         ),
         # ── catalog §8.3 Kafka / Kafka Connect ──────────────────────────────
         ToolDefinition(
@@ -456,6 +458,7 @@ def default_tool_definitions() -> dict[str, ToolDefinition]:
             params_model=GetConnectorTaskTraceParams,
             result_model=ConnectorTaskTraceData,
             path_params=("connector_name",),
+            structured_result=True,
         ),
         ToolDefinition(
             name="get_alerts",

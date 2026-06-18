@@ -448,7 +448,23 @@ def _deployments_response(request: httpx.Request) -> httpx.Response:
             "ok": True,
             "request_id": "req_001",
             "operation": "get_recent_changes",
-            "result": {"changes": []},
+            "result": {
+                "summary": (
+                    "live change evidence: 1 changes from metadb/kubernetes live sources "
+                    "(최근 pipeline/connector config 변경 evidence count=1)"
+                ),
+                "changes": [
+                    {
+                        "changeId": "orders-source:kafkaconnector-config",
+                        "type": "CONNECTOR_CONFIG_SNAPSHOT",
+                        "description": (
+                            "최근 pipeline/connector config 변경 evidence: "
+                            "KafkaConnector CR config snapshot"
+                        ),
+                        "changedAt": "2026-06-15T05:07:29Z",
+                    }
+                ],
+            },
         },
     )
 
@@ -471,6 +487,10 @@ async def test_get_deployments_forwards_limit_as_query_param():
     assert captured_request.url.path == "/internal/ops/projects/proj_001/pipelines/changes"
     assert captured_request.url.params["limit"] == "5"
     assert result.status == ToolStatus.SUCCESS
+    assert "live change evidence" in result.summary
+    assert "최근 pipeline/connector config 변경" in result.summary
+    assert result.result is not None
+    assert result.result["changes"][0]["type"] == "CONNECTOR_CONFIG_SNAPSHOT"
 
 
 @pytest.mark.asyncio

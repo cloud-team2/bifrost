@@ -1,16 +1,23 @@
 package com.bifrost.ops.internalops.controller;
 
 import com.bifrost.ops.global.common.error.ApiException;
+import com.bifrost.ops.governance.audit.persistence.entity.AuditEventEntity;
+import com.bifrost.ops.governance.audit.persistence.repository.AuditEventRepository;
+import com.bifrost.ops.governance.changemanagement.persistence.entity.ChangeTicketEntity;
+import com.bifrost.ops.governance.changemanagement.persistence.repository.ChangeTicketRepository;
 import com.bifrost.ops.internalops.dto.OpsEnvelope;
 import com.bifrost.ops.internalops.dto.RecentChangesResult;
 import com.bifrost.ops.pipeline.PipelineLifecycle;
 import com.bifrost.ops.pipeline.persistence.entity.PipelineEntity;
 import com.bifrost.ops.pipeline.persistence.repository.PipelineRepository;
 import com.bifrost.ops.provisioning.dto.PipelinePattern;
+import com.bifrost.ops.provisioning.dto.ConnectorKind;
+import com.bifrost.ops.provisioning.persistence.entity.ConnectorEntity;
 import com.bifrost.ops.provisioning.persistence.repository.ConnectorRepository;
 import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import io.fabric8.kubernetes.client.KubernetesClient;
 import org.junit.jupiter.api.Test;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.springframework.http.ResponseEntity;
@@ -42,8 +49,20 @@ class InternalOpsPipelineControllerTest {
     private final PipelineRepository pipelineRepository = mock(PipelineRepository.class);
     private final ConnectorRepository connectorRepository = mock(ConnectorRepository.class);
     private final AdminClient adminClient = mock(AdminClient.class);
+    private final ChangeTicketRepository changeTicketRepository = mock(ChangeTicketRepository.class);
+    private final AuditEventRepository auditEventRepository = mock(AuditEventRepository.class);
+    private final KubernetesClient k8s = mock(KubernetesClient.class);
     private final InternalOpsPipelineController controller =
-            new InternalOpsPipelineController(workspaceRepository, pipelineRepository, connectorRepository, adminClient);
+            new InternalOpsPipelineController(
+                    workspaceRepository,
+                    pipelineRepository,
+                    connectorRepository,
+                    adminClient,
+                    changeTicketRepository,
+                    auditEventRepository,
+                    k8s,
+                    "platform-kafka",
+                    "platform-connect");
 
     private final UUID tenantId = UUID.randomUUID();
 
@@ -58,6 +77,9 @@ class InternalOpsPipelineControllerTest {
                 PipelineLifecycle.LAG, "consumer lag 임계 초과");
         when(pipelineRepository.findByTenantIdOrderByCreatedAtDesc(tenantId))
                 .thenReturn(List.of(pipeline));
+        when(connectorRepository.findByTenantIdOrderByCrName(tenantId)).thenReturn(List.of());
+        when(changeTicketRepository.findByTenantIdOrderByCreatedAtDesc(tenantId)).thenReturn(List.of());
+        when(auditEventRepository.findByTenantIdOrderByCreatedAtDesc(tenantId)).thenReturn(List.of());
 
         ResponseEntity<OpsEnvelope<RecentChangesResult>> response =
                 controller.changes(PROJECT_ID, null, request());
@@ -75,6 +97,7 @@ class InternalOpsPipelineControllerTest {
         assertThat(changes.get(1).type()).isEqualTo("PIPELINE_CREATED");
         assertThat(changes.get(1).changedAt()).isEqualTo(created);
         assertThat(changes.get(1).description()).contains("orders");
+        assertThat(response.getBody().result().summary()).contains("live change evidence");
         assertThat(changes).allSatisfy(c -> {
             assertThat(c.changeId()).isNotBlank();
             assertThat(c.type()).isNotBlank();
@@ -90,6 +113,9 @@ class InternalOpsPipelineControllerTest {
         PipelineEntity pipeline = pipeline("orders", created, created, PipelineLifecycle.CREATING, null);
         when(pipelineRepository.findByTenantIdOrderByCreatedAtDesc(tenantId))
                 .thenReturn(List.of(pipeline));
+        when(connectorRepository.findByTenantIdOrderByCrName(tenantId)).thenReturn(List.of());
+        when(changeTicketRepository.findByTenantIdOrderByCreatedAtDesc(tenantId)).thenReturn(List.of());
+        when(auditEventRepository.findByTenantIdOrderByCreatedAtDesc(tenantId)).thenReturn(List.of());
 
         ResponseEntity<OpsEnvelope<RecentChangesResult>> response =
                 controller.changes(PROJECT_ID, null, request());
@@ -107,6 +133,9 @@ class InternalOpsPipelineControllerTest {
         PipelineEntity b = pipeline("b", base.plusSeconds(10), base.plusSeconds(7200), PipelineLifecycle.ERROR, "fail");
         when(pipelineRepository.findByTenantIdOrderByCreatedAtDesc(tenantId))
                 .thenReturn(List.of(b, a));
+        when(connectorRepository.findByTenantIdOrderByCrName(tenantId)).thenReturn(List.of());
+        when(changeTicketRepository.findByTenantIdOrderByCreatedAtDesc(tenantId)).thenReturn(List.of());
+        when(auditEventRepository.findByTenantIdOrderByCreatedAtDesc(tenantId)).thenReturn(List.of());
 
         ResponseEntity<OpsEnvelope<RecentChangesResult>> response =
                 controller.changes(PROJECT_ID, 2, request());
@@ -123,6 +152,46 @@ class InternalOpsPipelineControllerTest {
         when(workspaceRepository.findByNamespace("missing")).thenReturn(Optional.empty());
         assertThatThrownBy(() -> controller.changes("missing", null, request()))
                 .isInstanceOf(ApiException.class);
+    }
+
+    @Test
+    void changesIncludesLiveConnectorTicketAndAuditSourcesWithoutSecretValues() {
+        when(workspaceRepository.findByNamespace(PROJECT_ID)).thenReturn(Optional.of(workspace()));
+        when(pipelineRepository.findByTenantIdOrderByCreatedAtDesc(tenantId)).thenReturn(List.of());
+        ConnectorEntity connector = connector("orders-source", ConnectorKind.SOURCE,
+                Instant.parse("2026-06-03T00:00:00Z"));
+        when(connectorRepository.findByTenantIdOrderByCrName(tenantId)).thenReturn(List.of(connector));
+
+        ChangeTicketEntity ticket = new ChangeTicketEntity();
+        ticket.setId(UUID.fromString("00000000-0000-0000-0000-000000000111"));
+        ticket.setTenantId(tenantId);
+        ticket.setTitle("rotate connector credential config");
+        ticket.setScopeOperation("update_connector");
+        ticket.setStatus("APPROVED");
+        ReflectionTestUtils.setField(ticket, "createdAt", Instant.parse("2026-06-04T00:00:00Z"));
+        when(changeTicketRepository.findByTenantIdOrderByCreatedAtDesc(tenantId)).thenReturn(List.of(ticket));
+
+        AuditEventEntity audit = new AuditEventEntity();
+        audit.setId(UUID.fromString("00000000-0000-0000-0000-000000000222"));
+        audit.setTenantId(tenantId);
+        audit.setAction("update_connector");
+        audit.setTargetType("CONNECTOR");
+        audit.setDetail("config changed password=super-secret credential rotation");
+        ReflectionTestUtils.setField(audit, "createdAt", Instant.parse("2026-06-05T00:00:00Z"));
+        when(auditEventRepository.findByTenantIdOrderByCreatedAtDesc(tenantId)).thenReturn(List.of(audit));
+
+        RecentChangesResult result = controller.changes(PROJECT_ID, null, request()).getBody().result();
+
+        assertThat(result.changes()).extracting(RecentChangesResult.Change::type)
+                .contains("CONNECTOR_CONFIG_CREATED", "CHANGE_TICKET", "AUDIT_EVENT");
+        assertThat(result.summary())
+                .contains("live change evidence")
+                .contains("최근 pipeline/connector config 변경 evidence");
+        assertThat(result.changes()).extracting(RecentChangesResult.Change::description)
+                .anySatisfy(description -> assertThat(description)
+                        .contains("update_connector")
+                        .doesNotContain("super-secret")
+                        .doesNotContain("credential"));
     }
 
     @Test
@@ -168,6 +237,9 @@ class InternalOpsPipelineControllerTest {
                 PipelineLifecycle.LAG, "lag");
         when(pipelineRepository.findByTenantIdOrderByCreatedAtDesc(tenantId))
                 .thenReturn(List.of(pipeline));
+        when(connectorRepository.findByTenantIdOrderByCrName(tenantId)).thenReturn(List.of());
+        when(changeTicketRepository.findByTenantIdOrderByCreatedAtDesc(tenantId)).thenReturn(List.of());
+        when(auditEventRepository.findByTenantIdOrderByCreatedAtDesc(tenantId)).thenReturn(List.of());
 
         mockMvc().perform(get("/internal/ops/projects/{projectId}/pipelines/changes", PROJECT_ID))
                 .andExpect(status().isOk())
@@ -176,6 +248,7 @@ class InternalOpsPipelineControllerTest {
                 .andExpect(jsonPath("$.result.changes[0].changeId").isNotEmpty())
                 .andExpect(jsonPath("$.result.changes[0].type").value("STATUS_CHANGE"))
                 .andExpect(jsonPath("$.result.changes[0].description").isNotEmpty())
+                .andExpect(jsonPath("$.result.summary").value(org.hamcrest.Matchers.containsString("live change evidence")))
                 .andExpect(jsonPath("$.result.changes[0].changedAt").value("2026-06-05T12:00:00Z"))
                 .andExpect(jsonPath("$.result.changes[1].changedAt").value("2026-06-01T00:00:00Z"));
     }
@@ -212,6 +285,19 @@ class InternalOpsPipelineControllerTest {
         // createdAt 은 @PrePersist 로 채워지므로 테스트에서는 reflection 으로 주입
         ReflectionTestUtils.setField(pipeline, "createdAt", createdAt);
         return pipeline;
+    }
+
+    private ConnectorEntity connector(String name, ConnectorKind kind, Instant createdAt) {
+        ConnectorEntity connector = new ConnectorEntity();
+        connector.setId(UUID.randomUUID());
+        connector.setPipelineId(UUID.randomUUID());
+        connector.setCrName(name);
+        connector.setKind(kind);
+        connector.setConnectorClass("io.debezium.connector.postgresql.PostgresConnector");
+        connector.setTasksMax(1);
+        connector.setState("RUNNING");
+        connector.setCreatedAt(createdAt);
+        return connector;
     }
 
     private MockHttpServletRequest request() {

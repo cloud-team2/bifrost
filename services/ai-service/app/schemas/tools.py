@@ -412,6 +412,7 @@ class LogSearchData(SpringResponseModel):
     match_count: int = 0
     summary: str | None = None
     logs: list[dict[str, Any]] = Field(default_factory=list)
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
     total: int | None = None
     note: str | None = None
 
@@ -555,6 +556,7 @@ class DeploymentChangeSummary(SpringResponseModel):
 
 class DeploymentsData(SpringResponseModel):
     changes: list[DeploymentChangeSummary] = Field(default_factory=list)
+    summary: str | None = None
 
 
 # ── catalog §8.6 Mutation (write) actions ─────────────────────────────────────

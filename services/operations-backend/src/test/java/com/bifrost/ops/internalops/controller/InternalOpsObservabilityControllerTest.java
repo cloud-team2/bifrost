@@ -679,6 +679,33 @@ class InternalOpsObservabilityControllerTest {
     }
 
     @Test
+    void searchLogsReturnsStructuredRequiredEvidenceSummary() {
+        UUID tenantId = UUID.randomUUID();
+        when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId, "proj-001")));
+        when(connectorRepository.findByTenantIdOrderByCrName(tenantId))
+                .thenReturn(List.of(connector(UUID.randomUUID(), "orders-source", ConnectorKind.SOURCE)));
+        when(lokiClient.queryRange(any(), anyLong(), anyLong(), eq(10))).thenReturn(List.of(Map.of(
+                "ts", "1780000000000000000",
+                "line", "orders-source task 0 FAILED: AccessDenied token expired for source credential",
+                "labels", Map.of("namespace", "platform-kafka"))));
+
+        ResponseEntity<OpsEnvelope<com.bifrost.ops.internalops.dto.LogSearchResult>> response =
+                controller.searchLogs("proj-001", java.util.Map.of("query", "AccessDenied", "limit", 10),
+                        new MockHttpServletRequest());
+
+        assertThat(response.getBody()).isNotNull();
+        var result = response.getBody().result();
+        assertThat(result.summary())
+                .contains("auth/permission error log")
+                .contains("worker log")
+                .contains("connector=orders-source")
+                .contains("stage=source");
+        assertThat(result.evidence()).hasSize(1);
+        assertThat(result.evidence().getFirst().errorClass()).isEqualTo("auth");
+        assertThat(result.evidence().getFirst().matchedRequiredToken()).isEqualTo("auth/permission error log");
+    }
+
+    @Test
     void searchLogsResolvesProjectByWorkspaceUuid() {
         // #423: 프론트 챗봇은 project_id로 workspace UUID를 보낸다. findById로 해석해 namespace로 스코프해야 한다.
         UUID tenantId = UUID.randomUUID();

@@ -58,6 +58,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -214,10 +215,11 @@ public class InternalOpsObservabilityController {
             return apiError(requestId, "search_logs", e);
         }
 
+        List<String> connectorNames = ownedConnectorNames(workspace.getId());
         String query = scopedLogQuery(
                 workspace,
                 body != null ? String.valueOf(body.getOrDefault("query", "")) : "",
-                ownedConnectorNames(workspace.getId()),
+                connectorNames,
                 kafkaNamespace);
         long endNs = Instant.now().toEpochMilli() * 1_000_000L;
         long startNs = endNs - 3_600_000_000_000L; // 기본 1시간
@@ -232,7 +234,7 @@ public class InternalOpsObservabilityController {
         }
 
         List<Map<String, Object>> logs = lokiClient.queryRange(query, startNs, endNs, limit);
-        return ResponseEntity.ok(OpsEnvelope.ok(requestId, "search_logs", LogSearchResult.of(logs)));
+        return ResponseEntity.ok(OpsEnvelope.ok(requestId, "search_logs", LogSearchResult.of(logs, connectorNames)));
     }
 
     /**
@@ -460,11 +462,71 @@ public class InternalOpsObservabilityController {
                             "trace", t.get("trace")))
                     .collect(Collectors.toList());
 
-            return Map.of("connector", connectorName, "traces", traces);
+            Map<String, Object> body = new java.util.LinkedHashMap<>();
+            body.put("connector", connectorName);
+            body.put("traces", traces);
+            body.put("summary", connectorTaskTraceSummary(connectorName, traces));
+            return body;
         } catch (RestClientException | IllegalArgumentException e) {
             log.debug("connector task trace Connect REST 실패(무시): connector={} cause={}", connectorName, e.getMessage());
-            return Map.of("connector", connectorName, "traces", List.of(), "note", "Connect REST unavailable");
+            return Map.of(
+                    "connector", connectorName,
+                    "traces", List.of(),
+                    "summary", "connector task trace unavailable for connector " + connectorName,
+                    "note", "Connect REST unavailable");
         }
+    }
+
+    private static String connectorTaskTraceSummary(String connectorName, List<Map<String, Object>> traces) {
+        if (traces == null || traces.isEmpty()) {
+            return "connector task trace: no task trace available for connector " + connectorName;
+        }
+        List<String> classes = traces.stream()
+                .map(t -> classifyTrace(String.valueOf(t.getOrDefault("trace", ""))))
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        long failedTasks = traces.stream()
+                .filter(t -> "FAILED".equalsIgnoreCase(String.valueOf(t.get("state"))))
+                .count();
+        return "connector task status FAILED; task trace 또는 worker log exception stack summary"
+                + " connector=" + connectorName
+                + " traces=" + traces.size()
+                + " failedTasks=" + failedTasks
+                + (!classes.isEmpty() ? " classes=" + classes : "");
+    }
+
+    private static String classifyTrace(String trace) {
+        String normalized = trace.toLowerCase();
+        if (containsAny(normalized, "accessdenied", "permission denied", "token expired",
+                "authentication failed", "authorization failed", "password authentication failed",
+                "인증 실패", "권한 거부")) {
+            return "auth";
+        }
+        if (containsAny(normalized, "schema", "serialization", "deserialization", "incompatible",
+                "스키마", "역직렬화")) {
+            return "schema";
+        }
+        if (containsAny(normalized, "constraint", "duplicate key", "not null", "foreign key",
+                "sqlintegrityconstraintviolation")) {
+            return "constraint";
+        }
+        if (containsAny(normalized, "timeout", "timed out", "connection refused", "no route to host")) {
+            return "timeout";
+        }
+        if (containsAny(normalized, "config validation", "invalid option", "unknown config", "invalid converter")) {
+            return "config";
+        }
+        return null;
+    }
+
+    private static boolean containsAny(String value, String... needles) {
+        for (String needle : needles) {
+            if (value.contains(needle)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

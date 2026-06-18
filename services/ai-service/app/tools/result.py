@@ -146,6 +146,12 @@ def _success_summary(response: SpringOpsResponse) -> str:
         return summary
     if response.operation == "get_consumer_lag":
         return _consumer_lag_summary(base, result)
+    if response.operation == "search_logs" and isinstance(result.get("evidence"), list) and result.get("evidence"):
+        return _log_search_summary(base, result)
+    if response.operation == "get_recent_changes":
+        return _recent_changes_summary(base, result)
+    if response.operation == "get_connector_task_trace":
+        return _connector_task_trace_summary(base, result)
 
     parts: list[str] = []
     # 리스트-값 키: 항목 수만 보고 (내용 미노출).
@@ -192,6 +198,71 @@ def _consumer_lag_summary(base: str, result: dict) -> str:
         parts.append(f"source={source}")
     parts.append("offset position snapshot: current committed offsets and log end offsets captured")
     return f"{base} ({', '.join(parts)})"
+
+
+def _log_search_summary(base: str, result: dict) -> str:
+    total = _first_present(result, "total", "match_count", "matchCount")
+    evidence = result.get("evidence")
+    if isinstance(evidence, list) and evidence:
+        parts: list[str] = []
+        for item in evidence[:4]:
+            if not isinstance(item, dict):
+                continue
+            token = _first_present(item, "matched_required_token", "matchedRequiredToken") or "worker log"
+            error_class = _first_present(item, "error_class", "errorClass")
+            connector = item.get("connector")
+            count = item.get("count")
+            detail = str(token)
+            if error_class:
+                detail += f" class={error_class}"
+            if connector:
+                detail += f" connector={connector}"
+            if isinstance(count, int):
+                detail += f" count={count}"
+            parts.append(detail)
+        if parts:
+            return f"{base} ({'; '.join(parts)})"
+    return f"{base} (logs={total if total is not None else 0}, structured_matches=0)"
+
+
+def _recent_changes_summary(base: str, result: dict) -> str:
+    changes = result.get("changes")
+    if not isinstance(changes, list) or not changes:
+        return f"{base} (changes=0)"
+    types: dict[str, int] = {}
+    config_evidence = 0
+    for change in changes:
+        if isinstance(change, dict):
+            change_type = str(change.get("type") or "UNKNOWN")
+            types[change_type] = types.get(change_type, 0) + 1
+            description = str(change.get("description") or "")
+            if "CONFIG" in change_type.upper() or "pipeline/connector config 변경" in description:
+                config_evidence += 1
+    config_part = (
+        f", 최근 pipeline/connector config 변경 evidence count={config_evidence}"
+        if config_evidence
+        else ""
+    )
+    return f"{base} (live change evidence: changes={len(changes)}, types={types}{config_part})"
+
+
+def _connector_task_trace_summary(base: str, result: dict) -> str:
+    connector = result.get("connector") or result.get("connector_name") or result.get("connectorName")
+    traces = result.get("traces")
+    trace_count = len(traces) if isinstance(traces, list) else 0
+    if trace_count == 0:
+        return f"{base} (connector={connector}, task trace unavailable)"
+    failed = 0
+    if isinstance(traces, list):
+        failed = sum(
+            1
+            for trace in traces
+            if isinstance(trace, dict) and str(trace.get("state", "")).casefold() == "failed"
+        )
+    return (
+        f"{base} (connector task status FAILED; task trace 또는 worker log "
+        f"connector={connector}, traces={trace_count}, failedTasks={failed})"
+    )
 
 
 def _first_present(result: dict, *keys: str):

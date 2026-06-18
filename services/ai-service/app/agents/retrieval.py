@@ -30,11 +30,13 @@ logger = logging.getLogger(__name__)
 _FALLBACK_ONLY_TOOLS = frozenset({"search_logs"})
 _STRUCTURED_PANEL_TOOLS = frozenset({
     "get_metrics",
+    "get_deployments",
     "get_consumer_lag",
     "get_consumer_groups",
     "list_pipelines",
     "list_connectors",
     "analyze_event_log",
+    "get_connector_task_trace",
 })
 
 
