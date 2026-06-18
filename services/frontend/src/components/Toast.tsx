@@ -44,7 +44,7 @@ export function useToast(): ToastFn {
 }
 
 const TONE: Record<ToastTone, { bg: string; icon: IconName }> = {
-  success: { bg: 'bg-[#0d0d0d]', icon: 'check' },
+  success: { bg: 'bg-[#157f4a]', icon: 'check' }, // #869 성공은 초록 배경(UX)
   info: { bg: 'bg-[#1b1e24]', icon: 'info' },
   error: { bg: 'bg-[#c0392b]', icon: 'info' },
 }
