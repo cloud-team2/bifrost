@@ -293,6 +293,28 @@ export function slashCommandUserText(command: SlashToolCommand): string {
   const base = label.endsWith('조회') ? label : `${label} 조회`
   return `${base}해줘`
 }
+
+/**
+ * #860 복원: role='tool' 메시지의 content(JSON: {tool_name, params, result})를 파싱한다.
+ * 슬래시 커맨드 결과를 thread에 저장해 둔 것으로, 재접속 시 toolPanel을 그대로 재구성한다.
+ * 형식이 어긋나면 null(해당 메시지는 건너뛴다).
+ */
+export function toolTurnFromContent(
+  content: string,
+): { toolName: string; params: Record<string, unknown>; result: unknown } | null {
+  try {
+    const parsed = JSON.parse(content) as Record<string, unknown>
+    const toolName = typeof parsed.tool_name === 'string' ? parsed.tool_name : null
+    if (!toolName) return null
+    const params =
+      parsed.params && typeof parsed.params === 'object'
+        ? (parsed.params as Record<string, unknown>)
+        : {}
+    return { toolName, params, result: parsed.result ?? null }
+  } catch {
+    return null
+  }
+}
 const SLASH_CATALOG_ERROR_MESSAGE = '도구 목록을 불러오지 못했습니다. 잠시 후 다시 시도하세요.'
 const STALE_PIPELINE_WIZARD_MESSAGE = '프로젝트가 변경되어 이 파이프라인 생성 흐름을 계속할 수 없습니다. 현재 프로젝트에서 다시 시작하세요.'
 // #839: get_metrics의 metric enum 한글 라벨. 미정의 값은 원문 폴백.
@@ -485,12 +507,34 @@ export function AgentRunPanel({
       const res = await api.listThreadMessages(id)
       const restored: AgentMsg[] = res.messages
         .filter((m) => m.content?.trim())
-        .map((m) => ({
-          id: ++seq.current,
-          kind: 'text' as const,
-          role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
-          text: m.content,
-        }))
+        .map((m): AgentMsg | null => {
+          if (m.role === 'tool') {
+            // #860 슬래시 커맨드 결과 — 저장된 JSON으로 패널 재구성(없거나 깨지면 건너뜀).
+            const turn = toolTurnFromContent(m.content)
+            if (!turn) return null
+            const key = `restored_${++seq.current}`
+            return {
+              id: ++seq.current,
+              kind: 'toolPanel' as const,
+              runId: key,
+              panelKey: key,
+              toolName: turn.toolName,
+              params: turn.params,
+              state: 'done' as const,
+              summary: '이전 조회',
+              result: turn.result,
+              notice: null,
+              error: null,
+            }
+          }
+          return {
+            id: ++seq.current,
+            kind: 'text' as const,
+            role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
+            text: m.content,
+          }
+        })
+        .filter((m): m is AgentMsg => m !== null)
       updateMsgs(() =>
         restored.length
           ? [
@@ -1208,6 +1252,22 @@ export function AgentRunPanel({
       const response = await api.executeAgentTool(command.toolName, { project_id: projectRef, params })
       finishSlashCommand(panelKey, runId, 'done', response.result ?? null, null)
       toast('조회 완료', 'success')
+      // #860 멀티 채팅방: 명령 버튼 결과를 thread에 저장(복원 전용) + 목록 갱신.
+      if (multiThread && wsId && threadIdRef.current.startsWith('chat-')) {
+        api
+          .saveToolTurn(threadIdRef.current, {
+            project_id: wsId,
+            owner: myEmail || undefined,
+            request_text: slashCommandUserText(command),
+            tool_name: command.toolName,
+            params,
+            result: response.result ?? null,
+          })
+          .then(() => void refreshThreads())
+          .catch(() => {
+            /* 저장 실패는 무시 — 로컬 표시는 유지 */
+          })
+      }
     } catch (e) {
       const feedback = agentToolErrorFeedback(e)
       const message = feedback?.message ?? (e instanceof ApiError ? e.message : 'tool 조회에 실패했습니다')
