@@ -171,7 +171,7 @@ function PipelineCard({ edge, consumerGroups }: { edge: Edge; consumerGroups?: C
           <div className="truncate text-[12.5px] font-semibold text-gray-900">
             {source ? nodeName(source) : '—'}
           </div>
-          <div className="font-mono text-[10.5px] text-gray-400">
+          <div className="truncate font-mono text-[10.5px] text-gray-400">
             {edge.table?.schema}.{edge.table?.name}
           </div>
         </div>
