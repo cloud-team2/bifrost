@@ -4,7 +4,7 @@ import { Markdown } from '../../components/Markdown'
 import { Spinner } from '../../components/ui'
 import { CommandPalette } from '../../components/CommandPalette'
 import { useToast } from '../../components/Toast'
-import { useApp, type AgentTask } from '../../store/AppStore'
+import { useApp, type AgentTask, type AnalyzeTask } from '../../store/AppStore'
 import {
   ApiError,
   api,
@@ -702,6 +702,21 @@ export function AgentRunPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [app.agentTask])
 
+  // #865 인시던트 원인 분석(재분석)을 채팅에서 실행 — 후속 대화로 이어갈 수 있게.
+  const analyzeHandled = useRef(false)
+  useEffect(() => {
+    if (!app.analyzeTask) {
+      analyzeHandled.current = false
+      return
+    }
+    if (analyzeHandled.current) return
+    analyzeHandled.current = true
+    const task = app.analyzeTask
+    app.consumeAnalyzeTask()
+    startAnalysis(task)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [app.analyzeTask])
+
   useEffect(() => {
     if (!slashCommands) return
     let cancelled = false
@@ -1352,6 +1367,23 @@ export function AgentRunPanel({
       onCompleted: (success) => {
         if (success) app.runIncidentAction(task.incidentId, task.actionId)
       },
+    })
+  }
+
+  // #865 인시던트 원인 분석(재분석)을 채팅에서 실행한다(자동 분석 실패·미완료 시 사용자 재시도).
+  function startAnalysis(task: AnalyzeTask) {
+    const message = [
+      'Incident analysis request',
+      `incident_id=${task.incidentId}`,
+      `title=${task.title}`,
+      '근본 원인(RCA)과 권장 조치를 산출하세요.',
+    ].join('\n')
+    appendText('assistant', `인시던트 '${task.title}'의 원인 분석을 실행합니다.`)
+    void startRun(message, {
+      visibleUserText: `인시던트 원인 분석 요청: ${task.title}`,
+      mode: 'incident_analysis',
+      incidentId: task.incidentId,
+      remediationRequested: true,
     })
   }
 

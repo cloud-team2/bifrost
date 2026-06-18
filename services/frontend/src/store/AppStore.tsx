@@ -52,6 +52,12 @@ export interface AgentTask {
   actionCandidate: ActionRunCandidateInput
 }
 
+/** #865 인시던트 원인 분석(재분석)을 채팅에서 실행하는 요청. */
+export interface AnalyzeTask {
+  incidentId: string
+  title: string
+}
+
 /** A navigable position, captured so browser back/forward can restore it. */
 interface NavSnapshot {
   projectId: string | null
@@ -88,6 +94,9 @@ interface Store {
   agentTask: AgentTask | null
   dispatchAgentTask: (task: AgentTask) => void
   consumeAgentTask: () => void
+  analyzeTask: AnalyzeTask | null
+  dispatchIncidentAnalysis: (incidentId: string, title: string) => void
+  consumeAnalyzeTask: () => void
   agentRunState: AgentRunSseState
   setAgentRunState: (patch: Partial<AgentRunSseState>) => void
   /* data */
@@ -172,6 +181,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [opSelectedIncidentId, setOpSelectedIncidentId] = useState<string | null>(null)
   const [aiPanelOpen, setAiPanelOpen] = useState(true) // 기본 펼침(#780)
   const [agentTask, setAgentTask] = useState<AgentTask | null>(null)
+  const [analyzeTask, setAnalyzeTask] = useState<AnalyzeTask | null>(null)
   const [agentRunState, setAgentRunStateRaw] = useState<AgentRunSseState>(() => emptyAgentRunState())
   const [authReady, setAuthReady] = useState(false)
 
@@ -550,6 +560,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     consumeAgentTask() {
       setAgentTask(null)
     },
+    analyzeTask,
+    dispatchIncidentAnalysis(incidentId, title) {
+      setAnalyzeTask({ incidentId, title })
+      setAiPanelOpen(true)
+    },
+    consumeAnalyzeTask() {
+      setAnalyzeTask(null)
+    },
     agentRunState,
     setAgentRunState(patch) {
       setAgentRunStateRaw((prev) => ({ ...prev, ...patch, updatedAt: new Date().toISOString() }))
@@ -721,10 +739,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setCurrentProject((w) => (w ? adjust(w) : w))
     },
 
-    runIncidentAction() {
-      if (currentProject) {
-        void loadMonitoringData(currentProject.id, { clearOnError: false })
-      }
+    runIncidentAction(incidentId) {
+      if (!currentProject) return
+      const wsId = currentProject.id
+      // #865 조치 성공 → 인시던트 RESOLVED 전이 후 모니터링 재조회.
+      void api
+        .transitionIncident(wsId, incidentId, 'RESOLVED')
+        .catch(() => {
+          /* 전이 실패해도 재조회로 최신 상태 반영 */
+        })
+        .finally(() => {
+          void loadMonitoringData(wsId, { clearOnError: false })
+        })
     },
 
     async reloadMonitoring() {
