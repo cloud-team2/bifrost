@@ -15,6 +15,7 @@ import {
   type AgentStreamingEventType,
   type ApprovalDecisionValue,
   type CdcReadinessResponse,
+  type ConnectorInfo,
   type DatabaseResponse,
   type PipelineResponse,
   type SchemaTable,
@@ -2089,9 +2090,22 @@ export function AgentRunPanel({
                   .then((items) => items.map((p) => ({ value: p.id, label: p.name || p.id })))
               }
               if (param === 'connector_name') {
-                return api
-                  .clusterConnect()
-                  .then((c) => c.connectors.map((row) => ({ value: row.name, label: row.name })))
+                // #836: 클러스터 전체가 아니라 현재 프로젝트 파이프라인의 커넥터만 노출.
+                return api.listPipelines(wsId).then(async (pipelines) => {
+                  const perPipeline = await Promise.all(
+                    pipelines.map((p) =>
+                      api.listPipelineConnectors(wsId, p.id).catch(() => [] as ConnectorInfo[]),
+                    ),
+                  )
+                  const seen = new Set<string>()
+                  const options: { value: string; label: string }[] = []
+                  for (const conn of perPipeline.flat()) {
+                    if (seen.has(conn.name)) continue
+                    seen.add(conn.name)
+                    options.push({ value: conn.name, label: conn.name })
+                  }
+                  return options
+                })
               }
               if (param === 'incident_id') {
                 // 인시던트 ID 는 자유 입력 대신 프로젝트 인시던트 목록에서 선택.
