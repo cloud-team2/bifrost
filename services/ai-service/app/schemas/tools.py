@@ -412,6 +412,7 @@ class LogSearchData(SpringResponseModel):
     match_count: int = 0
     summary: str | None = None
     logs: list[dict[str, Any]] = Field(default_factory=list)
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
     total: int | None = None
     note: str | None = None
 
@@ -509,7 +510,8 @@ class TraceEntry(SpringResponseModel):
     # 명시 alias "taskId" 보존 (alias_generator(to_camel) 가 동일하게 생성하지만 명시성 유지).
     task_id: int | None = Field(default=None, alias="taskId")
     state: str | None = None
-    trace: str | None = None
+    trace_class: str | None = None
+    has_trace: bool | None = None
 
 
 class ConnectorTaskTraceData(SpringResponseModel):
@@ -555,6 +557,8 @@ class DeploymentChangeSummary(SpringResponseModel):
 
 class DeploymentsData(SpringResponseModel):
     changes: list[DeploymentChangeSummary] = Field(default_factory=list)
+    summary: str | None = None
+    unavailable_sources: list[str] = Field(default_factory=list)
 
 
 # ── catalog §8.6 Mutation (write) actions ─────────────────────────────────────

@@ -1,11 +1,16 @@
 package com.bifrost.ops.internalops.dto;
 
+import com.bifrost.ops.governance.audit.persistence.entity.AuditEventEntity;
+import com.bifrost.ops.governance.changemanagement.persistence.entity.ChangeTicketEntity;
 import com.bifrost.ops.pipeline.persistence.entity.PipelineEntity;
+import com.bifrost.ops.provisioning.persistence.entity.ConnectorEntity;
 
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * get_recent_changes(ai-service get_deployments) tool의 result payload.
@@ -19,7 +24,9 @@ import java.util.List;
  * (Future Work: git commit·helm release·kustomize patch 등 실 배포 source 연계)
  */
 public record RecentChangesResult(
-        List<Change> changes
+        List<Change> changes,
+        String summary,
+        List<String> unavailableSources
 ) {
 
     /** 변경 이벤트 1건. */
@@ -31,23 +38,63 @@ public record RecentChangesResult(
     ) {}
 
     /**
-     * 파이프라인 목록에서 변경 이벤트를 합성하고 changedAt 역순(최신 우선)으로 정렬한다.
+     * 파이프라인 목록에서 변경 이벤트를 만들고 changedAt 역순(최신 우선)으로 정렬한다.
      *
      * @param pipelines tenant(workspace) 소속 파이프라인
      * @param limit     반환할 최대 변경 건수(null·0 이하면 전체)
      */
     public static RecentChangesResult of(List<PipelineEntity> pipelines, Integer limit) {
+        return of(pipelines, List.of(), List.of(), List.of(), List.of(), limit);
+    }
+
+    /**
+     * live에 존재하는 변경 source만 병합한다.
+     *
+     * <p>connector config diff/schema registry/credential rotation 전용 이력은 현재 live source가
+     * 없으므로 여기서 만들지 않는다. 호출자는 KafkaConnect/KafkaConnector CR snapshot처럼 실측 가능한
+     * runtime metadata만 {@code runtimeChanges}로 넘긴다.
+     */
+    public static RecentChangesResult of(
+            List<PipelineEntity> pipelines,
+            List<ConnectorEntity> connectors,
+            List<ChangeTicketEntity> changeTickets,
+            List<AuditEventEntity> auditEvents,
+            List<Change> runtimeChanges,
+            Integer limit) {
+        return of(pipelines, connectors, changeTickets, auditEvents, runtimeChanges, List.of(), limit);
+    }
+
+    public static RecentChangesResult of(
+            List<PipelineEntity> pipelines,
+            List<ConnectorEntity> connectors,
+            List<ChangeTicketEntity> changeTickets,
+            List<AuditEventEntity> auditEvents,
+            List<Change> runtimeChanges,
+            List<String> unavailableSources,
+            Integer limit) {
         List<Change> changes = new ArrayList<>();
-        for (PipelineEntity p : pipelines) {
+        for (PipelineEntity p : nullSafe(pipelines)) {
             changes.addAll(toChanges(p));
         }
+        for (ConnectorEntity connector : nullSafe(connectors)) {
+            changes.addAll(toConnectorChanges(connector));
+        }
+        for (ChangeTicketEntity ticket : nullSafe(changeTickets)) {
+            changes.add(toChange(ticket));
+        }
+        for (AuditEventEntity audit : nullSafe(auditEvents)) {
+            changes.add(toChange(audit));
+        }
+        changes.addAll(nullSafe(runtimeChanges));
         changes.sort(Comparator.comparing(
                 Change::changedAt,
                 Comparator.nullsLast(Comparator.reverseOrder())));
         if (limit != null && limit > 0 && changes.size() > limit) {
             changes = changes.subList(0, limit);
         }
-        return new RecentChangesResult(List.copyOf(changes));
+        List<Change> immutable = List.copyOf(changes);
+        List<String> unavailable = List.copyOf(nullSafe(unavailableSources));
+        return new RecentChangesResult(immutable, summarize(immutable, unavailable), unavailable);
     }
 
     /** 단일 파이프라인 → 생성·상태전이 변경 이벤트. */
@@ -75,5 +122,116 @@ public record RecentChangesResult(
         }
 
         return changes;
+    }
+
+    private static List<Change> toConnectorChanges(ConnectorEntity connector) {
+        List<Change> changes = new ArrayList<>(2);
+        changes.add(new Change(
+                connector.getId() + ":connector-created",
+                "CONNECTOR_CONFIG_CREATED",
+                "최근 pipeline/connector config 변경 evidence: KafkaConnector config materialized for connector '"
+                        + connector.getCrName() + "'"
+                        + " (kind=" + connector.getKind()
+                        + ", class=" + connector.getConnectorClass()
+                        + ", tasksMax=" + connector.getTasksMax() + ")",
+                connector.getCreatedAt()));
+
+        Instant updatedAt = connector.getUpdatedAt();
+        if (updatedAt != null && (connector.getCreatedAt() == null || !updatedAt.equals(connector.getCreatedAt()))) {
+            String lastError = connector.getLastError();
+            changes.add(new Change(
+                    connector.getId() + ":connector-status:" + connector.getState(),
+                    "CONNECTOR_STATUS_OBSERVED",
+                    "connector task status " + connector.getState()
+                            + " observed for '" + connector.getCrName() + "'"
+                            + (lastError != null && !lastError.isBlank() ? ": " + sanitizeDetail(lastError) : ""),
+                    updatedAt));
+        }
+        return changes;
+    }
+
+    private static Change toChange(ChangeTicketEntity ticket) {
+        return new Change(
+                ticket.getId() + ":change-ticket",
+                "CHANGE_TICKET",
+                "recent change ticket '" + safe(ticket.getTitle()) + "'"
+                        + (notBlank(ticket.getScopeOperation()) ? " scopeOperation=" + ticket.getScopeOperation() : "")
+                        + " status=" + ticket.getStatus()
+                        + (ticket.getApprovedAt() != null ? " approvedAt=" + ticket.getApprovedAt() : ""),
+                ticket.getCreatedAt());
+    }
+
+    private static Change toChange(AuditEventEntity audit) {
+        return new Change(
+                audit.getId() + ":audit",
+                "AUDIT_EVENT",
+                "recent audit event action=" + audit.getAction()
+                        + (notBlank(audit.getTargetType()) ? " targetType=" + audit.getTargetType() : "")
+                        + (audit.getTargetId() != null ? " targetId=" + audit.getTargetId() : "")
+                        + (notBlank(audit.getDetail()) ? " detail=" + sanitizeDetail(audit.getDetail()) : ""),
+                audit.getCreatedAt());
+    }
+
+    private static String summarize(List<Change> changes, List<String> unavailableSources) {
+        if (changes.isEmpty()) {
+            return "live change evidence: 0 changes matched" + unavailableSummary(unavailableSources);
+        }
+        Map<String, Integer> byType = new LinkedHashMap<>();
+        int configEvidence = 0;
+        for (Change change : changes) {
+            byType.merge(change.type(), 1, Integer::sum);
+            if (isConfigEvidence(change)) {
+                configEvidence++;
+            }
+        }
+        return "live change evidence: " + changes.size()
+                + " changes from metadb/kubernetes live sources"
+                + " (types=" + byType
+                + (configEvidence > 0
+                        ? ", 최근 pipeline/connector config 변경 evidence count=" + configEvidence
+                        : "")
+                + ")"
+                + unavailableSummary(unavailableSources);
+    }
+
+    private static boolean isConfigEvidence(Change change) {
+        String type = change.type() == null ? "" : change.type().toUpperCase();
+        String description = change.description() == null ? "" : change.description();
+        if (type.contains("SNAPSHOT")) {
+            return false;
+        }
+        return type.contains("CONFIG") || description.contains("pipeline/connector config 변경");
+    }
+
+    private static String unavailableSummary(List<String> unavailableSources) {
+        if (unavailableSources == null || unavailableSources.isEmpty()) {
+            return "";
+        }
+        return "; unavailable live sources=" + unavailableSources;
+    }
+
+    private static String sanitizeDetail(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        String compact = raw.replaceAll("\\s+", " ").trim();
+        compact = compact.replaceAll("(?i)(password|passwd|secret|token|credential)\\s*[:=]\\s*[^\\s,;]+", "$1=[REDACTED]");
+        compact = compact.replaceAll("(?i)\\b(password|passwd|secret|token|credential)\\b", "[REDACTED]");
+        if (compact.length() > 180) {
+            compact = compact.substring(0, 177) + "...";
+        }
+        return compact;
+    }
+
+    private static String safe(String raw) {
+        return raw == null ? "" : sanitizeDetail(raw);
+    }
+
+    private static boolean notBlank(String raw) {
+        return raw != null && !raw.isBlank();
+    }
+
+    private static <T> List<T> nullSafe(List<T> list) {
+        return list == null ? List.of() : list;
     }
 }
