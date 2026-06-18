@@ -3119,6 +3119,8 @@ function ToolPanelCard({
           <AlertsPanel result={result} onOpenIncident={onOpenIncident} />
         ) : msg.toolName === 'analyze_event_log' || msg.toolName === 'get_incident_summary' ? (
           <EventSummaryPanel result={result} />
+        ) : msg.toolName === 'get_cluster_info' ? (
+          <ClusterInfoPanel result={result} />
         ) : (
           <GenericToolResultPanel result={msg.result} />
         )}
@@ -3481,6 +3483,106 @@ export function ConnectorDetailPanel({ result }: { result: Record<string, unknow
         <details className="rounded border border-[#e7c9c4] bg-[#fcf3f2] px-2 py-1.5 text-[11.5px] text-[#c0392b]">
           <summary className="cursor-pointer select-none">오류 원인 보기</summary>
           <div className="mt-1 whitespace-pre-wrap break-words font-mono text-[10.5px]">{summary.lastError}</div>
+        </details>
+      )}
+    </div>
+  )
+}
+
+export interface ClusterInfoData {
+  clusterId: string | null
+  controllerId: number | null
+  brokerCount: number | null
+  brokers: { id: number | null; host: string | null; port: number | null; controller: boolean }[]
+  topics: { name: string | null; partitionCount: number }[]
+}
+
+// get_cluster_info(ClusterInfoResult) 파싱. BE는 camelCase지만 snake_case도 허용.
+export function parseClusterInfo(result: unknown): ClusterInfoData | null {
+  const record = asRecord(result)
+  if (!record) return null
+  const brokers = recordArray(record, 'brokers').map((broker) => ({
+    id: recordNumber(broker, 'id'),
+    host: recordString(broker, 'host'),
+    port: recordNumber(broker, 'port'),
+    controller: broker.controller === true,
+  }))
+  const topics = recordArray(record, 'topics').map((topic) => ({
+    name: recordString(topic, 'name'),
+    partitionCount: recordNumber(topic, 'partitionCount', 'partition_count') ?? 0,
+  }))
+  return {
+    clusterId: recordString(record, 'clusterId', 'cluster_id'),
+    controllerId: recordNumber(record, 'controllerId', 'controller_id'),
+    brokerCount: recordNumber(record, 'brokerCount', 'broker_count'),
+    brokers,
+    topics,
+  }
+}
+
+export function ClusterInfoPanel({ result }: { result: Record<string, unknown> | null }) {
+  const data = parseClusterInfo(result)
+  if (!data) return <PanelEmpty text="클러스터 상태 데이터 없음" />
+  // brokerCount가 비면 brokers 배열 길이로 보정.
+  const brokerCount = data.brokerCount ?? (data.brokers.length || null)
+  const statusToken: SemanticToken = brokerCount && brokerCount > 0 ? 'safe' : 'neutral'
+  const statusLabel = brokerCount && brokerCount > 0 ? `브로커 ${brokerCount}대 정상` : '브로커 정보 없음'
+  const controllerBroker =
+    data.brokers.find((broker) => broker.controller) ??
+    (data.controllerId != null ? data.brokers.find((broker) => broker.id === data.controllerId) : undefined)
+  const topicCount = data.topics.length
+  const partitionTotal = data.topics.reduce((sum, topic) => sum + topic.partitionCount, 0)
+  const formatBroker = (broker: ClusterInfoData['brokers'][number]) =>
+    broker.host ? `${broker.host}:${broker.port ?? '-'}` : `브로커 #${broker.id ?? '-'}`
+  return (
+    <div className="space-y-2 text-[12px]">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={cn('inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold', semanticBadgeClass(statusToken))}>
+          <span className={cn('h-1.5 w-1.5 rounded-full', semanticDotClass(statusToken))} />
+          {statusLabel}
+        </span>
+        {controllerBroker && (
+          <span className="text-gray-600">컨트롤러 {formatBroker(controllerBroker)}</span>
+        )}
+        {data.clusterId && <span className="font-mono text-[10.5px] text-gray-400">#{data.clusterId}</span>}
+      </div>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+        <div className="space-y-1">
+          <div className="text-[10.5px] font-semibold text-gray-400">브로커</div>
+          {data.brokers.length === 0 ? (
+            <PanelEmpty text="브로커 없음" />
+          ) : (
+            <div className="space-y-0.5">
+              {data.brokers.map((broker, index) => (
+                <div key={broker.id ?? index} className="flex items-center gap-1.5 text-gray-700">
+                  <span className="font-mono text-[11px]">{formatBroker(broker)}</span>
+                  {broker.controller && (
+                    <span className="rounded bg-gray-100 px-1 py-0.5 text-[10px] text-gray-500">컨트롤러</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="space-y-1">
+          <div className="text-[10.5px] font-semibold text-gray-400">토픽 / 파티션</div>
+          <div className="text-gray-700">
+            토픽 <b className="text-gray-900">{topicCount.toLocaleString()}개</b>
+            {' · '}파티션 <b className="text-gray-900">{partitionTotal.toLocaleString()}개</b>
+          </div>
+        </div>
+      </div>
+      {data.topics.length > 0 && (
+        <details className="rounded border border-gray-100 bg-gray-50 px-2 py-1.5 text-[11.5px] text-gray-600">
+          <summary className="cursor-pointer select-none">토픽 전체 보기</summary>
+          <div className="mt-1 space-y-0.5">
+            {data.topics.map((topic, index) => (
+              <div key={topic.name ?? index} className="flex items-center justify-between gap-2">
+                <span className="min-w-0 truncate font-mono text-[10.5px] text-gray-700">{topic.name ?? '-'}</span>
+                <span className="shrink-0 text-gray-400">파티션 {topic.partitionCount.toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
         </details>
       )}
     </div>
