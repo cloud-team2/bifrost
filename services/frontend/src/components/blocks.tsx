@@ -57,13 +57,13 @@ export function MetricCard({
   const valueColor =
     tone === 'bad' ? 'text-[#c0392b]' : 'text-gray-900'
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-card">
-      <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
-        {icon && <Icon name={icon} size={12} />}
-        {label}
+    <div className="min-w-0 rounded-xl border border-gray-200 bg-white p-4 shadow-card">
+      <div className="flex min-w-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+        {icon && <Icon name={icon} size={12} className="shrink-0" />}
+        <span className="min-w-0 break-keep">{label}</span>
       </div>
-      <div className={cn('mt-1.5 text-[24px] font-bold leading-none', valueColor)}>{value}</div>
-      {sub && <div className="mt-1.5 text-[12px] text-gray-400">{sub}</div>}
+      <div className={cn('mt-1.5 truncate text-[24px] font-bold leading-none', valueColor)}>{value}</div>
+      {sub && <div className="mt-1.5 break-words text-[12px] text-gray-400">{sub}</div>}
     </div>
   )
 }
