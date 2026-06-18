@@ -38,6 +38,7 @@ class CreateRunRequest(BaseModel):
     remediation_requested: bool = False
     stream: bool = True
     action_candidate: ActionCandidateOutput | None = None
+    display_message: str | None = None  # #870 채팅에 표시·저장할 친근한 텍스트(LLM 입력은 message)
 
 
 @router.post("/runs")
@@ -45,6 +46,8 @@ async def create_run(req: CreateRunRequest, background_tasks: BackgroundTasks) -
     run_id = _run_id()
     request_id = _request_id()
     user_message = req.message or ""
+    # #870 사용자에게 보이고 thread에 저장될 텍스트(없으면 message 그대로).
+    display_message = (req.display_message or "").strip() or user_message
 
     # #592: agent_run.project_id는 uuid 컬럼이라 비 UUID 문자열(예: "demo-team")이
     # INSERT 시점에 asyncpg 예외 → 500이 됐다. 검증 실패 envelope으로 거른다.
@@ -79,8 +82,8 @@ async def create_run(req: CreateRunRequest, background_tasks: BackgroundTasks) -
             await thread_repo.ensure(id=thread_id, project_id=req.project_id, owner=req.owner)
         else:
             await thread_repo.touch(thread_id)
-        if user_message.strip():
-            await thread_repo.set_title_if_empty(thread_id, _preview(user_message, 40) or "새 대화")
+        if display_message.strip():
+            await thread_repo.set_title_if_empty(thread_id, _preview(display_message, 40) or "새 대화")
 
     background_tasks.add_task(
         run_workflow,
@@ -96,6 +99,7 @@ async def create_run(req: CreateRunRequest, background_tasks: BackgroundTasks) -
         requested_action_candidate=req.action_candidate,
         thread_id=thread_id,
         message_repo=get_message_repo(),
+        display_message=display_message,
     )
 
     return ApiResponse.success(request_id, {
