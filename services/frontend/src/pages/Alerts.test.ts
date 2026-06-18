@@ -1,7 +1,7 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { buildEvents, buildRunCandidate, EventDetailPanel, reportActions } from './Alerts'
+import { buildEvents, buildRunCandidate, EventDetailScreen, reportActions } from './Alerts'
 import type { IncidentReportResponse, IncidentResponse } from '../lib/api'
 import type { Edge } from '../data/types'
 
@@ -325,19 +325,16 @@ describe('alert event stream', () => {
       [],
     )
 
-    const html = renderToStaticMarkup(createElement(EventDetailPanel, {
+    const html = renderToStaticMarkup(createElement(EventDetailScreen, {
       event,
       pipeline: pipeline(),
-      incident: incident(),
-      onClose: () => {},
-      onOpenIncident: () => {},
+      onBack: () => {},
       onOpenPipeline: () => {},
     }))
 
     expect(html).toContain('PIPELINE_LAG')
     expect(html).toContain('consumer lag above threshold')
     expect(html).toContain('Orders CDC')
-    expect(html).toContain('Orders lag')
     expect(html).toContain('event-1')
   })
 
@@ -354,12 +351,10 @@ describe('alert event stream', () => {
       ],
     )
 
-    const html = renderToStaticMarkup(createElement(EventDetailPanel, {
+    const html = renderToStaticMarkup(createElement(EventDetailScreen, {
       event,
       pipeline: null,
-      incident: null,
-      onClose: () => {},
-      onOpenIncident: () => {},
+      onBack: () => {},
       onOpenPipeline: () => {},
     }))
 
