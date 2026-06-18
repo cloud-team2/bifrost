@@ -34,6 +34,7 @@ import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.config.ConfigResource;
+import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.TopicPartitionInfo;
 import org.slf4j.Logger;
@@ -92,9 +93,22 @@ public class PipelineTopicService {
         try {
             return fetchTopicInfo(topic);
         } catch (Exception e) {
+            if (isUnknownTopic(e)) {
+                // 토픽이 아직 없거나 삭제됨(스테일 파이프라인) — 서버 에러가 아니라 빈 응답으로 graceful 처리.
+                log.debug("토픽 미존재 — 빈 topic-info 반환: topic={}", topic);
+                return new TopicInfoResponse(topic, 100.0, -1L, List.of());
+            }
             log.warn("토픽 정보 조회 실패 (Kafka 접근 불가): topic={}, cause={}", topic, e.getMessage());
             throw new ApiException(ErrorCode.INTERNAL_ERROR, "토픽 정보를 불러오지 못했습니다");
         }
+    }
+
+    /** Kafka 예외 체인에 UnknownTopicOrPartitionException(토픽 미존재)이 있는지. */
+    private static boolean isUnknownTopic(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof UnknownTopicOrPartitionException) return true;
+        }
+        return false;
     }
 
     public List<ConsumerGroupInfo> consumerGroups(UUID wsId, AuthenticatedUser principal, UUID id) {
@@ -104,6 +118,11 @@ public class PipelineTopicService {
         try {
             return fetchConsumerGroups(topic);
         } catch (Exception e) {
+            if (isUnknownTopic(e)) {
+                // 토픽 미존재(스테일) — 컨슈머 그룹도 없음으로 graceful 처리.
+                log.debug("토픽 미존재 — 빈 consumer-group 반환: topic={}", topic);
+                return List.of();
+            }
             log.warn("Consumer group 조회 실패: topic={}, cause={}", topic, e.getMessage());
             throw new ApiException(ErrorCode.INTERNAL_ERROR, "Consumer group 정보를 불러오지 못했습니다");
         }
