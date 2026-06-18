@@ -160,14 +160,14 @@ function BrokersTab({ onSelectBroker }: { onSelectBroker: (b: BrokerInfo) => voi
         </div>
       )}
 
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <MetricCard label="Active controller" value={controllerLabel} icon="cpu" />
         <MetricCard label="Under-replicated" value={urp} icon="alert" tone={urp ? 'warn' : 'good'} />
         <MetricCard label="Offline partitions" value={data.offlinePartitions} tone={data.offlinePartitions ? 'bad' : 'good'} />
         <MetricCard label="Total partitions" value={data.totalPartitions} icon="server" />
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         {data.brokers.map((b) => (
           <button
             key={b.id}
@@ -176,13 +176,13 @@ function BrokersTab({ onSelectBroker }: { onSelectBroker: (b: BrokerInfo) => voi
           >
             <Panel>
               <div className="px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <Icon name="server" size={16} className="text-gray-400" />
-                  <span className="text-[13.5px] font-semibold text-gray-900">broker-{b.id}</span>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <Icon name="server" size={16} className="shrink-0 text-gray-400" />
+                  <span className="shrink-0 whitespace-nowrap text-[13.5px] font-semibold text-gray-900">broker-{b.id}</span>
                   {b.controller && (
-                    <span className="rounded bg-brand-50 px-1.5 py-0.5 text-[9.5px] font-bold uppercase text-brand-700">controller</span>
+                    <span className="shrink-0 whitespace-nowrap rounded bg-brand-50 px-1.5 py-0.5 text-[9.5px] font-bold uppercase text-brand-700">controller</span>
                   )}
-                  <div className="ml-auto flex items-center gap-1.5">
+                  <div className="ml-auto flex shrink-0 items-center gap-1.5">
                     <StatusBadge status={b.status} />
                     <Icon name="chevron-right" size={13} className="text-gray-400" />
                   </div>
@@ -217,7 +217,7 @@ function BrokersTab({ onSelectBroker }: { onSelectBroker: (b: BrokerInfo) => voi
 function BrokerDetail({ broker }: { broker: BrokerInfo }) {
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <MetricCard label="Leader partitions" value={broker.leaderPartitions} icon="server" />
         <MetricCard label="Broker ID" value={broker.id} />
         <MetricCard label="Controller" value={broker.controller ? 'yes' : 'no'} />
@@ -290,7 +290,7 @@ function KafkaConnectTab() {
           {error} · 기존 Connect 데이터로 표시합니다
         </div>
       )}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <MetricCard label="Workers" value={data.workers.length} icon="server" />
         <MetricCard label="Running" value={running} tone="good" />
         <MetricCard label="Not running" value={notRunning} tone={notRunning ? 'warn' : 'good'} />

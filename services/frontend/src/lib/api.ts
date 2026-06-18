@@ -613,6 +613,8 @@ export interface AgentRunCreateInput {
   remediation_requested?: boolean
   stream?: boolean
   action_candidate?: ActionRunCandidateInput | null
+  /** #870 채팅에 표시·저장할 친근한 텍스트(LLM 입력은 message). 조치/재분석처럼 둘이 다를 때 사용. */
+  display_message?: string | null
 }
 export interface ActionRunCandidateInput {
   action_id: string

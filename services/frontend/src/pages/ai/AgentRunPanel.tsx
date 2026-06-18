@@ -1149,20 +1149,25 @@ export function AgentRunPanel({
     runningRef.current = true
     if (options.visibleUserText) appendText('user', options.visibleUserText)
 
+    // #870 멀티 채팅방에선 인시던트 조치/재분석도 현재 채팅방 thread에 저장한다.
+    // (incident_id는 별도 전달해 리포트·RCA·인시던트 연결은 그대로 유지.)
+    const useChatRoom = multiThread && threadIdRef.current.startsWith('chat-')
     try {
       const run = await api.createAgentRun({
         project_id: wsId,
         mode: options.mode ?? null,
         message,
         incident_id: options.incidentId ?? null,
-        thread_id: options.incidentId ?? threadIdRef.current,
-        owner: multiThread && !options.incidentId ? (myEmail || undefined) : undefined,
+        thread_id: useChatRoom ? threadIdRef.current : (options.incidentId ?? threadIdRef.current),
+        owner: useChatRoom ? (myEmail || undefined) : undefined,
         remediation_requested: options.remediationRequested ?? false,
         action_candidate: options.actionCandidate ?? null,
+        // #870 사용자에게 보이는 친근한 텍스트로 저장(LLM 입력은 구조화 message).
+        display_message: options.visibleUserText ?? undefined,
         stream: true,
       })
-      // #821 멀티 채팅방: 새 스레드 등장·제목·시각 반영을 위해 목록 갱신.
-      if (multiThread && !options.incidentId) void refreshThreads()
+      // 새 스레드 등장·제목·시각 반영을 위해 목록 갱신.
+      if (useChatRoom) void refreshThreads()
       app.setAgentRunState({
         runId: run.run_id,
         status: 'starting',
@@ -3703,10 +3708,10 @@ export function ClusterInfoPanel({ result }: { result: Record<string, unknown> |
           ) : (
             <div className="space-y-0.5">
               {data.brokers.map((broker, index) => (
-                <div key={broker.id ?? index} className="flex items-center gap-1.5 text-gray-700">
-                  <span className="font-mono text-[11px]">{formatBroker(broker)}</span>
+                <div key={broker.id ?? index} className="flex items-start gap-1.5 text-gray-700">
+                  <span className="min-w-0 break-all font-mono text-[11px]">{formatBroker(broker)}</span>
                   {broker.controller && (
-                    <span className="rounded bg-gray-100 px-1 py-0.5 text-[10px] text-gray-500">컨트롤러</span>
+                    <span className="shrink-0 whitespace-nowrap rounded bg-gray-100 px-1 py-0.5 text-[10px] text-gray-500">컨트롤러</span>
                   )}
                 </div>
               ))}

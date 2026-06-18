@@ -538,6 +538,7 @@ async def run_workflow(
     requested_action_candidate: dict[str, Any] | ActionCandidateOutput | None = None,
     thread_id: str | None = None,
     message_repo: Any = None,
+    display_message: str | None = None,
 ) -> None:
     """에이전트 run 진입점. 루트 trace span(#372)으로 감싸 run 전체(+Spring 호출)를 한 trace 로 묶는다.
 
@@ -552,10 +553,13 @@ async def run_workflow(
         mode=requested_mode,
         incident_id=requested_incident_id,
     ):
-        # 이전 대화 로드 → 현재 질문 저장(원문) → 컨텍스트 주입된 메시지로 run 실행.
+        # 이전 대화 로드 → 현재 질문 저장 → 컨텍스트 주입된 메시지로 run 실행.
+        # #870 thread에는 사용자에게 보이는 친근한 텍스트(display_message)를 저장하고,
+        # LLM에는 구조화 원문(user_message)을 주입한다(조치/재분석은 둘이 다름).
         history_block = await _load_history_block(message_repo, thread_id)
+        persisted_user = (display_message or "").strip() or user_message
         await _append_message(
-            message_repo, thread_id, "user", user_message,
+            message_repo, thread_id, "user", persisted_user,
             project_id=project_id, run_id=run_id,
         )
         effective_message = _contextualize(user_message, history_block)
