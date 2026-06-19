@@ -2,7 +2,6 @@
         tf-init tf-plan tf-apply tf-destroy \
         kubeconfig \
         setup-strimzi setup-infra \
-        build-connect \
         local-up local-down
 
 AWS_PROFILE  := skala_student
@@ -48,12 +47,7 @@ setup-infra: kubeconfig setup-strimzi ## 전체 K8s 인프라 설치 (DB는 Argo
 	@echo ""
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "K8s 인프라 설치 완료"
-	@echo "다음 단계: make build-connect"
-
-# ─── Kafka Connect 이미지 ─────────────────────────────────────────────────────
-
-build-connect: ## Kafka Connect 이미지 빌드 후 Docker Hub(hwnnn) push
-	./scripts/build-push-connect.sh
+	@echo "Connect 이미지·앱 배포는 CI(Jenkins→Harbor)+ArgoCD가 처리"
 
 # ─── 로컬 개발 ───────────────────────────────────────────────────────────────
 
