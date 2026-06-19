@@ -46,6 +46,22 @@ v1 권장은 `urgent plus window`다. 고객 영향이 큰 alert는 즉시 Incid
 
 단, time proximity만으로 병합하지 않는다.
 
+> **[현재]** 실제 코드(`app/catalogs/correlation_rules.py`)의 `merge(...)`는 위 score weight를 아직 사용하지 않는다. 현재는 `severity` 동일 + 5분 time-window(`_GROUP_WINDOW_MINUTES=5`) 기준의 단순 그룹핑이고, `infer_scope_from_message(...)`는 키워드로 단일/복수 scope만 추론한다. 위 4축·score 모델은 실제 alert 스트림 연동 이후 적용할 설계다.
+
+### 4.1 상관과 인과의 구분 [계획 §12]
+
+> 아래는 to-be 설계다. 근거는 [RCA 표준 검토 §4.2](../../rca-standards-review.md)(Pearl 인과 사다리, Bradford Hill의 Temporality)와 §7 로드맵 item 12를 따른다.
+
+병합 score가 높다고 해서 한 alert가 다른 alert의 **원인**이라는 뜻은 아니다. Correlation은 기본적으로 Pearl 인과 사다리의 rung-1(association, 상관)에 머문다. 따라서 상관 신호는 RCA에서 다음과 같이 인과 사다리에 매핑한다.
+
+| Correlation 축 | 인과 사다리 단계 | RCA evidence 매핑 |
+| --- | --- | --- |
+| time proximity | association (상관) | [§9 evidence-matrix §3.1](catalog-evidence-matrix.md#31-인과상관-증거-구분-계획-12)의 `causality_type=association` → `supporting` 후보까지만 |
+| same change (변경 선행) | temporality 후보 | 변경이 증상에 **선행**하면 `temporality_required=True` 만족 시 `required` 인과 증거 후보 |
+| topology / dependency | 인과 경로 제약 | 인과 사슬(`causal_chain_step`)의 방향(upstream→downstream)을 좁히는 근거 |
+
+**단순 동시발생의 한계 [계획 §12]**: time proximity만 높은 병합은 인과 주장의 근거가 될 수 없다. 그래서 코드에서도 `time proximity` weight를 가장 낮은 0.10으로 두고 단독 병합을 금지한다. 인과 주장(어느 alert가 root cause인가)은 correlation 단계가 아니라 RCA가 evidence-matrix의 temporality·topology 근거로 별도 판단한다.
+
 ### 5. 병합 Decision
 
 | Decision | 기준 |

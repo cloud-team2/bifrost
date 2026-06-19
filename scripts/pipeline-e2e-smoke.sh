@@ -6,7 +6,7 @@ set -euo pipefail
 #
 # operations-backend real provisioner가 EDA(FAN_OUT)/CDC(DIRECT) 파이프라인을
 # 실제로 생성하고 KafkaConnector가 RUNNING으로 수렴하는지, 토픽이 생성되는지로
-# GREEN/RED를 판정한다. 판정 기준은 docs/guides/pipeline-e2e-smoke.md 참조.
+# GREEN/RED를 판정한다.
 #
 # 사용법:
 #   BASE_URL=http://localhost:8080 \

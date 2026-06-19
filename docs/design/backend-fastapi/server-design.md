@@ -298,7 +298,7 @@ erDiagram
 | `incident_id` | text null | Spring incident 논리 참조. 현재 create-run route는 request 값을 persistence에 넘기지 않아 null로 저장 |
 | `status` | text | `running`/`waiting_for_approval`/`completed`/`failed`/`cancelled` |
 | `current_agent` | text null | 진행 중 단계 |
-| `catalog_version` | text | tool/catalog 버전(replay 재현 기준, [§4.18](tool-catalog.md#4-tool-catalog)) |
+| `catalog_version` | text | tool/catalog 버전(replay 재현 기준, [§4.18](tool-catalog.md#4-tool-catalog)). **[현재]** `agent_run`이 재현성 목적으로 저장하는 유일한 버전 필드다([001 migration](../../../services/ai-service/alembic/versions/001_create_agent_run_store.py) `catalog_version text NOT NULL DEFAULT '0.1.0'`, 값은 [core/config.py](../../../services/ai-service/app/core/config.py)의 `catalog_version="0.1.0"`). `model_id`·`prompt_hash`·`evidence_matrix_version`·`runbook_version`·`corpus_manifest_hash`·`eval_dataset_version`·`code_commit_sha`·`temperature`는 run record에 없다([§12.1 계획 §4] 참조). |
 | `created_at` `updated_at` `closed_at` | timestamptz | |
 
 **`state_patch`** — State 변경 이력(append-only, event-sourced. [§14](contract/contract-state-schema.md#14-contract-state-schema))
@@ -381,7 +381,7 @@ Retrieval 에이전트의 **문서 RAG**([§1 Agent Principles](agent-principles
 3. **SoT 경계**: approval·audit·incident의 원본은 Spring `metadb`. FastAPI는 run 연계·캐시·요약만 둔다(중복 생성 금지).
 4. **FK 경계**: `project_id`·`incident_id`·`approval_id`·evidence `store_ref`는 Spring 소유라 **DB FK를 걸지 않는다**(논리 참조, 유효성은 API로 검증 — [ADR 0004](../../adr/0004-monorepo-monolith.md)).
 5. **retention**: 오래된 run의 `state_patch`/`run_event`는 보존 정책에 따라 아카이브·tombstone한다(무한 적재 금지).
-6. **replay 재현성**: `agent_run.catalog_version`을 고정해 동일 catalog 기준으로 run을 재생한다([admin replay api.md §17](../../api/fastapi.md)).
+6. **replay 재현성**: **[현재]** `agent_run.catalog_version`을 고정해 동일 catalog 기준으로 run을 재생한다([admin replay api.md §17](../../api/fastapi.md)). 단 현재 고정 가능한 버전 축은 catalog뿐이며, 모델·프롬프트·evidence matrix·runbook·corpus·평가셋·코드 commit은 run record에 남지 않아 동일 판단을 완전히 재현하기는 어렵다([§12 RCA 운영 성숙도] 참조). **[계획 §4]** run record를 §4 재현성 필드로 확장한다(정본 스키마는 [§14 contract-state-schema](contract/contract-state-schema.md#14-contract-state-schema)가 소유).
 7. **지식 코퍼스 인덱싱·격리**: Knowledge Vector Store는 `knowledge_chunk.embedding vector(1536)` 기반으로 검색한다. 현재 `knowledge.indexer._runbook_documents()`는 `runbook_catalog._RUNBOOKS`를 조회하지만 실제 catalog는 `ROOT_CAUSE_RUNBOOKS`로 노출되어, runbook corpus 인덱싱 경로는 그대로 동작하지 않는다. `scope=project:*` 청크는 해당 project로만 검색되게 격리한다.
 
 ### 10. 보안
@@ -402,8 +402,72 @@ Retrieval 에이전트의 **문서 RAG**([§1 Agent Principles](agent-principles
 - Spring Boot error envelope 처리
 - SSE reconnect 시 event resume 가능
 - 현재 Verifier 미통과 report를 차단하지 않고 `report_snapshot.verified=false`로 저장
+- **[계획 §13]** run record가 §4 재현성 필드(`model_id`·`prompt_hash` 등)를 채워 동일 run을 재구성할 수 있음
+- **[계획 §13]** run telemetry(`called_agents`·`tool_call_count`·`latency_by_stage` 등)가 run_id로 집계됨
+- **[계획 §13]** threshold registry 변경 시 `version`·`basis`·`rollback_value`가 함께 기록됨
 
-### 12. 결론
+### 12. [계획] RCA 운영 성숙도 (횡단 관심사)
+
+이 절은 [rca-standards-review.md](../rca-standards-review.md)가 식별한 RCA 운영 성숙도(재현성·관측성·임계값·평가·캘리브레이션·drift) 횡단 관심사를 FastAPI 서버 관점에서 정리한다. 표기 규약: **[현재]**=코드 동기화 / **[계획 §N]**=to-be(N은 [개선 로드맵 §7](../rca-standards-review.md#7-개선-로드맵) 단계).
+
+> 스키마 정본 경계: 아래 run record 필드와 telemetry 필드의 **정본 스키마는 [§14 contract-state-schema](contract/contract-state-schema.md#14-contract-state-schema)가 소유**한다. 이 절은 그 필드를 FastAPI가 어떻게 **수집·저장·노출**하는지(조회 관점)만 기술한다.
+
+#### 12.1 [계획 §4] 재현성 — run record 노출
+
+**[현재]** `agent_run`은 재현성 축으로 `catalog_version`만 저장한다([001 migration](../../../services/ai-service/alembic/versions/001_create_agent_run_store.py), [core/config.py](../../../services/ai-service/app/core/config.py) `catalog_version="0.1.0"`). 모델 매핑은 [model_router.py](../../../services/ai-service/app/llm/model_router.py)가 agent tier별 **별칭**(`AGENT_TIER`→`TIER_MODEL_DEFAULT`: lightweight=`gpt-4o-mini`, analysis=`gpt-4o`)을 반환할 뿐, 날짜 스냅샷·provider model revision을 run 단위로 핀고정하지 않는다. corpus는 [corpus/manifest.json](../../../services/ai-service/corpus/manifest.json)에 문서 목록으로 존재하나 자체 버전/해시를 run record에 남기지 않는다.
+
+**[계획 §4]** run record를 다음 재현성 필드로 확장해 `run_id` 하나로 당시 입력·버전·후보 랭킹을 재구성한다(정본 스키마는 contract-state-schema, 여기는 재현성 조회·노출 관점).
+
+| 필드 | 목적 | 현재 |
+| --- | --- | --- |
+| `model_id` | 별칭이 아닌 실제 모델 ID/날짜 스냅샷 | [현재] `gpt-4o` 별칭만(model_router) |
+| `prompt_version` `prompt_hash` | 프롬프트 템플릿 버전·해시 | [현재] 미저장 |
+| `catalog_version` | catalog 버전 | [현재] 저장됨(`0.1.0`) |
+| `evidence_matrix_version` | 증거 매트릭스 버전 | [현재] 미저장 |
+| `runbook_version` | runbook catalog 버전 | [현재] 미저장 |
+| `eval_dataset_version` | 평가셋 버전 | [현재] 미저장 |
+| `corpus_manifest_hash` | RAG corpus manifest 해시 | [현재] 미저장(manifest.json 버전 미관리) |
+| `code_commit_sha` | 빌드 commit | [현재] 미저장 |
+| `temperature` | 샘플링 온도 | [현재] 미저장 |
+
+재현성 조회 API는 [admin replay api.md §17](../../api/fastapi.md)를 확장해 위 필드를 노출한다. 근거: [review §5.2 run 단위 버전 고정](../rca-standards-review.md#52-개선-항목별-외부-근거와-bifrost-적용), [review §2.3·§2.5](../rca-standards-review.md#23-버전-관리).
+
+#### 12.2 [계획 §2] 관측성 — run telemetry 노출
+
+**[현재]** `agent_run`·`state_patch`·`run_event` 테이블과 전체 run budget(`max_llm_calls_per_run`·`max_tokens_per_run`)은 있으나, run 단위 호출량·단계별 latency/cost·handoff 사유 집계는 없다([review §2.5](../rca-standards-review.md#25-코드-기준-미구현부분-구현-목록)).
+
+**[계획 §2]** run telemetry를 수집·노출한다(정본 스키마는 contract-state-schema, 여기는 수집·노출 관점): `called_agents`, `called_tools`, `tool_call_count`, `latency_by_stage`, `cost_by_stage`, `handoff_reason`, `budget_used`. 자연어 질의/인시던트 분석별 호출량·latency·비용을 `run_id`로 설명 가능하게 한다(§8 streaming event 및 §9.2 `run_event`와 연계). 근거: [review §7 단계2](../rca-standards-review.md#7-개선-로드맵), [review 읽기 전 요약 항목10](../rca-standards-review.md).
+
+#### 12.3 [계획 §3] threshold registry
+
+**[현재]** RCA 임계값은 코드 상수·기본값으로 흩어져 있다.
+
+- [agents/rca.py](../../../services/ai-service/app/agents/rca.py): `MIN_CONFIDENT_ROOT_CAUSE=0.60`(상위 후보가 미만이면 `UNKNOWN_WITH_EVIDENCE_GAP` 폴백), `LLM_TIE_MARGIN=0.10`(상위 2후보 신뢰도차가 미만일 때만 LLM 타이브레이커).
+- [catalogs/types.py](../../../services/ai-service/app/catalogs/types.py): `default_confidence_cap=0.79`(required 부분 충족 시 상한), `min_confidence_for_action=0.80`.
+
+이 값들은 버전·근거·owner·보정 이력 없이 코드에 고정되어 "왜 이 값인가"를 추적하기 어렵다.
+
+**[계획 §3]** threshold registry로 옮겨 다음 필드를 갖게 한다: `threshold_name`, `value`, `version`, `basis`, `owner`, `last_calibrated_at`, `dataset_version`, `rollback_value`. 위 4개 상수(0.60·0.10·0.79·0.80)를 registry 초기값으로 등록하고 변경 근거·이력을 조회 가능하게 한다. 근거: [review §7 단계3](../rca-standards-review.md#7-개선-로드맵), [review §2.5 threshold governance](../rca-standards-review.md#25-코드-기준-미구현부분-구현-목록).
+
+#### 12.4 [계획 §7] AC@k·Avg@k 평가 job·report
+
+**[현재]** RCA는 후보 랭킹과 confidence를 산출하지만 평가 job/report는 없다(fixture 기반 회귀 테스트만 존재).
+
+**[계획 §7]** resolved incident마다 `accepted_root_cause_id`와 후보 랭킹을 저장하고, 오프라인 eval job이 `AC@1`/`AC@3`/`AC@5`/`Avg@5`를 root cause 계층별(`data_quality`·`connector`·`schema`·`infra`·`change` 등)로 산출한다. 결과는 UNKNOWN 비율과 함께 report artifact로 남겨 confidence threshold·UNKNOWN 기준 조정 근거로 쓴다. 근거: [review §7 단계7](../rca-standards-review.md#7-개선-로드맵), [review §4.4](../rca-standards-review.md#44-증거신뢰도평가).
+
+#### 12.5 [계획 §8] ECE calibration report
+
+**[현재]** confidence가 실제 정답률과 맞는지 ECE 등으로 검증하지 않는다.
+
+**[계획 §8]** 월 1회 calibration report를 생성해 confidence bin별 `count`, `avg_confidence`, `accuracy`, `gap`, `ECE`를 기록한다. 과신 구간 확인 후 `default_confidence_cap` 또는 `MIN_CONFIDENT_ROOT_CAUSE`(UNKNOWN threshold)를 §12.3 registry를 통해 재설정한다. 근거: [review §7 단계8](../rca-standards-review.md#7-개선-로드맵), [review §5.2 confidence 캘리브레이션(ECE)](../rca-standards-review.md#52-개선-항목별-외부-근거와-bifrost-적용).
+
+#### 12.6 [계획 §9] drift 감시
+
+**[현재]** incident 저장과 report snapshot은 있으나, 운영자 채택·수정·override를 평가 신호로 묶는 구조는 제한적이다.
+
+**[계획 §9]** 월별 offline report 외에 운영 지표 drift를 감시한다: UNKNOWN 비율, operator override 비율, confidence 분포 drift, root cause 분포. 임계 초과 시 §12.3 threshold 재보정 trigger를 발생시킨다. 근거: [review §7 단계9](../rca-standards-review.md#7-개선-로드맵), [review §8 online drift 기준](../rca-standards-review.md#8-후속-과제).
+
+### 13. 결론
 
 FastAPI Agent Server는 Bifrost의 판단 계층이다. 운영 리소스를 직접 만지는 서버가 아니라, evidence 기반으로 판단하고 Spring Boot Operations Backend에 검증 가능한 tool call을 위임하는 orchestration server로 설계한다.
 

@@ -86,7 +86,7 @@
 - connector config overwrite
 - customer-visible downtime 가능성
 - 여러 pipeline에 동시에 영향
-- rollback plan이 필요한 작업
+- rollback plan이 필요한 작업 (실패 시 자동 롤백 정책은 [§12 Risk-tier별 Rollback 정책](#12-risk-tier별-rollback-정책-계획-5) 참조 [계획 §5])
 
 ### 6. Severity 보정
 
@@ -167,7 +167,39 @@ Spring change-ticket facade의 validate endpoint는 `tenantId`와 ticket `OPEN` 
 | approval scope 불일치 | deny |
 | change window 종료 | deny 또는 대기 |
 
-### 12. Versioning
+### 12. Risk-tier별 Rollback 정책 [계획 §5]
+
+> 아래는 to-be 설계다. 근거는 [RCA 표준 검토 §5.2](../../rca-standards-review.md)(AWS OPS06-BP04: failure-condition 기반 자동 롤백, 수동 단계는 안티패턴), §2.5(자동 롤백 행), §7 로드맵 item 5를 따른다.
+
+**[현재]** 코드의 `policy_matrix.lookup(action_type, risk)`(`app/catalogs/policy_matrix.py`)는 정방향 조치만 판단하고, **rollback 실행을 위한 별도 정책 분기는 없다**. `rollback_plan`은 §9 Change Management 검증에서 "존재(non-empty)"만 확인할 뿐, 자동 롤백 실행 경로가 없다.
+
+**[계획 §5]** 정방향 조치(forward action)의 risk-tier에 따라 rollback 실행 정책을 분리한다. 즉 조치가 위험할수록 그 원복도 사람이 승인한다.
+
+| 정방향 조치 risk | rollback 실행 정책 |
+| --- | --- |
+| `read_only` | rollback 불필요 (상태 변경 없음) |
+| `low` | 자동 rollback 허용 |
+| `medium` | 일부 자동 rollback 허용. KEDB에 검증된 `rollback`이 있고 영향이 제한적인 경우만 자동, 그 외 승인 |
+| `high` | rollback 실행도 **승인 대상**(`require_approval`/`require_change_management`) |
+| `forbidden` | 해당 없음 (정방향 조치 자체가 deny) |
+
+rollback 실행 결과는 `pre_change_snapshot`, `rollback_action_id`, `rollback_status`, `rollback_audit_event_id`로 남긴다(공유 용어, [§11 runbooks §10.1](catalog-remediation-runbooks.md#101-검증된-rollback과-자동-롤백-실행-계획-513)과 동일 필드명).
+
+### 13. Owner·직접조치 정책 [계획 §13]
+
+> 아래는 to-be 설계다. 근거는 [RCA 표준 검토 §2.5](../../rca-standards-review.md)(KEDB 행), §7 로드맵 item 13을 따른다.
+
+**[현재]** root cause별 직접조치 가능 여부는 `RootCause.direct_action_allowed`(`no`/`limited`/`approval`/`change_management`/`escalation`)로만 정의되고, 책임자(owner) 단위 정책은 없다. ownership은 `owned_by`(bifrost/customer/shared) 영역 구분에 머문다.
+
+**[계획 §13]** KEDB([§8 root-causes §12](catalog-root-causes.md#12-kedb형-운영-지식화-계획-13))의 `owner`와 `verified_fixes`를 정책 판단에 연결한다.
+
+| 항목 | 정책 |
+| --- | --- |
+| `owner` | root cause별 운영 책임자. 승인 라우팅·escalation 대상 결정에 사용 |
+| 직접조치 정책 | `verified_fixes`에 검증된 조치만 자동 후보로 승격. 미검증 조치는 approval/escalation 유지 |
+| customer-owned 영역 | `owned_by`가 customer/shared이면 직접 mutation 금지, escalation 우선(현행 원칙 유지) |
+
+### 14. Versioning
 
 Policy 변경은 audit와 replay test에 영향을 준다. 새로운 mutation tool을 추가할 때는 이 문서와 [§4 Tool Catalog](../tool-catalog.md#4-tool-catalog)를 함께 갱신한다.
 

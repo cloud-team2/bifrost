@@ -13,24 +13,48 @@ RCA Agent는 점수만 보고 원인을 확정하지 않는다. Required evidenc
 
 ### 2. Evidence 유형
 
-| 유형 | 의미 |
+**[현재]** 코드의 `EvidenceRule`(`app/catalogs/types.py`)은 `kind`(`required`/`supporting`/`negative`/`exclusion`)와 `semantic_allowed` 두 분류 필드만 갖는다. 즉 현재 evidence는 "역할(kind)"로만 구분되고, 인과/상관 구분은 구조적으로 없다.
+
+| 유형 (`kind`) | 의미 |
 | --- | --- |
 | Required | 없으면 해당 root cause를 확정할 수 없음 |
 | Supporting | confidence를 높이는 보조 근거 |
 | Negative | 해당 root cause 가능성을 낮추는 반증 |
 | Exclusion | 다른 root cause를 배제하는 근거 |
 
+`semantic_allowed=False`인 규칙(예: `CONNECTOR_TASK_FAILED`의 task status `FAILED`)은 의미 매칭 없이 lexical 일치만 인정한다.
+
 ### 3. Confidence 기준
 
-초기 기준은 다음과 같다.
+**[현재]** 코드 기준값은 다음과 같다. `EvidenceProfile.min_confidence_for_action=0.80`, `needs_more_evidence_band=(0.60, 0.79)`, `RootCause.default_confidence_cap=0.79`(필수 evidence 부분 충족 시 상한)이다. RCA Agent(`app/agents/rca.py`)는 최상위 후보가 `MIN_CONFIDENT_ROOT_CAUSE=0.60` 미만이면 `UNKNOWN_WITH_EVIDENCE_GAP`으로 폴백한다.
 
 | Confidence | 의미 | 처리 |
 | --- | --- | --- |
-| `>= 0.80` | 강한 후보 | 대응안 생성 가능 |
-| `0.60 - 0.79` | 유력하지만 추가 확인 필요 | 추가 evidence 또는 제한적 대응 |
-| `< 0.60` | 확정 불가 | unknown 또는 추가 조사 |
+| `>= 0.80` | 강한 후보 (`min_confidence_for_action`) | 대응안 생성 가능 |
+| `0.60 - 0.79` | 유력하지만 추가 확인 필요 (`needs_more_evidence_band`, `default_confidence_cap=0.79`) | 추가 evidence 또는 제한적 대응 |
+| `< 0.60` | 확정 불가 (`MIN_CONFIDENT_ROOT_CAUSE`) | unknown 또는 추가 조사 |
 
 기준은 과거 incident replay로 보정한다. 임의로 threshold를 바꾸지 않는다.
+
+### 3.1 인과/상관 증거 구분 [계획 §12]
+
+> 아래는 to-be 설계이며 현재 코드에는 없다. `EvidenceRule`을 인과 사다리에 매핑하기 위한 확장이다. 근거는 [RCA 표준 검토 §4.2](../../rca-standards-review.md)(Bradford Hill의 Temporality, Pearl의 인과 사다리)와 §7 로드맵 item 12를 따른다.
+
+현재 evidence는 `kind`(역할)로만 구분되므로, 단순 동시발생(co-occurrence)과 시간 선행성(temporality)이 있는 인과 증거를 구조적으로 구분하지 못한다. `EvidenceRule`에 다음 필드를 추가한다.
+
+| 추가 필드 | 값 | 의미 |
+| --- | --- | --- |
+| `causality_type` | `association` / `temporal` / `counterfactual` | Pearl 인과 사다리 단계. `association`은 상관(rung-1)이며 인과 주장 불가 |
+| `temporality_required` | bool | true이면 원인 신호가 증상 발생에 **선행**한다는 시간 근거가 있어야 인정 |
+| `causal_chain_step` | int | "근본원인 → 증상" 인과 사슬에서의 순서. 사슬 일관성으로 confidence를 산정 |
+
+**required 승격 규칙 [계획 §12]**
+
+1. 단순 동시발생(`causality_type=association`)은 인과 주장이 불가하므로 `supporting`까지만 인정한다.
+2. `temporality_required=True`를 만족하는 증거(원인이 증상에 시간상 선행)만 `required` 인과 증거로 승격한다.
+   - 예: change/배포 이벤트 타임스탬프가 증상 발생에 선행할 때만 `RECENT_*_REGRESSION`의 변경 evidence를 required 인과로 인정한다.
+3. `negative` 증거는 "대안 원인 시그니처가 있으면 후보 약화"라는 조잡한(crude) counterfactual 검사임을 명시한다. 강한 인과 반증이 아니라 후보 배제용 약한 신호다.
+4. required 증거는 `causal_chain_step` 순서로 "근본원인 → 증상" 사슬을 구성하고, 사슬이 여러 신호에서 일관되게 성립하면 confidence를 상향한다.
 
 ### 4. Source Root Cause
 
@@ -351,6 +375,8 @@ RCA Agent는 점수만 보고 원인을 확정하지 않는다. Required evidenc
 | time window | 같은 시간대에 증상 시작 |
 
 시간만 겹치는 것은 충분하지 않다. topology나 dependency evidence가 필요하다.
+
+> **[계획 §12]** §3.1의 인과 사다리 기준으로 보면, `time window` 단독은 `causality_type=association`(상관)에 해당하므로 supporting까지만 인정한다. `common change`처럼 변경이 증상에 선행하는 신호는 `temporality_required=True`를 만족할 때만 required 인과 증거로 승격한다.
 
 ### 12. Replay 보정
 
