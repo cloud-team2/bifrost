@@ -7,6 +7,8 @@ approval_decision 경로: approval_gate → executor → verifier → report
 """
 from __future__ import annotations
 
+import inspect
+import json
 import logging
 import re
 from datetime import datetime, timezone
@@ -509,16 +511,56 @@ async def _append_message(message_repo, thread_id, role, content, *, project_id,
         logger.warning("conversation message persist failed thread=%s error=%s", thread_id, exc)
 
 
-async def _persist_assistant_reply(message_repo, thread_id, *, project_id, run_id) -> None:
-    """run이 만든 최종 answer(report_snapshot)를 assistant 메시지로 저장한다."""
+async def _list_run_events(event_repo, run_id: str):
+    res = event_repo.get_after(run_id, None)
+    return await res if inspect.isawaitable(res) else res
+
+
+async def _persist_run_transcript(message_repo, thread_id, *, run_id, project_id) -> None:
+    """#874 런이 만든 응답(구조화 tool 패널 + 최종 답변)을 thread에 저장한다.
+
+    run_workflow의 finally에서 호출돼 예외·중단(승인 거절 등)에도 보장된다. 복원 시
+    role='tool'(JSON {tool_name, params, result})은 toolPanel로, 최종 답변은 assistant 텍스트로 재현된다.
+    사용자에게 패널로 보였던 구조화 tool(result가 있는 TOOL_CALL_COMPLETED)만 저장한다.
+    """
     if not message_repo or not thread_id:
         return
     try:
+        events = await _list_run_events(get_event_repo(), run_id)
+    except Exception as exc:
+        logger.warning("run transcript events lookup failed run=%s error=%s", run_id, exc)
+        events = []
+
+    terminal_message = ""
+    for ev in events:
+        payload = getattr(ev, "payload", None) or {}
+        if ev.type == StreamingEventType.RUN_COMPLETED and ev.message:
+            terminal_message = ev.message
+        if (
+            ev.type == StreamingEventType.TOOL_CALL_COMPLETED
+            and payload.get("result") is not None
+            and payload.get("tool")
+        ):
+            content = json.dumps(
+                {
+                    "tool_name": payload.get("tool"),
+                    "params": payload.get("params") or {},
+                    "result": payload.get("result"),
+                },
+                ensure_ascii=False,
+                default=str,
+            )
+            await _append_message(
+                message_repo, thread_id, "tool", content, project_id=project_id, run_id=run_id
+            )
+
+    answer = ""
+    try:
         snapshot = await get_report_repo().get_latest(run_id, verified_only=False)
+        answer = (snapshot.body.get("answer") if snapshot and snapshot.body else "") or ""
     except Exception as exc:
         logger.warning("assistant reply lookup failed run=%s error=%s", run_id, exc)
-        return
-    answer = (snapshot.body.get("answer") if snapshot and snapshot.body else None) or ""
+    answer = answer.strip() or terminal_message.strip()
     await _append_message(
         message_repo, thread_id, "assistant", answer, project_id=project_id, run_id=run_id
     )
@@ -564,23 +606,25 @@ async def run_workflow(
         )
         effective_message = _contextualize(user_message, history_block)
 
-        await _run_workflow_impl(
-            run_id=run_id,
-            user_message=effective_message,
-            project_id=project_id,
-            bus=bus,
-            run_repo=run_repo,
-            registry=registry,
-            requested_mode=requested_mode,
-            requested_incident_id=requested_incident_id,
-            requested_remediation_requested=requested_remediation_requested,
-            requested_action_candidate=requested_action_candidate,
-        )
-
-        # run이 만든 최종 answer를 assistant turn으로 저장(다음 질문의 history가 됨).
-        await _persist_assistant_reply(
-            message_repo, thread_id, project_id=project_id, run_id=run_id,
-        )
+        try:
+            await _run_workflow_impl(
+                run_id=run_id,
+                user_message=effective_message,
+                project_id=project_id,
+                bus=bus,
+                run_repo=run_repo,
+                registry=registry,
+                requested_mode=requested_mode,
+                requested_incident_id=requested_incident_id,
+                requested_remediation_requested=requested_remediation_requested,
+                requested_action_candidate=requested_action_candidate,
+            )
+        finally:
+            # #874 런 응답(구조화 tool 패널 + 최종 답변)을 thread에 저장 — 예외·중단에도 보장.
+            # 복원 시 사용자 요청 + tool 패널 + agent 답변이 그대로 재현된다.
+            await _persist_run_transcript(
+                message_repo, thread_id, run_id=run_id, project_id=project_id,
+            )
 
 
 async def _run_workflow_impl(
