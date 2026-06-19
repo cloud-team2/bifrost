@@ -302,6 +302,69 @@ Workspace settings 화면의 notifications/thresholds/ai-policy 값을 저장한
 | `snapshot` | jsonb | mutation snapshot |
 | `created_at` | timestamptz | |
 
+#### 3.10 사용자 영향 SLI/SLO·severity·threshold 스키마 **[계획 §3·§10·§11]**
+
+> 아래 테이블은 to-be 설계이며 현재 metadb에 존재하지 않는다(위 §2 ERD와 §3.1~§3.9는 [현재] 보존). 외부 기준은 [rca-standards-review.md §5.2~§5.4·§7(item3·10·11)](../rca-standards-review.md), 임계값 수치 정본은 [spec.md 부록 B](../../spec.md#부록-b--리소스-상태값-정의-및-자동-기준-단일-출처)다. 임계값 값을 여기서 재정의하지 않는다. 모니터링측 연계는 [monitoring §10](./monitoring.md#6-monitoring-and-incident-engine)을 따른다.
+
+##### 3.10.1 `sli_metric` (사용자 영향 SLI) **[계획 §10]**
+
+`good_event / total_event` 측정값을 윈도우 단위로 적재한다.
+
+| 컬럼 | 타입 | 설명 |
+| --- | --- | --- |
+| `id` | uuid PK | |
+| `workspace_id` | uuid FK | |
+| `pipeline_id` | uuid FK null | SLI 대상(전역 SLI는 null) |
+| `sli_name` | text | `freshness`/`e2e_latency`/`success_rate`/`completeness`/`provisioning_success` |
+| `good_events` | bigint | window 내 good event 수 |
+| `total_events` | bigint | window 내 total event 수 |
+| `window_start` `window_end` | timestamptz | 측정 윈도우 |
+| `created_at` | timestamptz | |
+
+##### 3.10.2 `slo_config` (SLO 목표·burn-rate window) **[계획 §10·§11]**
+
+SLI별 목표와 multi-window burn-rate 규칙을 보관한다. burn-rate 시작값(`14.4x`/`6x`/`1x`)은 Google SRE 기준이며 Bifrost 데이터로 보정한다.
+
+| 컬럼 | 타입 | 설명 |
+| --- | --- | --- |
+| `id` | uuid PK | |
+| `workspace_id` | uuid FK | |
+| `sli_name` | text | `sli_metric.sli_name` 참조 |
+| `objective` | numeric | 목표(예: 0.999). baseline 보정 전 후보값 |
+| `long_window` `short_window` | interval | 예: `1h`/`5m`, `6h`/`30m`, `3d`/`6h` |
+| `burn_rate` | numeric | `14.4`/`6`/`1` 등 |
+| `alert_class` | text | `page`/`ticket` |
+| `created_at` | timestamptz | |
+
+##### 3.10.3 `incident.severity_reason` (Impact × Urgency) **[계획 §11]**
+
+[현재] `incident`는 `severity`(`WARNING`/`CRITICAL`) 단일 값만 가진다(§3.7). severity를 Impact × Urgency로 산정하면 산정 근거를 다음 JSONB로 남긴다(`incident`에 컬럼 추가 또는 별도 1:1 테이블).
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `impact` | text/int | 영향 등급(영향 범위 기반) |
+| `urgency` | text/int | 긴급도(복구 가능 시간 기반) |
+| `slo_burn_rate` | numeric | 트리거 시점 burn-rate |
+| `affected_resource_count` | int | 영향받은 pipeline/workspace/sink 수 |
+
+##### 3.10.4 `threshold_registry` (임계값 거버넌스) **[계획 §3]**
+
+부록 B 정적 임계값과 RCA threshold(0.60/0.80 등)의 "왜 이 값인가"를 추적한다. 값 자체는 부록 B/코드를 단일 출처로 인용하고, 이 테이블은 버전·근거·owner·보정 메타를 보관한다([governance §7 연계](./governance.md#7-governance-engine)).
+
+| 컬럼 | 타입 | 설명 |
+| --- | --- | --- |
+| `id` | uuid PK | |
+| `workspace_id` | uuid FK null | 전역 기본값은 null |
+| `threshold_name` | text | 예: `consumer_lag_warning`, `error_rate_critical_pct`, `min_confident_root_cause` |
+| `value` | text/numeric | 현재 적용값(부록 B/코드 인용) |
+| `version` | text/int | `threshold_version` |
+| `basis` | text | 근거(부록 B 인용·calibration report 링크) |
+| `owner` | text | 담당자 |
+| `last_calibrated_at` | timestamptz | 마지막 보정 시각 |
+| `dataset_version` | text null | 보정 데이터셋 버전 |
+| `rollback_value` | text/numeric null | 직전 값(롤백용) |
+| `created_at` | timestamptz | |
+
 ### 4. 운영 규칙
 
 1. datasource/pipeline row에는 `secret_ref`만 저장하고 API/log에는 secret material을 노출하지 않는다. 현재 `DbSecretStore` provider는 metadb `secrets.credential_json`에 `{"user":"...","password":"..."}` 형태로 자격증명을 영속한다.

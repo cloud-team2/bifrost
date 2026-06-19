@@ -120,6 +120,7 @@ Kafka Connect REST timeout은 504 `TIMEOUT`, 그 외 상류 실패는 502 `UPSTR
 | before/after evidence writer | mutation 응답 evidence는 빈 배열 |
 | audit_event append-only 기록 | `auditEventId` 값이 null이라 JSON 응답에서 `audit_event_id` field 생략 |
 | Kubernetes/Prometheus/Schema Registry mutation | endpoint 없음 |
+| threshold governance **[계획 §3]** | **[현재]** consumer lag 임계값은 `workspace_settings.lag_warning_threshold`/`lag_critical_threshold`(미설정 시 기본 5,000), error rate 임계값은 `PipelineStatusServiceImpl`의 코드 상수(`0.5%`/`2.0%`), RCA threshold(0.60/0.80 등)는 ai-service 코드 기본값으로 흩어져 있고 변경 근거·버전·owner·보정 시각이 남지 않는다. **[계획]** [data-model §3.10.4 `threshold_registry`](./data-model.md#4-data-model)로 `threshold_name`·`value`·`version`·`basis`·`owner`·`last_calibrated_at`·`dataset_version`·`rollback_value`를 일원화하고, 값 자체는 [spec.md 부록 B](../../spec.md#부록-b--리소스-상태값-정의-및-자동-기준-단일-출처)를 단일 출처로 인용한다(중복 정의 금지). 외부 기준은 [rca-standards-review.md §5.2·§7(item3)](../rca-standards-review.md) |
 
 ### 10. 테스트 기준
 

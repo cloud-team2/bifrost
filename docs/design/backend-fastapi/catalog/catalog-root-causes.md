@@ -13,13 +13,15 @@ RCA Agent는 이 문서의 root cause id 중 하나만 선택한다. catalog에 
 
 ### 2. 공통 필드
 
+**[현재]** 코드의 `RootCause`(`app/catalogs/types.py`)는 아래 필드만 갖는다. `ROOT_CAUSES`는 8계층 35개로, `unknown` 계층 3개(`UNKNOWN_WITH_EVIDENCE_GAP`, `MULTIPLE_POSSIBLE_CAUSES`, `CUSTOMER_OWNED_ROOT_CAUSE_LIKELY`)를 포함한 확정/보류 후보 전체다.
+
 | 필드 | 설명 |
 | --- | --- |
 | `root_cause_id` | 안정적인 원인 식별자 |
-| `layer` | source, pipeline, kafka, sink, infra, change, data_quality |
-| `owned_by` | bifrost, customer, shared |
-| `direct_action_allowed` | Agent가 직접 조치 후보를 만들 수 있는지 |
-| `default_confidence_cap` | 필수 evidence가 없을 때 confidence 상한 |
+| `layer` | source, pipeline, kafka, sink, infra, change, data_quality, unknown |
+| `owned_by` | bifrost, customer, shared (코드 필드명은 `owned_by`) |
+| `direct_action_allowed` | Agent가 직접 조치 후보를 만들 수 있는지 (`no`/`limited`/`approval`/`change_management`/`escalation`) |
+| `default_confidence_cap` | 필수 evidence가 없을 때 confidence 상한 (기본 `0.79`) |
 
 ### 3. Source
 
@@ -100,7 +102,42 @@ Sink 계층 root cause도 고객사 소유 영역이 많다. Agent는 connector 
 | `MULTIPLE_POSSIBLE_CAUSES` | 여러 후보가 비슷한 confidence를 가짐 | 추가 evidence 수집 |
 | `CUSTOMER_OWNED_ROOT_CAUSE_LIKELY` | 고객사 소유 영역 가능성이 높음 | 근거 포함 escalation |
 
-### 11. Versioning
+### 11. Trigger와 Root Cause 분리 [계획 §13]
+
+> 아래는 to-be 설계다. 근거는 [RCA 표준 검토 §4.3](../../rca-standards-review.md)(Google postmortem 템플릿의 trigger/root cause 별도 기록)과 §7 로드맵 item 13을 따른다.
+
+**[현재]** 코드의 `RootCause`는 trigger와 root cause를 구분하지 않는다. 예를 들어 "배포(트리거)가 schema mismatch(근본원인)를 드러냈다"는 경우, 현재는 둘 다 root cause id 한 칸으로만 기록된다.
+
+**[계획 §13]** Google 표준은 트리거(증상을 촉발한 직접 사건)와 근본원인(고치지 않으면 재발하는 원인)을 **별도 항목**으로 기록해 트렌드 분석을 가능하게 한다. Bifrost도 RCA 결과·인시던트 기록에 다음을 분리한다.
+
+| 개념 | 의미 | 예시 |
+| --- | --- | --- |
+| `trigger` | 증상을 촉발한 직접 사건(주로 직전 변경) | image 배포, config push, credential rotation |
+| `root_cause_id` | 고치지 않으면 재발하는 근본원인 | `SCHEMA_MISMATCH`, `POD_OOM_KILLED` |
+
+`change` 계층 root cause(`RECENT_*_REGRESSION`)는 트리거 성격이 강하므로, RCA가 이를 선택할 때 가능하면 그 변경이 드러낸 하위 근본원인도 함께 후보로 남긴다.
+
+### 12. KEDB형 운영 지식화 [계획 §13]
+
+> 아래는 to-be 설계다. 근거는 [RCA 표준 검토 §2.5](../../rca-standards-review.md)(KEDB 행), §4.3(ITIL Known Error / KEDB), §7 로드맵 item 13을 따른다.
+
+**[현재]** root cause catalog, evidence matrix, runbook catalog는 정적 데이터로만 존재하고, root cause별 운영 지식(소유자·검증된 조치·재발 이력)이 KEDB 레코드로 축적되지 않는다.
+
+**[계획 §13]** root cause별로 ITIL Known Error DB 포맷의 운영 지식을 축적한다. 추가 필드는 다음과 같다.
+
+| KEDB 필드 | 의미 |
+| --- | --- |
+| `owner` | 이 root cause의 운영 소유자 (현재 `owned_by`는 영역 구분이고, `owner`는 책임자 단위) |
+| `known_symptoms` | 이 root cause가 만드는 관측 증상 목록 (evidence matrix의 required/supporting과 연결) |
+| `verified_fixes` | 실제로 검증된 조치 (runbook action과 연결, [§11 runbooks §10.1](catalog-remediation-runbooks.md#101-검증된-rollback과-자동-롤백-실행-계획-513) 참조) |
+| `rollback` | 검증된 원복 절차 ([§5·§11 runbook `rollback_plan`](catalog-remediation-runbooks.md) 참조) |
+| `recurrence_count` | 누적 재발 횟수 |
+| `last_seen` | 마지막 발생 시각 |
+| `incident_links` | 이 root cause로 확정된 과거 incident id 목록 |
+
+이 레코드는 RCA 결과가 조치·rollback·운영 소유자·재발 방지까지 이어지게 한다.
+
+### 13. Versioning
 
 Root cause id는 report, replay test, approval/audit record에 남으므로 함부로 바꾸지 않는다. 이름 변경이 필요하면 alias 기간을 둔다.
 

@@ -131,6 +131,35 @@ Executor
 
 아래 분기와 의사코드에서 `action.is_executable`은 action status가 `ready`라는 뜻이다.
 
+**[현재]** 위 branch table은 `mode` 단위로만 분기한다. `simple_query`는 `execution_depth` 구분 없이 고정 stage chain `(planner, retrieval, verifier, report)`(`supervisor/transitions.py:6` `SIMPLE_QUERY_STAGES`)를 항상 탄다. `stages_for_mode(...)`(`transitions.py:29-42`)도 `mode`와 `remediation_requested`만 인자로 받아 depth-aware가 아니다. 즉 "DLQ가 뭐야?" 같은 지식 질의와 "상태 요약해줘" 같은 read-only 조회가 같은 4-stage 경로(Verifier 포함)를 실행한다.
+
+#### 4.0.1 실행 깊이(`execution_depth`)별 허용 stage 정본 [계획 §1]
+
+다음 표는 Router의 `execution_depth`([§17 Router Output](./contract-output-schemas.md#2-router-output))별로 호출 가능한 stage를 제한하는 **정본 매핑**이다. 다른 브랜치는 `stages_for_mode(...)`를 depth-aware로 바꿀 때 이 표를 기준으로 구현한다. 근거: [rca-standards-review §6.5, §6.6, §7-item1](../../rca-standards-review.md).
+
+| `execution_depth` | 허용 stage |
+| --- | --- |
+| `direct_answer` | knowledge_retrieval, report |
+| `single_lookup` | planner, retrieval, report |
+| `bounded_lookup` | planner, retrieval, report |
+| `incident_diagnosis` | correlation, planner, retrieval, classifier, rca, verifier, report |
+| `remediation_planning` | incident_diagnosis 허용 stage + remediation, policy_guard |
+| `action_execution` | policy_guard, approval_gate, change_gate, executor, verifier, report |
+
+`mode`→`execution_depth` 대응: `simple_query`는 `direct_answer`/`single_lookup`/`bounded_lookup` **3분기**, `incident_analysis`는 `incident_diagnosis`(diagnose_only)·`remediation_planning`(조치 요청), action 경로는 `action_execution`이다.
+
+**ReAct `max_steps` by depth** ([§6.4.4](../../rca-standards-review.md), Retrieval `run_tool_loop` 예산):
+
+| `execution_depth` | ReAct `max_steps` |
+| --- | --- |
+| `direct_answer` / `single_lookup` | 0 (ReAct 미실행) |
+| `bounded_lookup` | 2 |
+| `incident_diagnosis` / `remediation_planning` | 4~6 |
+
+ReAct 루프는 `allow_react_loop=true`이고 식별자 chaining 또는 실제 운영 데이터가 필요할 때만 켠다. `single_lookup`/`direct_answer`에서는 끈다.
+
+**Verifier 조건부 실행** ([§6.4.2](../../rca-standards-review.md)): Verifier는 모든 `simple_query`에 넣지 않는다. **운영 변경·RCA 결론·사용자 영향 판단 출력에만** 둔다(`incident_diagnosis` 이상, `action_execution`). 단순 조회(`direct_answer`/`single_lookup`/`bounded_lookup`) 답변은 Verifier 대신 schema validation과 evidence citation check로 대체한다.
+
 #### 4.1 의도별 최소 실행 단계
 
 현재 구현은 의도별 transition table을 기본 순서로 실행하고, loopback 등록이 있으면 Supervisor가 다음 stage를 책임 Agent로 되돌린다. 후속 turn에서는 action 후보와 policy 결정 State를 복원해 실행/승인 흐름에 재사용한다.
@@ -149,6 +178,16 @@ State 재사용 규칙:
 - 같은 run/incident 안에서 evidence와 root cause를 재사용하는 것은 목표 규칙이다. 현재 router는 `action_execution`/`approval_decision`에서 `reuse_existing_analysis=true`를 반환하고, runner는 기존 action 후보와 policy 결정을 복원한다. raw evidence hydrate 기반 재사용은 아직 #480 범위다.
 - 단, 새 evidence가 필요하거나 원인이 바뀔 수 있는 신호(새 alert, 시간 경과)가 있으면 재분석해야 한다는 규칙은 현재 router(LLM/keyword)에 구현되어 있지 않다.
 - `simple_query`의 canonical 경로는 Planner·Retrieval·Verifier·Report이며, 위 표의 지식/상태 질의는 Planner·Verifier를 lightweight하게 단축한 형태다. 단축하더라도 답변은 RAG 또는 read tool 근거에 기반한다.
+
+**[계획 §1]** 위 표의 두 `simple_query` 행("DLQ가 뭐야?", "지금 상태 보여줘")은 현재 동일한 4-stage 경로를 공유하지만, `execution_depth` 도입 후에는 [§4.0.1 정본 표](#401-실행-깊이execution_depth별-허용-stage-정본-계획-1)에 따라 분기한다.
+
+| 사용자 의도(예) | `execution_depth` | 실행 단계 |
+| --- | --- | --- |
+| "DLQ가 뭐야?"(지식) | `direct_answer` | knowledge_retrieval·Report (운영 tool·Verifier 없음) |
+| "파이프라인 목록 보여줘" | `single_lookup` | Planner·Retrieval(단일 tool)·Report |
+| "지금 상태 보여줘"(상태 조회) | `bounded_lookup` | Planner·Retrieval(`max_tool_calls` 제한)·Report |
+
+세 분기 모두 Verifier를 빼고 schema validation·citation check로 대체한다([§4.0.1 Verifier 조건부 실행](#401-실행-깊이execution_depth별-허용-stage-정본-계획-1)).
 
 - `action_execution`/`approval_decision` 콜드 스타트 fallback은 현재 제한적이다. 복원할 action 후보나 policy 결정이 없으면 해당 stage는 빈 입력으로 진행할 수 있다.
 
@@ -272,6 +311,30 @@ Verifier status는 세 가지다.
 - Remediation이 runbook에 없는 action을 생성함
 - Report가 검증되지 않은 내용을 포함함
 - Executor 결과에 after evidence가 없음
+
+#### 9.1 Verifier 대상(target) 현황 [현재]
+
+Verifier(`agents/verifier.py`)는 출력 종류를 `target`(예: `root_cause`, `report`)으로 구분해 검증한다([§17 Verifier Output](./contract-output-schemas.md#10-verifier-output)). 현재는 `simple_query`를 포함한 모든 mode가 Verifier stage를 거친다(`SIMPLE_QUERY_STAGES`에 `verifier` 포함). 단순 조회에서 Verifier를 빼고 schema/citation 체크로 대체하는 조건부 실행은 [§4.0.1 Verifier 조건부 실행](#401-실행-깊이execution_depth별-허용-stage-정본-계획-1) [계획 §1]에 둔다.
+
+#### 9.2 Verifier 실패 → rollback stage [계획 §5]
+
+**[현재]** Verifier가 `fail`/`needs_revision`이면 `fail_loops`/`gap_loops` 예산 안에서 책임 Agent로 loopback할 뿐, **실행된 mutation을 원복하는 rollback stage는 없다**. `workflow/` 어디에도 rollback executor가 없고(코드 검색 기준), Change Gate는 ticket의 `rollback_plan` 문자열 존재만 검증한다(`change_gate.py:115`). `MAX_FAIL_LOOPS` 기본값은 1이다([§5.1](#51-루프-방지와-종료-보장)).
+
+**[계획 §5]** Executor가 실제 운영 변경을 수행한 뒤 Verifier가 성공 조건 미달을 판정하면, loopback 대신(또는 loopback 예산 소진 시) **rollback stage**를 실행해 `pre_change_snapshot` 지점으로 원복한다. 근거: [rca-standards-review §5.2 "조치 실패 시 자동 롤백", §7-item5](../../rca-standards-review.md).
+
+```text
+Executor (pre_change_snapshot 저장)
+  -> Verifier
+       -> pass: Report
+       -> fail (운영 변경 실행됨): Rollback stage
+            -> rollback_action_id 실행
+            -> rollback_status / rollback_audit_event_id 기록
+            -> Verifier(rollback 검증) -> Report
+```
+
+- 실행 대상은 후보 단계 `rollback_action_id`([§17 Remediation Output](./contract-output-schemas.md#7-remediation-output))이며, 결과는 `pre_change_snapshot`, `rollback_action_id`, `rollback_status`, `rollback_audit_event_id`([§17 Executor Output](./contract-output-schemas.md#9-executor-output))로 남긴다.
+- **risk-tier 정책**: `low`/`read-only`와 일부 `medium` 조치는 rollback을 자동 실행한다. `high` 위험 조치는 rollback 실행도 승인 대상(`pending_approval`)으로 둔다.
+- rollback 실행 자체는 append-only 감사 이벤트(`rollback_audit_event_id`)를 남기고, mutation 비재시도 규칙([§5.1](#51-루프-방지와-종료-보장))과 동일하게 rollback도 1회만 시도한다.
 
 ### 10. Stop 조건
 
