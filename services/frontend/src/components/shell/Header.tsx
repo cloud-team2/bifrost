@@ -6,7 +6,7 @@ export function Header({ viewLabel }: { viewLabel: string }) {
   const openIncidents = app.incidents.filter((i) => i.status.toUpperCase() !== 'RESOLVED').length
 
   return (
-    <header className="flex h-11 shrink-0 items-center gap-3 border-b border-gray-200 bg-white px-4">
+    <header className="bifrost-header-glow flex h-11 shrink-0 items-center gap-3 overflow-hidden border-b border-gray-200 bg-white px-4">
       <span className="font-mono text-[12px] text-gray-400">
         {app.currentProject?.slug ?? 'bifrost'}
         <span className="mx-1 text-gray-300">/</span>

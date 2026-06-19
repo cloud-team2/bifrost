@@ -3,6 +3,16 @@
 @theme {
   --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  /* 브랜드/헤더용 디스플레이 서체 — 랜딩 워드마크와 콘솔을 통일 (#879) */
+  --font-display: 'Space Grotesk', 'Inter', ui-sans-serif, system-ui, sans-serif;
+
+  /* 딥스페이스 — 랜딩 히어로와 콘솔 브랜드 레일을 통일하는 다크 톤 (#879) */
+  --color-space: #06070e;
+  --color-rail-a: #0b0d17;
+  --color-rail-b: #0e1019;
+  --color-rail-line: #1b1f2e;
+  --color-rail-ink: #e9ebf4;
+  --color-rail-mut: #878da3;
 
   /* "Codex 모노크롬" — brand 스케일을 그레이스케일+잉크로 재정의(#719).
      클래스명(brand-600 등)은 그대로 두고 값만 교체 → 마크업 무변경 반영. */
@@ -127,4 +137,67 @@
 }
 .bifrost-dot {
   animation: bifrost-dot 1.2s ease-in-out infinite;
+}
+
+/* ───────── Bifröst 디자인 언어 (#879) — 랜딩↔콘솔 통일 ─────────
+   딥스페이스 브랜드 레일 + 스펙트럼 시그니처. 레이아웃 불변, 표면/색만. */
+
+/* 사이드바 = 딥스페이스 그라데이션 + 오로라 글로우 + 우측 1px 스펙트럼 심.
+   소비처(aside)가 이미 position:absolute 라 글로우/심 의사요소의 컨테이닝 블록이 됨. */
+.bifrost-rail {
+  background: linear-gradient(180deg, var(--color-rail-a), var(--color-rail-b));
+}
+.bifrost-rail::before {
+  content: '';
+  position: absolute;
+  top: -50px;
+  left: -40px;
+  width: 220px;
+  height: 200px;
+  pointer-events: none;
+  background: radial-gradient(closest-side, rgba(124, 107, 255, 0.28), rgba(124, 107, 255, 0) 70%);
+  filter: blur(6px);
+}
+.bifrost-rail::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -1px;
+  width: 1px;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    rgba(46, 197, 255, 0.6),
+    rgba(179, 108, 255, 0.55),
+    rgba(255, 95, 162, 0.3),
+    transparent 70%
+  );
+}
+
+/* 스펙트럼 그라데이션 — 마크/활성 인디케이터/confidence 막대에만 (데이터엔 X) */
+.bifrost-spectrum {
+  background-image: linear-gradient(90deg, #2ec5ff, #6c7bff, #b36cff, #ff5fa2, #ffd166);
+}
+
+/* 헤더 우상단 미세 오로라 — 랜딩 빔의 잔향 */
+.bifrost-header-glow {
+  position: relative;
+}
+.bifrost-header-glow::after {
+  content: '';
+  position: absolute;
+  top: -40px;
+  right: 40px;
+  width: 280px;
+  height: 90px;
+  pointer-events: none;
+  background: radial-gradient(closest-side, rgba(179, 108, 255, 0.1), transparent 72%);
+}
+
+/* 워드마크 글로우 — 딥스페이스 히어로 위 */
+.bifrost-wm-glow {
+  text-shadow:
+    0 0 30px rgba(150, 170, 255, 0.35),
+    0 0 80px rgba(120, 90, 200, 0.25);
 }

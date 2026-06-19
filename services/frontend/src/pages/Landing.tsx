@@ -1,13 +1,14 @@
-import type { ReactNode } from 'react'
+import { useRef, type ReactNode } from 'react'
 import { BrandMark } from '../components/BrandMark'
 import { HeroBackground } from '../components/HeroBackground'
 
 /**
- * 제품 소개 랜딩 페이지 (신규, #719).
+ * 제품 소개 랜딩 페이지 (신규 #719, 디자인 통일 #879).
  *
- * "Codex 모노크롬" — 흰/검 교차, 유채색은 오류(#C0392B) 하나뿐. 라이트 전용.
- * 콘솔 토큰(brand-*)이 아직 인디고일 수 있으므로 색은 전부 명시 hex 로 둔다
- * (랜딩은 콘솔 리컬러 여부와 무관하게 모노크롬을 유지).
+ * 히어로는 "딥스페이스 + Bifröst 빔"(three.js, HeroBackground) — 워드마크를
+ * Space Grotesk 로 키워 프로젝트명을 전면에 세운다. 하단 섹션은 흰/검 교차의
+ * 모노크롬 기조를 유지하고, 유채색은 Bifröst 스펙트럼(브랜드 시그니처)과
+ * 오류(#C0392B)에만 쓴다. 색은 콘솔 리컬러와 무관하게 명시 hex 로 고정.
  *
  * 진입 흐름: 비로그인 + 미진입 시 App 이 이 화면을 렌더. 모든 CTA(로그인·데모
  * 요청·도입 문의)는 `onEnter` 로 로그인 화면(데모 계정 포함)으로 보낸다. 데모/
@@ -17,69 +18,82 @@ export function Landing({ onEnter }: { onEnter: () => void }) {
   const scrollTo = (id: string) => () =>
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
 
+  // 히어로 빔을 워드마크("o") 수직 중앙에 맞추기 위한 참조 (#879)
+  const wordmarkRef = useRef<HTMLHeadingElement>(null)
+
   return (
     <div className="min-h-screen bg-[#FAFAFA] font-sans text-[#0D0D0D]">
-      {/* ───────────────────────── NAV (sticky) */}
-      <header className="sticky top-0 z-30 border-b border-[#ECECEC] bg-white/90 backdrop-blur">
-        <nav className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3.5">
+      {/* ───────────────────────── HERO (딥스페이스 + Bifröst 빔, #879) — nav 포함 */}
+      <section className="relative overflow-hidden bg-[#06070e]">
+        {/* 성운(좌측) */}
+        <div
+          className="pointer-events-none absolute inset-0 z-0"
+          style={{
+            background:
+              'radial-gradient(closest-side at 8% 62%, rgba(70,150,180,.40), rgba(70,150,180,0) 70%), radial-gradient(closest-side at 0% 48%, rgba(180,120,255,.20), rgba(180,120,255,0) 65%), linear-gradient(180deg,#070812,#05060c 60%,#040509)',
+          }}
+        />
+        <HeroBackground className="absolute inset-0 z-[1] block h-full w-full" beamTargetRef={wordmarkRef} />
+        {/* 비네트 — 가장자리를 눌러 텍스트 가독성 확보 */}
+        <div
+          className="pointer-events-none absolute inset-0 z-[2]"
+          style={{
+            background:
+              'radial-gradient(ellipse 120% 90% at 50% 50%, rgba(0,0,0,0) 52%, rgba(0,0,0,.5))',
+          }}
+        />
+        {/* NAV — 투명 오버레이. 히어로의 딥스페이스 배경(별·빔)이 그대로 비친다 (#879) */}
+        <nav className="relative z-[5] mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <div className="flex items-center gap-2">
-            <BrandMark size={22} />
-            <span className="text-[16px] font-bold tracking-tight">bifrost</span>
+            <BrandMark size={24} />
+            <span className="font-display text-[16px] font-bold lowercase tracking-tight text-white">bifrost</span>
           </div>
-          <div className="flex items-center gap-1 text-[13px] text-[#6B6B73]">
-            <button onClick={scrollTo('product')} className="hidden rounded-md px-3 py-1.5 transition-colors hover:text-[#0D0D0D] sm:block">
+          <div className="flex items-center gap-1 text-[13px] text-[#c7c9d6]">
+            <button onClick={scrollTo('product')} className="hidden rounded-md px-3 py-1.5 transition-colors hover:text-white sm:block">
               제품
             </button>
-            <button onClick={scrollTo('deploy')} className="hidden rounded-md px-3 py-1.5 transition-colors hover:text-[#0D0D0D] sm:block">
+            <button onClick={scrollTo('deploy')} className="hidden rounded-md px-3 py-1.5 transition-colors hover:text-white sm:block">
               배포
             </button>
-            <button onClick={scrollTo('security')} className="hidden rounded-md px-3 py-1.5 transition-colors hover:text-[#0D0D0D] sm:block">
+            <button onClick={scrollTo('security')} className="hidden rounded-md px-3 py-1.5 transition-colors hover:text-white sm:block">
               보안
             </button>
-            <button onClick={onEnter} className="rounded-lg bg-[#0D0D0D] px-4 py-2 font-semibold text-white transition-colors hover:bg-black">
+            <button onClick={onEnter} className="rounded-lg bg-white px-4 py-2 font-semibold text-[#0b0b0b] transition-colors hover:bg-[#ececec]">
               로그인
             </button>
           </div>
         </nav>
-      </header>
-
-      {/* ───────────────────────── HERO */}
-      <section className="relative overflow-hidden bg-white">
-        <HeroBackground className="absolute inset-0 block h-full w-full" />
-        {/* 헤드라인 가독성용 흰 베일 */}
-        <div
-          className="pointer-events-none absolute inset-0"
-          style={{
-            background:
-              'radial-gradient(ellipse 78% 60% at 50% 30%, rgba(255,255,255,.92), rgba(255,255,255,.32) 54%, rgba(255,255,255,0) 80%)',
-          }}
-        />
-        <div className="relative mx-auto max-w-4xl px-6 pt-20 pb-8 text-center sm:pt-24">
-          <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[#A0A0A0]">
+        <div className="relative z-[4] mx-auto max-w-4xl px-6 pt-8 pb-8 text-center sm:pt-10">
+          <div className="font-display text-[11px] uppercase tracking-[0.2em] text-[#9aa0b8]">
             AI 기반 분산 데이터 플랫폼
           </div>
-          <h1 className="mx-auto mt-4 max-w-3xl text-[34px] font-semibold leading-[1.12] tracking-tight sm:text-[50px]">
-            파이프라인은 클릭 몇 번으로,
-            <br />
-            장애는 AI 에이전트가 진단합니다
+          <h1
+            ref={wordmarkRef}
+            className="bifrost-wm-glow font-display mt-3 font-bold lowercase tracking-[-0.045em] text-white"
+            style={{ fontSize: 'clamp(64px,12vw,150px)', lineHeight: 0.9 }}
+          >
+            bifrost
           </h1>
-          <p className="mx-auto mt-5 max-w-2xl text-[15px] leading-relaxed text-[#6B6B73]">
+          <p className="mx-auto mt-5 max-w-2xl text-[17px] font-semibold leading-snug tracking-tight text-[#e6e8f2] sm:text-[20px]">
+            파이프라인은 클릭 몇 번으로, 장애는 AI 에이전트가 진단합니다
+          </p>
+          <p className="mx-auto mt-4 max-w-2xl text-[14px] leading-relaxed text-[#a7abbd]">
             복잡한 Kafka 설정 없이 EDA·CDC 파이프라인을 구축하고,
             <br />
             이상이 감지되면 AI가 근본 원인과 조치를 제안합니다 — 승인하면 실행(HITL).
           </p>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
-            <button onClick={onEnter} className="rounded-lg bg-[#0D0D0D] px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-black">
+            <button onClick={onEnter} className="rounded-lg bg-white px-6 py-3 text-sm font-semibold text-[#0b0b0b] transition-colors hover:bg-[#ececec]">
               로그인
             </button>
-            <button onClick={onEnter} className="rounded-lg border border-[#D9D9D9] bg-transparent px-5 py-3 text-sm font-semibold text-[#0D0D0D] transition-colors hover:bg-[#F2F2F2]">
+            <button onClick={onEnter} className="rounded-lg border border-[#3a3d4d] bg-transparent px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-white/5">
               도입 문의 →
             </button>
           </div>
         </div>
 
         {/* 히어로 스크린샷 — 리컬러된 콘솔(파이프라인). 오류만 색. */}
-        <div className="relative mx-auto max-w-4xl px-6 pb-16">
+        <div className="relative z-[4] mx-auto max-w-4xl px-6 pb-16">
           <ConsoleShot />
         </div>
       </section>
@@ -241,7 +255,7 @@ export function Landing({ onEnter }: { onEnter: () => void }) {
       <footer className="border-t border-[#1F1F1F] bg-[#0D0D0D]">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5 text-[12px] text-white">
           <div className="flex items-center gap-2">
-            <BrandMark size={16} tone="light" />
+            <BrandMark size={16} />
             <span>© 2026 bifrost</span>
           </div>
           <span>문서 · 보안 · 문의</span>
@@ -312,7 +326,7 @@ function DeployCard({ title, sub }: { title: string; sub: string }) {
 /* 히어로 스크린샷 — 리컬러된 실제 파이프라인 콘솔 화면 (#719) */
 function ConsoleShot() {
   return (
-    <div className="overflow-hidden rounded-xl border border-[#ececec] bg-white shadow-[0_18px_44px_rgba(0,0,0,.09)]">
+    <div className="overflow-hidden rounded-xl border border-white/10 bg-white shadow-[0_30px_80px_rgba(4,5,12,.6)] ring-1 ring-[rgba(120,140,255,.12)]">
       <img
         src="/landing-pipelines.png"
         alt="bifrost 파이프라인 콘솔 화면"
