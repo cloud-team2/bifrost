@@ -30,7 +30,7 @@ public interface KafkaPipelineProvisioner {
 }
 ```
 
-- **구현체**: `StrimziKafkaPipelineProvisioner` 단일 구현(아래 §3~§6, Fabric8/Strimzi CR 생성·watch). 파이프라인 생성은 항상 Strimzi(K8s)를 거치므로 로컬에서도 kind+Strimzi가 필요하다([local-dev-fullstack.md](../../guides/local-dev-fullstack.md) 트랙 B).
+- **구현체**: `StrimziKafkaPipelineProvisioner` 단일 구현(아래 §3~§6, Fabric8/Strimzi CR 생성·watch). 파이프라인 생성은 항상 Strimzi(K8s)를 거치므로 로컬에서도 kind+Strimzi가 필요하다.
 - **부분 실패**는 result로 구분한다: 현재 stage enum은 `SECRET`, `SOURCE_CONNECTOR`, `SINK_CONNECTOR`, `COMPLETED`다. 별도 `TOPIC` stage는 없다.
 
 > 토픽 네이밍 규칙: **`{root}.{projectKey}.{dbSlug}.{schema}.{table}`** (table 중심, `root=cdc.table|eda.table`). `dbSlug = {datasource.dbName}-{datasourceId 앞 8 hex}` — `name` 표시값이 아니라 물리 DB 이름(`db_name`)과 datasource 고유 id를 섞어 충돌을 막는다. 현재 mapper는 Debezium `topic.prefix`를 최종 토픽명으로 두고 route SMT로 Debezium의 `.{schema}.{table}` 중복 suffix를 제거한다(#365). KafkaUser ACL section은 현재 `TenantProvisioner`가 CR에 포함하지 않는다.
@@ -60,8 +60,7 @@ public interface KafkaPipelineProvisioner {
 #### 3.1 KafkaConnect — 플러그인 이미지
 
 KafkaConnect CR의 `spec.image`로 커스텀 Connect 이미지를 참조한다. 이미지는
-`infra/docker/kafka-connect/Dockerfile`(멀티스테이지)로 빌드해 Harbor에 push하며, 빌드/롤아웃 절차는
-[Kafka Connect 커스텀 이미지 런북](../../guides/kafka-connect-custom-image.md) 참조.
+`infra/docker/kafka-connect/Dockerfile`(멀티스테이지)로 빌드해 Harbor에 push한다(CI: `Jenkinsfile`의 `Build Kafka Connect image` 스테이지).
 
 > 과거에는 `spec.build`(in-cluster Kaniko)로 빌드했으나, plugin artifact를 URL로만 받을 수 있어
 > private repo의 timestamptz 커스텀 컨버터 JAR을 넣을 수 없었다(#425). 이미지를 직접 빌드하는

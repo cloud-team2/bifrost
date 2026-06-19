@@ -304,7 +304,7 @@ Mutation timeout이 발생해도 Spring은 자동 재시도하지 않는다. Kaf
 
 - **Prometheus·Loki·Tempo**: `monitoring` 네임스페이스의 **별도 스택**([infra §6.7](../infra.md#67-observability)). Spring은 HTTP client로 **질의만** 한다. 현재 build에는 `spring-boot-starter-actuator`만 있고 `micrometer-registry-prometheus` 의존성은 없어 `/actuator/prometheus` 노출은 구현되어 있지 않다. `query_traces`는 `TempoClient`(HTTP query API)로 분산 trace summary를 가져오고(#373), connector task 예외 stack trace는 `get_connector_task_trace`(Connect REST status trace)에서 가져온다.
 - **Grafana**: 운영자용 대시보드이며 제품 화면이 아니다. 사용자 화면은 프론트가 위 플랫폼 API로 구성한다.
-- **Kafka UI**: 제품에 포함하지 않는다(로컬 `docker-compose` 개발 편의 도구 한정 — [guide](../../guides/getting-started-infra.md)). "Connect REST를 사용자에게 직접 노출하지 않는다"는 원칙과 일치한다.
+- **Kafka UI**: 제품에 포함하지 않는다(로컬 `docker-compose` 개발 편의 도구 한정). "Connect REST를 사용자에게 직접 노출하지 않는다"는 원칙과 일치한다.
 
 ### 12. 보안 원칙
 

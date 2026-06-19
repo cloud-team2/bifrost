@@ -12,7 +12,7 @@
 | 서비스 | 책임 | 외부 노출 |
 | --- | --- | --- |
 | operations-backend | 인증, 도메인, REST API, WebSocket, K8s/Kafka 자동화(provisioning·watcher) | ✅ (`/api/v1`) |
-| ai-service | LLM 통합 / AI 장애대응 (FastAPI, W3 — [roadmap](../team/roadmap.md)) | ❌ |
+| ai-service | LLM 통합 / AI 장애대응 (FastAPI, W3) | ❌ |
 | frontend | React UI | ✅ |
 
 > 기존 core/orchestrator 분리는 폐기. K8s/Kafka 자동화는 operations-backend의 `provisioning`·`adapters` 패키지로 in-process 흡수된다.
