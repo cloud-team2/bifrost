@@ -42,7 +42,7 @@ export function Sidebar({ onCreateProject }: { onCreateProject: () => void }) {
       <aside
         className={cn(
           'bifrost-rail absolute left-0 top-0 z-40 flex h-full flex-col text-[#878da3] transition-[width] duration-200',
-          expanded ? 'w-52' : 'w-14',
+          expanded ? 'w-52' : 'w-14 bifrost-rail-collapsed',
         )}
       >
         {/* 토글(펼침·접힘 동일 위치) + 브랜드 */}
