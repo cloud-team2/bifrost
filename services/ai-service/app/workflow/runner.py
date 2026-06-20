@@ -62,6 +62,7 @@ from app.workflow.stages.change_gate import run_change_gate
 from app.workflow.stages.correlation import run_correlation
 from app.workflow.stages.executor import run_executor
 from app.workflow.stages.policy_guard import run_policy_guard
+from app.workflow.stages.rollback import run_rollback
 
 logger = logging.getLogger(__name__)
 _PUBLIC_FAILURE_MESSAGE = "요청 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
@@ -167,6 +168,53 @@ def _action_execution_answer(executor_out, verifier_out) -> str:
     if first_verification is not None:
         lines.append(f"사후 검증: {first_verification.status.value} — {first_verification.reason}")
     return "\n".join(lines)
+
+
+async def _run_auto_rollback(
+    executor_out,
+    candidates,
+    *,
+    run_id: str,
+    context,
+    registry,
+    bus: EventBus,
+    event_repo: AnyEventRepo,
+    state_repo: Any,
+) -> None:
+    """#886 실패한 mutation 의 자동 롤백을 실행하고 결과를 이벤트·감사 state 로 남긴다.
+
+    실패 조치가 없으면 아무 것도 하지 않는다(no-op). 롤백 자체가 실패해도 run 흐름은
+    막지 않으며, 결과는 항상 append-only state patch 로 감사 추적된다.
+    """
+    if executor_out is None or not executor_out.execution_results:
+        return
+    rollback_out = await run_rollback(
+        executor_out.execution_results,
+        candidates,
+        run_id=run_id,
+        context=context,
+        registry=registry,
+    )
+    if not rollback_out.rollback_results:
+        return
+
+    summary = ", ".join(
+        f"{r.original_action_id}:{r.rollback_status.value}" for r in rollback_out.rollback_results
+    )
+    await _publish(bus, event_repo, run_id, _evt(
+        run_id, StreamingEventType.EXECUTION_COMPLETED, "rollback",
+        f"조치 실패 자동 롤백: {summary}",
+        {"stage": "rollback", "rollback_results": _jsonable(rollback_out.rollback_results)},
+    ))
+    await _append_state_patch(
+        state_repo,
+        run_id,
+        namespace="actions",
+        author="Rollback",
+        op="append",
+        path="/actions/rollback_results",
+        patch={"rollback_results": _jsonable(rollback_out.rollback_results)},
+    )
 
 
 async def _append_state_patch(
@@ -1271,6 +1319,8 @@ async def _run_workflow_impl(
                         registry=registry,
                         approval_by_action=approval_by_action,
                         change_ticket_by_action=change_ticket_by_action,
+                        # #886 조치 전 상태 스냅샷을 남겨 실패 시 자동 롤백 기준으로 쓴다.
+                        capture_pre_change_snapshot=True,
                     )
                     await _publish(bus, event_repo, run_id, _evt(
                         run_id, StreamingEventType.AGENT_COMPLETED, "executor",
@@ -1292,6 +1342,18 @@ async def _run_workflow_impl(
                         op="append",
                         path="/actions/execution_results",
                         patch={"execution_results": _jsonable(executor_out.execution_results)},
+                    )
+                    # #886 조치가 성공 조건을 충족하지 못하면(FAILED/BLOCKED) 사람 개입 없이
+                    # inverse 조치로 자동 롤백한다. high-risk 원조치의 롤백은 승인 대상으로 남긴다.
+                    await _run_auto_rollback(
+                        executor_out,
+                        ready_candidates,
+                        run_id=run_id,
+                        context=exec_context,
+                        registry=registry,
+                        bus=bus,
+                        event_repo=event_repo,
+                        state_repo=state_repo,
                     )
                     # #553: 실행할 조치가 없으면(ready_candidates 비어 있음) Verifier로
                     # 진행하지 않고 정상 종결한다. 결정적 Executor는 같은 빈 후보로

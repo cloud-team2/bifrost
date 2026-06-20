@@ -106,6 +106,19 @@ class ActionStatus(str, Enum):
     BLOCKED = "blocked"
 
 
+class RollbackStatus(str, Enum):
+    """조치 실패 시 자동 롤백 결과 상태(#886, 설계문서 §7-5).
+
+    NOT_APPLICABLE: 되돌릴 inverse 조치가 없음(예: consumer group 재시작).
+    PENDING_APPROVAL: high-risk 원조치라 롤백 실행도 사람 승인 대상.
+    """
+
+    COMPLETED = "completed"
+    FAILED = "failed"
+    PENDING_APPROVAL = "pending_approval"
+    NOT_APPLICABLE = "not_applicable"
+
+
 class VerificationStatus(str, Enum):
     PASS = "pass"
     FAIL = "fail"
