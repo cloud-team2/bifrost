@@ -21,6 +21,8 @@ class IncidentResponseTest {
             "tenantId",
             "groupingKey",
             "severity",
+            "severityReason",
+            "alertRoute",
             "status",
             "title",
             "rca",
@@ -30,7 +32,7 @@ class IncidentResponseTest {
             "resolvedAt");
 
     @Test
-    void fromEntitySerializesAllElevenIncidentFieldsForSsePayloads() {
+    void fromEntitySerializesAllIncidentFieldsForSsePayloads() {
         UUID id = UUID.randomUUID();
         UUID tenantId = UUID.randomUUID();
         UUID sourceId = UUID.randomUUID();
@@ -42,6 +44,8 @@ class IncidentResponseTest {
         entity.setTenantId(tenantId);
         entity.setGroupingKey("connector:orders");
         entity.setSeverity("ERROR");
+        entity.setSeverityReason("impact=user_sli:data_freshness; urgency=page");
+        entity.setAlertRoute("PAGE");
         entity.setStatus("RESOLVED");
         entity.setTitle("Orders connector failed");
         entity.setRca("restart connector");
@@ -57,6 +61,8 @@ class IncidentResponseTest {
         assertThat(json.get("tenantId").asText()).isEqualTo(tenantId.toString());
         assertThat(json.get("groupingKey").asText()).isEqualTo("connector:orders");
         assertThat(json.get("severity").asText()).isEqualTo("ERROR");
+        assertThat(json.get("severityReason").asText()).isEqualTo("impact=user_sli:data_freshness; urgency=page");
+        assertThat(json.get("alertRoute").asText()).isEqualTo("PAGE");
         assertThat(json.get("status").asText()).isEqualTo("RESOLVED");
         assertThat(json.get("title").asText()).isEqualTo("Orders connector failed");
         assertThat(json.get("rca").asText()).isEqualTo("restart connector");
@@ -89,6 +95,8 @@ class IncidentResponseTest {
         assertThat(json.get("status").asText()).isEqualTo("OPEN");
         assertThat(json.get("openedAt").asText()).isEqualTo("2026-06-09T00:00:00Z");
         assertThat(json.get("rca").isNull()).isTrue();
+        assertThat(json.get("severityReason").isNull()).isTrue();
+        assertThat(json.get("alertRoute").isNull()).isTrue();
         assertThat(json.get("sourceType").isNull()).isTrue();
         assertThat(json.get("sourceId").isNull()).isTrue();
         assertThat(json.get("resolvedAt").isNull()).isTrue();

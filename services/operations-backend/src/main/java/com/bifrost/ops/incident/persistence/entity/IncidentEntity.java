@@ -22,6 +22,12 @@ public class IncidentEntity {
     @Column(nullable = false, length = 10)
     private String severity; // WARNING / CRITICAL (스펙 B.7, #558)
 
+    @Column(name = "severity_reason", columnDefinition = "text")
+    private String severityReason;
+
+    @Column(name = "alert_route", length = 20)
+    private String alertRoute;
+
     @Column(nullable = false, length = 20)
     private String status = "OPEN"; // OPEN / INVESTIGATING / RESOLVED (스펙 B.7, #558)
 
@@ -62,6 +68,10 @@ public class IncidentEntity {
     public void setGroupingKey(String groupingKey) { this.groupingKey = groupingKey; }
     public String getSeverity() { return severity; }
     public void setSeverity(String severity) { this.severity = severity; }
+    public String getSeverityReason() { return severityReason; }
+    public void setSeverityReason(String severityReason) { this.severityReason = severityReason; }
+    public String getAlertRoute() { return alertRoute; }
+    public void setAlertRoute(String alertRoute) { this.alertRoute = alertRoute; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public String getTitle() { return title; }
