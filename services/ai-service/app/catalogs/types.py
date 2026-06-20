@@ -35,6 +35,12 @@ EvidenceKind: TypeAlias = Literal[
     "exclusion",
 ]
 
+CausalityType: TypeAlias = Literal[
+    "causal",
+    "correlational",
+    "temporal",
+]
+
 ActionTypeValue: TypeAlias = Literal[
     "runtime_tool",
     "workflow_action",
@@ -93,6 +99,9 @@ class EvidenceRule:
     evidence: str
     example: str | None = None
     semantic_allowed: bool = True
+    causality_type: CausalityType = "causal"
+    temporality_required: bool = False
+    causal_chain_step: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
