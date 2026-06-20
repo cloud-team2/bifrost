@@ -16,6 +16,7 @@ from app.api import (
     routes_approvals,
     routes_catalogs,
     routes_change,
+    routes_drift,
     routes_events,
     routes_evidence,
     routes_feedback,
@@ -63,6 +64,7 @@ def create_app() -> FastAPI:
     app.include_router(routes_change.router, prefix="/api/v1/agent", tags=["change"])
     app.include_router(routes_reports.router, prefix="/api/v1", tags=["reports"])
     app.include_router(routes_feedback.router, prefix="/api/v1/agent", tags=["feedback"])
+    app.include_router(routes_drift.router, prefix="/api/v1/agent", tags=["drift"])
     app.include_router(routes_admin.router, prefix="/api/v1/admin", tags=["admin"])
     app.include_router(routes_evidence.router, prefix="/api/v1/agent", tags=["evidence"])
     app.include_router(routes_catalogs.router, prefix="/api/v1", tags=["catalogs"])
