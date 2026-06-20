@@ -198,6 +198,53 @@ class PostgresRunRepository:
         return record
 
 
+    async def save_telemetry(self, run_id: str, telemetry: dict) -> None:
+        """#883 run telemetry 를 upsert 저장한다."""
+        async with self._get_pool().acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO run_telemetry
+                    (run_id, total_latency_ms, total_stages, called_agents,
+                     called_tools, total_tool_calls, total_llm_calls,
+                     total_estimated_tokens, stages, handoff_reasons)
+                VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8, $9::jsonb, $10::jsonb)
+                ON CONFLICT (run_id) DO UPDATE SET
+                    total_latency_ms = EXCLUDED.total_latency_ms,
+                    total_stages = EXCLUDED.total_stages,
+                    called_agents = EXCLUDED.called_agents,
+                    called_tools = EXCLUDED.called_tools,
+                    total_tool_calls = EXCLUDED.total_tool_calls,
+                    total_llm_calls = EXCLUDED.total_llm_calls,
+                    total_estimated_tokens = EXCLUDED.total_estimated_tokens,
+                    stages = EXCLUDED.stages,
+                    handoff_reasons = EXCLUDED.handoff_reasons
+                """,
+                run_id,
+                telemetry.get("total_latency_ms", 0),
+                telemetry.get("total_stages", 0),
+                json.dumps(telemetry.get("called_agents", [])),
+                json.dumps(telemetry.get("called_tools", {})),
+                telemetry.get("total_tool_calls", 0),
+                telemetry.get("total_llm_calls", 0),
+                telemetry.get("total_estimated_tokens", 0),
+                json.dumps(telemetry.get("stages", [])),
+                json.dumps(telemetry.get("handoff_reasons", [])),
+            )
+
+    async def get_telemetry(self, run_id: str) -> dict | None:
+        async with self._get_pool().acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM run_telemetry WHERE run_id = $1", run_id
+            )
+        if row is None:
+            return None
+        record = dict(row)
+        for key in ("called_agents", "called_tools", "stages", "handoff_reasons"):
+            if isinstance(record[key], str):
+                record[key] = json.loads(record[key])
+        return record
+
+
 class InMemoryRunRecord(BaseModel):
     run_id: str
     project_id: str | None = None
@@ -214,6 +261,7 @@ class InMemoryRunRepository:
     def __init__(self) -> None:
         self._store: dict[str, InMemoryRunRecord] = {}
         self._reproducibility: dict[str, dict] = {}
+        self._telemetry: dict[str, dict] = {}
 
     async def create(
         self,
@@ -281,6 +329,12 @@ class InMemoryRunRepository:
 
     async def get_reproducibility(self, run_id: str) -> dict | None:
         return self._reproducibility.get(run_id)
+
+    async def save_telemetry(self, run_id: str, telemetry: dict) -> None:
+        self._telemetry[run_id] = dict(telemetry)
+
+    async def get_telemetry(self, run_id: str) -> dict | None:
+        return self._telemetry.get(run_id)
 
 
 AnyRunRepo = Union[InMemoryRunRepository, PostgresRunRepository]

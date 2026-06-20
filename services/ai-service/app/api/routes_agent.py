@@ -154,6 +154,27 @@ async def get_run_reproducibility(run_id: str) -> ApiResponse:
     })
 
 
+@router.get("/runs/{run_id}/telemetry")
+async def get_run_telemetry(run_id: str) -> ApiResponse:
+    """#883 run 의 실행 telemetry(stage별 latency/tool 호출 수/비용)를 반환한다."""
+    request_id = _request_id()
+    run_repo = get_run_repo()
+    rec = await run_repo.get(run_id)
+    if rec is None:
+        return ApiResponse.failure(request_id, ErrorCode.RUN_NOT_FOUND, f"run not found: {run_id}")
+    telemetry = None
+    if hasattr(run_repo, "get_telemetry"):
+        telemetry = await run_repo.get_telemetry(run_id)
+    if telemetry is None:
+        patches = await get_state_repo().get_patches(run_id)
+        telem = [p.patch for p in patches if p.path == "/run/telemetry"]
+        telemetry = telem[-1] if telem else None
+    return ApiResponse.success(request_id, {
+        "run_id": run_id,
+        "telemetry": telemetry,
+    })
+
+
 @router.get("/threads/{thread_id}/messages")
 async def list_thread_messages(thread_id: str, limit: int = 50) -> ApiResponse:
     """#712 대화 메모리: 한 thread(인시던트 채팅은 incident_id)의 대화 turn을 시간순 반환.
