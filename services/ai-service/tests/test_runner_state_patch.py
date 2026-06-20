@@ -278,9 +278,10 @@ async def test_incident_analysis_emits_full_chain_patches() -> None:
     patches = await repo.get_patches("run_incident_patch")
     emitted = {(p.namespace, p.author, p.path) for p in patches}
 
-    # #885 run 시작 시 재현성 manifest patch 가 추가된다(+1).
-    assert len(patches) in {15, 16}
+    # #885 재현성 manifest patch 와 #883 telemetry patch 가 추가된다.
+    assert len(patches) in {16, 17}
     assert ("run", "Supervisor", "/run/reproducibility") in emitted
+    assert ("run", "Telemetry", "/run/telemetry") in emitted
     assert ("correlation", "CorrelationEngine", "/correlation") in emitted
     assert ("run.plan", "Planner", "/run/plan/executed_plan_hashes") in emitted
     assert ("evidence", "Retrieval", "/evidence/items") in emitted

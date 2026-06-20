@@ -59,6 +59,7 @@ from app.supervisor.transitions import default_depth_for_mode, depth_budget, sta
 from app.tools.registry import ToolClientRegistry
 from app.workflow.action_tools import ACTION_EXECUTION_TOOLS, is_executable_runtime_action_payload
 from app.workflow.guards import RunBudgetExceeded
+from app.workflow.telemetry import RunTelemetryCollector
 from app.workflow.stages.approval_gate import run_approval_gate
 from app.workflow.stages.change_gate import run_change_gate
 from app.workflow.stages.correlation import run_correlation
@@ -721,6 +722,7 @@ async def _run_workflow_impl(
     event_repo = get_event_repo()
     state_repo = get_state_repo()
     supervisor = get_supervisor()
+    telemetry = RunTelemetryCollector(run_id)
     answer: str | None = None  # report 단계 전 budget 초과 대비
     keep_stream_open = False
     run_record = await run_repo.get(run_id)
@@ -899,6 +901,7 @@ async def _run_workflow_impl(
                 break
 
             await run_repo.update_status(run_id, "running", stage)
+            telemetry.start_stage(stage, stage)
 
             match stage:
                 case "correlation":
@@ -1621,6 +1624,18 @@ async def _run_workflow_impl(
         await _publish_failure(bus, event_repo, run_id)
 
     finally:
+        telemetry.finish()
+        try:
+            telem_summary = telemetry.summary()
+            await _append_state_patch(
+                state_repo, run_id,
+                namespace="run", author="Telemetry", op="version",
+                path="/run/telemetry", patch=telem_summary,
+            )
+            if hasattr(run_repo, "save_telemetry"):
+                await run_repo.save_telemetry(run_id, telem_summary)
+        except Exception:
+            logger.warning("telemetry persist failed: run_id=%s", run_id, exc_info=True)
         if not keep_stream_open:
             await bus.close_run(run_id)
 
