@@ -28,7 +28,7 @@ public class UserImpactSliService {
     private static final Logger log = LoggerFactory.getLogger(UserImpactSliService.class);
     private static final int DEFAULT_WINDOW_MINUTES = 30;
     private static final int MIN_WINDOW_MINUTES = 5;
-    private static final int MAX_WINDOW_MINUTES = 360;
+    private static final int MAX_WINDOW_MINUTES = 4_320;
     private static final double FRESHNESS_DELAY_THRESHOLD_MS = 300_000.0;
     private static final double E2E_DELAY_THRESHOLD_MS = 60_000.0;
 

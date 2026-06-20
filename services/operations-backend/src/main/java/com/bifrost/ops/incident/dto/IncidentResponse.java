@@ -10,6 +10,8 @@ public record IncidentResponse(
         UUID tenantId,
         String groupingKey,
         String severity,
+        String severityReason,
+        String alertRoute,
         String status,
         String title,
         String rca,
@@ -21,7 +23,8 @@ public record IncidentResponse(
     public static IncidentResponse from(IncidentEntity e) {
         return new IncidentResponse(
                 e.getId(), e.getTenantId(), e.getGroupingKey(),
-                e.getSeverity(), e.getStatus(), e.getTitle(), e.getRca(),
+                e.getSeverity(), e.getSeverityReason(), e.getAlertRoute(),
+                e.getStatus(), e.getTitle(), e.getRca(),
                 e.getSourceType(), e.getSourceId(),
                 e.getOpenedAt(), e.getResolvedAt());
     }
