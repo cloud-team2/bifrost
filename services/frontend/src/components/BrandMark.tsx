@@ -1,10 +1,11 @@
 import { useState } from 'react'
 
 /**
- * Bifrost brand mark — renders the real project logo image at `public/logo.svg`
- * (mono ink #0D0D0D). On dark backgrounds pass `tone="light"` to invert the
- * mark to white via CSS filter. Falls back to a mono inline glyph so the UI
- * never shows a broken image.
+ * Bifrost brand mark — renders the project logo at `public/logo.svg`
+ * (Bifröst spectrum bridge, full-color #879). The asset reads on both light and
+ * dark surfaces, so no tinting is needed. `tone` is kept for backward
+ * compatibility ('light' inverts the legacy mono mark; unused by the color
+ * logo). Falls back to a mono inline glyph so the UI never shows a broken image.
  */
 export function BrandMark({
   size = 28,
@@ -16,8 +17,6 @@ export function BrandMark({
   tone?: 'ink' | 'light'
 }) {
   const [failed, setFailed] = useState(false)
-  // brightness(0) → pure black, invert(1) → pure white. Used to flip the mono
-  // ink mark to #FFFFFF on dark sections without shipping a second asset.
   const lightFilter = tone === 'light' ? 'brightness(0) invert(1)' : undefined
 
   if (failed) {
