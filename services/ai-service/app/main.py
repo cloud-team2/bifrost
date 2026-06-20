@@ -16,11 +16,15 @@ from app.api import (
     routes_approvals,
     routes_catalogs,
     routes_change,
+    routes_drift,
     routes_events,
     routes_evidence,
     routes_feedback,
+    routes_gold_set,
     routes_health,
+    routes_kedb,
     routes_reports,
+    routes_thresholds,
 )
 from app.api import routes_runs
 from app.core.config import settings
@@ -62,9 +66,13 @@ def create_app() -> FastAPI:
     app.include_router(routes_change.router, prefix="/api/v1/agent", tags=["change"])
     app.include_router(routes_reports.router, prefix="/api/v1", tags=["reports"])
     app.include_router(routes_feedback.router, prefix="/api/v1/agent", tags=["feedback"])
+    app.include_router(routes_drift.router, prefix="/api/v1/agent", tags=["drift"])
     app.include_router(routes_admin.router, prefix="/api/v1/admin", tags=["admin"])
     app.include_router(routes_evidence.router, prefix="/api/v1/agent", tags=["evidence"])
     app.include_router(routes_catalogs.router, prefix="/api/v1", tags=["catalogs"])
+    app.include_router(routes_thresholds.router, prefix="/api/v1/admin", tags=["thresholds"])
+    app.include_router(routes_gold_set.router, prefix="/api/v1/agent", tags=["gold-set"])
+    app.include_router(routes_kedb.router, prefix="/api/v1", tags=["kedb"])
 
     # K8s liveness/readiness probe용 경량 엔드포인트 (helm deployment에서 사용)
     @app.get("/health", tags=["health"])

@@ -8,8 +8,12 @@ import com.bifrost.ops.incident.dto.IncidentReportResponse;
 import com.bifrost.ops.incident.dto.IncidentResponse;
 import com.bifrost.ops.incident.persistence.entity.IncidentEntity;
 import com.bifrost.ops.incident.persistence.repository.IncidentRepository;
+import com.bifrost.ops.monitoring.slo.SloAlertRoute;
+import com.bifrost.ops.monitoring.slo.SloBurnRateEvaluation;
+import com.bifrost.ops.monitoring.slo.SloBurnRateService;
 import com.bifrost.ops.streaming.SsePublisher;
 import com.fasterxml.jackson.databind.JsonNode;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -41,15 +45,26 @@ public class IncidentService {
     private final EventService eventService;
     private final SsePublisher sseService;
     private final IncidentAnalysisTrigger incidentAnalysisTrigger;
+    private final SloBurnRateService sloBurnRateService;
 
     public IncidentService(IncidentRepository incidentRepository,
                            EventService eventService,
                            SsePublisher sseService,
                            IncidentAnalysisTrigger incidentAnalysisTrigger) {
+        this(incidentRepository, eventService, sseService, incidentAnalysisTrigger, null);
+    }
+
+    @Autowired
+    public IncidentService(IncidentRepository incidentRepository,
+                           EventService eventService,
+                           SsePublisher sseService,
+                           IncidentAnalysisTrigger incidentAnalysisTrigger,
+                           SloBurnRateService sloBurnRateService) {
         this.incidentRepository = incidentRepository;
         this.eventService = eventService;
         this.sseService = sseService;
         this.incidentAnalysisTrigger = incidentAnalysisTrigger;
+        this.sloBurnRateService = sloBurnRateService;
     }
 
     // (#558, 스펙 B.7) 심각도·상태값
@@ -108,16 +123,25 @@ public class IncidentService {
 
         // 기존 활성(OPEN·INVESTIGATING) incident 조회
         List<IncidentEntity> existing = activeIncidents(tenantId, groupingKey);
+        SloBurnRateEvaluation sloDecision = sloDecision(tenantId, level, sourceType, eventType, 1);
+
+        if (existing.isEmpty() && sloDecision.route() == SloAlertRoute.DIAGNOSTIC) {
+            eventService.record(tenantId, pipelineId, EventLevel.INFO,
+                    eventType, eventMessage + " (" + sloDecision.severityReason() + ")");
+            return;
+        }
 
         if (!existing.isEmpty()) {
             // 이미 인시던트가 있으면 게이팅 없이 연결 + 필요 시 에스컬레이션.
             IncidentEntity incident = existing.get(0);
             List<IncidentResponse> duplicateUpdates = closeDuplicateActiveIncidents(existing);
             // severity escalation: WARNING + ERROR 이벤트 → CRITICAL (B.7)
-            if (level == EventLevel.ERROR && SEV_WARNING.equals(incident.getSeverity())) {
+            if (SEV_CRITICAL.equals(sloDecision.severity()) && SEV_WARNING.equals(incident.getSeverity())) {
                 incident.setSeverity(SEV_CRITICAL);
-                incidentRepository.save(incident);
             }
+            incident.setSeverityReason(sloDecision.severityReason());
+            incident.setAlertRoute(sloDecision.route().name());
+            incidentRepository.save(incident);
             eventService.recordWithIncident(tenantId, pipelineId, level, eventType, eventMessage,
                     incident.getId(), sourceType);
             publishAfterCommit(duplicateUpdates);
@@ -134,7 +158,9 @@ public class IncidentService {
         IncidentEntity incident = new IncidentEntity();
         incident.setTenantId(tenantId);
         incident.setGroupingKey(groupingKey);
-        incident.setSeverity(severityOf(level));
+        incident.setSeverity(sloDecision.severity());
+        incident.setSeverityReason(sloDecision.severityReason());
+        incident.setAlertRoute(sloDecision.route().name());
         incident.setStatus(ST_OPEN);
         incident.setTitle(title);
         incident.setSourceType(sourceType);
@@ -147,6 +173,27 @@ public class IncidentService {
                 incident.getId(), sourceType);
         publishAfterCommit(tenantId, "incident_opened", IncidentResponse.from(incident));
         incidentAnalysisTrigger.startAfterCommit(tenantId, incident.getId(), title, eventMessage);
+    }
+
+    private SloBurnRateEvaluation sloDecision(UUID tenantId,
+                                              EventLevel level,
+                                              String sourceType,
+                                              String eventType,
+                                              int affectedResourceCount) {
+        if (sloBurnRateService == null) {
+            return new SloBurnRateEvaluation(
+                    com.bifrost.ops.monitoring.sli.UserImpactSliType.DATA_FRESHNESS,
+                    level == EventLevel.ERROR ? SloAlertRoute.PAGE : SloAlertRoute.TICKET,
+                    severityOf(level),
+                    "impact=unknown; urgency=threshold_" + level.name().toLowerCase()
+                            + "; slo_burn_rate=unavailable; affected_resource_count=" + Math.max(1, affectedResourceCount),
+                    "static_threshold_fallback",
+                    null,
+                    null,
+                    com.bifrost.ops.monitoring.sli.UserImpactSliType.DATA_FRESHNESS.targetRatio(),
+                    Math.max(1, affectedResourceCount));
+        }
+        return sloBurnRateService.decideIncident(tenantId, level, sourceType, eventType, affectedResourceCount);
     }
 
     /**

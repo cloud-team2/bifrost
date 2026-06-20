@@ -1,6 +1,7 @@
 """Repository for agent_run table (Agent Run Store §9.2)."""
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Union
 
@@ -157,6 +158,92 @@ class PostgresRunRepository:
                 run_id, status,
             )
 
+    async def save_reproducibility(self, run_id: str, manifest: dict) -> None:
+        """#885 run 의 재현성 manifest 를 upsert 저장한다(run 시작 시 1회)."""
+        async with self._get_pool().acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO run_reproducibility
+                    (run_id, model_id, model_tier_map, prompt_version, prompt_hash,
+                     catalog_version, evidence_matrix_version, runbook_version,
+                     corpus_manifest_hash, eval_dataset_version, code_commit_sha, temperature)
+                VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                ON CONFLICT (run_id) DO NOTHING
+                """,
+                run_id,
+                manifest["model_id"],
+                json.dumps(manifest.get("model_tier_map") or {}),
+                manifest["prompt_version"],
+                manifest["prompt_hash"],
+                manifest["catalog_version"],
+                manifest["evidence_matrix_version"],
+                manifest["runbook_version"],
+                manifest["corpus_manifest_hash"],
+                manifest.get("eval_dataset_version", "none"),
+                manifest.get("code_commit_sha", "unknown"),
+                float(manifest.get("temperature", 0.0)),
+            )
+
+    async def get_reproducibility(self, run_id: str) -> dict | None:
+        async with self._get_pool().acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM run_reproducibility WHERE run_id = $1", run_id
+            )
+        if row is None:
+            return None
+        record = dict(row)
+        tier_map = record.get("model_tier_map")
+        if isinstance(tier_map, str):
+            record["model_tier_map"] = json.loads(tier_map)
+        return record
+
+
+    async def save_telemetry(self, run_id: str, telemetry: dict) -> None:
+        """#883 run telemetry 를 upsert 저장한다."""
+        async with self._get_pool().acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO run_telemetry
+                    (run_id, total_latency_ms, total_stages, called_agents,
+                     called_tools, total_tool_calls, total_llm_calls,
+                     total_estimated_tokens, stages, handoff_reasons)
+                VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8, $9::jsonb, $10::jsonb)
+                ON CONFLICT (run_id) DO UPDATE SET
+                    total_latency_ms = EXCLUDED.total_latency_ms,
+                    total_stages = EXCLUDED.total_stages,
+                    called_agents = EXCLUDED.called_agents,
+                    called_tools = EXCLUDED.called_tools,
+                    total_tool_calls = EXCLUDED.total_tool_calls,
+                    total_llm_calls = EXCLUDED.total_llm_calls,
+                    total_estimated_tokens = EXCLUDED.total_estimated_tokens,
+                    stages = EXCLUDED.stages,
+                    handoff_reasons = EXCLUDED.handoff_reasons
+                """,
+                run_id,
+                telemetry.get("total_latency_ms", 0),
+                telemetry.get("total_stages", 0),
+                json.dumps(telemetry.get("called_agents", [])),
+                json.dumps(telemetry.get("called_tools", {})),
+                telemetry.get("total_tool_calls", 0),
+                telemetry.get("total_llm_calls", 0),
+                telemetry.get("total_estimated_tokens", 0),
+                json.dumps(telemetry.get("stages", [])),
+                json.dumps(telemetry.get("handoff_reasons", [])),
+            )
+
+    async def get_telemetry(self, run_id: str) -> dict | None:
+        async with self._get_pool().acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM run_telemetry WHERE run_id = $1", run_id
+            )
+        if row is None:
+            return None
+        record = dict(row)
+        for key in ("called_agents", "called_tools", "stages", "handoff_reasons"):
+            if isinstance(record[key], str):
+                record[key] = json.loads(record[key])
+        return record
+
 
 class InMemoryRunRecord(BaseModel):
     run_id: str
@@ -173,6 +260,8 @@ class InMemoryRunRecord(BaseModel):
 class InMemoryRunRepository:
     def __init__(self) -> None:
         self._store: dict[str, InMemoryRunRecord] = {}
+        self._reproducibility: dict[str, dict] = {}
+        self._telemetry: dict[str, dict] = {}
 
     async def create(
         self,
@@ -234,6 +323,18 @@ class InMemoryRunRepository:
         if rec:
             rec.status = status
             rec.current_agent = current_agent
+
+    async def save_reproducibility(self, run_id: str, manifest: dict) -> None:
+        self._reproducibility.setdefault(run_id, dict(manifest))
+
+    async def get_reproducibility(self, run_id: str) -> dict | None:
+        return self._reproducibility.get(run_id)
+
+    async def save_telemetry(self, run_id: str, telemetry: dict) -> None:
+        self._telemetry[run_id] = dict(telemetry)
+
+    async def get_telemetry(self, run_id: str) -> dict | None:
+        return self._telemetry.get(run_id)
 
 
 AnyRunRepo = Union[InMemoryRunRepository, PostgresRunRepository]

@@ -13,8 +13,12 @@ import com.bifrost.ops.global.common.error.ErrorCode;
 import com.bifrost.ops.internalops.dto.MetricsResult;
 import com.bifrost.ops.monitoring.dto.OverviewResponse;
 import com.bifrost.ops.monitoring.dto.ResourceEventResponse;
+import com.bifrost.ops.monitoring.dto.SliDefinitionResponse;
+import com.bifrost.ops.monitoring.dto.SliMeasurementResponse;
 import com.bifrost.ops.monitoring.query.ObservabilityMetricsQuery;
 import com.bifrost.ops.monitoring.service.MonitoringReadService;
+import com.bifrost.ops.monitoring.sli.UserImpactSliService;
+import com.bifrost.ops.monitoring.sli.UserImpactSliType;
 import com.bifrost.ops.workspace.WorkspaceAccessGuard;
 import com.bifrost.ops.workspace.persistence.entity.WorkspaceEntity;
 import com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository;
@@ -46,6 +50,7 @@ public class MonitoringController {
     private final WorkspaceAccessGuard accessGuard;
     private final ObservabilityMetricsQuery metricsQuery;
     private final WorkspaceRepository workspaceRepository;
+    private final UserImpactSliService sliService;
 
     public MonitoringController(MonitoringReadService monitoringReadService,
                                 IncidentService incidentService,
@@ -53,7 +58,8 @@ public class MonitoringController {
                                 IncidentReportService incidentReportService,
                                 WorkspaceAccessGuard accessGuard,
                                 ObservabilityMetricsQuery metricsQuery,
-                                WorkspaceRepository workspaceRepository) {
+                                WorkspaceRepository workspaceRepository,
+                                UserImpactSliService sliService) {
         this.monitoringReadService = monitoringReadService;
         this.incidentService = incidentService;
         this.eventService = eventService;
@@ -61,6 +67,7 @@ public class MonitoringController {
         this.accessGuard = accessGuard;
         this.metricsQuery = metricsQuery;
         this.workspaceRepository = workspaceRepository;
+        this.sliService = sliService;
     }
 
     /** 워크스페이스 전체 health 집계. */
@@ -79,6 +86,36 @@ public class MonitoringController {
             @AuthenticationPrincipal AuthenticatedUser principal) {
         accessGuard.requireAccess(wsId, principal);
         return ResponseEntity.ok(monitoringReadService.resourceEvents(wsId));
+    }
+
+    /** 사용자 영향 SLI good_event/total_event 정의. */
+    @GetMapping("/slis/definitions")
+    public ResponseEntity<List<SliDefinitionResponse>> sliDefinitions(
+            @PathVariable UUID wsId,
+            @AuthenticationPrincipal AuthenticatedUser principal) {
+        accessGuard.requireAccess(wsId, principal);
+        return ResponseEntity.ok(sliService.definitions());
+    }
+
+    /** 사용자 영향 SLI 현재 측정값 목록. */
+    @GetMapping("/slis")
+    public ResponseEntity<List<SliMeasurementResponse>> slis(
+            @PathVariable UUID wsId,
+            @RequestParam(required = false) Integer windowMinutes,
+            @AuthenticationPrincipal AuthenticatedUser principal) {
+        accessGuard.requireAccess(wsId, principal);
+        return ResponseEntity.ok(sliService.measurements(wsId, windowMinutes));
+    }
+
+    /** 사용자 영향 SLI 단건 측정값. */
+    @GetMapping("/slis/{type}")
+    public ResponseEntity<SliMeasurementResponse> sli(
+            @PathVariable UUID wsId,
+            @PathVariable String type,
+            @RequestParam(required = false) Integer windowMinutes,
+            @AuthenticationPrincipal AuthenticatedUser principal) {
+        accessGuard.requireAccess(wsId, principal);
+        return ResponseEntity.ok(sliService.measurement(wsId, UserImpactSliType.parse(type), windowMinutes));
     }
 
     /** incident 목록. */

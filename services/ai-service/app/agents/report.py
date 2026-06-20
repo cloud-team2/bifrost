@@ -6,6 +6,7 @@ Report 입력으로 받아(#451) 최종 답변에 진단 결론을 반영한다.
 """
 from __future__ import annotations
 
+from app.catalogs.kedb import get_static_kedb_record
 from app.llm.provider import LLMProvider
 from app.schemas.outputs import ClassifierOutput, RcaOutput, RetrievalOutput
 from app.schemas.state import AgentMode
@@ -76,6 +77,12 @@ def _diagnosis_block(
             f"required_evidence_satisfied={c.required_evidence_satisfied}"
         )
         lines.append(f"    설명: {c.explanation}")
+        if kedb := get_static_kedb_record(c.root_cause_id):
+            lines.append(
+                "    KEDB: "
+                f"owner={kedb.owner}, recurrence_count={kedb.recurrence_count}, "
+                f"verified_fixes={', '.join(kedb.verified_fixes) or 'none'}"
+            )
         if c.supporting_evidence_ids:
             lines.append(f"    근거 evidence: {', '.join(c.supporting_evidence_ids)}")
         if c.evidence_gap:

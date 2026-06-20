@@ -14,10 +14,13 @@ from app.schemas.state import (
     ActionType,
     AgentMode,
     EvidenceItem,
+    ExecutionDepth,
     FinalResponse,
+    HistoryPolicy,
     IncidentScope,
     PolicyDecisionType,
     RiskLevel,
+    RollbackStatus,
     RootCauseCandidate,
     VerificationStatus,
 )
@@ -46,6 +49,12 @@ class RouteDecision(StrictModel):
     reuse_existing_analysis: bool = False
     reason: str
     required_flow: list[str]
+    # #882 자연어 질의 실행 깊이 제어 — Router 가 질의 난이도에 맞춰 실행량을 정한다.
+    # execution_depth 가 없으면(구버전/외부 mock) runner 가 mode 기준 기본 depth 로 보정한다.
+    execution_depth: ExecutionDepth | None = None
+    max_tool_calls: int = Field(default=0, ge=0)
+    allow_react_loop: bool = False
+    history_policy: HistoryPolicy = HistoryPolicy.FULL
 
 
 class RouterOutput(StrictModel):
@@ -155,6 +164,8 @@ class ExecutionResultOutput(StrictModel):
     after_evidence_id: str | None = None
     reason_code: str | None = None
     summary: str
+    # #886 조치 전 상태 스냅샷 — 실패 시 자동 롤백의 기준(이전 상태 복원)으로 쓴다.
+    pre_change_snapshot: str | None = None
 
     @model_validator(mode="after")
     def executor_status_is_terminal(self) -> "ExecutionResultOutput":
@@ -169,6 +180,23 @@ class ExecutionResultOutput(StrictModel):
 
 class ExecutorOutput(StrictModel):
     execution_results: list[ExecutionResultOutput]
+
+
+class RollbackResultOutput(StrictModel):
+    """#886 조치 실패 시 자동 롤백 실행 결과(run record 에 남는다)."""
+
+    rollback_action_id: str
+    original_action_id: str
+    rollback_status: RollbackStatus
+    tool_name: str | None = None
+    tool_params: dict[str, Any] | None = None
+    rollback_audit_event_id: str | None = None
+    pre_change_snapshot: str | None = None
+    summary: str
+
+
+class RollbackOutput(StrictModel):
+    rollback_results: list[RollbackResultOutput] = Field(default_factory=list)
 
 
 class ApprovedActionOutput(StrictModel):

@@ -80,10 +80,15 @@ class _RuleMatch:
     rule: EvidenceRule
     evidence_ids: set[str]
     semantic_evidence_ids: set[str]
+    demoted_evidence_ids: set[str] | None = None
 
     @property
     def lexical_evidence_ids(self) -> set[str]:
         return self.evidence_ids - self.semantic_evidence_ids
+
+    @property
+    def supporting_evidence_ids(self) -> set[str]:
+        return set(self.demoted_evidence_ids or set())
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,11 +257,13 @@ async def _evaluate_candidate(
         if not has_positive_lexical_anchor:
             supporting_matches = _discard_semantic_only_matches(supporting_matches)
 
+    evidence_by_id = {item.evidence_id: item for item in evidence_items}
+    required_matches = _demote_non_temporal_required_matches(required_matches, evidence_by_id)
     matched_required = [item for item in required_matches if item.evidence_ids]
     evidence_gap = [item.rule.evidence for item in required_matches if not item.evidence_ids]
 
     required_satisfied = not evidence_gap
-    supporting_ids = _matched_evidence_ids(supporting_matches)
+    supporting_ids = _matched_evidence_ids(supporting_matches) | _demoted_evidence_ids(required_matches)
     confidence = _score_confidence(
         root_cause=root_cause,
         required_matched=len(matched_required),
@@ -283,6 +290,7 @@ async def _evaluate_candidate(
             len(profile.required),
             supporting_ids,
             negative_ids,
+            _causal_chain_explanation(required_matches, supporting_matches),
         ),
     )
 
@@ -330,9 +338,42 @@ def _discard_semantic_only_matches(matches: list[_RuleMatch]) -> list[_RuleMatch
             rule=match.rule,
             evidence_ids=match.lexical_evidence_ids,
             semantic_evidence_ids=set(),
+            demoted_evidence_ids=match.demoted_evidence_ids,
         )
         for match in matches
     ]
+
+
+def _demote_non_temporal_required_matches(
+    matches: list[_RuleMatch],
+    evidence_by_id: dict[str, EvidenceItem],
+) -> list[_RuleMatch]:
+    gated: list[_RuleMatch] = []
+    for match in matches:
+        if not match.rule.temporality_required:
+            gated.append(match)
+            continue
+        temporal_ids = {
+            evidence_id
+            for evidence_id in match.evidence_ids
+            if _has_temporal_precedence(evidence_by_id[evidence_id])
+        }
+        gated.append(
+            _RuleMatch(
+                rule=match.rule,
+                evidence_ids=temporal_ids,
+                semantic_evidence_ids=match.semantic_evidence_ids & temporal_ids,
+                demoted_evidence_ids=match.evidence_ids - temporal_ids,
+            )
+        )
+    return gated
+
+
+def _demoted_evidence_ids(matches: list[_RuleMatch]) -> set[str]:
+    evidence_ids: set[str] = set()
+    for match in matches:
+        evidence_ids.update(match.supporting_evidence_ids)
+    return evidence_ids
 
 
 def _has_lexical_required_anchor(required_matches: list[_RuleMatch]) -> bool:
@@ -466,6 +507,17 @@ def _rule_matches_evidence(rule: EvidenceRule, item: EvidenceItem) -> bool:
         if _tokens_match(_meaningful_tokens(alt), evidence_tokens):
             return True
     return False
+
+
+def _has_temporal_precedence(item: EvidenceItem) -> bool:
+    normalized = _normalize_text(item.summary)
+    return bool(
+        re.search(
+            r"\b(?:after|since|following|followed|before|prior|preced(?:e|ed|ing)|then|subsequent)\b",
+            normalized,
+        )
+        or re.search(r"(?:이후|직후|뒤이어|이어서|다음|전후|전에|먼저|선행)", normalized)
+    )
 
 
 def _split_alternatives(value: str) -> list[str]:
@@ -731,6 +783,7 @@ def _build_explanation(
     required_total: int,
     supporting_ids: set[str],
     negative_ids: set[str],
+    causal_chain: str | None = None,
 ) -> str:
     status = "required evidence satisfied" if required_satisfied else f"required evidence partial {required_matched}/{required_total}"
     parts = [f"{root_cause.root_cause_id}: {status}"]
@@ -738,7 +791,24 @@ def _build_explanation(
         parts.append(f"supporting evidence {len(supporting_ids)}건")
     if negative_ids:
         parts.append(f"negative evidence {len(negative_ids)}건 반영")
+    if causal_chain:
+        parts.append(causal_chain)
     return "; ".join(parts)
+
+
+def _causal_chain_explanation(required_matches: list[_RuleMatch], supporting_matches: list[_RuleMatch]) -> str | None:
+    chain: list[tuple[int, str, str]] = []
+    for match in [*required_matches, *supporting_matches]:
+        step = match.rule.causal_chain_step
+        if step is None or not (match.evidence_ids or match.supporting_evidence_ids):
+            continue
+        status = "causal" if match.evidence_ids else "correlational"
+        chain.append((step, status, match.rule.evidence))
+    if not chain:
+        return None
+    ordered = sorted(chain, key=lambda item: item[0])
+    rendered = " -> ".join(f"step {step} {status}: {evidence}" for step, status, evidence in ordered)
+    return f"causal chain {rendered}"
 
 
 def _sanitize_explanation(value: str) -> str:

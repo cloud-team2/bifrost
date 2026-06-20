@@ -29,6 +29,7 @@ from app.schemas.state import (
     AgentMode,
     EvidenceItem,
     EvidenceType,
+    ExecutionDepth,
     IncidentScope,
     RedactionStatus,
     RiskLevel,
@@ -242,11 +243,13 @@ async def test_simple_query_emits_run_and_report_patches() -> None:
 
     patches = await repo.get_patches("run_simple_patch")
 
-    assert len(patches) >= 4
-    assert ("run.plan", "Planner") in {(p.namespace, p.author) for p in patches}
-    assert ("evidence", "Retrieval") in {(p.namespace, p.author) for p in patches}
-    assert ("verification", "Verifier") in {(p.namespace, p.author) for p in patches}
-    assert ("report", "Report") in {(p.namespace, p.author) for p in patches}
+    pairs = {(p.namespace, p.author) for p in patches}
+    assert len(patches) >= 3
+    assert ("run.plan", "Planner") in pairs
+    assert ("evidence", "Retrieval") in pairs
+    assert ("report", "Report") in pairs
+    # #882 단순 조회(기본 bounded_lookup)는 검증 agent 를 호출하지 않는다.
+    assert ("verification", "Verifier") not in pairs
 
 
 @pytest.mark.asyncio
@@ -275,7 +278,10 @@ async def test_incident_analysis_emits_full_chain_patches() -> None:
     patches = await repo.get_patches("run_incident_patch")
     emitted = {(p.namespace, p.author, p.path) for p in patches}
 
-    assert len(patches) in {14, 15}
+    # #885 재현성 manifest patch 와 #883 telemetry patch 가 추가된다.
+    assert len(patches) in {16, 17}
+    assert ("run", "Supervisor", "/run/reproducibility") in emitted
+    assert ("run", "Telemetry", "/run/telemetry") in emitted
     assert ("correlation", "CorrelationEngine", "/correlation") in emitted
     assert ("run.plan", "Planner", "/run/plan/executed_plan_hashes") in emitted
     assert ("evidence", "Retrieval", "/evidence/items") in emitted
@@ -443,9 +449,11 @@ async def test_requested_incident_context_forces_incident_mode_and_report_link()
         )
 
     assert supervisor.start_args == ("run_requested_incident", AgentMode.INCIDENT_ANALYSIS)
+    # #882 remediation 요청이 켜진 incident 컨텍스트는 remediation_planning depth 로 보정된다.
     assert supervisor.start_kwargs == {
         "incident_id": "inc_001",
         "remediation_requested": True,
+        "execution_depth": ExecutionDepth.REMEDIATION_PLANNING,
     }
     assert report_repo.created[0][1]["incident_id"] == "inc_001"
     incident_patches = [

@@ -45,6 +45,8 @@ from app.schemas.state import (
     AgentMode,
     EvidenceItem,
     EvidenceType,
+    ExecutionDepth,
+    HistoryPolicy,
     PolicyDecisionType,
     RedactionStatus,
     RiskLevel,
@@ -53,15 +55,17 @@ from app.schemas.state import (
 from app.schemas.tools import ToolContext
 from app.streaming.event_bus import EventBus
 from app.supervisor.graph import get_supervisor
-from app.supervisor.transitions import stages_for_mode
+from app.supervisor.transitions import default_depth_for_mode, depth_budget, stages_for_mode
 from app.tools.registry import ToolClientRegistry
 from app.workflow.action_tools import ACTION_EXECUTION_TOOLS, is_executable_runtime_action_payload
 from app.workflow.guards import RunBudgetExceeded
+from app.workflow.telemetry import RunTelemetryCollector
 from app.workflow.stages.approval_gate import run_approval_gate
 from app.workflow.stages.change_gate import run_change_gate
 from app.workflow.stages.correlation import run_correlation
 from app.workflow.stages.executor import run_executor
 from app.workflow.stages.policy_guard import run_policy_guard
+from app.workflow.stages.rollback import run_rollback
 
 logger = logging.getLogger(__name__)
 _PUBLIC_FAILURE_MESSAGE = "요청 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
@@ -167,6 +171,79 @@ def _action_execution_answer(executor_out, verifier_out) -> str:
     if first_verification is not None:
         lines.append(f"사후 검증: {first_verification.status.value} — {first_verification.reason}")
     return "\n".join(lines)
+
+
+async def _run_auto_rollback(
+    executor_out,
+    candidates,
+    *,
+    run_id: str,
+    context,
+    registry,
+    bus: EventBus,
+    event_repo: AnyEventRepo,
+    state_repo: Any,
+) -> None:
+    """#886 실패한 mutation 의 자동 롤백을 실행하고 결과를 이벤트·감사 state 로 남긴다.
+
+    실패 조치가 없으면 아무 것도 하지 않는다(no-op). 롤백 자체가 실패해도 run 흐름은
+    막지 않으며, 결과는 항상 append-only state patch 로 감사 추적된다.
+    """
+    if executor_out is None or not executor_out.execution_results:
+        return
+    rollback_out = await run_rollback(
+        executor_out.execution_results,
+        candidates,
+        run_id=run_id,
+        context=context,
+        registry=registry,
+    )
+    if not rollback_out.rollback_results:
+        return
+
+    summary = ", ".join(
+        f"{r.original_action_id}:{r.rollback_status.value}" for r in rollback_out.rollback_results
+    )
+    await _publish(bus, event_repo, run_id, _evt(
+        run_id, StreamingEventType.EXECUTION_COMPLETED, "rollback",
+        f"조치 실패 자동 롤백: {summary}",
+        {"stage": "rollback", "rollback_results": _jsonable(rollback_out.rollback_results)},
+    ))
+    await _append_state_patch(
+        state_repo,
+        run_id,
+        namespace="actions",
+        author="Rollback",
+        op="append",
+        path="/actions/rollback_results",
+        patch={"rollback_results": _jsonable(rollback_out.rollback_results)},
+    )
+
+
+async def _persist_reproducibility(run_repo: Any, state_repo: Any, run_id: str) -> None:
+    """#885 재현성 manifest 를 run record + state patch 로 남긴다(best-effort)."""
+    try:
+        from app.core.reproducibility import build_reproducibility_manifest
+
+        manifest = build_reproducibility_manifest().model_dump(mode="json")
+    except Exception as exc:
+        logger.warning("reproducibility manifest build failed run=%s error=%s", run_id, exc)
+        return
+    save = getattr(run_repo, "save_reproducibility", None)
+    if save is not None:
+        try:
+            await save(run_id, manifest)
+        except Exception as exc:
+            logger.warning("reproducibility persist failed run=%s error=%s", run_id, exc)
+    await _append_state_patch(
+        state_repo,
+        run_id,
+        namespace="run",
+        author="Supervisor",
+        op="version",
+        path="/run/reproducibility",
+        patch=manifest,
+    )
 
 
 async def _append_state_patch(
@@ -610,6 +687,7 @@ async def run_workflow(
             await _run_workflow_impl(
                 run_id=run_id,
                 user_message=effective_message,
+                raw_user_message=user_message,
                 project_id=project_id,
                 bus=bus,
                 run_repo=run_repo,
@@ -631,6 +709,7 @@ async def _run_workflow_impl(
     *,
     run_id: str,
     user_message: str,
+    raw_user_message: str | None = None,
     project_id: str,
     bus: EventBus,
     run_repo: AnyRunRepo,
@@ -643,6 +722,7 @@ async def _run_workflow_impl(
     event_repo = get_event_repo()
     state_repo = get_state_repo()
     supervisor = get_supervisor()
+    telemetry = RunTelemetryCollector(run_id)
     answer: str | None = None  # report 단계 전 budget 초과 대비
     keep_stream_open = False
     run_record = await run_repo.get(run_id)
@@ -672,15 +752,35 @@ async def _run_workflow_impl(
             or _bool_or_false(router_out.route_decision.remediation_requested)
         )
         set_current_run_mode(mode.value)  # router 결정 mode 를 run span 에 기록(#372)
+        # #882 실행 깊이 확정. Router 가 simple_query 로 분류한 그대로면 Router 의 depth 를
+        # 쓰고, mode 가 외부 요청/incident 컨텍스트로 바뀌었으면 그 mode 의 기본 depth 로
+        # 재산정한다. remediation 이 뒤늦게 켜진 incident 는 remediation_planning 으로 승격.
+        router_depth = router_out.route_decision.execution_depth
+        if mode == router_out.route_decision.mode and router_depth is not None:
+            execution_depth = router_depth
+        else:
+            execution_depth = default_depth_for_mode(mode, remediation_requested)
+        if (
+            mode == AgentMode.INCIDENT_ANALYSIS
+            and remediation_requested
+            and execution_depth == ExecutionDepth.INCIDENT_DIAGNOSIS
+        ):
+            execution_depth = ExecutionDepth.REMEDIATION_PLANNING
+        max_tool_calls, allow_react_loop, react_max_steps, history_policy = depth_budget(
+            execution_depth
+        )
         # #604: 전체 stage 흐름은 이 시점에 확정된다. FE가 진행 단계 분모를
         # 처음부터 고정할 수 있도록 required_flow를 payload로 노출한다.
-        required_flow = list(stages_for_mode(mode, remediation_requested))
+        required_flow = list(stages_for_mode(mode, remediation_requested, execution_depth))
         await _publish(bus, event_repo, run_id, _evt(
             run_id, StreamingEventType.AGENT_COMPLETED, "router", f"mode: {mode.value}",
             {
                 "mode": mode.value,
                 "required_flow": required_flow,
                 "total_stages": len(required_flow),
+                "execution_depth": execution_depth.value,
+                "max_tool_calls": max_tool_calls,
+                "allow_react_loop": allow_react_loop,
             },
         ))
         if persisted_incident_id:
@@ -699,7 +799,13 @@ async def _run_workflow_impl(
             run_id, mode,
             incident_id=persisted_incident_id,
             remediation_requested=remediation_requested,
+            execution_depth=execution_depth,
         )
+
+        # #885 run 단위 재현성: 당시 모델 스냅샷·프롬프트·카탈로그·코드 버전을 고정 저장한다.
+        # run record 테이블(run_reproducibility)과 append-only state patch 양쪽에 남겨,
+        # 나중에 이 run 의 입력·버전·후보 랭킹을 그대로 재구성할 수 있게 한다.
+        await _persist_reproducibility(run_repo, state_repo, run_id)
 
         # ── Stage 루프 ─────────────────────────────────────────────────────────
         correlation_out = None
@@ -795,6 +901,7 @@ async def _run_workflow_impl(
                 break
 
             await run_repo.update_status(run_id, "running", stage)
+            telemetry.start_stage(stage, stage)
 
             match stage:
                 case "correlation":
@@ -831,8 +938,15 @@ async def _run_workflow_impl(
                         project_id=project_id,
                         request_id=str(uuid4()),
                     )
+                    # #882 history input filter: history_policy=none 인 단순 조회는 이전 대화
+                    # 맥락을 Planner 에 주입하지 않는다(지난 장애 키워드가 단순 질의를 오염시키는 것 차단).
+                    planner_message = (
+                        raw_user_message
+                        if history_policy == HistoryPolicy.NONE and raw_user_message is not None
+                        else user_message
+                    )
                     planner_out = await planner_agent.run_planner(
-                        user_message,
+                        planner_message,
                         project_id,
                         registry=registry,
                         tool_context=planner_context,
@@ -989,6 +1103,10 @@ async def _run_workflow_impl(
                         event_repo,
                         user_message=user_message,
                         mode=mode,
+                        # #882 Router 가 정한 실행 깊이 예산 — 단순 조회는 tool 수/ReAct 를 제한한다.
+                        max_tool_calls=max_tool_calls,
+                        allow_react_loop=allow_react_loop,
+                        react_max_steps=react_max_steps,
                     )
                     await _publish(bus, event_repo, run_id, _evt(
                         run_id, StreamingEventType.AGENT_COMPLETED, "retrieval",
@@ -1271,6 +1389,8 @@ async def _run_workflow_impl(
                         registry=registry,
                         approval_by_action=approval_by_action,
                         change_ticket_by_action=change_ticket_by_action,
+                        # #886 조치 전 상태 스냅샷을 남겨 실패 시 자동 롤백 기준으로 쓴다.
+                        capture_pre_change_snapshot=True,
                     )
                     await _publish(bus, event_repo, run_id, _evt(
                         run_id, StreamingEventType.AGENT_COMPLETED, "executor",
@@ -1292,6 +1412,18 @@ async def _run_workflow_impl(
                         op="append",
                         path="/actions/execution_results",
                         patch={"execution_results": _jsonable(executor_out.execution_results)},
+                    )
+                    # #886 조치가 성공 조건을 충족하지 못하면(FAILED/BLOCKED) 사람 개입 없이
+                    # inverse 조치로 자동 롤백한다. high-risk 원조치의 롤백은 승인 대상으로 남긴다.
+                    await _run_auto_rollback(
+                        executor_out,
+                        ready_candidates,
+                        run_id=run_id,
+                        context=exec_context,
+                        registry=registry,
+                        bus=bus,
+                        event_repo=event_repo,
+                        state_repo=state_repo,
                     )
                     # #553: 실행할 조치가 없으면(ready_candidates 비어 있음) Verifier로
                     # 진행하지 않고 정상 종결한다. 결정적 Executor는 같은 빈 후보로
@@ -1402,40 +1534,52 @@ async def _run_workflow_impl(
                         record_usage = getattr(supervisor, "record_llm_usage", None)
                         if record_usage is not None:
                             record_usage(run_id, calls=1, tokens=_estimate_tokens(user_message, answer))
-                    verifier_out = await verifier_agent.run_verifier(
-                        mode,
-                        rca_out=rca_out,
-                        retrieval_out=retrieval_out,
-                        classifier_out=classifier_out,
-                        executor_out=executor_out,
-                        report_body=answer,
+                    # #882 단순 조회(direct/single/bounded lookup)는 검증 agent 를 호출하지 않고
+                    # 곧장 답변을 확정한다(설계 §6.4.2: schema/citation 검증으로 대체). 운영 변경·
+                    # RCA 결론처럼 검증 가치가 큰 출력에서만 verifier loopback 을 유지한다.
+                    skip_verifier = (
+                        mode == AgentMode.SIMPLE_QUERY
+                        and execution_depth in (
+                            ExecutionDepth.DIRECT_ANSWER,
+                            ExecutionDepth.SINGLE_LOOKUP,
+                            ExecutionDepth.BOUNDED_LOOKUP,
+                        )
                     )
-                    first_result = (
-                        verifier_out.verification_results[0]
-                        if verifier_out.verification_results
-                        else None
-                    )
-                    v_status = first_result.status.value if first_result else "pass"
-                    await _publish(bus, event_repo, run_id, _evt(
-                        run_id,
-                        StreamingEventType.VERIFICATION_COMPLETED,
-                        "verifier",
-                        f"report 검증: {v_status}",
-                    ))
-                    await _append_state_patch(
-                        state_repo,
-                        run_id,
-                        namespace="verification",
-                        author="Verifier",
-                        op="append",
-                        path="/verification/verification_results",
-                        patch={"verification_results": _jsonable(verifier_out.verification_results)},
-                    )
-                    record_verifier = getattr(supervisor, "record_verifier_result", None)
-                    if record_verifier is not None and first_result is not None:
-                        record_verifier(run_id, first_result.status, first_result.next_agent)
-                    if first_result is not None and first_result.status != VerificationStatus.PASS:
-                        continue
+                    if not skip_verifier:
+                        verifier_out = await verifier_agent.run_verifier(
+                            mode,
+                            rca_out=rca_out,
+                            retrieval_out=retrieval_out,
+                            classifier_out=classifier_out,
+                            executor_out=executor_out,
+                            report_body=answer,
+                        )
+                        first_result = (
+                            verifier_out.verification_results[0]
+                            if verifier_out.verification_results
+                            else None
+                        )
+                        v_status = first_result.status.value if first_result else "pass"
+                        await _publish(bus, event_repo, run_id, _evt(
+                            run_id,
+                            StreamingEventType.VERIFICATION_COMPLETED,
+                            "verifier",
+                            f"report 검증: {v_status}",
+                        ))
+                        await _append_state_patch(
+                            state_repo,
+                            run_id,
+                            namespace="verification",
+                            author="Verifier",
+                            op="append",
+                            path="/verification/verification_results",
+                            patch={"verification_results": _jsonable(verifier_out.verification_results)},
+                        )
+                        record_verifier = getattr(supervisor, "record_verifier_result", None)
+                        if record_verifier is not None and first_result is not None:
+                            record_verifier(run_id, first_result.status, first_result.next_agent)
+                        if first_result is not None and first_result.status != VerificationStatus.PASS:
+                            continue
                     await _persist_report_snapshot(
                         run_id=run_id,
                         answer=answer,
@@ -1480,6 +1624,18 @@ async def _run_workflow_impl(
         await _publish_failure(bus, event_repo, run_id)
 
     finally:
+        telemetry.finish()
+        try:
+            telem_summary = telemetry.summary()
+            await _append_state_patch(
+                state_repo, run_id,
+                namespace="run", author="Telemetry", op="version",
+                path="/run/telemetry", patch=telem_summary,
+            )
+            if hasattr(run_repo, "save_telemetry"):
+                await run_repo.save_telemetry(run_id, telem_summary)
+        except Exception:
+            logger.warning("telemetry persist failed: run_id=%s", run_id, exc_info=True)
         if not keep_stream_open:
             await bus.close_run(run_id)
 

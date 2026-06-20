@@ -259,6 +259,48 @@ async def test_connector_status_and_trace_commit_without_logs_or_metrics(
 
 
 @pytest.mark.asyncio
+async def test_required_causal_evidence_without_temporality_is_demoted_to_supporting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier("CONFIG_CHANGE_REGRESSION"),
+        _retrieval(
+            "config 변경 시점 error latency 증가 change time correlation 없음; config 변경과 error가 같은 창에서 관측됨",
+            "변경 diff와 증상 계층이 연결됨 connector task config diff",
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "RECENT_CONFIG_CHANGE_REGRESSION"
+    assert top.required_evidence_satisfied is False
+    assert "config 변경 시점 이후 error/latency 증가" in top.evidence_gap
+    assert "ev-1" in top.supporting_evidence_ids
+    assert "step 1 correlational" in top.explanation
+
+
+@pytest.mark.asyncio
+async def test_temporal_required_evidence_outputs_causal_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier("CONFIG_CHANGE_REGRESSION"),
+        _retrieval(
+            "config 변경 시점 이후 error latency 증가 change time correlation: 배포 직후 오류 증가",
+            "변경 diff와 증상 계층이 연결됨 connector task config diff",
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "RECENT_CONFIG_CHANGE_REGRESSION"
+    assert top.required_evidence_satisfied is True
+    assert "causal chain" in top.explanation
+    assert "step 1 causal" in top.explanation
+    assert "step 2 causal" in top.explanation
+
+
+@pytest.mark.asyncio
 async def test_source_auth_trace_commits_with_partial_observability(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

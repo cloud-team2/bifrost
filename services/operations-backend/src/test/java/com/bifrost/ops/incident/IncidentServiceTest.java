@@ -7,6 +7,10 @@ import com.bifrost.ops.incident.dto.IncidentReportResponse;
 import com.bifrost.ops.incident.dto.IncidentResponse;
 import com.bifrost.ops.incident.persistence.entity.IncidentEntity;
 import com.bifrost.ops.incident.persistence.repository.IncidentRepository;
+import com.bifrost.ops.monitoring.sli.UserImpactSliType;
+import com.bifrost.ops.monitoring.slo.SloAlertRoute;
+import com.bifrost.ops.monitoring.slo.SloBurnRateEvaluation;
+import com.bifrost.ops.monitoring.slo.SloBurnRateService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.bifrost.ops.streaming.SsePublisher;
@@ -42,6 +46,7 @@ class IncidentServiceTest {
     @Mock private EventService eventService;
     @Mock private SsePublisher ssePublisher;
     @Mock private IncidentAnalysisTrigger incidentAnalysisTrigger;
+    @Mock private SloBurnRateService sloBurnRateService;
 
     private final UUID tenantId = UUID.randomUUID();
 
@@ -123,12 +128,44 @@ class IncidentServiceTest {
         IncidentEntity incident = captor.getValue();
         assertThat(incident.getGroupingKey()).isEqualTo(groupingKey);
         assertThat(incident.getSeverity()).isEqualTo("CRITICAL");
+        assertThat(incident.getSeverityReason()).contains("slo_burn_rate=unavailable");
+        assertThat(incident.getAlertRoute()).isEqualTo("PAGE");
         assertThat(incident.getSourceType()).isEqualTo("PIPELINE");
         assertThat(incident.getSourceId()).isEqualTo(pipelineId);
         verify(eventService).recordWithIncident(tenantId, pipelineId, EventLevel.ERROR,
                 "PIPELINE_STATUS_CHANGED", "boom", incident.getId(), "PIPELINE");
         verify(ssePublisher).incidentEvent(eq(tenantId), eq("incident_opened"), any());
         verify(incidentAnalysisTrigger).startAfterCommit(tenantId, incident.getId(), "Pipeline failed", "boom");
+    }
+
+    @Test
+    void causeOnlySignalWithoutUserImpactIsRecordedAsDiagnosticWithoutIncident() {
+        UUID pipelineId = UUID.randomUUID();
+        String groupingKey = IncidentGroupingKeys.consumerLag("connect-orders-sink");
+        when(incidentRepository.findByTenantIdAndGroupingKeyAndStatusInOrderByOpenedAtAsc(
+                tenantId, groupingKey, List.of("OPEN", "INVESTIGATING"))).thenReturn(List.of());
+        when(sloBurnRateService.decideIncident(tenantId, EventLevel.ERROR,
+                "CONSUMER_GROUP", "CONSUMER_LAG_CRITICAL", 1))
+                .thenReturn(new SloBurnRateEvaluation(
+                        UserImpactSliType.DATA_FRESHNESS,
+                        SloAlertRoute.DIAGNOSTIC,
+                        "WARNING",
+                        "impact=none; urgency=diagnostic; slo_burn_rate=below_threshold; affected_resource_count=1",
+                        "diagnostic",
+                        null,
+                        null,
+                        UserImpactSliType.DATA_FRESHNESS.targetRatio(),
+                        1));
+        IncidentService svc = new IncidentService(
+                incidentRepository, eventService, ssePublisher, incidentAnalysisTrigger, sloBurnRateService);
+
+        svc.onThresholdViolation(tenantId, groupingKey, "CONSUMER_GROUP", pipelineId,
+                EventLevel.ERROR, "Consumer lag critical", "CONSUMER_LAG_CRITICAL", "lag too high", pipelineId);
+
+        verify(incidentRepository, never()).save(any());
+        verify(eventService).record(eq(tenantId), eq(pipelineId), eq(EventLevel.INFO),
+                eq("CONSUMER_LAG_CRITICAL"), org.mockito.ArgumentMatchers.contains("impact=none"));
+        verify(incidentAnalysisTrigger, never()).startAfterCommit(any(), any(), any(), any());
     }
 
     @Test
