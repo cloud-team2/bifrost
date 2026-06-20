@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from app.catalogs.failure_types import list_failure_types
 from app.catalogs.incident_rootcause_map import INCIDENT_ROOT_CAUSE_MAP
+from app.catalogs.kedb import get_static_kedb_record
 from app.catalogs.policy_matrix import lookup
 from app.catalogs.root_causes import list_root_causes
 from app.catalogs.runbooks import list_runbooks
@@ -128,12 +129,26 @@ async def get_root_causes() -> ApiResponse:
                     "owned_by": item.owned_by,
                     "direct_action_allowed": item.direct_action_allowed,
                     "default_confidence_cap": item.default_confidence_cap,
+                    "kedb": _kedb_summary(item.root_cause_id),
                 }
                 for item in list_root_causes()
             ],
             "version": settings.catalog_version,
         },
     )
+
+
+def _kedb_summary(root_cause_id: str) -> dict[str, object] | None:
+    record = get_static_kedb_record(root_cause_id)
+    if record is None:
+        return None
+    return {
+        "owner": record.owner,
+        "verified_fixes": list(record.verified_fixes),
+        "recurrence_count": record.recurrence_count,
+        "last_seen": record.last_seen,
+        "incident_links": list(record.incident_links),
+    }
 
 
 @router.get("/catalogs/policies")
