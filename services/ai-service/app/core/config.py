@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     llm_provider: str = "openai"
     llm_api_key: str = ""
     llm_default_model: str = "gpt-4o-mini"
+    # #885 재현성: 판단 시 사용한 temperature 와 평가셋·코드 버전을 run 마다 고정 저장한다.
+    llm_temperature: float = 0.0
+    eval_dataset_version: str = "none"
+    # 배포 시 gitops 가 주입(예: git short SHA). 비면 런타임에 git rev-parse 로 보강.
+    code_commit_sha: str = ""
 
     # Knowledge RAG embeddings
     embedding_api_key: str = ""

@@ -219,6 +219,32 @@ async def _run_auto_rollback(
     )
 
 
+async def _persist_reproducibility(run_repo: Any, state_repo: Any, run_id: str) -> None:
+    """#885 재현성 manifest 를 run record + state patch 로 남긴다(best-effort)."""
+    try:
+        from app.core.reproducibility import build_reproducibility_manifest
+
+        manifest = build_reproducibility_manifest().model_dump(mode="json")
+    except Exception as exc:
+        logger.warning("reproducibility manifest build failed run=%s error=%s", run_id, exc)
+        return
+    save = getattr(run_repo, "save_reproducibility", None)
+    if save is not None:
+        try:
+            await save(run_id, manifest)
+        except Exception as exc:
+            logger.warning("reproducibility persist failed run=%s error=%s", run_id, exc)
+    await _append_state_patch(
+        state_repo,
+        run_id,
+        namespace="run",
+        author="Supervisor",
+        op="version",
+        path="/run/reproducibility",
+        patch=manifest,
+    )
+
+
 async def _append_state_patch(
     state_repo: Any,
     run_id: str,
@@ -773,6 +799,11 @@ async def _run_workflow_impl(
             remediation_requested=remediation_requested,
             execution_depth=execution_depth,
         )
+
+        # #885 run 단위 재현성: 당시 모델 스냅샷·프롬프트·카탈로그·코드 버전을 고정 저장한다.
+        # run record 테이블(run_reproducibility)과 append-only state patch 양쪽에 남겨,
+        # 나중에 이 run 의 입력·버전·후보 랭킹을 그대로 재구성할 수 있게 한다.
+        await _persist_reproducibility(run_repo, state_repo, run_id)
 
         # ── Stage 루프 ─────────────────────────────────────────────────────────
         correlation_out = None

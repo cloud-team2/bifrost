@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from app.persistence.message_repository import get_message_repo
 from app.persistence.run_repository import get_run_repo
+from app.persistence.state_repository import get_state_repo
 from app.persistence.thread_repository import get_thread_repo
 from app.schemas import ApiResponse, ErrorCode
 from app.schemas.outputs import ActionCandidateOutput
@@ -116,6 +117,41 @@ async def get_run(run_id: str) -> ApiResponse:
     if rec is None:
         return ApiResponse.failure(request_id, ErrorCode.RUN_NOT_FOUND, f"run not found: {run_id}")
     return ApiResponse.success(request_id, rec.model_dump())
+
+
+@router.get("/runs/{run_id}/reproducibility")
+async def get_run_reproducibility(run_id: str) -> ApiResponse:
+    """#885 과거 run 의 재현성 manifest + 당시 입력·후보 랭킹을 재구성해 반환한다.
+
+    run 시작 시 고정한 모델 스냅샷·프롬프트·카탈로그·코드 버전(manifest)과, RCA 가 낸
+    root cause 후보 랭킹을 함께 돌려줘 "그때 그 판단"을 그대로 추적할 수 있게 한다.
+    """
+    request_id = _request_id()
+    run_repo = get_run_repo()
+    rec = await run_repo.get(run_id)
+    if rec is None:
+        return ApiResponse.failure(request_id, ErrorCode.RUN_NOT_FOUND, f"run not found: {run_id}")
+
+    patches = await get_state_repo().get_patches(run_id)
+    manifest = await run_repo.get_reproducibility(run_id)
+    if manifest is None:
+        # run record 테이블이 없거나 비었으면 append-only state patch 에서 복원한다.
+        repro = [p.patch for p in patches if p.path == "/run/reproducibility"]
+        manifest = repro[-1] if repro else None
+
+    rankings = [p.patch for p in patches if p.path == "/analysis/root_cause_candidates"]
+    root_cause_candidates = (
+        rankings[-1].get("root_cause_candidates", []) if rankings else []
+    )
+
+    return ApiResponse.success(request_id, {
+        "run_id": run_id,
+        "user_message": getattr(rec, "user_message", None),
+        "mode": rec.mode,
+        "incident_id": getattr(rec, "incident_id", None),
+        "reproducibility": manifest,
+        "root_cause_candidates": root_cause_candidates,
+    })
 
 
 @router.get("/threads/{thread_id}/messages")
