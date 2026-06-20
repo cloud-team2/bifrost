@@ -1,7 +1,8 @@
-"""#887 RCA gold set API — CRUD + 검수(review) 엔드포인트."""
+"""#887 RCA gold set API + #888 AC@k 평가 리포트 엔드포인트."""
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from fastapi import APIRouter
 
@@ -140,3 +141,34 @@ async def labeling_guide() -> ApiResponse:
         "categories": LABELING_GUIDE,
         "rules": LABELING_RULES,
     })
+
+
+# ── #888 AC@k/Avg@k 평가 리포트 ─────────────────────────────────────────────
+
+from pydantic import BaseModel, Field as PydanticField
+
+
+class RunEvalReportRequest(BaseModel):
+    predictions: dict[str, list[dict[str, Any]]] = PydanticField(
+        default_factory=dict,
+        description="incident_id → [{'root_cause_id': ..., 'confidence': ...}, ...]",
+    )
+
+
+@router.post("/eval/accuracy-report")
+async def run_accuracy_report(req: RunEvalReportRequest) -> ApiResponse:
+    """#888 gold set 기반 AC@k/Avg@k 평가 리포트를 생성한다.
+
+    predictions가 비어 있으면 reviewed gold set만으로 "예측 없음" 리포트를 반환한다.
+    """
+    from app.evaluation.offline_eval import report_to_dict, run_offline_eval
+
+    request_id = _request_id()
+    repo = get_gold_set_repo()
+    entries = await repo.list(review_status=ReviewStatus.REVIEWED, limit=500)
+    if not entries:
+        return ApiResponse.failure(
+            request_id, ErrorCode.VALIDATION_FAILED, "no reviewed gold set entries"
+        )
+    report = run_offline_eval(entries, req.predictions)
+    return ApiResponse.success(request_id, report_to_dict(report))
