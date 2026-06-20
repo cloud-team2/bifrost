@@ -32,6 +32,15 @@ class KedbRecordModel(BaseModel):
             return date.fromisoformat(value)
         return value
 
+    @field_validator("known_symptoms", "verified_fixes", "incident_links", mode="before")
+    @classmethod
+    def _coerce_json_list(cls, value: object) -> object:
+        # asyncpg 는 jsonb 컬럼을 raw JSON 문자열로 돌려준다. RETURNING */SELECT * 로
+        # 받은 값이 str 이면 list 로 역직렬화한다(in-memory 경로는 이미 list 라 그대로 통과).
+        if isinstance(value, str):
+            return json.loads(value) if value.strip() else []
+        return value
+
 
 class InMemoryKedbRepository:
     def __init__(self) -> None:
