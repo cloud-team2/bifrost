@@ -24,6 +24,40 @@ async def _snapshot_evidence(action_id: str, phase: str) -> str:
     return f"evidence://{phase}/{action_id}/{uuid4().hex[:8]}"
 
 
+async def _capture_pre_change_snapshot(
+    action: ActionCandidate,
+    context: ToolContext,
+    registry: ToolClientRegistry,
+) -> str | None:
+    """#886 조치 직전 상태를 best-effort 로 읽어 롤백 기준 스냅샷 ref 를 만든다.
+
+    connector mutation 은 get_connector_status 로 현재 상태를 한 번 조회해
+    ``snapshot://before/{action_id}/{state}`` 형태로 남긴다. 조회 실패는 흡수하고
+    state 미상('unknown')으로 남겨 실행 흐름을 막지 않는다.
+    """
+    tool_name = action.tool_name or ""
+    if "connector" not in tool_name or "consumer_group" in tool_name:
+        return None
+    params = _build_tool_params(tool_name, action.action_name, action.tool_params)
+    connector_name = params.get("connector_name")
+    if not isinstance(connector_name, str) or not connector_name:
+        return None
+    state = "unknown"
+    try:
+        result = await registry.call_tool(
+            "get_connector_status", {"connector_name": connector_name}, context
+        )
+        if result.status == ToolStatus.SUCCESS:
+            payload = result.raw_payload if isinstance(result.raw_payload, dict) else {}
+            inner = payload.get("result") if isinstance(payload.get("result"), dict) else payload
+            raw_state = (inner or {}).get("connectorState") or (inner or {}).get("state")
+            if isinstance(raw_state, str) and raw_state:
+                state = raw_state
+    except Exception as exc:  # 스냅샷은 보조 — 실패해도 실행을 막지 않는다.
+        logger.warning("pre-change snapshot failed action=%s error=%s", action.action_id, exc)
+    return f"snapshot://before/{action.action_id}/{state}"
+
+
 async def _after_check(
     action: ActionCandidate,
     context: ToolContext,
@@ -71,6 +105,7 @@ async def run_executor(
     registry: ToolClientRegistry,
     approval_by_action: dict[str, str] | None = None,
     change_ticket_by_action: dict[str, str] | None = None,
+    capture_pre_change_snapshot: bool = False,
 ) -> ExecutorOutput:
     """ready action만 멱등키로 실행. ready 아닌 action은 건너뜀(중복 실행 차단).
 
@@ -91,6 +126,12 @@ async def run_executor(
             continue
 
         before_ref = await _snapshot_evidence(action.action_id, "before")
+        # #886 조치 직전 상태를 스냅샷으로 남겨 실패 시 자동 롤백의 복원 기준으로 쓴다.
+        pre_change_snapshot = (
+            await _capture_pre_change_snapshot(action, context, registry)
+            if capture_pre_change_snapshot
+            else None
+        )
         idempotency_key = f"{run_id}:{action.action_id}"
         exec_context = context.with_idempotency_key(idempotency_key).with_approval(
             approval_id=approval_by_action.get(action.action_id),
@@ -120,6 +161,7 @@ async def run_executor(
             after_evidence_id=after_ref,
             reason_code=tool_result.error.code if tool_result.error else None,
             summary=tool_result.summary,
+            pre_change_snapshot=pre_change_snapshot,
         ))
 
     return ExecutorOutput(execution_results=results)
