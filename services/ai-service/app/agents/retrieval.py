@@ -169,6 +169,9 @@ async def run_retrieval(
     mode: AgentMode | None = None,
     vector_store: Any | None = None,
     evidence_repo: AnyEvidenceRepo | None = None,
+    max_tool_calls: int | None = None,
+    allow_react_loop: bool = True,
+    react_max_steps: int = 6,
 ) -> RetrievalOutput:
     if event_repo is None:
         event_repo = InMemoryEventRepository()
@@ -191,6 +194,13 @@ async def run_retrieval(
         event_repo=event_repo,
         vector_store=vector_store,
     )
+
+    # #882 max_tool_calls=0(direct_answer 등) → 운영 tool 을 호출하지 않고 지식/요청 근거만 쓴다.
+    if max_tool_calls == 0:
+        return RetrievalOutput(evidence_items=[*request_items, *knowledge_items])
+
+    # #882 Router 가 정한 read-only tool 예산만큼 flat plan 을 좁힌다(의도치 않은 다중 호출 차단).
+    plan_steps = plan.retrieval_plan if max_tool_calls is None else plan.retrieval_plan[:max_tool_calls]
 
     # 순수 지식 질의(planner 가 fallback tool 만 계획)는 RAG 근거가 있으면 운영 runtime tool
     # 호출 없이 답변한다. 단, 상태/목록 등 명시적 운영 tool 이 계획됐다면 knowledge 근거가
@@ -307,9 +317,17 @@ async def run_retrieval(
     # 막지 않는다(planner 가 search_logs 같은 fallback 만 골라도 루프가 sql_read 등을 선택할 수 있게).
     # 순수 지식 질의는 위 knowledge 단락(short-circuit)에서 이미 처리된다.
     provider = get_llm_provider()
-    if mode in (AgentMode.SIMPLE_QUERY, AgentMode.INCIDENT_ANALYSIS) and provider.supports_tools():
+    # #882 ReAct 루프는 Router 가 allow_react_loop 를 켠 depth(incident_diagnosis 등)에서만 돈다.
+    # 단순 조회(direct/single/bounded)는 루프를 끄고 capped flat plan 으로만 조회해
+    # 의도치 않은 다중 tool 호출을 막는다.
+    if (
+        allow_react_loop
+        and mode in (AgentMode.SIMPLE_QUERY, AgentMode.INCIDENT_ANALYSIS)
+        and provider.supports_tools()
+    ):
         loop_result = await run_tool_loop(
-            user_message=user_message or "", registry=registry, context=context, provider=provider,
+            user_message=user_message or "", registry=registry, context=context,
+            provider=provider, max_steps=react_max_steps,
         )
         if loop_result.used_llm and loop_result.calls:
             tool_evidence = [
@@ -318,7 +336,7 @@ async def run_retrieval(
             ]
             called_tools = {rec.tool_name for rec in loop_result.calls}
             remaining_steps = [
-                step for step in plan.retrieval_plan if step.tool_name not in called_tools
+                step for step in plan_steps if step.tool_name not in called_tools
             ]
             if remaining_steps:
                 tool_evidence.extend(await _run_plan_steps(remaining_steps, call_step))
@@ -328,7 +346,7 @@ async def run_retrieval(
             )
 
     # depends_on을 해석해 독립 tool은 병렬(fan-out), 의존 tool은 선행 완료 후 순차 실행
-    tool_evidence = await _run_plan_steps(plan.retrieval_plan, call_step)
+    tool_evidence = await _run_plan_steps(plan_steps, call_step)
     return RetrievalOutput(evidence_items=[*request_items, *knowledge_items, *tool_evidence])
 
 

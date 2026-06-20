@@ -7,7 +7,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from app.schemas.state import AgentMode, AgentState, RunStatus, VerificationStatus
+from app.schemas.state import (
+    AgentMode,
+    AgentState,
+    ExecutionDepth,
+    RunStatus,
+    VerificationStatus,
+)
 from app.supervisor.retry_policy import RetryPolicy, default_retry_policy
 from app.supervisor.state_store import InMemoryStateStore, get_state_store
 from app.supervisor.transitions import next_stage
@@ -23,6 +29,8 @@ class Supervisor:
         self._store = store or get_state_store()
         self._policy = policy or default_retry_policy()
         self._remediation_flags: dict[str, bool] = {}
+        # #882 Router 가 정한 실행 깊이. depth-aware stage 선택에 쓴다.
+        self._execution_depth: dict[str, ExecutionDepth] = {}
         # #453 Verifier loopback: 다음 advance에서 정적 테이블 대신 되돌릴 stage.
         self._pending_loopback: dict[str, str] = {}
         # #453 loopback 예산 소진 시 다음 advance에서 올릴 RunBudgetExceeded reason.
@@ -34,8 +42,11 @@ class Supervisor:
         mode: AgentMode,
         incident_id: str | None = None,
         remediation_requested: bool = False,
+        execution_depth: ExecutionDepth | None = None,
     ) -> AgentState:
         self._remediation_flags[run_id] = remediation_requested
+        if execution_depth is not None:
+            self._execution_depth[run_id] = execution_depth
         state = self._store.create(run_id, mode, incident_id)
         # #481: wall-clock 예산 기준점. stage_started_at은 첫 advance에서 설정된다.
         now = datetime.now(timezone.utc)
@@ -75,7 +86,8 @@ class Supervisor:
             mode = _infer_mode(state)
             current = state.run.current_agent
             remediation_requested = self._remediation_flags.get(run_id, False)
-            nxt = next_stage(mode, current, remediation_requested)
+            execution_depth = self._execution_depth.get(run_id)
+            nxt = next_stage(mode, current, remediation_requested, execution_depth)
 
         stage_start = datetime.now(timezone.utc)
 
