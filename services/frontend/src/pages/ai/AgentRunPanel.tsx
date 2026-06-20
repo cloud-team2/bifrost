@@ -100,7 +100,7 @@ const GENERIC_BADGE_KEYS = new Set(['severity', 'status', 'state', 'level', 'typ
 const THEMES = {
   brand: {
     avatar: 'bg-[#0d0d0d]',
-    userBubble: 'rounded-br-sm bg-brand-600 text-white',
+    userBubble: 'rounded-br-sm bg-[#e6e7e9] text-[#0d0d0d]',
     icon: 'text-brand-500',
     statusText: 'text-brand-700',
     quick: 'border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 disabled:opacity-50',
@@ -110,7 +110,7 @@ const THEMES = {
   },
   violet: {
     avatar: 'bg-[#0d0d0d]',
-    userBubble: 'rounded-br-sm bg-[#0d0d0d] text-white',
+    userBubble: 'rounded-br-sm bg-[#e6e7e9] text-[#0d0d0d]',
     icon: 'text-[#8a8a8a]',
     statusText: 'text-[#6b6b73]',
     quick: 'border-[#ececec] bg-[#ededed] text-[#6b6b73] hover:bg-[#ededed] disabled:opacity-50',
