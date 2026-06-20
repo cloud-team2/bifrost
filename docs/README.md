@@ -9,7 +9,7 @@
 | 분류 | 문서 | 내용 |
 | --- | --- | --- |
 | 요구사항(SoT) | [spec.md](./spec.md) | 기능명세서 — FR 카탈로그 + 부록 B(상태값·임계값·이벤트→인시던트 규칙)의 **단일 출처** |
-| 시나리오 | [scenario.md](./scenario.md) | 시연 Critical Path, 통합 시나리오, 완료 정의(DoD). 주차 로드맵은 team/roadmap |
+| 시나리오 | [scenario.md](./scenario.md) | 시연 Critical Path, 통합 시나리오, 완료 정의(DoD) |
 | 설계 | [design/infra.md](./design/infra.md) | 인프라(단일 EKS·Strimzi·Harbor·CI/CD·Observability) |
 | 설계 | [design/frontend.md](./design/frontend.md) | 프론트엔드 화면(FR)별 백엔드 연동 |
 | 설계 | [design/backend-springboot/](./design/backend-springboot/overview.md) | Spring Boot Operations Backend(플랫폼 본체·운영 집행) |
@@ -17,8 +17,7 @@
 | API | [api/springboot.md](./api/springboot.md) | 플랫폼 `/api/v1` + 내부 전용 운영 `/internal/ops` |
 | API | [api/fastapi.md](./api/fastapi.md) | Agent `/api/v1/agent…` |
 | 결정 | [adr/](./adr/) | 아키텍처 결정 기록(ADR) |
-| 가이드 | [guides/getting-started-infra.md](./guides/getting-started-infra.md) | 인프라 환경 셋업 |
-| 팀 | [team/git-convention.md](./team/git-convention.md) · [team/roadmap.md](./team/roadmap.md) · [team/todo.md](./team/todo.md) | git 컨벤션 · 발표(6/24)까지 로드맵(역할 분담 포함) · 이번주 작업 |
+| 팀 | [team/git-convention.md](./team/git-convention.md) | git 컨벤션 |
 
 ## 전체 구조
 
@@ -68,6 +67,6 @@ Spring Boot Operations Backend
 
 ## 읽는 순서
 
-1. 이 문서(README) → 2. [spec.md](./spec.md)(FR·임계값) → 3. [scenario.md](./scenario.md) → 4. 설계 [design/](./design/) → 5. API [api/](./api/) → 6. [team/todo.md](./team/todo.md)(현재 작업)
+1. 이 문서(README) → 2. [spec.md](./spec.md)(FR·임계값) → 3. [scenario.md](./scenario.md) → 4. 설계 [design/](./design/) → 5. API [api/](./api/)
 
 상태값(`pipeline.status`·`connector.state` 등)·임계값(consumer lag 5,000/50,000, error rate 0.5%/2% 등)·이벤트→인시던트 규칙의 **단일 출처는 [spec.md 부록 B](./spec.md#부록-b--리소스-상태값-정의-및-자동-기준-단일-출처)**다. 다른 문서는 중복 정의하지 않고 이를 인용한다.

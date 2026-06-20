@@ -90,4 +90,4 @@ uv run pytest
 
 ## 인프라 인계
 
-K8s 매니페스트 · Helm 차트 · agentdb 세팅은 `docs/guides/fastapi-infra-handover.md` 참고.
+K8s 매니페스트 · Helm 차트 · agentdb 세팅은 `gitops` 브랜치(`charts/ai-service/`, `databases/agentdb/`) 참고.

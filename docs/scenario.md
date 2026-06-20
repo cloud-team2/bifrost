@@ -90,4 +90,3 @@ Frontend → operations-backend: POST /api/v1/workspaces {name}
 - [ ] AI 장애대응: 자연어/자동감지 → 진단(RCA) → 추천 조치 → **HITL 승인 후 실행**(audit 기록)
 - [ ] 2개 이상 워크스페이스 동시 사용 시 토픽·리소스 격리(다른 워크스페이스 토픽 접근 불가)
 
-> 주차별 추진 일정·마일스톤은 [team/roadmap.md](./team/roadmap.md), 이번주 상세 작업은 [team/todo.md](./team/todo.md).

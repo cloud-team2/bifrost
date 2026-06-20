@@ -91,3 +91,4 @@ erDiagram
 - 카탈로그: [failure-types](./catalog/catalog-failure-types.md) · [incident→rootcause](./catalog/catalog-incident-root-cause-map.md) · [root-causes](./catalog/catalog-root-causes.md) · [evidence-matrix](./catalog/catalog-evidence-matrix.md) · [correlation-rules](./catalog/catalog-correlation-rules.md) · [runbooks](./catalog/catalog-remediation-runbooks.md) · [policy-matrix](./catalog/catalog-policy-matrix.md)
 - 계약: [agent-roles](./contract/contract-agent-roles.md) · [state-schema](./contract/contract-state-schema.md) · [workflow-control](./contract/contract-workflow-control.md) · [streaming-events](./contract/contract-streaming-events.md) · [output-schemas](./contract/contract-output-schemas.md)
 - [api/fastapi.md](../../api/fastapi.md) — Frontend-facing FastAPI API
+- [RCA 표준 검토·개선 로드맵](../rca-standards-review.md) — 설계 문서 곳곳의 **[계획 §N]** to-be(자동롤백·실행깊이 제어·run 재현성·인과/상관 증거 태그·KEDB 등)의 표준 근거

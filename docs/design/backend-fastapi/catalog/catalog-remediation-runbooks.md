@@ -242,6 +242,25 @@ Unknown 상태에서는 mutation action을 만들지 않는다.
 
 `tool_name`은 `action_type=runtime_tool`일 때 필수다. `workflow_action`, `notification`, `escalation`, `composite_action`은 `tool_name`을 비워둘 수 있으며, Tool Client Registry 또는 Supervisor가 구체적인 read-only tool plan, notification request, runtime tool 후보로 변환한다.
 
+> **[현재] `rollback_plan` 상태**: `rollback_plan`은 필드로만 존재한다. 코드의 `RunbookActionTemplate.rollback_plan`(`app/catalogs/types.py`)은 기본값 `None`이고, `app/catalogs/runbooks.py`의 어떤 action template도 이 값을 채우지 않는다(검증된 원복 절차가 catalog에 없음). 위 JSON 예시의 `"rollback_plan": "pause connector if task fails again"`은 Remediation Agent가 생성하는 자유 텍스트 후보(`ActionCandidateOutput.rollback_plan`)이며, `change_management` action일 때 Change Ticket으로 넘어가 `change_gate.py`가 **비어있지 않은지(non-empty)만** 검증한다. 즉 현재는 rollback "계획 텍스트의 존재"만 확인하고, 실제 자동 롤백 실행은 없다.
+
+### 10.1 검증된 rollback과 자동 롤백 실행 [계획 §5·§13]
+
+> 아래는 to-be 설계다. 근거는 [RCA 표준 검토 §5.2](../../rca-standards-review.md)(AWS OPS06-BP04, Argo Rollouts 기반 failure-condition 자동 롤백), §2.5(자동 롤백 행), §7 로드맵 item 5·13을 따른다.
+
+**(a) runbook의 검증된 rollback_plan [계획 §13]**: 자유 텍스트 대신, root cause별 KEDB의 `verified_fixes`·`rollback`([§8 root-causes §12 KEDB](catalog-root-causes.md#12-kedb형-운영-지식화-계획-13))과 연결된 **검증된 원복 절차**를 action template `rollback_plan`에 채운다. 검증되지 않은 조치는 rollback이 비어 있을 수 있고, 이 경우 자동 롤백 대상에서 제외한다.
+
+**(b) 자동 롤백 실행 필드 [계획 §5]**: Executor가 조치 전 상태를 저장하고, Verifier가 성공 조건 미달을 판정하면 `rollback_plan`을 실행한다. run 결과에 다음을 남긴다(공유 용어, [§12 policy-matrix](catalog-policy-matrix.md) risk-tier rollback 정책과 동일 필드명).
+
+| 필드 | 의미 |
+| --- | --- |
+| `pre_change_snapshot` | 조치 직전 상태 스냅샷 (원복 기준) |
+| `rollback_action_id` | 실행된 rollback action 식별자 |
+| `rollback_status` | rollback 실행 결과 (성공/실패/미실행) |
+| `rollback_audit_event_id` | rollback 감사 이벤트 id (append-only 이력) |
+
+risk-tier별 자동 롤백 범위(low/read-only·일부 medium은 자동, high는 rollback 실행도 승인)는 [§12 Policy Matrix](catalog-policy-matrix.md#12-catalog-policy-matrix)에서 정의한다.
+
 Action type 예시:
 
 | Action | action_type | 해석 |

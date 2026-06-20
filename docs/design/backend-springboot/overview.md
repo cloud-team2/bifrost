@@ -85,3 +85,4 @@ erDiagram
 - [monitoring.md](./monitoring.md) — 수집기·상태 산정·이벤트/인시던트 엔진·Sync/Messages/Metrics·SSE
 - [governance.md](./governance.md) — 운영 조치 집행 현재 구현(approval·change-ticket·idempotency·mutation subset)과 보강 대상
 - [api/springboot.md](../../api/springboot.md) — 플랫폼 `/api/v1` + 내부 전용 운영 `/internal/ops`
+- [RCA 표준 검토·개선 로드맵](../rca-standards-review.md) — monitoring·data-model의 **[계획 §N]** to-be(사용자 영향 SLI/SLO·burn-rate 알림·severity·threshold registry)의 표준 근거
