@@ -61,9 +61,17 @@ public class DatabaseHealthProbeJob {
         this.eventService = eventService;
     }
 
-    /** 기본 60초마다 등록된 모든 DB의 연결 상태를 프로브한다. */
+    /**
+     * 기본 60초마다 등록된 모든 DB의 연결 상태를 프로브한다.
+     *
+     * <p>의도적으로 {@code @Transactional}을 두지 않는다(#918). 이 메서드를 한 트랜잭션으로 감싸면,
+     * {@code probe()} 내부의 중첩 {@code @Transactional}({@code reevaluateForDatasource} 등)이
+     * 예외로 트랜잭션을 rollback-only로 마킹했을 때, 아래 try/catch로 예외를 삼켜도 플래그가 남아
+     * 메서드 커밋 시점에 {@code UnexpectedRollbackException}이 발생한다. 트랜잭션 경계를 두지 않으면
+     * 각 {@code save}/{@code reevaluateForDatasource}가 자기 트랜잭션에서 독립 커밋/롤백되어
+     * 한 datasource의 실패가 전체 스윕을 깨지 않고, 상태 저장도 유실되지 않는다.
+     */
     @Scheduled(fixedDelayString = "${database.health-probe-ms:60000}")
-    @Transactional
     public void probeAll() {
         for (DatasourceEntity e : datasourceRepository.findAll()) {
             try {
