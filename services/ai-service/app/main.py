@@ -20,6 +20,7 @@ from app.api import (
     routes_events,
     routes_evidence,
     routes_feedback,
+    routes_gold_set,
     routes_health,
     routes_reports,
     routes_thresholds,
@@ -69,6 +70,7 @@ def create_app() -> FastAPI:
     app.include_router(routes_evidence.router, prefix="/api/v1/agent", tags=["evidence"])
     app.include_router(routes_catalogs.router, prefix="/api/v1", tags=["catalogs"])
     app.include_router(routes_thresholds.router, prefix="/api/v1/admin", tags=["thresholds"])
+    app.include_router(routes_gold_set.router, prefix="/api/v1/agent", tags=["gold-set"])
 
     # K8s liveness/readiness probe용 경량 엔드포인트 (helm deployment에서 사용)
     @app.get("/health", tags=["health"])
