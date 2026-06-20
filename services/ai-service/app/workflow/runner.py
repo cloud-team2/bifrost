@@ -45,6 +45,8 @@ from app.schemas.state import (
     AgentMode,
     EvidenceItem,
     EvidenceType,
+    ExecutionDepth,
+    HistoryPolicy,
     PolicyDecisionType,
     RedactionStatus,
     RiskLevel,
@@ -53,7 +55,7 @@ from app.schemas.state import (
 from app.schemas.tools import ToolContext
 from app.streaming.event_bus import EventBus
 from app.supervisor.graph import get_supervisor
-from app.supervisor.transitions import stages_for_mode
+from app.supervisor.transitions import default_depth_for_mode, depth_budget, stages_for_mode
 from app.tools.registry import ToolClientRegistry
 from app.workflow.action_tools import ACTION_EXECUTION_TOOLS, is_executable_runtime_action_payload
 from app.workflow.guards import RunBudgetExceeded
@@ -610,6 +612,7 @@ async def run_workflow(
             await _run_workflow_impl(
                 run_id=run_id,
                 user_message=effective_message,
+                raw_user_message=user_message,
                 project_id=project_id,
                 bus=bus,
                 run_repo=run_repo,
@@ -631,6 +634,7 @@ async def _run_workflow_impl(
     *,
     run_id: str,
     user_message: str,
+    raw_user_message: str | None = None,
     project_id: str,
     bus: EventBus,
     run_repo: AnyRunRepo,
@@ -672,15 +676,35 @@ async def _run_workflow_impl(
             or _bool_or_false(router_out.route_decision.remediation_requested)
         )
         set_current_run_mode(mode.value)  # router 결정 mode 를 run span 에 기록(#372)
+        # #882 실행 깊이 확정. Router 가 simple_query 로 분류한 그대로면 Router 의 depth 를
+        # 쓰고, mode 가 외부 요청/incident 컨텍스트로 바뀌었으면 그 mode 의 기본 depth 로
+        # 재산정한다. remediation 이 뒤늦게 켜진 incident 는 remediation_planning 으로 승격.
+        router_depth = router_out.route_decision.execution_depth
+        if mode == router_out.route_decision.mode and router_depth is not None:
+            execution_depth = router_depth
+        else:
+            execution_depth = default_depth_for_mode(mode, remediation_requested)
+        if (
+            mode == AgentMode.INCIDENT_ANALYSIS
+            and remediation_requested
+            and execution_depth == ExecutionDepth.INCIDENT_DIAGNOSIS
+        ):
+            execution_depth = ExecutionDepth.REMEDIATION_PLANNING
+        max_tool_calls, allow_react_loop, react_max_steps, history_policy = depth_budget(
+            execution_depth
+        )
         # #604: 전체 stage 흐름은 이 시점에 확정된다. FE가 진행 단계 분모를
         # 처음부터 고정할 수 있도록 required_flow를 payload로 노출한다.
-        required_flow = list(stages_for_mode(mode, remediation_requested))
+        required_flow = list(stages_for_mode(mode, remediation_requested, execution_depth))
         await _publish(bus, event_repo, run_id, _evt(
             run_id, StreamingEventType.AGENT_COMPLETED, "router", f"mode: {mode.value}",
             {
                 "mode": mode.value,
                 "required_flow": required_flow,
                 "total_stages": len(required_flow),
+                "execution_depth": execution_depth.value,
+                "max_tool_calls": max_tool_calls,
+                "allow_react_loop": allow_react_loop,
             },
         ))
         if persisted_incident_id:
@@ -699,6 +723,7 @@ async def _run_workflow_impl(
             run_id, mode,
             incident_id=persisted_incident_id,
             remediation_requested=remediation_requested,
+            execution_depth=execution_depth,
         )
 
         # ── Stage 루프 ─────────────────────────────────────────────────────────
@@ -831,8 +856,15 @@ async def _run_workflow_impl(
                         project_id=project_id,
                         request_id=str(uuid4()),
                     )
+                    # #882 history input filter: history_policy=none 인 단순 조회는 이전 대화
+                    # 맥락을 Planner 에 주입하지 않는다(지난 장애 키워드가 단순 질의를 오염시키는 것 차단).
+                    planner_message = (
+                        raw_user_message
+                        if history_policy == HistoryPolicy.NONE and raw_user_message is not None
+                        else user_message
+                    )
                     planner_out = await planner_agent.run_planner(
-                        user_message,
+                        planner_message,
                         project_id,
                         registry=registry,
                         tool_context=planner_context,
@@ -989,6 +1021,10 @@ async def _run_workflow_impl(
                         event_repo,
                         user_message=user_message,
                         mode=mode,
+                        # #882 Router 가 정한 실행 깊이 예산 — 단순 조회는 tool 수/ReAct 를 제한한다.
+                        max_tool_calls=max_tool_calls,
+                        allow_react_loop=allow_react_loop,
+                        react_max_steps=react_max_steps,
                     )
                     await _publish(bus, event_repo, run_id, _evt(
                         run_id, StreamingEventType.AGENT_COMPLETED, "retrieval",
@@ -1402,40 +1438,52 @@ async def _run_workflow_impl(
                         record_usage = getattr(supervisor, "record_llm_usage", None)
                         if record_usage is not None:
                             record_usage(run_id, calls=1, tokens=_estimate_tokens(user_message, answer))
-                    verifier_out = await verifier_agent.run_verifier(
-                        mode,
-                        rca_out=rca_out,
-                        retrieval_out=retrieval_out,
-                        classifier_out=classifier_out,
-                        executor_out=executor_out,
-                        report_body=answer,
+                    # #882 단순 조회(direct/single/bounded lookup)는 검증 agent 를 호출하지 않고
+                    # 곧장 답변을 확정한다(설계 §6.4.2: schema/citation 검증으로 대체). 운영 변경·
+                    # RCA 결론처럼 검증 가치가 큰 출력에서만 verifier loopback 을 유지한다.
+                    skip_verifier = (
+                        mode == AgentMode.SIMPLE_QUERY
+                        and execution_depth in (
+                            ExecutionDepth.DIRECT_ANSWER,
+                            ExecutionDepth.SINGLE_LOOKUP,
+                            ExecutionDepth.BOUNDED_LOOKUP,
+                        )
                     )
-                    first_result = (
-                        verifier_out.verification_results[0]
-                        if verifier_out.verification_results
-                        else None
-                    )
-                    v_status = first_result.status.value if first_result else "pass"
-                    await _publish(bus, event_repo, run_id, _evt(
-                        run_id,
-                        StreamingEventType.VERIFICATION_COMPLETED,
-                        "verifier",
-                        f"report 검증: {v_status}",
-                    ))
-                    await _append_state_patch(
-                        state_repo,
-                        run_id,
-                        namespace="verification",
-                        author="Verifier",
-                        op="append",
-                        path="/verification/verification_results",
-                        patch={"verification_results": _jsonable(verifier_out.verification_results)},
-                    )
-                    record_verifier = getattr(supervisor, "record_verifier_result", None)
-                    if record_verifier is not None and first_result is not None:
-                        record_verifier(run_id, first_result.status, first_result.next_agent)
-                    if first_result is not None and first_result.status != VerificationStatus.PASS:
-                        continue
+                    if not skip_verifier:
+                        verifier_out = await verifier_agent.run_verifier(
+                            mode,
+                            rca_out=rca_out,
+                            retrieval_out=retrieval_out,
+                            classifier_out=classifier_out,
+                            executor_out=executor_out,
+                            report_body=answer,
+                        )
+                        first_result = (
+                            verifier_out.verification_results[0]
+                            if verifier_out.verification_results
+                            else None
+                        )
+                        v_status = first_result.status.value if first_result else "pass"
+                        await _publish(bus, event_repo, run_id, _evt(
+                            run_id,
+                            StreamingEventType.VERIFICATION_COMPLETED,
+                            "verifier",
+                            f"report 검증: {v_status}",
+                        ))
+                        await _append_state_patch(
+                            state_repo,
+                            run_id,
+                            namespace="verification",
+                            author="Verifier",
+                            op="append",
+                            path="/verification/verification_results",
+                            patch={"verification_results": _jsonable(verifier_out.verification_results)},
+                        )
+                        record_verifier = getattr(supervisor, "record_verifier_result", None)
+                        if record_verifier is not None and first_result is not None:
+                            record_verifier(run_id, first_result.status, first_result.next_agent)
+                        if first_result is not None and first_result.status != VerificationStatus.PASS:
+                            continue
                     await _persist_report_snapshot(
                         run_id=run_id,
                         answer=answer,

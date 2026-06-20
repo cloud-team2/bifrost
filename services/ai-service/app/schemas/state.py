@@ -24,6 +24,30 @@ class AgentMode(str, Enum):
     APPROVAL_DECISION = "approval_decision"
 
 
+class ExecutionDepth(str, Enum):
+    """자연어 질의의 실행 깊이(#882, 설계문서 §6.4.1).
+
+    Router 가 mode 와 함께 결정한다. 단순 조회는 짧은 경로로 끝내고, 인시던트
+    분석/조치는 깊은 경로를 탄다. depth 별 허용 stage 와 tool budget 은
+    transitions.depth_budget()/stages_for_mode() 가 결정한다.
+    """
+
+    DIRECT_ANSWER = "direct_answer"            # RAG/cached 로 바로 답변, 운영 tool 0개
+    SINGLE_LOOKUP = "single_lookup"            # read-only tool 1개
+    BOUNDED_LOOKUP = "bounded_lookup"          # read-only tool 2~3개
+    INCIDENT_DIAGNOSIS = "incident_diagnosis"  # classifier/rca 까지
+    REMEDIATION_PLANNING = "remediation_planning"  # rca 뒤 remediation/policy 까지
+    ACTION_EXECUTION = "action_execution"      # 승인/변경/실행 경로
+
+
+class HistoryPolicy(str, Enum):
+    """다음 agent 에 전달할 대화 이력 범위(#882, 설계문서 §6.4.5)."""
+
+    NONE = "none"
+    SUMMARY = "summary"
+    FULL = "full"
+
+
 class RunStatus(str, Enum):
     RUNNING = "running"
     WAITING_FOR_APPROVAL = "waiting_for_approval"

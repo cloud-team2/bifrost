@@ -14,7 +14,9 @@ from app.schemas.state import (
     ActionType,
     AgentMode,
     EvidenceItem,
+    ExecutionDepth,
     FinalResponse,
+    HistoryPolicy,
     IncidentScope,
     PolicyDecisionType,
     RiskLevel,
@@ -46,6 +48,12 @@ class RouteDecision(StrictModel):
     reuse_existing_analysis: bool = False
     reason: str
     required_flow: list[str]
+    # #882 자연어 질의 실행 깊이 제어 — Router 가 질의 난이도에 맞춰 실행량을 정한다.
+    # execution_depth 가 없으면(구버전/외부 mock) runner 가 mode 기준 기본 depth 로 보정한다.
+    execution_depth: ExecutionDepth | None = None
+    max_tool_calls: int = Field(default=0, ge=0)
+    allow_react_loop: bool = False
+    history_policy: HistoryPolicy = HistoryPolicy.FULL
 
 
 class RouterOutput(StrictModel):

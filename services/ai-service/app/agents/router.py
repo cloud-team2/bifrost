@@ -10,8 +10,12 @@ from typing import Any
 
 from app.prompts import router as router_prompt
 from app.schemas.outputs import RouteDecision, RouterOutput
-from app.schemas.state import AgentMode
-from app.supervisor.transitions import stages_for_mode
+from app.schemas.state import AgentMode, ExecutionDepth
+from app.supervisor.transitions import (
+    default_depth_for_mode,
+    depth_budget,
+    stages_for_mode,
+)
 
 # 명시적 승인/거절 의도 — approval_decision 모드로 라우팅한다.
 _APPROVAL_KEYWORDS = {
@@ -34,6 +38,17 @@ _INCIDENT_KEYWORDS = {
     "timeout", "타임아웃", "lag", "지연", "중단", "죽",
 }
 
+# #882 단순 질의 실행 깊이 분류용 키워드.
+# 용어·개념 설명만 원하는 지식 질의 → direct_answer(운영 tool 호출 없음).
+_DEFINITION_KEYWORDS = {
+    "뭐야", "뭔가요", "뭐임", "무엇", "뜻", "의미", "개념", "설명해", "설명 좀",
+    "define", "what is", "what's", "whats", "어떤 거", "어떤거", "왜 쓰", "차이가",
+}
+# 단일 목록/조회 → single_lookup(read-only tool 1개).
+_SINGLE_LOOKUP_KEYWORDS = {
+    "목록", "리스트", "list", "보여줘", "몇 개", "몇개", "개수", "알려줘 목록",
+}
+
 _VALID_MODES = {mode.value for mode in AgentMode}
 
 
@@ -50,6 +65,12 @@ async def run_router(user_message: str) -> RouterOutput:
         AgentMode.APPROVAL_DECISION,
     )
 
+    # #882 실행 깊이 결정: 단순 조회는 짧게, 인시던트/조치는 깊게.
+    execution_depth = _classify_depth(user_message, mode, remediation_requested)
+    max_tool_calls, allow_react_loop, _react_max_steps, history_policy = depth_budget(
+        execution_depth
+    )
+
     return RouterOutput(
         route_decision=RouteDecision(
             mode=mode,
@@ -57,9 +78,35 @@ async def run_router(user_message: str) -> RouterOutput:
             reuse_existing_analysis=reuse_existing_analysis,
             reason=reason,
             # 실제 transition table과 정합된 stage 흐름을 노출한다(하드코딩 제거).
-            required_flow=list(stages_for_mode(mode, remediation_requested)),
+            required_flow=list(stages_for_mode(mode, remediation_requested, execution_depth)),
+            execution_depth=execution_depth,
+            max_tool_calls=max_tool_calls,
+            allow_react_loop=allow_react_loop,
+            history_policy=history_policy,
         )
     )
+
+
+def _classify_depth(
+    user_message: str, mode: AgentMode, remediation_requested: bool
+) -> ExecutionDepth:
+    """질의 난이도에 맞춰 실행 깊이를 정한다(설계문서 §6.4.1 기본값 표).
+
+    simple_query 만 direct/single/bounded 로 세분하고, incident/action 은 mode
+    기본 depth 를 따른다. 키워드 휴리스틱이라 LLM 미가용에도 결정적으로 동작한다.
+    """
+    if mode != AgentMode.SIMPLE_QUERY:
+        return default_depth_for_mode(mode, remediation_requested)
+
+    msg = user_message.lower()
+    # "DLQ가 뭐야?" 류 용어·개념 질의 → 운영 tool 없이 지식으로 답변.
+    if any(kw in msg for kw in _DEFINITION_KEYWORDS):
+        return ExecutionDepth.DIRECT_ANSWER
+    # "파이프라인 목록 보여줘" 류 단일 조회 → tool 1개.
+    if any(kw in msg for kw in _SINGLE_LOOKUP_KEYWORDS):
+        return ExecutionDepth.SINGLE_LOOKUP
+    # 그 외 현황·요약 질의 → tool 2개까지.
+    return ExecutionDepth.BOUNDED_LOOKUP
 
 
 def _keyword_route(user_message: str) -> tuple[AgentMode, bool, str]:
