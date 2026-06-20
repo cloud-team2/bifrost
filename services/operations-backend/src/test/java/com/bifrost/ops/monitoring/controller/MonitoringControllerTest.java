@@ -12,7 +12,12 @@ import com.bifrost.ops.incident.dto.IncidentReportResponse;
 import com.bifrost.ops.incident.dto.IncidentResponse;
 import com.bifrost.ops.monitoring.dto.OverviewResponse;
 import com.bifrost.ops.monitoring.dto.ResourceEventResponse;
+import com.bifrost.ops.monitoring.dto.SliDefinitionResponse;
+import com.bifrost.ops.monitoring.dto.SliMeasurementResponse;
 import com.bifrost.ops.monitoring.service.MonitoringReadService;
+import com.bifrost.ops.monitoring.sli.UserImpactSliService;
+import com.bifrost.ops.monitoring.sli.UserImpactSliStatus;
+import com.bifrost.ops.monitoring.sli.UserImpactSliType;
 import com.bifrost.ops.workspace.WorkspaceAccessGuard;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
@@ -55,9 +60,10 @@ class MonitoringControllerTest {
             mock(com.bifrost.ops.monitoring.query.ObservabilityMetricsQuery.class);
     private final com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository workspaceRepository =
             mock(com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository.class);
+    private final UserImpactSliService sliService = mock(UserImpactSliService.class);
     private final MonitoringController controller =
             new MonitoringController(monitoringReadService, incidentService, eventService, incidentReportService,
-                    accessGuard, metricsQuery, workspaceRepository);
+                    accessGuard, metricsQuery, workspaceRepository, sliService);
 
     private final UUID wsId = UUID.randomUUID();
     private final AuthenticatedUser principal = new AuthenticatedUser(UUID.randomUUID(), wsId, "u@bifrost.io");
@@ -128,6 +134,76 @@ class MonitoringControllerTest {
 
         verify(accessGuard).requireAccess(wsId, principal);
         verify(monitoringReadService).resourceEvents(wsId);
+    }
+
+    @Test
+    void sliDefinitionsEndpointReturnsGoodAndTotalEventDefinitions() throws Exception {
+        when(sliService.definitions()).thenReturn(List.of(
+                SliDefinitionResponse.from(UserImpactSliType.DATA_FRESHNESS)));
+
+        mockMvc().perform(get("/api/v1/workspaces/{wsId}/monitoring/slis/definitions", wsId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].type").value("DATA_FRESHNESS"))
+                .andExpect(jsonPath("$[0].apiName").value("data_freshness"))
+                .andExpect(jsonPath("$[0].goodEvent").value(UserImpactSliType.DATA_FRESHNESS.goodEvent()))
+                .andExpect(jsonPath("$[0].totalEvent").value(UserImpactSliType.DATA_FRESHNESS.totalEvent()));
+
+        verify(accessGuard).requireAccess(wsId, principal);
+        verify(sliService).definitions();
+    }
+
+    @Test
+    void slisEndpointReturnsMeasurementsWithWindow() throws Exception {
+        Instant measuredAt = Instant.parse("2026-06-20T00:00:00Z");
+        when(sliService.measurements(wsId, 60)).thenReturn(List.of(SliMeasurementResponse.of(
+                UserImpactSliType.PROVISIONING_SUCCESS_RATE,
+                9,
+                10,
+                0.9,
+                UserImpactSliStatus.CRITICAL,
+                60,
+                measuredAt,
+                "database",
+                null)));
+
+        mockMvc().perform(get("/api/v1/workspaces/{wsId}/monitoring/slis", wsId)
+                        .param("windowMinutes", "60"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].type").value("PROVISIONING_SUCCESS_RATE"))
+                .andExpect(jsonPath("$[0].goodEvents").value(9.0))
+                .andExpect(jsonPath("$[0].totalEvents").value(10.0))
+                .andExpect(jsonPath("$[0].sliRatio").value(0.9))
+                .andExpect(jsonPath("$[0].status").value("CRITICAL"))
+                .andExpect(jsonPath("$[0].source").value("database"));
+
+        verify(accessGuard).requireAccess(wsId, principal);
+        verify(sliService).measurements(wsId, 60);
+    }
+
+    @Test
+    void singleSliEndpointParsesApiName() throws Exception {
+        Instant measuredAt = Instant.parse("2026-06-20T00:00:00Z");
+        when(sliService.measurement(wsId, UserImpactSliType.DATA_COMPLETENESS, 30))
+                .thenReturn(SliMeasurementResponse.of(
+                        UserImpactSliType.DATA_COMPLETENESS,
+                        99,
+                        100,
+                        0.99,
+                        UserImpactSliStatus.WARNING,
+                        30,
+                        measuredAt,
+                        "prometheus",
+                        null));
+
+        mockMvc().perform(get("/api/v1/workspaces/{wsId}/monitoring/slis/{type}", wsId, "data-completeness")
+                        .param("windowMinutes", "30"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.type").value("DATA_COMPLETENESS"))
+                .andExpect(jsonPath("$.apiName").value("data_completeness"))
+                .andExpect(jsonPath("$.status").value("WARNING"));
+
+        verify(accessGuard).requireAccess(wsId, principal);
+        verify(sliService).measurement(wsId, UserImpactSliType.DATA_COMPLETENESS, 30);
     }
 
     @Test
