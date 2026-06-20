@@ -172,3 +172,27 @@ async def run_accuracy_report(req: RunEvalReportRequest) -> ApiResponse:
         )
     report = run_offline_eval(entries, req.predictions)
     return ApiResponse.success(request_id, report_to_dict(report))
+
+
+# ── #889 ECE confidence 캘리브레이션 ─────────────────────────────────────────
+
+
+@router.post("/eval/calibration-report")
+async def run_calibration_report(req: RunEvalReportRequest) -> ApiResponse:
+    """#889 confidence bin별 accuracy/gap/ECE 리포트를 생성한다.
+
+    과신 구간을 식별하고 confidence cap / UNKNOWN threshold 재설정 근거를 산출한다.
+    """
+    from app.evaluation.calibration import calibration_report_to_dict, compute_calibration
+    from app.evaluation.offline_eval import build_eval_cases_from_gold_set
+
+    request_id = _request_id()
+    repo = get_gold_set_repo()
+    entries = await repo.list(review_status=ReviewStatus.REVIEWED, limit=500)
+    if not entries:
+        return ApiResponse.failure(
+            request_id, ErrorCode.VALIDATION_FAILED, "no reviewed gold set entries"
+        )
+    cases = build_eval_cases_from_gold_set(entries, req.predictions)
+    report = compute_calibration(cases)
+    return ApiResponse.success(request_id, calibration_report_to_dict(report))
