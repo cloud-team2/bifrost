@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.agents.report import _diagnosis_block
 from app.main import app
-from app.persistence.kedb_repository import get_kedb_repo
+from app.persistence.kedb_repository import KedbRecordModel, get_kedb_repo
 from app.schemas.outputs import RcaOutput
 from app.schemas.state import RootCauseCandidate
 
@@ -62,6 +62,27 @@ def test_kedb_crud_endpoints() -> None:
     delete = client.delete("/api/v1/catalogs/kedb/SINK_AUTH_EXPIRED")
     assert delete.status_code == 200
     assert delete.json()["data"]["deleted"] is True
+
+
+def test_kedb_record_model_coerces_jsonb_string_columns() -> None:
+    # asyncpg 가 jsonb 컬럼을 raw JSON 문자열로 돌려주는 실제 Postgres 경로를 모사한다(#894).
+    # 이전에는 list[str] 검증이 실패해 POST/GET 시 500 이 났다.
+    record = KedbRecordModel(
+        **{
+            "root_cause_id": "SINK_AUTH_EXPIRED",
+            "owner": "customer/shared",
+            "known_symptoms": '["sink auth failure", "permission denied"]',
+            "verified_fixes": '["rotate sink credential"]',
+            "rollback_procedure": "restore previous secret version",
+            "recurrence_count": 3,
+            "last_seen": "2026-06-20",
+            "incident_links": "[]",
+        }
+    )
+
+    assert record.known_symptoms == ["sink auth failure", "permission denied"]
+    assert record.verified_fixes == ["rotate sink credential"]
+    assert record.incident_links == []
 
 
 def test_report_diagnosis_includes_kedb_owner_and_verified_fixes() -> None:
