@@ -634,6 +634,12 @@ export interface AgentRunCreateResponse {
   event_stream_url: string
   status: AgentRunStatus
 }
+export interface AgentRunSummary {
+  run_id: string
+  incident_id: string | null
+  status: string | null
+  current_agent: string | null
+}
 export interface AgentRunEvent {
   event_id: string
   run_id: string
@@ -875,6 +881,12 @@ export const api = {
     const q = token ? `?access_token=${encodeURIComponent(token)}` : ''
     return `${BASE}/api/v1/agent/runs/${runId}/events${q}`
   },
+  // #935 인시던트 RCA 진행 상태: 프로젝트의 최근 run 을 조회해 해당 인시던트의 진행 중 run 을 찾는다.
+  agentRuns: (projectId: string, limit = 20) =>
+    agentRequest<{ runs: AgentRunSummary[] }>(
+      'GET',
+      `/api/v1/agent/runs?project_id=${encodeURIComponent(projectId)}&limit=${limit}`,
+    ),
   // #712 대화 메모리: thread(인시던트는 incident_id)의 이전 대화 복원
   listThreadMessages: (threadId: string, limit = 50) =>
     agentRequest<ThreadMessagesResponse>(
