@@ -68,6 +68,48 @@ def set_current_run_mode(mode: str) -> None:
     trace.get_current_span().set_attribute("bifrost.mode", mode)
 
 
+def _patch_otel_route_details() -> bool:
+    """OTel instrumentation(0.63b1) ↔ FastAPI ``_IncludedRouter`` 비호환 우회.
+
+    OTel ``_get_route_details`` 는 ``app.routes`` 를 순회하며 매칭된 라우트의 ``.path`` 로
+    span 이름을 만든다. FULL 매치 분기는 ``.path`` 가 없을 때 AttributeError 를 방어하지만,
+    **PARTIAL 매치 분기는 방어하지 않는다**. FastAPI 신버전이 ``.path`` 가 없는
+    ``_IncludedRouter(BaseRoute)`` 를 ``app.routes`` 에 넣으면서, 이게 PARTIAL 로 매치되는
+    요청(예: bare collection ``GET /api/v1/agent/runs``)이 핸들러 실행 전에 AttributeError →
+    500 으로 죽는다. PARTIAL 분기도 FULL 처럼 방어하도록 교체한다.
+    (upstream 이 고치면 무해하게 중복될 뿐이며, 계측이 켜질 때만 적용한다.)
+    """
+    try:
+        from opentelemetry.instrumentation import fastapi as _otel_fastapi
+        from starlette.routing import Match, Route
+    except Exception:  # pragma: no cover - instrumentation 미설치 환경
+        return False
+
+    def _safe_get_route_details(scope: Any):
+        app = scope.get("app")
+        if app is None:
+            return scope.get("path")
+        route = None
+        for starlette_route in app.routes:
+            try:
+                match, _ = (
+                    Route.matches(starlette_route, scope)
+                    if isinstance(starlette_route, Route)
+                    else starlette_route.matches(scope)
+                )
+            except Exception:  # pragma: no cover - 방어적
+                continue
+            if match == Match.FULL:
+                route = getattr(starlette_route, "path", None) or scope.get("path")
+                break
+            if match == Match.PARTIAL:
+                route = getattr(starlette_route, "path", None) or scope.get("path")
+        return route
+
+    _otel_fastapi._get_route_details = _safe_get_route_details
+    return True
+
+
 def setup_tracing(
     app: Any,
     *,
@@ -95,6 +137,9 @@ def setup_tracing(
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
     from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+
+    # FastAPI _IncludedRouter ↔ OTel PARTIAL-매치 .path 크래시 우회(정상 엔드포인트 500 방지).
+    _patch_otel_route_details()
 
     resource = Resource.create(
         {SERVICE_NAME: settings.app_name, SERVICE_VERSION: settings.version}
