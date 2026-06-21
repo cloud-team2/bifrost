@@ -434,11 +434,21 @@ class TriggerEventSummary(SpringResponseModel):
     occurred_at: datetime
 
 
+class IncidentSummaryConnector(SpringResponseModel):
+    """인시던트 영향 파이프라인의 Kafka Connect 커넥터(#925) — RCA 도구 체이닝용."""
+
+    name: str
+    role: str | None = None
+    pipeline_id: str | None = None
+    pipeline_name: str | None = None
+
+
 class IncidentSummaryData(SpringResponseModel):
-    """Spring IncidentSummaryResult{incidentId, status, note} 수용 (#474).
+    """Spring IncidentSummaryResult{incidentId, status, note, connectors} 수용 (#474, #925).
 
     Spring 의 incident read model 은 현재 severity/trigger_event/related_event_count/grouping_key 를
     제공하지 않으므로 해당 필드를 optional 로 완화한다. note 는 summary 로 normalize.
+    connectors 는 영향 파이프라인의 source/sink 커넥터명으로, RCA 도구가 바로 조회에 사용한다.
     """
     incident_id: str
     status: str
@@ -450,6 +460,7 @@ class IncidentSummaryData(SpringResponseModel):
     summary: str | None = None
     affected_rows_estimate: int | None = None
     root_cause_summary: str | None = None
+    connectors: list[IncidentSummaryConnector] | None = None
 
     @model_validator(mode="before")
     @classmethod
