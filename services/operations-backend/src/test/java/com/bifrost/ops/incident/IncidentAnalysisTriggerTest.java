@@ -96,15 +96,40 @@ class IncidentAnalysisTriggerTest {
         context.server.verify();
     }
 
+    @Test
+    void startWaitsInitialDelayBeforePostingSoEvidenceCanAccumulate() {
+        // #963 초기 지연만큼 기다린 뒤 1차 분석을 POST 한다(증거 누적 시간 확보).
+        UUID tenantId = UUID.randomUUID();
+        UUID incidentId = UUID.randomUUID();
+        TestContext context = context(AI_URL, 60L);
+        context.server.expect(requestTo(AI_URL + "/api/v1/agent/runs"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess("""
+                        {"ok": true, "data": {"run_id": "run_003", "status": "running"}}
+                        """, MediaType.APPLICATION_JSON));
+
+        long start = System.nanoTime();
+        context.trigger.start(tenantId, incidentId, "Pipeline failed", "boom");
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+
+        context.server.verify();
+        org.assertj.core.api.Assertions.assertThat(elapsedMs).isGreaterThanOrEqualTo(50L);
+    }
+
     private static TestContext context() {
         return context(AI_URL);
     }
 
     private static TestContext context(String aiServiceUrl) {
+        return context(aiServiceUrl, 0L);
+    }
+
+    private static TestContext context(String aiServiceUrl, long initialDelayMs) {
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
         // 동기 executor + backoff 0 으로 테스트를 빠르게 — 프로덕션은 applicationTaskExecutor + backoff.
-        return new TestContext(new IncidentAnalysisTrigger(aiServiceUrl, builder, Runnable::run, 0L), server);
+        return new TestContext(
+                new IncidentAnalysisTrigger(aiServiceUrl, builder, Runnable::run, 0L, initialDelayMs), server);
     }
 
     private record TestContext(IncidentAnalysisTrigger trigger, MockRestServiceServer server) {}
