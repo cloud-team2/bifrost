@@ -42,9 +42,10 @@
 
 ## 4. 핵심 결함 — 자동 RCA가 분류 확신·증거 존재에도 UNKNOWN (→ #957)
 - **증상**: Classifier `CONSUMER_LAG_SPIKE` 0.90 + evidence `total_lag=60110` 가 있는데도 RCA 가 `required_evidence_satisfied=False` → `UNKNOWN_WITH_EVIDENCE_GAP`(0.0).
-- **원인(추정)**: `agents/rca.py` 의 required-증거 충족 판정이 lexical + semantic(임베딩 threshold 0.86) 매칭에 의존. semantic 켜짐(`AI_RCA_EMBEDDING_MATCH_ENABLED=true`)·임베더 실패 로그 없음에도, **한글 룰("consumer lag 급증") ↔ 영어/수치 증거("total_lag=60110") 매칭이 임계값을 못 넘김**.
-- **영향**: 명백한 장애도 자동 RCA 결과가 "원인 불명"으로 보임. 사용자 신뢰·자동화 가치 저하.
-- **주의**: threshold 를 blind 하게 낮추면 오탐 위험. 문서 §7(roadmap 6~8)·§8 은 gold set + AC@k + ECE 평가셋으로 보정하라고 명시.
+- **정확한 원인(코드 정독)**: CONSUMER_LAG_SPIKE required 증거는 `consumer lag 급증`(`_has_consumer_lag_trend_evidence` — **lag 신호 + 증가 신호**(`spike|increase|surge|급증|증가`)를 모두 요구) + `offset progression 둔화`, 둘 다 `semantic_allowed=False`. 수집 증거는 **"증가" 단어 없는 시점 스냅샷**(`total_lag=60110`) → trend 룰 미충족.
+- **판정**: RCA 는 **설계대로 정상 abstain**. 문서 §4.2(temporality·Pearl 인과사다리)대로 스냅샷 상관(높은 lag)이 아니라 추세/시간선행 증거가 있어야 근본원인으로 인정 → UNKNOWN 은 안전장치가 옳게 작동한 것.
+- **진짜 갭**: lag "추세" 증거가 RCA 에 공급되지 않음. 시스템은 추세를 알지만(정상→CRITICAL escalation) get_consumer_lag/evidence 는 시점 스냅샷만 전달하고, 인시던트 이벤트는 "임계 초과"라 증가 정규식에 안 걸림.
+- **올바른 수정(평가셋 불필요·인과 엄격성 유지)**: threshold/룰을 낮추지 말 것(스냅샷=급증 인정은 temporality 훼손·오탐). 대신 추세 증거를 공급 — lag 정상→CRITICAL 전이를 "급증/증가"로 evidence 화 / get_consumer_lag delta 반환 / escalation 신호를 temporal 증거로 주입. ※ 전역 threshold·ECE 캘리브레이션(문서 §7 6~8)은 별개 작업.
 
 ## 5. 부가 발견
 - **[A] 자동 RCA 조기 발화**: 인시던트 생성 즉시 발화 → 증거가 늦게 쌓이는 장애(sink DB down)에선 첫 결과가 UNKNOWN. UNKNOWN 시 증거 누적 후 재시도/지연 로직 없음.
