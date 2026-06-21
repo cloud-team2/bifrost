@@ -19,6 +19,10 @@ const TONE: Record<string, string> = {
   creating: GRAY, UNASSIGNED: GRAY,
   error: RED, ERROR: RED, DEAD: RED, FAILED: RED, STOPPED: RED, DOWN: RED,
   critical: RED, CRITICAL: RED, open: RED, OPEN: RED, revoked: RED, REVOKED: RED,
+  // #949 조치 승인/실행 상태
+  approved: ORANGE, APPROVED: ORANGE, executing: ORANGE, EXECUTING: ORANGE,
+  completed: GREEN, COMPLETED: GREEN, executed: GREEN, EXECUTED: GREEN, succeeded: GREEN, SUCCEEDED: GREEN,
+  blocked: SLATE, BLOCKED: SLATE, ready: GRAY, READY: GRAY,
 }
 
 export function statusTone(status: string): string {
