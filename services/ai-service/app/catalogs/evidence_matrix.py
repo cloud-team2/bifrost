@@ -71,6 +71,9 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
         ),
         negative=(
             EvidenceRule(root_cause_id='SOURCE_NETWORK_REACHABILITY', kind='negative', evidence='auth error 또는 query error만 존재', example='network 후보 약화'),
+            # #962 'connection refused' 는 source/sink 양쪽 trace 에 동일하게 나타난다. 실패한 쪽이 sink 면
+            # source reachability 가 generic refused 토큰으로 오탐되지 않도록 sink-context 를 negative 로 둔다.
+            EvidenceRule(root_cause_id='SOURCE_NETWORK_REACHABILITY', kind='negative', evidence='sink dependency 연결 실패 또는 sink connector 오류', example='sink connector, sink dependency, sink write'),
         ),
     ),
     EvidenceProfile(
@@ -206,11 +209,14 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
     ),
     EvidenceProfile(
         root_cause_id='SINK_DB_CONNECTION_TIMEOUT',
+        # #962 sink DB down 은 'connection refused'(reachability), DB slow 는 'connection timeout' 으로 나타난다.
+        # 둘 다 "sink dependency 에 연결하지 못함" 이라는 같은 root cause 이므로 하나의 required 로 묶고,
+        # write timeout 증가(=느림일 때만 관측) 는 supporting 으로 둔다. 그래야 hard-down(refused) 도 완전 충족된다.
         required=(
-            EvidenceRule(root_cause_id='SINK_DB_CONNECTION_TIMEOUT', kind='required', evidence='sink write timeout 증가', example='sink connector write timeout'),
-            EvidenceRule(root_cause_id='SINK_DB_CONNECTION_TIMEOUT', kind='required', evidence='sink dependency connection error', example='reachability or pool error'),
+            EvidenceRule(root_cause_id='SINK_DB_CONNECTION_TIMEOUT', kind='required', evidence='sink dependency 연결 실패 또는 connection timeout', example='connection refused, no route to host, 연결 실패, 호스트 연결 실패, 네트워크 도달 실패, connection timeout, sink connector write timeout, pool error'),
         ),
         supporting=(
+            EvidenceRule(root_cause_id='SINK_DB_CONNECTION_TIMEOUT', kind='supporting', evidence='sink write timeout 증가', example='sink connector write timeout'),
             EvidenceRule(root_cause_id='SINK_DB_CONNECTION_TIMEOUT', kind='supporting', evidence='source read 정상', example='upstream 정상'),
             EvidenceRule(root_cause_id='SINK_DB_CONNECTION_TIMEOUT', kind='supporting', evidence='sink write latency 증가', example='write duration p95 증가'),
         ),

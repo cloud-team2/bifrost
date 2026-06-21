@@ -105,6 +105,16 @@ _CASES = {
         ("DB 연결 실패 (호스트·포트·네트워크 확인) connection refused",),
         "SOURCE_NETWORK_REACHABILITY",
     ),
+    # #962 sink DB down: 커넥터 task 는 FAILED(근접 증상)지만 trace 의 connection refused 가
+    # 진짜 원인(sink dependency 연결 실패)을 가리킨다. 심층 원인이 top 이어야 한다.
+    "SINK_DB_DOWN": (
+        "CONNECTOR_TASK_FAILED",
+        (
+            "sink connector task status FAILED",
+            "java.net.ConnectException: Connection refused host=tenant-mariadb-service:3306",
+        ),
+        "SINK_DB_CONNECTION_TIMEOUT",
+    ),
 }
 
 
@@ -123,13 +133,41 @@ async def test_failure_type_classifies_to_expected_root_cause(case_name: str) ->
 
 
 @pytest.mark.asyncio
+async def test_sink_db_down_root_cause_outranks_connector_task_failed_symptom() -> None:
+    """#962 sink DB down(Connection refused)이면 RCA top 은 근접 증상 CONNECTOR_TASK_FAILED 가
+    아니라 심층 원인 SINK_DB_CONNECTION_TIMEOUT 여야 한다. 증상은 사라지지 않고 그 아래로 강등된다."""
+    result = await run_rca(
+        _classifier("CONNECTOR_TASK_FAILED"),
+        _retrieval(
+            "sink connector task status FAILED",
+            "java.net.ConnectException: Connection refused host=tenant-mariadb-service:3306",
+        ),
+    )
+    ids = [c.root_cause_id for c in result.root_cause_candidates]
+    assert ids[0] == "SINK_DB_CONNECTION_TIMEOUT", ids
+    assert "CONNECTOR_TASK_FAILED" in ids, ids  # 증상은 2차 후보로 보존
+    assert ids.index("SINK_DB_CONNECTION_TIMEOUT") < ids.index("CONNECTOR_TASK_FAILED")
+
+
+@pytest.mark.asyncio
+async def test_connector_task_failed_stays_top_without_deeper_cause() -> None:
+    """#962 회귀 가드: 심층 원인(연결 실패/timeout 등)이 입증되지 않은 일반 task 실패는
+    강등되지 않고 여전히 CONNECTOR_TASK_FAILED 가 top 이어야 한다."""
+    result = await run_rca(
+        _classifier("CONNECTOR_TASK_FAILED"),
+        _retrieval("connector task status FAILED", "task trace worker log generic exception"),
+    )
+    assert result.root_cause_candidates[0].root_cause_id == "CONNECTOR_TASK_FAILED"
+
+
+@pytest.mark.asyncio
 async def test_at_least_four_of_six_types_correct() -> None:
     correct = 0
     for incident_type, summaries, expected in _CASES.values():
         result = await run_rca(_classifier(incident_type), _retrieval(*summaries))
         if result.root_cause_candidates[0].root_cause_id == expected:
             correct += 1
-    assert correct >= 4, f"only {correct}/6 failure types classified correctly"
+    assert correct >= 4, f"only {correct}/{len(_CASES)} failure types classified correctly"
 
 
 @pytest.mark.asyncio
