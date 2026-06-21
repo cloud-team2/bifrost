@@ -284,6 +284,13 @@ describe('#967 command result panels', () => {
     expect(html).toContain('✕')
   })
 
+  it('TracesPanel surfaces the backend note when there are no spans (#970)', () => {
+    const html = renderToStaticMarkup(<TracesPanel result={{
+      status: 'unknown', durationMs: 0, spans: [], note: '구간 내 trace 없음',
+    }} />)
+    expect(html).toContain('구간 내 trace 없음')
+  })
+
   it('DeploymentsPanel summarizes change count and rows', () => {
     const html = renderToStaticMarkup(<DeploymentsPanel result={{
       changes: [
@@ -303,14 +310,23 @@ describe('#967 command result panels', () => {
     expect(html).toContain('1건')
   })
 
-  it('MetricsPanel renders latest value and stats with sparkline', () => {
+  it('MetricsPanel reads the real backend dataPoints field (#970) and renders stats', () => {
+    // 백엔드(Prometheus)는 dataPoints(대문자 P)로 반환 — 소문자만 읽던 버그 회귀 방지
     const html = renderToStaticMarkup(<MetricsPanel result={{
       metric: 'throughput', unit: 'rec/s',
-      datapoints: [{ value: 980 }, { value: 1020 }, { value: 1240 }],
+      dataPoints: [{ timestamp: '2026-06-21T16:00:00Z', value: 980 }, { value: 1020 }, { value: 1240 }],
     }} />)
     expect(html).toContain('1,240')
     expect(html).toContain('평균')
     expect(html).toContain('<svg')
+  })
+
+  it('MetricsPanel keeps fractional metrics from rounding to zero (#970)', () => {
+    // broker_cpu_cores=0.178 → Math.round 시 0 으로 사라지던 문제
+    const html = renderToStaticMarkup(<MetricsPanel result={{
+      metric: 'broker_cpu_cores', dataPoints: [{ value: 0.12 }, { value: 0.2 }, { value: 0.178 }],
+    }} />)
+    expect(html).toContain('0.178')
   })
 
   it('ClusterInfoPanel shows broker health and flags under-replicated topics', () => {
