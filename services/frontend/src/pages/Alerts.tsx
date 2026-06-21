@@ -111,6 +111,23 @@ const AGENT_STAGE_KO: Record<string, string> = {
   report: '리포트 작성',
 }
 
+// #949 조치 승인/실행 상태 한글 라벨.
+const ACTION_STATUS_KO: Record<string, string> = {
+  approved: '승인됨',
+  executing: '실행 중',
+  ready: '실행 대기',
+  completed: '실행 완료',
+  executed: '실행 완료',
+  succeeded: '실행 완료',
+  failed: '실행 실패',
+  blocked: '차단됨',
+  rejected: '거부됨',
+}
+
+function actionStatusLabel(status: string): string {
+  return ACTION_STATUS_KO[status.toLowerCase()] ?? status
+}
+
 const RUN_IN_PROGRESS_STATUS = new Set(['running', 'created', 'queued', 'pending'])
 
 export interface IncidentRunProgress {
@@ -329,6 +346,22 @@ function pickRecordValue(value: unknown, keys: string[]): Record<string, unknown
 export function reportActions(reports: IncidentReportResponse[]): ReportAction[] {
   const seen = new Set<string>()
   const actions: ReportAction[] = []
+  // #949 조치별 승인/실행 상태: approved_actions(승인)·execution_results(실행 결과)를 action_id 로 모은다.
+  // 실행 결과가 승인보다 우선(실행됨/실패 > 승인됨)이라 나중에 덮어쓴다.
+  const statusByActionId = new Map<string, string>()
+  for (const report of reports) {
+    for (const a of approvedActionArrays(report.body)) {
+      if (!isRecord(a)) continue
+      const id = pickString(a, ['action_id', 'actionId', 'id'])
+      if (id && !statusByActionId.has(id)) statusByActionId.set(id, 'approved')
+    }
+    for (const e of executionArrays(report.body)) {
+      if (!isRecord(e)) continue
+      const id = pickString(e, ['action_id', 'actionId', 'id'])
+      const st = pickString(e, ['status', 'state'])
+      if (id && st) statusByActionId.set(id, st.toLowerCase())
+    }
+  }
   for (const report of reports) {
     const mode = reportMode(report.body)
     if (mode === 'action_execution' || mode === 'approval_decision') continue
@@ -350,7 +383,7 @@ export function reportActions(reports: IncidentReportResponse[]): ReportAction[]
         key,
         actionId: id ?? label,
         label,
-        status: pickString(raw, ['status', 'state']),
+        status: (id ? statusByActionId.get(id) : undefined) ?? pickString(raw, ['status', 'state']),
         risk: pickString(raw, ['risk']),
         estimatedTime: pickString(raw, ['estimated_duration', 'estimatedDuration', 'estimated_time', 'estimatedTime']),
         detail: expectedEffect ?? reason,
@@ -378,6 +411,19 @@ function executionArrays(body: unknown): unknown[] {
   }
   const final = nestedRecord(body, ['final_response', 'finalResponse'])
   if (final) out.push(...executionArrays(final))
+  return out
+}
+
+// #949 리포트 본문의 approved_actions(승인된 조치) 배열을 모은다(final_response 중첩 포함).
+function approvedActionArrays(body: unknown): unknown[] {
+  if (!isRecord(body)) return []
+  const out: unknown[] = []
+  for (const key of ['approved_actions', 'approvedActions']) {
+    const value = body[key]
+    if (Array.isArray(value)) out.push(...value)
+  }
+  const final = nestedRecord(body, ['final_response', 'finalResponse'])
+  if (final) out.push(...approvedActionArrays(final))
   return out
 }
 
@@ -1411,7 +1457,7 @@ function IncidentDetailScreen({
                       <div key={action.key} className="rounded-lg border border-gray-200 px-3 py-2.5">
                         <div className="flex items-center gap-2">
                           <span className="min-w-0 flex-1 text-[12.5px] font-semibold text-gray-800">{action.label}</span>
-                          {action.status && <StatusBadge status={action.status} />}
+                          {action.status && <StatusBadge status={action.status} label={actionStatusLabel(action.status)} />}
                         </div>
                         {action.detail && (
                           <div className="mt-1 line-clamp-2 text-[11.5px] leading-relaxed text-gray-500">{action.detail}</div>
@@ -1465,7 +1511,7 @@ function IncidentDetailScreen({
                     <div key={log.key} className="rounded-lg border border-gray-200 px-3 py-2.5">
                       <div className="flex items-center gap-2">
                         <span className="min-w-0 flex-1 font-mono text-[11.5px] text-gray-700">{log.actionId}</span>
-                        <StatusBadge status={log.status} />
+                        <StatusBadge status={log.status} label={actionStatusLabel(log.status)} />
                       </div>
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-gray-500">
                         {log.toolName && <span className="font-mono">{log.toolName}</span>}

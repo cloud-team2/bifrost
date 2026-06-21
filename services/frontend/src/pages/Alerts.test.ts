@@ -98,6 +98,25 @@ describe('incident report actions', () => {
     expect(actions).toHaveLength(0)
   })
 
+  it('marks recommended actions with approval/execution status (#949)', () => {
+    const actions = reportActions([
+      report({
+        action_candidates: [
+          { action_id: 'act-approved', action_name: 'restart_connector', risk: 'medium', reason: 'a' },
+          { action_id: 'act-done', action_name: 'resume_connector', risk: 'low', reason: 'b' },
+          { action_id: 'act-plain', action_name: 'collect_broker_metrics', risk: 'low', reason: 'c' },
+        ],
+        approved_actions: [{ action_id: 'act-approved' }, { action_id: 'act-done' }],
+        execution_results: [{ action_id: 'act-done', status: 'COMPLETED' }],
+      }),
+    ])
+
+    const byId = Object.fromEntries(actions.map((a) => [a.actionId, a.status]))
+    expect(byId['act-approved']).toBe('approved') // 승인만 됨
+    expect(byId['act-done']).toBe('completed') // 실행 결과가 승인보다 우선
+    expect(byId['act-plain']).toBeFalsy() // 승인/실행 없음 → 상태 없음
+  })
+
   it('dedups duplicate recommended actions within and across reports (#937)', () => {
     const candidate = (id: string) => ({
       action_id: id,
