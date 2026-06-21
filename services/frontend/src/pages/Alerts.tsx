@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../components/Icon'
+import { Markdown } from '../components/Markdown'
 import { PageHead, StatusBadge } from '../components/blocks'
 import { useApp } from '../store/AppStore'
 import { pipelineLabel } from '../data/helpers'
@@ -1230,7 +1231,9 @@ function IncidentDetailScreen({
             <div className="border-b border-gray-100 px-5 py-4">
               <div className="mb-2 text-[10.5px] font-bold uppercase tracking-wide text-gray-400">근본 원인 · RCA</div>
               {panelIncident.rca?.trim() ? (
-                <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-gray-700">{panelIncident.rca}</p>
+                <div className="text-[13px] leading-relaxed text-gray-700">
+                  <Markdown>{panelIncident.rca}</Markdown>
+                </div>
               ) : (
                 <div className="flex items-center gap-3 rounded-lg bg-gray-50 px-3.5 py-3">
                   <span className="flex-1 text-[12.5px] leading-relaxed text-gray-500">
@@ -1541,9 +1544,9 @@ function ReportDrawer({
         )}
         <div className="flex-1 overflow-auto px-5 py-4">
           {body ? (
-            <pre className="whitespace-pre-wrap break-words rounded-lg bg-gray-50 p-3 font-sans text-[12.5px] leading-relaxed text-gray-700">
-              {body}
-            </pre>
+            <div className="break-words rounded-lg bg-gray-50 p-3 text-[12.5px] leading-relaxed text-gray-700">
+              <Markdown>{body}</Markdown>
+            </div>
           ) : (
             <div className="rounded-lg border border-dashed border-gray-200 py-10 text-center text-[13px] text-gray-400">
               표시 가능한 리포트 본문 필드가 없습니다
