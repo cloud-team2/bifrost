@@ -571,7 +571,8 @@ public class InternalOpsObservabilityController {
             IncidentSummaryResult result = new IncidentSummaryResult(
                     incidentId,
                     incident.getStatus(),
-                    buildSummaryNote(incident));
+                    buildSummaryNote(incident),
+                    resolveIncidentConnectors(workspace.getId(), incident));
             return ResponseEntity.ok(OpsEnvelope.ok(requestId, "get_incident_summary", result));
         } catch (ApiException e) {
             if (e.code() == ErrorCode.WORKSPACE_NOT_FOUND || e.code() == ErrorCode.WORKSPACE_FORBIDDEN) {
@@ -585,6 +586,48 @@ public class InternalOpsObservabilityController {
             return ResponseEntity.ok(OpsEnvelope.ok(requestId, "get_incident_summary",
                     IncidentSummaryResult.stub(incidentId)));
         }
+    }
+
+    /** 인시던트 영향 파이프라인의 source/sink 커넥터를 해석한다(#925, RCA 도구 체이닝용). */
+    private java.util.List<IncidentSummaryResult.ConnectorRef> resolveIncidentConnectors(
+            UUID tenantId, IncidentEntity incident) {
+        try {
+            java.util.LinkedHashSet<UUID> pipelineIds = new java.util.LinkedHashSet<>();
+            eventRepository.findByTenantIdAndIncidentIdOrderByCreatedAtDesc(tenantId, incident.getId())
+                    .forEach(e -> {
+                        if (e.getPipelineId() != null) {
+                            pipelineIds.add(e.getPipelineId());
+                        }
+                    });
+            String sourceType = incident.getSourceType();
+            UUID sourceId = incident.getSourceId();
+            if (sourceId != null && "PIPELINE".equalsIgnoreCase(sourceType)) {
+                pipelineIds.add(sourceId);
+            } else if (sourceId != null && "DATABASE".equalsIgnoreCase(sourceType)) {
+                pipelineRepository.findBySourceDatasourceIdOrSinkDatasourceId(sourceId, sourceId)
+                        .forEach(p -> pipelineIds.add(p.getId()));
+            }
+            java.util.List<IncidentSummaryResult.ConnectorRef> connectors = new java.util.ArrayList<>();
+            java.util.Set<String> seen = new java.util.HashSet<>();
+            for (UUID pid : pipelineIds) {
+                pipelineRepository.findByIdAndTenantId(pid, tenantId).ifPresent(p -> {
+                    addConnectorRef(connectors, seen, p.getSourceConnectorName(), "source", p);
+                    addConnectorRef(connectors, seen, p.getSinkConnectorName(), "sink", p);
+                });
+            }
+            return connectors;
+        } catch (Exception e) {
+            log.debug("incident 커넥터 해석 실패(무시): id={} cause={}", incident.getId(), e.getMessage());
+            return java.util.List.of();
+        }
+    }
+
+    private static void addConnectorRef(java.util.List<IncidentSummaryResult.ConnectorRef> out,
+                                        java.util.Set<String> seen, String name, String role, PipelineEntity p) {
+        if (name == null || name.isBlank() || !seen.add(name)) {
+            return;
+        }
+        out.add(new IncidentSummaryResult.ConnectorRef(name, role, p.getId().toString(), p.getName()));
     }
 
     @GetMapping("/incidents/{incidentId}/summary")

@@ -644,6 +644,40 @@ class InternalOpsObservabilityControllerTest {
     }
 
     @Test
+    void incidentSummaryIncludesImpactedPipelineConnectors() throws Exception {
+        // #925: RCA 도구 체이닝을 위해 영향 파이프라인의 source/sink 커넥터명을 summary 에 포함한다.
+        UUID tenantId = UUID.randomUUID();
+        UUID incidentId = UUID.randomUUID();
+        UUID pipelineId = UUID.randomUUID();
+        when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId, "proj-001")));
+        IncidentEntity incident = incident("sink failed", "ERROR", "OPEN", "CONNECTOR");
+        incident.setId(incidentId);
+        incident.setTenantId(tenantId);
+        when(incidentRepository.findByIdAndTenantId(incidentId, tenantId)).thenReturn(Optional.of(incident));
+
+        EventEntity ev = event(tenantId, EventLevel.ERROR, "PIPELINE_STATUS_CHANGED", "sink failed");
+        ev.setIncidentId(incidentId);
+        ev.setPipelineId(pipelineId);
+        when(eventRepository.findByTenantIdAndIncidentIdOrderByCreatedAtDesc(tenantId, incidentId))
+                .thenReturn(List.of(ev));
+
+        PipelineEntity p = pipeline(pipelineId, tenantId, "cdc-products");
+        p.setSourceConnectorName(pipelineId + "-source");
+        p.setSinkConnectorName(pipelineId + "-sink");
+        when(pipelineRepository.findByIdAndTenantId(pipelineId, tenantId)).thenReturn(Optional.of(p));
+
+        mockMvc().perform(get("/internal/ops/projects/{projectId}/incidents/{incidentId}/summary",
+                        "proj-001", incidentId)
+                        .header("X-Request-Id", "req-incident-conn"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result.connectors[0].name").value(pipelineId + "-source"))
+                .andExpect(jsonPath("$.result.connectors[0].role").value("source"))
+                .andExpect(jsonPath("$.result.connectors[1].name").value(pipelineId + "-sink"))
+                .andExpect(jsonPath("$.result.connectors[1].role").value("sink"))
+                .andExpect(jsonPath("$.result.connectors[1].pipelineName").value("cdc-products"));
+    }
+
+    @Test
     void legacyIncidentSummaryPathReturnsProjectScopeRequiredError() throws Exception {
         UUID incidentId = UUID.randomUUID();
 

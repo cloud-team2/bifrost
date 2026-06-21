@@ -108,8 +108,9 @@ async def run_tool_loop(
     if incident_id:
         # 인시던트 분석: 먼저 get_incident_summary(incident_id)로 맥락을 잡도록 유도(체이닝 시작점).
         user_content = (
-            f"분석 대상 incident_id={incident_id}. 먼저 get_incident_summary 로 인시던트 맥락을 확인한 뒤,\n"
-            f"관련 파이프라인/커넥터/토픽을 이어서 조사하라.\n\n{user_message}"
+            f"분석 대상 incident_id={incident_id}. 먼저 get_incident_summary 로 인시던트 맥락을 확인하라.\n"
+            f"summary 의 connectors[].name 이 영향 파이프라인의 실제 커넥터명이므로, 이를 connector_name 으로\n"
+            f"사용해 get_connector_task_trace·analyze_event_log 등으로 이어서 조사하라(텍스트 추측 금지).\n\n{user_message}"
         )
     messages: list[dict] = [
         {"role": "system", "content": LOOP_SYSTEM_PROMPT},
