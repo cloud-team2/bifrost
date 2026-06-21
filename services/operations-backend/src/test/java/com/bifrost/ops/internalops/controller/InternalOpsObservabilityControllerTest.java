@@ -733,6 +733,7 @@ class InternalOpsObservabilityControllerTest {
                         + "|(^|[^A-Za-z0-9._-])connect-orders-source([^A-Za-z0-9._-]|$)"
                         + "|(^|[^A-Za-z0-9._-])orders-sink([^A-Za-z0-9._-]|$)"
                         + "|(^|[^A-Za-z0-9._-])connect-orders-sink([^A-Za-z0-9._-]|$)\""
+                        + " !~ \"RestServer:[0-9]+ -\"" // #973 모니터링 폴러 접근 로그 노이즈 제외
                         + " |= \"pipeline events\"");
     }
 
@@ -826,6 +827,7 @@ class InternalOpsObservabilityControllerTest {
                         + " |~ \"cdc\\\\.table\\\\.proj-001\\\\.|eda\\\\.table\\\\.proj-001\\\\."
                         + "|bifrost\\\\.proj-001\\\\."
                         + "|(^|[^A-Za-z0-9._-])proj-proj-001-user([^A-Za-z0-9._-]|$)\""
+                        + " !~ \"RestServer:[0-9]+ -\"" // #973 모니터링 폴러 접근 로그 노이즈 제외
                         + " |= \"pipeline events\"");
     }
 
@@ -847,6 +849,7 @@ class InternalOpsObservabilityControllerTest {
                         + " |~ \"cdc\\\\.table\\\\.proj-001\\\\.|eda\\\\.table\\\\.proj-001\\\\."
                         + "|bifrost\\\\.proj-001\\\\."
                         + "|(^|[^A-Za-z0-9._-])proj-proj-001-user([^A-Za-z0-9._-]|$)\""
+                        + " !~ \"RestServer:[0-9]+ -\"" // #973 모니터링 폴러 접근 로그 노이즈 제외
                         + " |= \"error\"");
     }
 
