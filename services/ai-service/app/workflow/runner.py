@@ -1308,6 +1308,28 @@ async def _run_workflow_impl(
                             patch={"approval_requests": _jsonable(approval_out.approval_requests)},
                         )
                     if approval_out.run_status == "waiting_for_approval":
+                        # #922: 승인 대기 중에도 인시던트 상세에 RCA·권장조치(action_candidates)가
+                        # 표시되도록 이 시점의 report snapshot 을 남긴다. run 은 승인 전까지 report
+                        # 단계에 도달하지 못하므로(여기서 return), 권장조치가 비어 보이던 문제를 해소한다.
+                        try:
+                            pause_answer = await report_agent.run_report(
+                                user_message, retrieval_out, mode, get_llm_provider(),
+                                rca_out=rca_out, classifier_out=classifier_out,
+                            )
+                        except Exception:
+                            pause_answer = ""
+                        await _persist_report_snapshot(
+                            run_id=run_id,
+                            answer=pause_answer,
+                            mode=mode,
+                            retrieval_out=retrieval_out,
+                            rca_out=rca_out,
+                            verifier_out=verifier_out,
+                            incident_id=persisted_incident_id,
+                            remediation_out=remediation_out,
+                            policy_out=policy_out,
+                            approval_out=approval_out,
+                        )
                         keep_stream_open = True
                         return
 
