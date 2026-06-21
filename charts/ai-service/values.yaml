@@ -4,7 +4,7 @@ image:
   # in-cluster Harbor (library 프로젝트). 빌드 후 Harbor로 push, 노드는 내부 DNS로 pull.
   repository: harbor.harbor.svc.cluster.local/library/bifrost-ai-service
   pullPolicy: IfNotPresent
-  tag: "3ed8e694"
+  tag: "b6b82366"
 
 # Harbor pull 인증 (harbor-push-secret을 배포 네임스페이스에 복제)
 imagePullSecrets:
