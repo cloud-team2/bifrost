@@ -301,11 +301,15 @@ export function reportActions(reports: IncidentReportResponse[]): ReportAction[]
       const id = pickString(raw, ['action_id', 'actionId', 'id'])
       const label = pickString(raw, ['action_name', 'actionName', 'name', 'label']) ?? id
       if (!label) continue
-      const key = `${report.id}:${id ?? label}`
-      if (seen.has(key)) continue
-      seen.add(key)
       const expectedEffect = pickString(raw, ['expected_effect', 'expectedEffect', 'effect'])
       const reason = pickString(raw, ['reason', 'detail', 'description'])
+      const toolName = pickString(raw, ['tool_name', 'toolName'])
+      const toolParams = pickRecordValue(raw, ['tool_params', 'toolParams', 'params'])
+      // #937: 같은 조치가 여러 리포트/후보로 중복 노출되지 않도록 기능 정체성으로 dedup한다.
+      // (report.id·인스턴스 action_id 가 달라도 이름·도구·파라미터·효과가 같으면 한 번만 표시)
+      const key = [label, toolName ?? '', JSON.stringify(toolParams ?? {}), expectedEffect ?? reason ?? ''].join('|')
+      if (seen.has(key)) continue
+      seen.add(key)
       actions.push({
         key,
         actionId: id ?? label,
@@ -321,8 +325,8 @@ export function reportActions(reports: IncidentReportResponse[]): ReportAction[]
         reason,
         expectedEffect,
         rollbackPlan: pickString(raw, ['rollback_plan', 'rollbackPlan']),
-        toolName: pickString(raw, ['tool_name', 'toolName']),
-        toolParams: pickRecordValue(raw, ['tool_params', 'toolParams', 'params']),
+        toolName,
+        toolParams,
       })
     }
   }
