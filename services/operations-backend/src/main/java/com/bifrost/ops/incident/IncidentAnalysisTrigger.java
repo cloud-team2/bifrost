@@ -32,18 +32,21 @@ public class IncidentAnalysisTrigger {
     private final AiServiceEndpoint aiServiceEndpoint;
     private final Executor executor;
     private final long retryBackoffMs;
+    private final long initialDelayMs;
     private final AtomicBoolean disabledWarningLogged = new AtomicBoolean(false);
 
     public IncidentAnalysisTrigger(@Value("${ai-service.url:}") String aiServiceUrl,
                                    RestClient.Builder restClientBuilder,
                                    @Qualifier("applicationTaskExecutor") Executor executor,
-                                   @Value("${ai-service.incident-analysis.retry-backoff-ms:1000}") long retryBackoffMs) {
+                                   @Value("${ai-service.incident-analysis.retry-backoff-ms:1000}") long retryBackoffMs,
+                                   @Value("${ai-service.incident-analysis.initial-delay-ms:0}") long initialDelayMs) {
         this.aiServiceEndpoint = AiServiceEndpoint.from(aiServiceUrl);
         this.restClient = aiServiceEndpoint.configured()
                 ? restClientBuilder.baseUrl(aiServiceEndpoint.baseUrl()).build()
                 : restClientBuilder.build();
         this.executor = executor;
         this.retryBackoffMs = retryBackoffMs;
+        this.initialDelayMs = initialDelayMs;
     }
 
     public void startAfterCommit(UUID tenantId, UUID incidentId, String title, String eventMessage) {
@@ -68,6 +71,11 @@ public class IncidentAnalysisTrigger {
             }
             return;
         }
+        // #963 증거 누적 대기: 인시던트 생성 직후엔 커넥터 task FAILED 등 실패 증거가 아직
+        // 안 쌓여 자동 RCA 가 UNKNOWN 으로 빠지기 쉽다. 설정된 초기 지연만큼 기다린 뒤 1차 분석을
+        // 시작해 증거가 쌓일 시간을 준다(기본 0=즉시; executor 스레드에서 대기). 비동기 경로라
+        // 커밋/폴러 스레드는 막지 않는다. (완전한 해법은 UNKNOWN 시 재분석 — 별도 후속)
+        sleepInitialDelay();
         Map<String, Object> body = requestBody(tenantId, incidentId, title, eventMessage);
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
@@ -89,6 +97,17 @@ public class IncidentAnalysisTrigger {
                         attempt, MAX_ATTEMPTS, incidentId, e.getMessage());
                 sleepBackoff(attempt);
             }
+        }
+    }
+
+    private void sleepInitialDelay() {
+        if (initialDelayMs <= 0) {
+            return;
+        }
+        try {
+            Thread.sleep(initialDelayMs);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
         }
     }
 

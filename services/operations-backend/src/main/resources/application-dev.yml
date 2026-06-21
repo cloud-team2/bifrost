@@ -79,6 +79,11 @@ tempo:
 ai-service:
   url: ${AI_SERVICE_URL:}
   enabled: false   # Sprint 4부터 true
+  incident-analysis:
+    # #963 자동 RCA 1차 분석 전 대기(ms). 인시던트 직후엔 실패 증거(커넥터 task FAILED 등)가
+    # 아직 안 쌓여 RCA 가 UNKNOWN 으로 빠지기 쉬워, 증거 누적 시간을 준다. 0=즉시. env 로 조정.
+    # (완전한 해법은 UNKNOWN 시 재분석 — 별도 후속)
+    initial-delay-ms: ${AI_INCIDENT_ANALYSIS_INITIAL_DELAY_MS:30000}
 
 # K8s 설정 (provisioning/watcher in-process)
 k8s:
