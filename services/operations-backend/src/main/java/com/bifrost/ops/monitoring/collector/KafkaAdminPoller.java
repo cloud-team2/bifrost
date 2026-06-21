@@ -149,6 +149,10 @@ public class KafkaAdminPoller {
                 .partitionsToOffsetAndMetadata()
                 .get(TIMEOUT_SEC, TimeUnit.SECONDS);
 
+        // #926 lag 계산 불가(미커밋) 정책: 커밋 오프셋이 없는 컨슈머(처음부터 미시작·의도적
+        // pause 등)는 lag 을 계산할 수 없다 → 0(=lag 없음)으로 보고 임계 평가에서 제외한다.
+        // running 컨슈머는 정상적으로 오프셋을 커밋하므로 running-but-lagging 케이스는 그대로
+        // CONSUMER_LAG_CRITICAL 로 감지된다. (의도적으로 멈춘 컨슈머를 lag 으로 오탐하지 않기 위함)
         if (committed == null || committed.isEmpty()) return 0L;
 
         Map<TopicPartition, OffsetSpec> latestReqs = committed.keySet().stream()
