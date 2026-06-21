@@ -1,10 +1,18 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
+  ClusterInfoPanel,
+  ConsumerLagPanel,
+  DeploymentsPanel,
+  EventSummaryPanel,
   GenericToolResultPanel,
+  LogSearchPanel,
+  MetricsPanel,
   RcaPreviewCard,
   RemediationCard,
   SlashCommandOptionContent,
+  TopologyPanel,
+  TracesPanel,
   progressCounts,
   remediationCandidatesFromPayload,
   slashMissingArgsFeedback,
@@ -222,5 +230,114 @@ describe('progressCounts (#604)', () => {
       items: [stageItem('run-1', 'correlation', 'done'), stageItem('run-1', 'planner', 'running')],
     })
     expect(counts).toEqual({ done: 1, total: 2 })
+  })
+})
+
+describe('#967 command result panels', () => {
+  it('TopologyPanel renders source→topic→sink flow with connector states', () => {
+    const html = renderToStaticMarkup(
+      <TopologyPanel result={{
+        status: 'active', pattern: 'direct', topic: 'cdc.table.x.public.products', pipelineId: 'p1',
+        connectors: [
+          { kind: 'source', connectorClass: 'io.debezium.connector.postgresql.PostgresConnector', state: 'RUNNING' },
+          { kind: 'sink', connectorClass: 'io.confluent.connect.jdbc.JdbcSinkConnector', state: 'RUNNING', tasksMax: 3 },
+        ],
+      }} />,
+    )
+    expect(html).toContain('소스 커넥터')
+    expect(html).toContain('싱크 커넥터')
+    expect(html).toContain('postgres')
+    expect(html).toContain('RUNNING')
+  })
+
+  it('TopologyPanel surfaces sink connector failure', () => {
+    const html = renderToStaticMarkup(
+      <TopologyPanel result={{
+        status: 'error', topic: 't', connectors: [
+          { kind: 'sink', connectorClass: 'io.confluent.connect.jdbc.JdbcSinkConnector', state: 'FAILED', lastError: 'Connection refused mariadb:3306' },
+        ],
+      }} />,
+    )
+    expect(html).toContain('FAILED')
+    expect(html).toContain('Connection refused mariadb:3306')
+  })
+
+  it('ConsumerLagPanel shows safe headline at zero lag and partition bars when high', () => {
+    const ok = renderToStaticMarkup(<ConsumerLagPanel result={{ totalLag: 0, p95Lag: 0, partitions: [{ partition: 0, lag: 0 }] }} />)
+    expect(ok).toContain('정상')
+    expect(ok).toContain('총 lag 0')
+
+    const hot = renderToStaticMarkup(<ConsumerLagPanel result={{
+      totalLag: 60110, p95Lag: 11200,
+      partitions: [{ partition: 3, lag: 12400 }, { partition: 1, lag: 8200 }, { partition: 0, lag: 120 }],
+    }} />)
+    expect(hot).toContain('위험')
+    expect(hot).toContain('HOT')
+  })
+
+  it('TracesPanel renders span durations and marks error spans', () => {
+    const html = renderToStaticMarkup(<TracesPanel result={{
+      status: 'error', durationMs: 2031,
+      spans: [{ name: 'a.sink-write', service: 'jdbc', durationMs: 2024, status: 'error', error: 'timeout' }],
+    }} />)
+    expect(html).toContain('error')
+    expect(html).toContain('✕')
+  })
+
+  it('DeploymentsPanel summarizes change count and rows', () => {
+    const html = renderToStaticMarkup(<DeploymentsPanel result={{
+      changes: [
+        { type: 'PIPELINE_STATUS_TRANSITION', description: 'ACTIVE→ERROR', changedAt: '2026-06-21T15:47:55Z' },
+        { type: 'CONFIG_CHANGE', description: 'sink config', changedAt: '2026-06-21T15:46:00Z' },
+      ],
+    }} />)
+    expect(html).toContain('최근 변경 2건')
+    expect(html).toContain('상태전이')
+  })
+
+  it('LogSearchPanel renders log lines with level and pod', () => {
+    const html = renderToStaticMarkup(<LogSearchPanel result={{
+      total: 1, logs: [{ line: '2026-06-21 16:15:30 WARN RestServer rebalance', labels: { pod: 'platform-connect-connect-0' } }],
+    }} />)
+    expect(html).toContain('WARN')
+    expect(html).toContain('1건')
+  })
+
+  it('MetricsPanel renders latest value and stats with sparkline', () => {
+    const html = renderToStaticMarkup(<MetricsPanel result={{
+      metric: 'throughput', unit: 'rec/s',
+      datapoints: [{ value: 980 }, { value: 1020 }, { value: 1240 }],
+    }} />)
+    expect(html).toContain('1,240')
+    expect(html).toContain('평균')
+    expect(html).toContain('<svg')
+  })
+
+  it('ClusterInfoPanel shows broker health and flags under-replicated topics', () => {
+    const ok = renderToStaticMarkup(<ClusterInfoPanel result={{
+      brokerCount: 3, controllerId: 1,
+      brokers: [{ id: 0 }, { id: 1, controller: true }, { id: 2 }],
+      topics: [{ name: 'cdc.x.products', partitionCount: 6, replicationFactor: 3, underReplicatedPartitions: 0, offlinePartitions: 0 }],
+    }} />)
+    expect(ok).toContain('정상')
+    expect(ok).toContain('3대 온라인')
+
+    const bad = renderToStaticMarkup(<ClusterInfoPanel result={{
+      brokerCount: 2,
+      brokers: [{ id: 0, controller: true }, { id: 1 }],
+      topics: [{ name: 'cdc.x.products', partitionCount: 6, replicationFactor: 3, underReplicatedPartitions: 4, offlinePartitions: 0 }],
+    }} />)
+    expect(bad).toContain('저하')
+    expect(bad).toContain('복제 저하 4')
+  })
+
+  it('EventSummaryPanel renders incident summary markdown instead of raw syntax (#967)', () => {
+    const html = renderToStaticMarkup(<EventSummaryPanel result={{
+      incident_id: 'inc-1', status: 'resolved', severity: 'critical',
+      summary: '## 근본 원인\n**주요 원인**: CONSUMER_LAG_SPIKE',
+    }} />)
+    expect(html).not.toContain('**주요 원인**')
+    expect(html).not.toContain('## 근본')
+    expect(html).toContain('주요 원인')
   })
 })
