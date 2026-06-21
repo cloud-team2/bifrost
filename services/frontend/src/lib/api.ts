@@ -476,6 +476,30 @@ export interface IncidentDetailResponse {
   impactPipelineIds: string[]
   reports: IncidentReportResponse[]
 }
+// #964 RCA 운영자 피드백(채택/거부/수정) — 축적되면 평가·캘리브레이션용 gold set.
+export type RcaFeedbackVerdict = 'accepted' | 'rejected' | 'corrected'
+export interface RcaFeedbackRequest {
+  verdict: RcaFeedbackVerdict
+  runId?: string | null
+  rcaRootCauseId?: string | null
+  rcaConfidence?: number | null
+  correctedRootCauseId?: string | null
+  triggerLabel?: string | null
+  symptomLabel?: string | null
+}
+export interface RcaFeedbackResponse {
+  id: string
+  incidentId: string
+  runId: string | null
+  rcaRootCauseId: string | null
+  rcaConfidence: number | null
+  verdict: string
+  correctedRootCauseId: string | null
+  triggerLabel: string | null
+  symptomLabel: string | null
+  operator: string | null
+  createdAt: string | null
+}
 /** #865 범용 시계열(monitoring/metrics/series) — ops-backend MetricsResult 대응. */
 export interface MetricSeriesResponse {
   metric: string
@@ -859,6 +883,11 @@ export const api = {
     request<IncidentReportResponse[]>('GET', `/api/v1/workspaces/${wsId}/monitoring/incidents/${incidentId}/reports`),
   getIncidentReport: (wsId: string, incidentId: string, reportId: string) =>
     request<IncidentReportResponse>('GET', `/api/v1/workspaces/${wsId}/monitoring/incidents/${incidentId}/reports/${reportId}`),
+  // #964 RCA 운영자 피드백 제출/조회.
+  listIncidentRcaFeedback: (wsId: string, incidentId: string) =>
+    request<RcaFeedbackResponse[]>('GET', `/api/v1/workspaces/${wsId}/monitoring/incidents/${incidentId}/rca-feedback`),
+  submitIncidentRcaFeedback: (wsId: string, incidentId: string, body: RcaFeedbackRequest) =>
+    request<RcaFeedbackResponse>('POST', `/api/v1/workspaces/${wsId}/monitoring/incidents/${incidentId}/rca-feedback`, body),
   // #865 인시던트 상태 전이(OPEN↔INVESTIGATING→RESOLVED). 조치 완료 시 RESOLVED.
   transitionIncident: (wsId: string, incidentId: string, status: string) =>
     request<IncidentResponse>('PATCH', `/api/v1/workspaces/${wsId}/monitoring/incidents/${incidentId}`, { status }),

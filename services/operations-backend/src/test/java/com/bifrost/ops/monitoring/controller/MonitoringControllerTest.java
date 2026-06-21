@@ -61,9 +61,11 @@ class MonitoringControllerTest {
     private final com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository workspaceRepository =
             mock(com.bifrost.ops.workspace.persistence.repository.WorkspaceRepository.class);
     private final UserImpactSliService sliService = mock(UserImpactSliService.class);
+    private final com.bifrost.ops.incident.feedback.RcaFeedbackService rcaFeedbackService =
+            mock(com.bifrost.ops.incident.feedback.RcaFeedbackService.class);
     private final MonitoringController controller =
             new MonitoringController(monitoringReadService, incidentService, eventService, incidentReportService,
-                    accessGuard, metricsQuery, workspaceRepository, sliService);
+                    accessGuard, metricsQuery, workspaceRepository, sliService, rcaFeedbackService);
 
     private final UUID wsId = UUID.randomUUID();
     private final AuthenticatedUser principal = new AuthenticatedUser(UUID.randomUUID(), wsId, "u@bifrost.io");

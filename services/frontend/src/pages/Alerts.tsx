@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../components/Icon'
 import { Markdown } from '../components/Markdown'
 import { PageHead, StatusBadge } from '../components/blocks'
+import { RcaFeedbackBar } from '../components/RcaFeedbackBar'
 import { useApp } from '../store/AppStore'
 import { pipelineLabel } from '../data/helpers'
 import {
@@ -14,6 +15,7 @@ import {
   type EventResponse,
   type IncidentReportResponse,
   type IncidentResponse,
+  type RcaFeedbackResponse,
   type ResourceEventResponse,
 } from '../lib/api'
 import type { Edge } from '../data/types'
@@ -1151,6 +1153,7 @@ function IncidentDetailScreen({
   const [reports, setReports] = useState<IncidentReportResponse[]>([])
   const [reportsLoading, setReportsLoading] = useState(false)
   const [reportsError, setReportsError] = useState<string | null>(null)
+  const [rcaFeedback, setRcaFeedback] = useState<RcaFeedbackResponse[]>([]) // #964
   const [rawOpen, setRawOpen] = useState(false)
   const [selectedReport, setSelectedReport] = useState<IncidentReportResponse | null>(null)
   const [reportLoadingId, setReportLoadingId] = useState<string | null>(null)
@@ -1165,6 +1168,7 @@ function IncidentDetailScreen({
   useEffect(() => {
     setEventRows([])
     setReports([])
+    setRcaFeedback([])
     setDetailIncident(null)
     setDetailLoaded(false)
     setDetailImpactPipelineIds([])
@@ -1178,6 +1182,11 @@ function IncidentDetailScreen({
     let alive = true
     setEventsLoading(true)
     setReportsLoading(true)
+    // #964 운영자 피드백(맞음/아님/수정) — 실패해도 상세 로딩을 막지 않음.
+    api
+      .listIncidentRcaFeedback(wsId, incident.id)
+      .then((rows) => alive && setRcaFeedback(rows))
+      .catch(() => {})
     api
       .getIncidentDetail(wsId, incident.id)
       .then((detail) => {
@@ -1366,9 +1375,24 @@ function IncidentDetailScreen({
             <div className="border-b border-gray-100 px-5 py-4">
               <div className="mb-2 text-[10.5px] font-bold uppercase tracking-wide text-gray-400">근본 원인 · RCA</div>
               {panelIncident.rca?.trim() ? (
-                <div className="text-[13px] leading-relaxed text-gray-700">
-                  <Markdown>{panelIncident.rca}</Markdown>
-                </div>
+                <>
+                  <div className="text-[13px] leading-relaxed text-gray-700">
+                    <Markdown>{panelIncident.rca}</Markdown>
+                  </div>
+                  {wsId && (
+                    <RcaFeedbackBar
+                      wsId={wsId}
+                      incidentId={panelIncident.id}
+                      rcaRootCauseId={reports[0]?.rootCauseId}
+                      rcaConfidence={reports[0]?.confidence}
+                      runId={reports[0]?.runId}
+                      existing={rcaFeedback}
+                      onSubmitted={() => {
+                        api.listIncidentRcaFeedback(wsId, panelIncident.id).then(setRcaFeedback).catch(() => {})
+                      }}
+                    />
+                  )}
+                </>
               ) : analysisRunning ? (
                 <div className="flex items-center gap-3 rounded-lg bg-gray-50 px-3.5 py-3">
                   <span className="bifrost-spin h-3.5 w-3.5 shrink-0 rounded-full border-2 border-gray-300 border-t-gray-600" />
