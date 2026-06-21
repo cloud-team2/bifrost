@@ -132,6 +132,47 @@ async def test_at_least_four_of_six_types_correct() -> None:
     assert correct >= 4, f"only {correct}/6 failure types classified correctly"
 
 
+@pytest.mark.asyncio
+async def test_consumer_lag_spike_from_realistic_incident_evidence() -> None:
+    """#957 라이브 회귀: lag 인시던트의 *실제* 증거(이벤트 제목·메시지 + 스냅샷)만으로도
+    CONSUMER_LAG_SPIKE 를 산출해야 한다.
+
+    라이브 테스트(2026-06-21)에서 RCA 가 UNKNOWN 으로 빠진 이유: 수집된 증거가
+    'Consumer lag critical' + 'total_lag=60110' 스냅샷뿐이라 required 룰('consumer lag 급증')의
+    *추세* 신호가 없었다. ops-backend lag 이벤트(edge-trigger 상승 전이)가 'spike/급증'을 담도록
+    보강(#957)해, 스냅샷이 아닌 전이 근거로 추세 증거를 공급한다.
+    """
+    summaries = (
+        "Consumer lag spike (critical): connect-5d4b0826-sink",          # 이벤트 제목(보강된 상승 전이 표현)
+        "consumer lag 급증으로 임계 초과: group=connect-5d4b0826-sink lag=60110",  # 이벤트 메시지
+        "consumer lag snapshot: total_lag=60110 partition_count=6",       # get_consumer_lag 스냅샷
+    )
+    result = await run_rca(_classifier("CONSUMER_LAG_SPIKE"), _retrieval(*summaries))
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "CONSUMER_LAG_SPIKE", (
+        f"expected CONSUMER_LAG_SPIKE, got {top.root_cause_id} "
+        f"(candidates={[c.root_cause_id for c in result.root_cause_candidates]})"
+    )
+    assert top.confidence >= 0.60
+
+
+@pytest.mark.asyncio
+async def test_consumer_lag_snapshot_without_trend_stays_unknown() -> None:
+    """#957 엄격성 보존: 추세 신호 없이 높은 lag 스냅샷(상관)만 있으면 RCA 는 단정하지 않고
+    UNKNOWN 으로 abstain 해야 한다(temporality 원칙). '스냅샷=급증' 으로 인정하지 않는다 —
+    이것이 보강 전 라이브에서 본 (올바른) 동작이며, 본 fix 는 추세 증거를 *공급* 할 뿐
+    룰을 느슨하게 만들지 않는다."""
+    summaries = (
+        "consumer lag snapshot: total_lag=60110 partition_count=6",
+        "Consumer lag critical: connect-5d4b0826-sink",  # 추세 단어 없는 과거 표현
+    )
+    result = await run_rca(_classifier("CONSUMER_LAG_SPIKE"), _retrieval(*summaries))
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "UNKNOWN_WITH_EVIDENCE_GAP", (
+        f"snapshot-only correlation must abstain, got {top.root_cause_id}"
+    )
+
+
 _RAW_E2_REGRESSIONS = {
     "SOURCE_AUTH_EXPIRED_02": (
         (
