@@ -140,6 +140,10 @@ function GeneralSection() {
   const [name, setName] = useState(app.currentProject?.name ?? '')
   const [timezone, setTimezone] = useState('')
   const [saving, setSaving] = useState(false)
+  // #954 워크스페이스 삭제(danger zone) — 이름 확인 후 삭제. OWNER/ADMIN 만.
+  const [confirmName, setConfirmName] = useState('')
+  const [deleting, setDeleting] = useState(false)
+  const canDelete = app.currentUser?.role === 'OWNER' || app.currentUser?.role === 'ADMIN'
 
   // 진입 시 워크스페이스 현재 설정(timezone) 로드 (#145)
   useEffect(() => {
@@ -171,8 +175,23 @@ function GeneralSection() {
     }
   }
 
+  async function handleDelete() {
+    if (!wsId) return
+    setDeleting(true)
+    try {
+      await api.deleteWorkspace(wsId)
+      toast('워크스페이스를 삭제했습니다')
+      // 현재 워크스페이스가 사라졌으므로 프로젝트 목록·선택을 깨끗이 재초기화한다.
+      setTimeout(() => window.location.reload(), 700)
+    } catch (e) {
+      toast(e instanceof ApiError ? `삭제 실패: ${e.message}` : '워크스페이스 삭제에 실패했습니다', 'error')
+      setDeleting(false)
+    }
+  }
+
   // 로드된 timezone이 옵션에 없으면 함께 노출
   const tzOptions = Array.from(new Set([timezone, ...TZ_OPTIONS].filter(Boolean)))
+  const projectName = app.currentProject?.name ?? ''
 
   return (
     <div>
@@ -219,6 +238,35 @@ function GeneralSection() {
           </button>
         </div>
       </Panel>
+
+      {canDelete && (
+        <Panel className="mt-4 border-[#e7c3bd]">
+          <div className="space-y-3 px-5 py-4">
+            <div className="text-[13px] font-semibold text-[#c0392b]">위험 구역</div>
+            <p className="text-[12.5px] leading-relaxed text-gray-500">
+              이 워크스페이스(프로젝트)를 영구 삭제합니다. 등록된 DB·네임스페이스 등 외부 리소스까지 제거되며{' '}
+              <b className="text-gray-700">되돌릴 수 없습니다</b>. 파이프라인이 남아 있으면 삭제할 수 없으니 먼저 파이프라인을 삭제하세요.
+            </p>
+            <Labeled label={`확인을 위해 프로젝트 이름 "${projectName}" 을(를) 입력하세요`}>
+              <input
+                value={confirmName}
+                onChange={(e) => setConfirmName(e.target.value)}
+                placeholder={projectName}
+                className="h-9 w-full rounded-md border border-gray-300 px-3 text-[13px] outline-none focus:border-[#c0392b]"
+              />
+            </Labeled>
+            <div className="flex justify-end">
+              <button
+                onClick={handleDelete}
+                disabled={deleting || !wsId || confirmName.trim() !== projectName.trim() || !projectName}
+                className="rounded-md bg-[#c0392b] px-3.5 py-1.5 text-[13px] font-semibold text-white hover:bg-[#a93226] disabled:bg-[#e0a9a2]"
+              >
+                {deleting ? '삭제 중…' : '워크스페이스 삭제'}
+              </button>
+            </div>
+          </div>
+        </Panel>
+      )}
     </div>
   )
 }
