@@ -1,8 +1,8 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { buildEvents, buildRunCandidate, EventDetailScreen, reportActions } from './Alerts'
-import type { IncidentReportResponse, IncidentResponse } from '../lib/api'
+import { buildEvents, buildRunCandidate, EventDetailScreen, incidentRunProgress, reportActions } from './Alerts'
+import type { AgentRunSummary, IncidentReportResponse, IncidentResponse } from '../lib/api'
 import type { Edge } from '../data/types'
 
 function report(body: unknown): IncidentReportResponse {
@@ -241,6 +241,33 @@ describe('incident report actions', () => {
       tool_name: 'restart_connector',
       tool_params: { connector_name: 'orders-source' },
     }))
+  })
+})
+
+describe('incidentRunProgress (#936)', () => {
+  const run = (over: Partial<AgentRunSummary> = {}): AgentRunSummary => ({
+    run_id: 'run-1',
+    incident_id: 'incident-1',
+    status: 'running',
+    current_agent: 'rca',
+    mode: 'incident_analysis',
+    ...over,
+  })
+
+  it('classifies an active incident_analysis run as analysis phase', () => {
+    expect(incidentRunProgress([run()], 'incident-1')).toEqual({ phase: 'analysis', stage: 'rca' })
+  })
+
+  it('classifies an active action_execution run as action phase', () => {
+    expect(
+      incidentRunProgress([run({ mode: 'action_execution', current_agent: 'executor' })], 'incident-1'),
+    ).toEqual({ phase: 'action', stage: 'executor' })
+  })
+
+  it('ignores completed runs and other incidents', () => {
+    expect(incidentRunProgress([run({ status: 'completed' })], 'incident-1')).toEqual({ phase: null, stage: null })
+    expect(incidentRunProgress([run({ status: 'waiting_for_approval' })], 'incident-1')).toEqual({ phase: null, stage: null })
+    expect(incidentRunProgress([run({ incident_id: 'other' })], 'incident-1')).toEqual({ phase: null, stage: null })
   })
 })
 

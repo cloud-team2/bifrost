@@ -9,6 +9,7 @@ import {
   type ActionRunCandidateInput,
   type ActionRunRisk,
   type ActionRunType,
+  type AgentRunSummary,
   ApiError,
   type EventResponse,
   type IncidentReportResponse,
@@ -93,8 +94,8 @@ function severityBorder(severity: string): string {
   return SEV_BORDER[severityKey(severity)] ?? 'border-l-[#d9d9d9]'
 }
 
-// #935 RCA 진행 단계 한글 라벨(에이전트명 → 사용자 표현).
-const RCA_STAGE_KO: Record<string, string> = {
+// #935/#936 에이전트 진행 단계 한글 라벨(에이전트명 → 사용자 표현).
+const AGENT_STAGE_KO: Record<string, string> = {
   router: '라우팅',
   correlation: '연관 분석',
   planner: '조사 계획',
@@ -103,8 +104,29 @@ const RCA_STAGE_KO: Record<string, string> = {
   rca: '근본 원인 분석',
   remediation: '권장 조치 도출',
   policy_guard: '정책 점검',
+  change_management: '변경 관리',
+  change: '변경 적용',
+  executor: '조치 실행',
   verifier: '검증',
   report: '리포트 작성',
+}
+
+const RUN_IN_PROGRESS_STATUS = new Set(['running', 'created', 'queued', 'pending'])
+
+export interface IncidentRunProgress {
+  /** analysis=RCA 분석 파이프라인, action=승인된 조치 실행. 진행 중 run 이 없으면 null */
+  phase: 'analysis' | 'action' | null
+  stage: string | null
+}
+
+// #936 인시던트의 진행 중 run 을 분류한다(분석 중 vs 조치 실행 중 + 현재 단계). 순수 함수.
+export function incidentRunProgress(runs: AgentRunSummary[], incidentId: string): IncidentRunProgress {
+  const active = runs.find(
+    (r) => r.incident_id === incidentId && RUN_IN_PROGRESS_STATUS.has((r.status ?? '').toLowerCase()),
+  )
+  if (!active) return { phase: null, stage: null }
+  const phase = (active.mode ?? '').toLowerCase() === 'action_execution' ? 'action' : 'analysis'
+  return { phase, stage: active.current_agent ?? null }
 }
 
 function isOpenIncident(incident: IncidentResponse): boolean {
@@ -1087,9 +1109,11 @@ function IncidentDetailScreen({
   const [selectedReport, setSelectedReport] = useState<IncidentReportResponse | null>(null)
   const [reportLoadingId, setReportLoadingId] = useState<string | null>(null)
   const [reportError, setReportError] = useState<string | null>(null)
-  // #935 RCA 진행 표시: 이 인시던트의 자동 분석 run 이 도는 중인지(분석 중) + 현재 단계.
+  // #935 RCA 진행 표시 / #936 조치 실행 진행 표시: 이 인시던트의 진행 중 run(분석/조치) + 현재 단계.
   const [analysisRunning, setAnalysisRunning] = useState(false)
   const [analysisStage, setAnalysisStage] = useState<string | null>(null)
+  const [actionRunning, setActionRunning] = useState(false)
+  const [actionStage, setActionStage] = useState<string | null>(null)
   const completedRunMarker = app.agentRunState.status === 'completed' ? app.agentRunState.updatedAt : null
 
   useEffect(() => {
@@ -1136,18 +1160,21 @@ function IncidentDetailScreen({
   }, [wsId, incident.id, completedRunMarker])
 
   const panelIncident = detailIncident ?? incident
-  const hasRca = !!panelIncident.rca?.trim()
-  // #935: RCA 리포트가 아직 없고 인시던트가 열려 있으면 이 인시던트의 분석 run 진행 상태를 폴링해
-  // '분석 중'(+현재 단계)을 표시하고, 결과(리포트)가 도착하면 자동 반영한다(#936 보조).
+  const incidentOpen = isOpenIncident(panelIncident)
+  // #935/#936: 인시던트가 열려 있는 동안 이 인시던트의 진행 중 run 과 상세를 폴링한다.
+  //  - 분석 run(incident_analysis) → RCA 섹션에 '분석 중'(+단계)
+  //  - 조치 run(action_execution) → 권장 조치 섹션에 '조치 실행 중'(+단계)
+  //  - 매 틱마다 상세를 재조회해 RCA·권장조치·조치이력을 수동 새로고침 없이 실시간 반영한다.
   useEffect(() => {
-    if (!wsId || hasRca || !isOpenIncident(panelIncident)) {
+    if (!wsId || !incidentOpen) {
       setAnalysisRunning(false)
       setAnalysisStage(null)
+      setActionRunning(false)
+      setActionStage(null)
       return
     }
     let alive = true
     let timer: ReturnType<typeof setTimeout> | undefined
-    const IN_PROGRESS = new Set(['running', 'created', 'queued', 'pending'])
     const tick = async () => {
       try {
         const [detail, runsResp] = await Promise.all([
@@ -1161,10 +1188,11 @@ function IncidentDetailScreen({
           setEventRows(detail.events)
           setDetailImpactPipelineIds(detail.impactPipelineIds)
         }
-        const mine = (runsResp?.runs ?? []).filter((r) => r.incident_id === incident.id)
-        const active = mine.find((r) => IN_PROGRESS.has((r.status ?? '').toLowerCase()))
-        setAnalysisRunning(!!active)
-        setAnalysisStage(active?.current_agent ?? null)
+        const { phase, stage } = incidentRunProgress(runsResp?.runs ?? [], incident.id)
+        setAnalysisRunning(phase === 'analysis')
+        setAnalysisStage(phase === 'analysis' ? stage : null)
+        setActionRunning(phase === 'action')
+        setActionStage(phase === 'action' ? stage : null)
       } catch {
         /* 폴링 실패는 무시 */
       }
@@ -1175,7 +1203,7 @@ function IncidentDetailScreen({
       alive = false
       if (timer) clearTimeout(timer)
     }
-  }, [wsId, incident.id, hasRca, panelIncident.status])
+  }, [wsId, incident.id, incidentOpen])
   const timelineEvents = useMemo(
     () => (detailLoaded ? buildEvents(eventRows, []).sort(eventSortAsc) : relatedEvents),
     [detailLoaded, eventRows, relatedEvents],
@@ -1300,7 +1328,7 @@ function IncidentDetailScreen({
                   <span className="bifrost-spin h-3.5 w-3.5 shrink-0 rounded-full border-2 border-gray-300 border-t-gray-600" />
                   <span className="flex-1 text-[12.5px] leading-relaxed text-gray-600">
                     AI가 근본 원인을 분석하고 있습니다…
-                    {analysisStage ? <span className="text-gray-400"> · {RCA_STAGE_KO[analysisStage] ?? analysisStage}</span> : null}
+                    {analysisStage ? <span className="text-gray-400"> · {AGENT_STAGE_KO[analysisStage] ?? analysisStage}</span> : null}
                   </span>
                 </div>
               ) : (
@@ -1360,6 +1388,15 @@ function IncidentDetailScreen({
             {/* 권장 조치 */}
             <div className="border-b border-gray-100 px-5 py-4">
               <div className="mb-2 text-[10.5px] font-bold uppercase tracking-wide text-gray-400">권장 조치</div>
+              {actionRunning && (
+                <div className="mb-2 flex items-center gap-3 rounded-lg bg-gray-50 px-3.5 py-3">
+                  <span className="bifrost-spin h-3.5 w-3.5 shrink-0 rounded-full border-2 border-gray-300 border-t-gray-600" />
+                  <span className="flex-1 text-[12.5px] leading-relaxed text-gray-600">
+                    AI가 조치를 실행하고 있습니다…
+                    {actionStage ? <span className="text-gray-400"> · {AGENT_STAGE_KO[actionStage] ?? actionStage}</span> : null}
+                  </span>
+                </div>
+              )}
               {reportsLoading ? (
                 <div className="rounded-lg border border-dashed border-gray-200 py-6 text-center text-[12px] text-gray-400">
                   자동 분석 기반 조치를 불러오는 중…
