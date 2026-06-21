@@ -2120,7 +2120,7 @@ export function AgentRunPanel({
               />
             )
           }
-          if (m.kind === 'toolPanel') return <ToolPanelCard key={m.id} msg={m} onOpenPipeline={app.openPipeline} onOpenIncident={app.openIncident} />
+          if (m.kind === 'toolPanel') return <ToolPanelCard key={m.id} msg={m} onOpenPipeline={app.openPipeline} onOpenIncident={app.openIncident} onView={app.setView} />
           if (m.kind === 'approval') {
             return (
               <ApprovalCard
@@ -3177,12 +3177,17 @@ function ToolPanelCard({
   msg,
   onOpenPipeline,
   onOpenIncident,
+  onView,
 }: {
   msg: ToolPanelMsg
   onOpenPipeline?: (id: string) => void
   onOpenIncident?: (id: string) => void
+  onView?: (v: 'cluster') => void
 }) {
   const result = asRecord(msg.result)
+  // #967 파이프라인 스코프 명령의 상세 이동용 pipelineId(파라미터 우선, 없으면 결과에서)
+  const pipelineId = recordString(asRecord(msg.params), 'pipeline_id', 'pipelineId')
+    ?? (result ? recordString(result, 'pipelineId', 'pipeline_id') : null)
   const resultError = result ? recordString(result, 'error') : null
   const error = msg.error ?? resultError
   const notice = msg.notice
@@ -3238,9 +3243,21 @@ function ToolPanelCard({
         ) : msg.toolName === 'get_alerts' ? (
           <AlertsPanel result={result} onOpenIncident={onOpenIncident} />
         ) : msg.toolName === 'analyze_event_log' || msg.toolName === 'get_incident_summary' ? (
-          <EventSummaryPanel result={result} />
+          <EventSummaryPanel result={result} onOpenIncident={onOpenIncident} />
         ) : msg.toolName === 'get_cluster_info' ? (
-          <ClusterInfoPanel result={result} />
+          <ClusterInfoPanel result={result} onView={onView} />
+        ) : msg.toolName === 'get_pipeline_topology' ? (
+          <TopologyPanel result={result} onOpenPipeline={onOpenPipeline} />
+        ) : msg.toolName === 'get_consumer_lag' ? (
+          <ConsumerLagPanel result={result} onOpenPipeline={onOpenPipeline} pipelineId={pipelineId} />
+        ) : msg.toolName === 'get_traces' || msg.toolName === 'query_traces' ? (
+          <TracesPanel result={result} onOpenPipeline={onOpenPipeline} />
+        ) : msg.toolName === 'get_deployments' ? (
+          <DeploymentsPanel result={result} onOpenPipeline={onOpenPipeline} pipelineId={pipelineId} />
+        ) : msg.toolName === 'search_logs' ? (
+          <LogSearchPanel result={result} />
+        ) : msg.toolName === 'get_metrics' ? (
+          <MetricsPanel result={result} onOpenPipeline={onOpenPipeline} pipelineId={pipelineId} />
         ) : (
           <GenericToolResultPanel result={msg.result} />
         )}
@@ -3648,7 +3665,7 @@ export interface ClusterInfoData {
   controllerId: number | null
   brokerCount: number | null
   brokers: { id: number | null; host: string | null; port: number | null; controller: boolean }[]
-  topics: { name: string | null; partitionCount: number }[]
+  topics: { name: string | null; partitionCount: number; replicationFactor: number | null; underReplicated: number; offline: number }[]
 }
 
 // get_cluster_info(ClusterInfoResult) 파싱. BE는 camelCase지만 snake_case도 허용.
@@ -3664,6 +3681,9 @@ export function parseClusterInfo(result: unknown): ClusterInfoData | null {
   const topics = recordArray(record, 'topics').map((topic) => ({
     name: recordString(topic, 'name'),
     partitionCount: recordNumber(topic, 'partitionCount', 'partition_count') ?? 0,
+    replicationFactor: recordNumber(topic, 'replicationFactor', 'replication_factor'),
+    underReplicated: recordNumber(topic, 'underReplicatedPartitions', 'under_replicated_partitions') ?? 0,
+    offline: recordNumber(topic, 'offlinePartitions', 'offline_partitions') ?? 0,
   }))
   return {
     clusterId: recordString(record, 'clusterId', 'cluster_id'),
@@ -3674,71 +3694,63 @@ export function parseClusterInfo(result: unknown): ClusterInfoData | null {
   }
 }
 
-export function ClusterInfoPanel({ result }: { result: Record<string, unknown> | null }) {
+export function ClusterInfoPanel({ result, onView }: { result: Record<string, unknown> | null; onView?: (v: 'cluster') => void }) {
   const data = parseClusterInfo(result)
   if (!data) return <PanelEmpty text="클러스터 상태 데이터 없음" />
-  // brokerCount가 비면 brokers 배열 길이로 보정.
-  const brokerCount = data.brokerCount ?? (data.brokers.length || null)
-  const statusToken: SemanticToken = brokerCount && brokerCount > 0 ? 'safe' : 'neutral'
-  const statusLabel = brokerCount && brokerCount > 0 ? `브로커 ${brokerCount}대 정상` : '브로커 정보 없음'
+  const brokerCount = data.brokerCount ?? (data.brokers.length || 0)
   const controllerBroker =
-    data.brokers.find((broker) => broker.controller) ??
-    (data.controllerId != null ? data.brokers.find((broker) => broker.id === data.controllerId) : undefined)
-  const topicCount = data.topics.length
-  const partitionTotal = data.topics.reduce((sum, topic) => sum + topic.partitionCount, 0)
-  const formatBroker = (broker: ClusterInfoData['brokers'][number]) =>
-    broker.host ? `${broker.host}:${broker.port ?? '-'}` : `브로커 #${broker.id ?? '-'}`
+    data.brokers.find((b) => b.controller) ??
+    (data.controllerId != null ? data.brokers.find((b) => b.id === data.controllerId) : undefined)
+  const underTotal = data.topics.reduce((s, t) => s + t.underReplicated, 0)
+  const offlineTotal = data.topics.reduce((s, t) => s + t.offline, 0)
+  const noBrokers = brokerCount === 0
+  // #967 헬스 = 파티션 복제/오프라인 상태에서 도출(offline→위험, under-replicated→경고). 브로커 없으면 중립.
+  const token: SemanticToken = noBrokers ? 'neutral' : offlineTotal > 0 ? 'danger' : underTotal > 0 ? 'warn' : 'safe'
+  const healthLabel = noBrokers ? '브로커 정보 없음' : offlineTotal > 0 ? '오프라인' : underTotal > 0 ? '저하' : '정상'
   return (
     <div className="space-y-2 text-[12px]">
       <div className="flex flex-wrap items-center gap-2">
-        <span className={cn('inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold', semanticBadgeClass(statusToken))}>
-          <span className={cn('h-1.5 w-1.5 rounded-full', semanticDotClass(statusToken))} />
-          {statusLabel}
+        <span className={cn('inline-flex items-center gap-1 font-bold', token === 'danger' ? 'text-[#c0392b]' : token === 'warn' ? 'text-[#d97316]' : 'text-gray-900')}>
+          <span className={cn('h-1.5 w-1.5 rounded-full', semanticDotClass(token))} />
+          {healthLabel}
         </span>
-        {controllerBroker && (
-          <span className="text-gray-600">컨트롤러 {formatBroker(controllerBroker)}</span>
-        )}
-        {data.clusterId && <span className="font-mono text-[10.5px] text-gray-400">#{data.clusterId}</span>}
+        <span className="text-[11px] text-gray-400">· 토픽 {data.topics.length}개</span>
       </div>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-        <div className="space-y-1">
-          <div className="text-[10.5px] font-semibold text-gray-400">브로커</div>
-          {data.brokers.length === 0 ? (
-            <PanelEmpty text="브로커 없음" />
-          ) : (
-            <div className="space-y-0.5">
-              {data.brokers.map((broker, index) => (
-                <div key={broker.id ?? index} className="flex items-start gap-1.5 text-gray-700">
-                  <span className="min-w-0 break-all font-mono text-[11px]">{formatBroker(broker)}</span>
-                  {broker.controller && (
-                    <span className="shrink-0 whitespace-nowrap rounded bg-gray-100 px-1 py-0.5 text-[10px] text-gray-500">컨트롤러</span>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-        <div className="space-y-1">
-          <div className="text-[10.5px] font-semibold text-gray-400">토픽 / 파티션</div>
-          <div className="text-gray-700">
-            토픽 <b className="text-gray-900">{topicCount.toLocaleString()}개</b>
-            {' · '}파티션 <b className="text-gray-900">{partitionTotal.toLocaleString()}개</b>
-          </div>
-        </div>
+      {/* #967 브로커: 상태 점 + 평문(직관화). 컨트롤러는 ★ 표기 */}
+      <div className="flex items-center gap-2">
+        <span className="w-11 shrink-0 text-[9.5px] font-semibold uppercase tracking-wide text-gray-400">브로커</span>
+        <span className="flex items-center gap-1.5">
+          {data.brokers.length > 0 ? data.brokers.map((b, i) => (
+            <span key={b.id ?? i} className="relative inline-flex">
+              <span className="h-2.5 w-2.5 rounded-full bg-[#157f4a]" />
+              {b.controller && <span className="absolute -top-2 left-1/2 -translate-x-1/2 text-[8px] text-[#d97316]">★</span>}
+            </span>
+          )) : <span className="h-2.5 w-2.5 rounded-full bg-gray-300" />}
+        </span>
+        <span className="text-gray-600">{brokerCount}대 온라인{controllerBroker ? ' · 컨트롤러 1대(★)' : ''}</span>
+      </div>
+      <div className="text-[10.5px] text-gray-400">
+        {token === 'safe' ? '파티션 정상 · under-replicated 0 · offline 0'
+          : <span className="text-[#c0392b]">복제본 부족 {underTotal}개{offlineTotal > 0 ? ` · 오프라인 ${offlineTotal}개` : ''}</span>}
       </div>
       {data.topics.length > 0 && (
-        <details className="rounded border border-gray-100 bg-gray-50 px-2 py-1.5 text-[11.5px] text-gray-600">
-          <summary className="cursor-pointer select-none">토픽 전체 보기</summary>
-          <div className="mt-1 space-y-0.5">
-            {data.topics.map((topic, index) => (
-              <div key={topic.name ?? index} className="flex items-center justify-between gap-2">
-                <span className="min-w-0 truncate font-mono text-[10.5px] text-gray-700">{topic.name ?? '-'}</span>
-                <span className="shrink-0 text-gray-400">파티션 {topic.partitionCount.toLocaleString()}</span>
+        <div className="divide-y divide-gray-100 rounded-md border border-gray-100">
+          {data.topics.map((topic, index) => {
+            const bad = topic.offline > 0 || topic.underReplicated > 0
+            return (
+              <div key={topic.name ?? index} className="flex items-center gap-2 px-2.5 py-1.5">
+                <span className="min-w-0 flex-1 truncate text-gray-700">{shortTopic(topic.name)}</span>
+                <span className="shrink-0 text-[10px] text-gray-400">{topic.partitionCount} 파티션</span>
+                {topic.replicationFactor != null && <span className="shrink-0 text-[10px] text-gray-400">복제 {topic.replicationFactor}</span>}
+                <span className={cn('shrink-0 text-[11px]', bad ? 'text-[#c0392b]' : 'text-[#157f4a]')}>
+                  {topic.offline > 0 ? `오프라인 ${topic.offline}` : topic.underReplicated > 0 ? `복제 저하 ${topic.underReplicated}` : '정상'}
+                </span>
               </div>
-            ))}
-          </div>
-        </details>
+            )
+          })}
+        </div>
       )}
+      <PanelNav label="클러스터 상세" onClick={onView ? () => onView('cluster') : undefined} />
     </div>
   )
 }
@@ -3774,12 +3786,15 @@ function incidentStatusKo(status: string) {
 }
 
 // get_incident_summary 는 단일 인시던트(IncidentSummaryData)를 반환할 수 있다.
-function IncidentSummaryCard({ result }: { result: Record<string, unknown> }) {
+function IncidentSummaryCard({ result, onOpenIncident }: { result: Record<string, unknown>; onOpenIncident?: (id: string) => void }) {
   const id = recordString(result, 'incident_id', 'incidentId')
   const status = recordString(result, 'status') ?? ''
   const severity = recordString(result, 'severity')
   const summary = recordString(result, 'summary', 'note', 'root_cause_summary', 'rootCauseSummary')
   const rootCause = recordString(result, 'root_cause_summary', 'rootCauseSummary')
+  const connectors = recordArray(result, 'connectors')
+    .map((c) => recordString(c, 'role') ?? recordString(c, 'name'))
+    .filter((v): v is string => !!v)
   return (
     <div className="space-y-2 text-[12px]">
       <div className="flex flex-wrap items-center gap-2">
@@ -3791,12 +3806,351 @@ function IncidentSummaryCard({ result }: { result: Record<string, unknown> }) {
         {severity && <span className="text-gray-500">심각도 {severityKo(severity)}</span>}
         {id && <span className="font-mono text-[10.5px] text-gray-400">#{shortId(id)}</span>}
       </div>
-      {summary && <div className="leading-relaxed text-gray-700">{summary}</div>}
+      {/* #967 markdown 렌더 — RCA/요약의 #,**,코드펜스가 문자 그대로 노출되던 문제 수정 */}
+      {summary && <div className="leading-relaxed text-gray-700"><Markdown>{summary}</Markdown></div>}
       {rootCause && rootCause !== summary && (
         <div className="rounded bg-gray-50 px-2 py-1.5 text-[11.5px] text-gray-600">
           <span className="font-semibold">근본 원인</span> · {rootCause}
         </div>
       )}
+      {connectors.length > 0 && (
+        <div className="text-[11px] text-gray-500">관련 커넥터 {connectors.join(' · ')}</div>
+      )}
+      <PanelNav label="인시던트 상세" onClick={id && onOpenIncident ? () => onOpenIncident(id) : undefined} />
+    </div>
+  )
+}
+
+// #967 명령 카드 공통: 추상 카드 → 상세 페이지 이동 버튼
+function PanelNav({ label, onClick }: { label: string; onClick?: () => void }) {
+  if (!onClick) return null
+  return (
+    <div className="mt-2 text-right">
+      <button
+        onClick={onClick}
+        className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-[11px] font-medium text-gray-600 hover:bg-gray-50"
+      >
+        {label}
+        <Icon name="chevron-right" size={11} className="text-gray-400" />
+      </button>
+    </div>
+  )
+}
+
+// #967 sparkline (지표 추세)
+function Sparkline({ values }: { values: number[] }) {
+  if (values.length < 2) return null
+  const w = 116, h = 24, max = Math.max(...values), min = Math.min(...values)
+  const span = max - min || 1
+  const pts = values
+    .map((v, i) => `${(i / (values.length - 1)) * w},${h - 2 - ((v - min) / span) * (h - 4)}`)
+    .join(' ')
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="ml-2 inline-block align-middle">
+      <polyline fill="none" stroke="#157f4a" strokeWidth="2" points={pts} />
+    </svg>
+  )
+}
+
+function connectorEngine(cls: string | null): string {
+  if (!cls) return ''
+  const s = cls.toLowerCase()
+  if (s.includes('postgres')) return 'postgres'
+  if (s.includes('maria') || s.includes('mysql')) return 'mariadb'
+  if (s.includes('mongo')) return 'mongodb'
+  if (s.includes('jdbc')) return 'jdbc'
+  return cls.split('.').pop() ?? ''
+}
+
+function shortTopic(topic: string | null): string {
+  if (!topic) return '-'
+  const parts = topic.split('.')
+  return parts.length > 2 ? `…${parts.slice(-2).join('.')}` : topic
+}
+
+// #967 토폴로지: 소스→토픽→싱크 세로 플로우 + 커넥터 상태(좁은 폭 대응)
+export function TopologyPanel({
+  result,
+  onOpenPipeline,
+}: {
+  result: Record<string, unknown> | null
+  onOpenPipeline?: (id: string) => void
+}) {
+  if (!result) return <PanelEmpty text="토폴로지 데이터 없음" />
+  const status = (recordString(result, 'status') ?? '').toLowerCase()
+  const pattern = recordString(result, 'pattern') ?? ''
+  const topic = recordString(result, 'topic')
+  const pid = recordString(result, 'pipelineId', 'pipeline_id', 'id')
+  const conns = recordArray(result, 'connectors')
+  const source = conns.find((c) => (recordString(c, 'kind') ?? '') === 'source')
+  const sink = conns.find((c) => (recordString(c, 'kind') ?? '') === 'sink')
+
+  const Node = ({ title, sub, bad }: { title: string; sub: string; bad?: boolean }) => (
+    <div className={cn('flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5',
+      bad ? 'border-[#e3b5ad] bg-[#fcf3f2]' : 'border-gray-200 bg-white')}>
+      <span className={cn('truncate font-semibold', bad ? 'text-[#c0392b]' : 'text-gray-800')}>{title}</span>
+      <span className="shrink-0 text-[9.5px] font-semibold uppercase tracking-wide text-gray-400">{sub}</span>
+    </div>
+  )
+  const Edge = ({ conn, label }: { conn?: Record<string, unknown>; label: string }) => {
+    const state = recordString(conn ?? null, 'state') ?? 'UNKNOWN'
+    const bad = semanticToken(state) === 'danger' || state === 'FAILED'
+    const tasks = recordNumber(conn ?? null, 'tasksMax', 'tasks_max')
+    return (
+      <div className={cn('flex items-center gap-1.5 py-1 pl-3 text-[11px]', bad ? 'text-[#c0392b]' : 'text-gray-600')}>
+        <span className="text-gray-400">↓</span>
+        <span className={cn('font-semibold', bad ? 'text-[#c0392b]' : 'text-gray-700')}>{label}</span>
+        <span>·</span>
+        <span className={cn('h-1.5 w-1.5 rounded-full', semanticDotClass(semanticToken(state)))} />
+        {state}{tasks != null && !bad ? ` · ${tasks} tasks` : ''}
+      </div>
+    )
+  }
+  const sinkBad = sink && (recordString(sink, 'state') === 'FAILED' || semanticToken(recordString(sink, 'state') ?? '') === 'danger')
+  const sinkErr = recordString(sink ?? null, 'lastError')
+
+  return (
+    <div className="text-[12px]">
+      <div className="mb-2 flex items-center gap-2">
+        <span className={cn('inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold', semanticBadgeClass(semanticToken(status)))}>
+          <span className={cn('h-1.5 w-1.5 rounded-full', semanticDotClass(semanticToken(status)))} />
+          {pipelineStatusKo(status)}
+        </span>
+        {pattern && <span className="text-[11px] text-gray-400">{pattern}</span>}
+      </div>
+      <div className="space-y-0">
+        <Node title={`소스 · ${connectorEngine(recordString(source ?? null, 'connectorClass', 'connector_class')) || 'source'}`} sub="source" />
+        <Edge conn={source} label="소스 커넥터" />
+        <Node title={shortTopic(topic)} sub="topic" />
+        <Edge conn={sink} label="싱크 커넥터" />
+        <Node title={`싱크 · ${connectorEngine(recordString(sink ?? null, 'connectorClass', 'connector_class')) || 'sink'}`} sub="sink" bad={!!sinkBad} />
+      </div>
+      {sinkBad && sinkErr && (
+        <div className="mt-2 break-words rounded border border-[#e3b5ad] bg-[#fcf3f2] px-2 py-1.5 font-mono text-[10.5px] text-[#c0392b]">{sinkErr}</div>
+      )}
+      <PanelNav label="파이프라인 상세" onClick={pid && onOpenPipeline ? () => onOpenPipeline(pid) : undefined} />
+    </div>
+  )
+}
+
+// #967 컨슈머 Lag: 총 lag/상태 + 파티션별 분포 막대
+export function ConsumerLagPanel({
+  result,
+  onOpenPipeline,
+  pipelineId,
+}: {
+  result: Record<string, unknown> | null
+  onOpenPipeline?: (id: string) => void
+  pipelineId?: string | null
+}) {
+  if (!result) return <PanelEmpty text="컨슈머 lag 데이터 없음" />
+  const total = recordNumber(result, 'totalLag', 'total_lag') ?? 0
+  const p95 = recordNumber(result, 'p95Lag', 'p95_lag')
+  const parts = recordArray(result, 'partitions')
+  const token: SemanticToken = total >= 50000 ? 'danger' : total >= 5000 ? 'warn' : 'safe'
+  const statusLabel = total >= 50000 ? '위험' : total >= 5000 ? '경고' : '정상'
+  const maxLag = Math.max(1, ...parts.map((p) => recordNumber(p, 'lag') ?? 0))
+  return (
+    <div className="text-[12px]">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={cn('font-bold', token === 'danger' ? 'text-[#c0392b]' : 'text-gray-900')}>총 lag {total.toLocaleString()}</span>
+        {p95 != null && <span className="text-[11px] text-gray-400">p95 {p95.toLocaleString()}</span>}
+        <span className={cn('inline-flex items-center rounded px-1.5 py-0.5 text-[10.5px] font-semibold', semanticBadgeClass(token))}>{statusLabel}</span>
+      </div>
+      <div className="mt-0.5 text-[10.5px] text-gray-400">{parts.length}개 파티션 · 임계 50,000</div>
+      {total > 0 && parts.length > 0 && (
+        <div className="mt-2 space-y-1">
+          {parts.slice().sort((a, b) => (recordNumber(b, 'lag') ?? 0) - (recordNumber(a, 'lag') ?? 0)).slice(0, 6).map((p, i) => {
+            const lag = recordNumber(p, 'lag') ?? 0
+            const part = recordNumber(p, 'partition')
+            const hot = lag === maxLag && lag > 0
+            const fill = hot ? 'bg-[#c0392b]' : lag >= 5000 ? 'bg-[#d97316]' : 'bg-[#157f4a]'
+            return (
+              <div key={i} className="flex items-center gap-2 text-[11px]">
+                <span className="w-6 shrink-0 font-mono text-gray-500">p{part ?? i}</span>
+                <span className="h-2 flex-1 overflow-hidden rounded bg-gray-100">
+                  <span className={cn('block h-full rounded', fill)} style={{ width: `${Math.max(2, (lag / maxLag) * 100)}%` }} />
+                </span>
+                <span className="w-16 shrink-0 text-right font-mono text-[10.5px] text-gray-600">{lag.toLocaleString()}{hot && <span className="ml-1 text-[9.5px] font-bold text-[#c0392b]">HOT</span>}</span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+      <PanelNav label="모니터링에서 보기" onClick={pipelineId && onOpenPipeline ? () => onOpenPipeline(pipelineId) : undefined} />
+    </div>
+  )
+}
+
+// #967 트레이스: span별 지속시간 막대(느린 span 강조)
+export function TracesPanel({
+  result,
+  onOpenPipeline,
+}: {
+  result: Record<string, unknown> | null
+  onOpenPipeline?: (id: string) => void
+}) {
+  if (!result) return <PanelEmpty text="트레이스 데이터 없음" />
+  const status = (recordString(result, 'status') ?? '').toLowerCase()
+  const durMs = recordNumber(result, 'durationMs', 'duration_ms')
+  const pid = recordString(result, 'pipelineId', 'pipeline_id')
+  const spans = recordArray(result, 'spans')
+  const bad = status === 'error' || status === 'failed'
+  const spanDur = (s: Record<string, unknown>) => {
+    const ms = recordNumber(s, 'durationMs', 'duration_ms')
+    if (ms != null && ms > 0) return ms
+    const us = recordNumber(s, 'durationMicros', 'duration_micros')
+    return us != null ? us / 1000 : 0
+  }
+  const maxDur = Math.max(0.001, ...spans.map(spanDur))
+  const fmtDur = (ms: number) => (ms >= 1 ? `${ms.toFixed(ms < 10 ? 1 : 0)}ms` : `${Math.round(ms * 1000)}µs`)
+  return (
+    <div className="text-[12px]">
+      <div className="flex items-center gap-2">
+        <span className={cn('h-1.5 w-1.5 rounded-full', semanticDotClass(bad ? 'danger' : 'safe'))} />
+        <span className={cn('font-semibold', bad ? 'text-[#c0392b]' : 'text-gray-900')}>{status || 'ok'}</span>
+        {durMs != null && <span className="text-[11px] text-gray-400">총 {fmtDur(durMs)}</span>}
+        <span className="text-[11px] text-gray-400">· span {spans.length}</span>
+      </div>
+      {spans.length > 0 && (
+        <div className="mt-2 space-y-1">
+          {spans.map((s, i) => {
+            const d = spanDur(s)
+            const sbad = recordString(s, 'status') === 'error' || !!recordString(s, 'error')
+            return (
+              <div key={i} className="flex items-center gap-2 text-[11px]">
+                <span className="w-20 shrink-0 truncate text-gray-700">{recordString(s, 'name')?.split('.').pop() ?? `span ${i}`}</span>
+                <span className="h-2 flex-1 overflow-hidden rounded bg-gray-100">
+                  <span className={cn('block h-full rounded', sbad ? 'bg-[#c0392b]' : 'bg-[#157f4a]')} style={{ width: `${Math.max(3, (d / maxDur) * 100)}%` }} />
+                </span>
+                <span className="w-12 shrink-0 text-right font-mono text-[10px] text-gray-600">{fmtDur(d)}</span>
+                <span className={cn('w-3 shrink-0 text-center', sbad ? 'text-[#c0392b]' : 'text-[#157f4a]')}>{sbad ? '✕' : '✓'}</span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+      <PanelNav label="파이프라인 상세" onClick={pid && onOpenPipeline ? () => onOpenPipeline(pid) : undefined} />
+    </div>
+  )
+}
+
+// #967 배포·변경 이력: 타임라인(상위 N + 접기)
+export function DeploymentsPanel({
+  result,
+  onOpenPipeline,
+  pipelineId,
+}: {
+  result: Record<string, unknown> | null
+  onOpenPipeline?: (id: string) => void
+  pipelineId?: string | null
+}) {
+  if (!result) return <PanelEmpty text="변경 이력 데이터 없음" />
+  const changes = recordArray(result, 'changes', 'deployments')
+  if (changes.length === 0) return <PanelEmpty text="변경 이력 없음" />
+  const fmtTime = (iso: string | null) => (iso ? iso.replace('T', ' ').slice(5, 16) : '-')
+  const typeKo = (t: string | null) => {
+    const s = (t ?? '').toUpperCase()
+    if (s.includes('STATUS')) return '상태전이'
+    if (s.includes('CONFIG')) return '설정변경'
+    if (s.includes('DEPLOY') || s.includes('IMAGE')) return '배포'
+    if (s.includes('AUDIT')) return '감사'
+    return t ?? '변경'
+  }
+  const Row = ({ c }: { c: Record<string, unknown> }) => (
+    <div className="flex items-start gap-2 border-t border-gray-100 py-1.5 first:border-t-0">
+      <span className="w-20 shrink-0 font-mono text-[10px] text-gray-400">{fmtTime(recordString(c, 'changedAt', 'changed_at'))}</span>
+      <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[9.5px] font-semibold text-gray-500">{typeKo(recordString(c, 'type'))}</span>
+      <span className="min-w-0 flex-1 break-words text-[11.5px] text-gray-700">{recordString(c, 'description') ?? '-'}</span>
+    </div>
+  )
+  const head = changes.slice(0, 4)
+  const rest = changes.slice(4)
+  return (
+    <div className="text-[12px]">
+      <div className="mb-1 font-bold text-gray-900">최근 변경 {changes.length.toLocaleString()}건</div>
+      <div>{head.map((c, i) => <Row key={i} c={c} />)}</div>
+      {rest.length > 0 && (
+        <details className="mt-1">
+          <summary className="cursor-pointer select-none text-[11px] text-gray-500">▾ {rest.length}건 더 보기</summary>
+          <div className="mt-1">{rest.map((c, i) => <Row key={i} c={c} />)}</div>
+        </details>
+      )}
+      <PanelNav label="파이프라인 상세" onClick={pipelineId && onOpenPipeline ? () => onOpenPipeline(pipelineId) : undefined} />
+    </div>
+  )
+}
+
+// #967 로그 검색: 시각·pod·레벨·메시지(라벨 접기)
+export function LogSearchPanel({ result }: { result: Record<string, unknown> | null }) {
+  if (!result) return <PanelEmpty text="로그 데이터 없음" />
+  const logs = recordArray(result, 'logs')
+  if (logs.length === 0) return <PanelEmpty text="일치하는 로그 없음" />
+  const total = recordNumber(result, 'total') ?? logs.length
+  const levelOf = (line: string) => {
+    const m = line.match(/\b(ERROR|WARN|INFO|DEBUG)\b/)
+    return m ? m[1] : ''
+  }
+  const levelTok = (lv: string): SemanticToken => (lv === 'ERROR' ? 'danger' : lv === 'WARN' ? 'warn' : 'neutral')
+  const head = logs.slice(0, 6)
+  return (
+    <div className="text-[12px]">
+      <div className="mb-1.5 text-[11px] text-gray-500">{total.toLocaleString()}건</div>
+      <div className="space-y-1">
+        {head.map((row, i) => {
+          const line = recordString(row, 'line') ?? ''
+          const labels = asRecord(row.labels)
+          const pod = labels ? recordString(labels, 'pod') : null
+          const lv = levelOf(line)
+          const msg = line.replace(/^\d{4}-\d\d-\d\d[ T][\d:.]+\s*/, '').replace(/^(ERROR|WARN|INFO|DEBUG)\s*/, '')
+          return (
+            <div key={i} className="flex items-center gap-2 border-t border-gray-100 py-1 first:border-t-0">
+              {pod && <span className="shrink-0 rounded bg-gray-100 px-1 py-0.5 text-[9.5px] text-gray-500">{pod.replace(/-connect-\d+$/, '…')}</span>}
+              {lv && <span className={cn('shrink-0 rounded px-1 py-0.5 text-[9.5px] font-semibold', semanticBadgeClass(levelTok(lv)))}>{lv}</span>}
+              <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-gray-600" title={line}>{msg.slice(0, 120) || line.slice(0, 120)}</span>
+            </div>
+          )
+        })}
+      </div>
+      {logs.length > head.length && <div className="mt-1 text-[11px] text-gray-400">… {logs.length - head.length}건 더</div>}
+    </div>
+  )
+}
+
+// #967 지표: 최신값 + sparkline + 평균/최대/최소
+export function MetricsPanel({
+  result,
+  onOpenPipeline,
+  pipelineId,
+}: {
+  result: Record<string, unknown> | null
+  onOpenPipeline?: (id: string) => void
+  pipelineId?: string | null
+}) {
+  if (!result) return <PanelEmpty text="지표 데이터 없음" />
+  const metric = recordString(result, 'metric', 'name') ?? '지표'
+  const unit = recordString(result, 'unit') ?? ''
+  const dps = recordArray(result, 'datapoints', 'series', 'points')
+  const values = dps.map((d) => recordNumber(d, 'value', 'v')).filter((v): v is number => v != null)
+  if (values.length === 0) return <PanelEmpty text="데이터 포인트 없음" />
+  const latest = values[values.length - 1]
+  const avg = values.reduce((a, b) => a + b, 0) / values.length
+  const max = Math.max(...values), min = Math.min(...values)
+  const fmt = (n: number) => Math.round(n).toLocaleString()
+  return (
+    <div className="text-[12px]">
+      <div className="flex items-center">
+        <span className="text-[15px] font-bold text-gray-900">{fmt(latest)}</span>
+        {unit && <span className="ml-1 text-[11px] text-gray-400">{unit}</span>}
+        <Sparkline values={values} />
+      </div>
+      <div className="mt-0.5 text-[10.5px] text-gray-400">{METRIC_LABELS_KO[metric] ?? metric} · {values.length} 포인트</div>
+      <div className="mt-1.5 flex gap-4 text-[11.5px] text-gray-600">
+        <span>평균 <b className="text-gray-900">{fmt(avg)}</b></span>
+        <span>최대 <b className="text-gray-900">{fmt(max)}</b></span>
+        <span>최소 <b className="text-gray-900">{fmt(min)}</b></span>
+      </div>
+      <PanelNav label="파이프라인 상세" onClick={pipelineId && onOpenPipeline ? () => onOpenPipeline(pipelineId) : undefined} />
     </div>
   )
 }
@@ -3845,7 +4199,7 @@ export function AlertsPanel({
   )
 }
 
-export function EventSummaryPanel({ result }: { result: Record<string, unknown> | null }) {
+export function EventSummaryPanel({ result, onOpenIncident }: { result: Record<string, unknown> | null; onOpenIncident?: (id: string) => void }) {
   if (!result) return <PanelEmpty text="이벤트/인시던트 데이터 없음" />
   const open = recordNumber(result, 'openIncidents', 'open_incidents') ?? 0
   const criticalCount = recordNumber(result, 'criticalIncidents', 'critical_incidents') ?? 0
@@ -3855,7 +4209,7 @@ export function EventSummaryPanel({ result }: { result: Record<string, unknown> 
   // 현황(집계/목록) 데이터가 아니고 단일 인시던트 요약이면 요약 카드로 폴백.
   const hasOverview = open > 0 || criticalCount > 0 || critical.length > 0 || warnings.length > 0
   const isSingleIncident = !hasOverview && !!recordString(result, 'incident_id', 'incidentId', 'summary', 'note')
-  if (isSingleIncident) return <IncidentSummaryCard result={result} />
+  if (isSingleIncident) return <IncidentSummaryCard result={result} onOpenIncident={onOpenIncident} />
 
   return (
     <div className="space-y-2.5 text-[12px]">

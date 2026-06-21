@@ -355,13 +355,15 @@ describe('ClusterInfoPanel rendering (#837)', () => {
             { id: 1, host: 'broker-1', port: 9092, controller: false },
             { id: 2, host: 'broker-2', port: 9092, controller: true },
           ],
-          topics: [{ name: 'orders', partitionCount: 6 }],
+          topics: [{ name: 'orders', partitionCount: 6, replicationFactor: 3, underReplicatedPartitions: 0, offlinePartitions: 0 }],
         }}
       />,
     )
-    expect(html).toContain('브로커 2대 정상')
+    // #967 재디자인: 헬스 헤드라인 + 브로커 상태점/평문 + 토픽 헬스 행
+    expect(html).toContain('정상')
+    expect(html).toContain('2대 온라인')
     expect(html).toContain('컨트롤러')
-    expect(html).toContain('토픽 전체 보기')
+    expect(html).toContain('6 파티션')
     expect(html).toContain('orders')
   })
 
