@@ -861,8 +861,14 @@ public class InternalOpsObservabilityController {
                         alternatives.add(boundedToken("connect-" + name));
                     });
         }
-        return " |~ \"" + escapeLogQuery(String.join("|", alternatives)) + "\"";
+        // #973 커넥터명이 URL에 박힌 모니터링 폴러의 Connect REST 접근 로그
+        // (예: `RestServer:57 - <ip> ... "GET /connectors/<name>/status`)는 스코프에 걸리지만
+        // RCA에 무의미한 헬스체크 노이즈이므로 제외한다. 정상 시 결과가 비더라도 노이즈 도배보다 정직하다.
+        return " |~ \"" + escapeLogQuery(String.join("|", alternatives)) + "\"" + LOG_ACCESS_NOISE_EXCLUSION;
     }
+
+    /** Kafka Connect RestServer HTTP 접근 로그(`RestServer:<port> - ...`) 제외 — 모니터링 폴러 노이즈 차단. */
+    private static final String LOG_ACCESS_NOISE_EXCLUSION = " !~ \"RestServer:[0-9]+ -\"";
 
     private static String boundedToken(String raw) {
         return "(^|[^A-Za-z0-9._-])" + escapeRegex(raw) + "([^A-Za-z0-9._-]|$)";
