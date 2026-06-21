@@ -61,7 +61,7 @@ class KafkaAdminPollerTest {
                 eq("CONSUMER_GROUP"),
                 eq(null),
                 eq(EventLevel.ERROR),
-                eq("Consumer lag critical: connect-orders-sink"),
+                eq("Consumer lag spike (critical): connect-orders-sink"),
                 eq("CONSUMER_LAG_CRITICAL"),
                 org.mockito.ArgumentMatchers.contains("lag=150"),
                 eq(pipeline.getId()));

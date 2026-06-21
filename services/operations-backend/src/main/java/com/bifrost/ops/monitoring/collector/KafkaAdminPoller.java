@@ -179,10 +179,13 @@ public class KafkaAdminPoller {
 
         if (lag >= settings.getLagCriticalThreshold()) {
             if (!"ERROR".equals(prev)) {
-                String message = "consumer lag 임계 초과: group=" + group + " lag=" + lag;
+                // #957 edge-trigger(정상/WARN→ERROR 상승 전이)이므로 lag 가 임계를 넘어 '증가'한 것이
+                //      사실이다. RCA 가 CONSUMER_LAG_SPIKE 의 required 증거('consumer lag 급증')를
+                //      매칭하도록 추세(급증) 신호를 제목·메시지에 명시한다(스냅샷이 아닌 전이 근거).
+                String message = "consumer lag 급증으로 임계 초과: group=" + group + " lag=" + lag;
                 incidentService.onThresholdViolation(p.getTenantId(), IncidentGroupingKeys.consumerLag(group),
                         "CONSUMER_GROUP", null, EventLevel.ERROR,
-                        "Consumer lag critical: " + group,
+                        "Consumer lag spike (critical): " + group,
                         "CONSUMER_LAG_CRITICAL", message, p.getId());
             }
             lagAlarmState.put(group, "ERROR");
@@ -190,7 +193,7 @@ public class KafkaAdminPoller {
             if (!"WARN".equals(prev) && !"ERROR".equals(prev)) {
                 eventService.record(p.getTenantId(), p.getId(), EventLevel.WARN,
                         "CONSUMER_LAG_WARNING",
-                        "consumer lag 경고: group=" + group + " lag=" + lag);
+                        "consumer lag 증가 경고: group=" + group + " lag=" + lag);
             }
             lagAlarmState.put(group, "WARN");
         } else {
