@@ -470,6 +470,23 @@ class InternalOpsObservabilityControllerTest {
     }
 
     @Test
+    void eventIncidentSummaryDegradesToProjectScopeWhenConnectorNotFound() throws Exception {
+        // #938: 커넥터명을 못 찾아도 analyze_event_log 는 hard-fail 하지 않고 project scope 로 degrade(200).
+        UUID tenantId = UUID.randomUUID();
+        when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId, "proj-001")));
+        when(connectorRepository.findByCrName("ghost-connector")).thenReturn(Optional.empty());
+
+        mockMvc().perform(get("/internal/ops/projects/{projectId}/observability/events/summary", "proj-001")
+                        .queryParam("connector_name", "ghost-connector")
+                        .queryParam("window", "2h")
+                        .queryParam("level", "warn+")
+                        .header("X-Request-Id", "req-events-degrade"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.operation").value("analyze_event_log"))
+                .andExpect(jsonPath("$.error").doesNotExist());
+    }
+
+    @Test
     void eventIncidentSummaryRejectsInvalidPipelineIdWithErrorEnvelope() throws Exception {
         UUID tenantId = UUID.randomUUID();
         when(workspaceRepository.findByNamespace("proj-001")).thenReturn(Optional.of(workspace(tenantId, "proj-001")));

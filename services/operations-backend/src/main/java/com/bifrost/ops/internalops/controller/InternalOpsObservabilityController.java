@@ -707,9 +707,18 @@ public class InternalOpsObservabilityController {
         PipelineEntity pipeline = pipelineId == null ? null : requireOwnedPipeline(workspace, pipelineId);
         ConnectorEntity connector = null;
         if (connectorName != null) {
-            connector = connectorRepository.findByCrName(connectorName)
-                    .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND,
-                            "connector not found: " + connectorName));
+            Optional<ConnectorEntity> found = connectorRepository.findByCrName(connectorName);
+            if (found.isEmpty()) {
+                // #938: 커넥터명을 못 찾아도 analyze_event_log/list_alerts 를 hard-fail 하지 않는다.
+                // 이벤트·알림 요약 도구라 부정확한 connector scope 로 전체 분석(RCA)을 깨면 안 되므로,
+                // pipeline_id 가 있으면 pipeline scope, 없으면 project-wide 로 graceful degrade 한다.
+                log.debug("observability scope: connector '{}' 미발견 → degrade(scope 완화)", connectorName);
+                if (pipeline != null) {
+                    return ObservabilityScope.forPipeline(pipeline, connectorRepository.findByPipelineId(pipeline.getId()));
+                }
+                return ObservabilityScope.projectWide();
+            }
+            connector = found.get();
             PipelineEntity connectorPipeline = pipelineRepository
                     .findByIdAndTenantId(connector.getPipelineId(), workspace.getId())
                     .orElseThrow(() -> new ApiException(ErrorCode.WORKSPACE_FORBIDDEN,
