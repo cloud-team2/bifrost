@@ -2,6 +2,7 @@ package com.bifrost.ops.incident;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -12,36 +13,50 @@ import org.springframework.web.client.RestClientException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Starts ai-service incident_analysis runs for newly opened incidents. */
+/**
+ * Starts ai-service incident_analysis runs for newly opened incidents.
+ *
+ * <p>전송은 커밋 스레드(폴러/요청 스레드)를 막지 않도록 {@code executor} 로 비동기 처리한다.
+ * ai-service 가 일시적으로 불가할 때 RCA 가 영구 누락되지 않도록 유한 재시도(backoff)를 둔다(#923).
+ */
 @Service
 public class IncidentAnalysisTrigger {
 
     private static final Logger log = LoggerFactory.getLogger(IncidentAnalysisTrigger.class);
+    private static final int MAX_ATTEMPTS = 3;
 
     private final RestClient restClient;
     private final AiServiceEndpoint aiServiceEndpoint;
+    private final Executor executor;
+    private final long retryBackoffMs;
     private final AtomicBoolean disabledWarningLogged = new AtomicBoolean(false);
 
     public IncidentAnalysisTrigger(@Value("${ai-service.url:}") String aiServiceUrl,
-                                   RestClient.Builder restClientBuilder) {
+                                   RestClient.Builder restClientBuilder,
+                                   @Qualifier("applicationTaskExecutor") Executor executor,
+                                   @Value("${ai-service.incident-analysis.retry-backoff-ms:1000}") long retryBackoffMs) {
         this.aiServiceEndpoint = AiServiceEndpoint.from(aiServiceUrl);
         this.restClient = aiServiceEndpoint.configured()
                 ? restClientBuilder.baseUrl(aiServiceEndpoint.baseUrl()).build()
                 : restClientBuilder.build();
+        this.executor = executor;
+        this.retryBackoffMs = retryBackoffMs;
     }
 
     public void startAfterCommit(UUID tenantId, UUID incidentId, String title, String eventMessage) {
-        Runnable start = () -> start(tenantId, incidentId, title, eventMessage);
+        // 전송은 비동기로 — 재시도 backoff 가 커밋/폴러 스레드를 막지 않게 한다.
+        Runnable submit = () -> executor.execute(() -> start(tenantId, incidentId, title, eventMessage));
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            start.run();
+            submit.run();
             return;
         }
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                start.run();
+                submit.run();
             }
         });
     }
@@ -53,15 +68,38 @@ public class IncidentAnalysisTrigger {
             }
             return;
         }
+        Map<String, Object> body = requestBody(tenantId, incidentId, title, eventMessage);
+        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            try {
+                restClient.post()
+                        .uri("/api/v1/agent/runs")
+                        .body(body)
+                        .retrieve()
+                        .toBodilessEntity();
+                log.info("[incident] ai incident_analysis 시작: incidentId={} (attempt {}/{})",
+                        incidentId, attempt, MAX_ATTEMPTS);
+                return;
+            } catch (RestClientException e) {
+                if (attempt >= MAX_ATTEMPTS) {
+                    log.warn("[incident] ai incident_analysis 시작 실패({}회 시도): incidentId={} cause={}",
+                            MAX_ATTEMPTS, incidentId, e.getMessage());
+                    return;
+                }
+                log.warn("[incident] ai incident_analysis 재시도 {}/{}: incidentId={} cause={}",
+                        attempt, MAX_ATTEMPTS, incidentId, e.getMessage());
+                sleepBackoff(attempt);
+            }
+        }
+    }
+
+    private void sleepBackoff(int attempt) {
+        if (retryBackoffMs <= 0) {
+            return;
+        }
         try {
-            restClient.post()
-                    .uri("/api/v1/agent/runs")
-                    .body(requestBody(tenantId, incidentId, title, eventMessage))
-                    .retrieve()
-                    .toBodilessEntity();
-            log.info("[incident] ai incident_analysis 시작: incidentId={}", incidentId);
-        } catch (RestClientException e) {
-            log.warn("[incident] ai incident_analysis 시작 실패: incidentId={} cause={}", incidentId, e.getMessage());
+            Thread.sleep(retryBackoffMs * attempt);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
         }
     }
 
