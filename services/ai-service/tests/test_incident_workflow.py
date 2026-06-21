@@ -349,6 +349,15 @@ async def test_incident_analysis_remediation_emits_approval_required() -> None:
     assert "action_id" in approval_events[0].payload
     assert approval_events[0].payload["action_id"] == "act_001"
 
+    # #922: 승인 대기로 멈춰도(report 단계 미도달) RCA·권장조치를 담은 report snapshot 이
+    # 기록되어, 인시던트 상세에 권장조치가 비어 보이지 않는다.
+    from app.persistence.report_repository import get_report_repo
+
+    snapshot = await get_report_repo().get_latest("run_002", verified_only=False)
+    assert snapshot is not None
+    assert snapshot.body.get("action_candidates"), "승인 대기 스냅샷에 권장조치가 있어야 함"
+    assert snapshot.body.get("root_cause_candidates"), "승인 대기 스냅샷에 RCA 후보가 있어야 함"
+
 
 @pytest.mark.asyncio
 async def test_incident_analysis_full_loop_persists_approval_bridge_and_executes() -> None:
