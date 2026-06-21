@@ -8,6 +8,9 @@ import com.bifrost.ops.incident.IncidentService;
 import com.bifrost.ops.incident.dto.IncidentDetailResponse;
 import com.bifrost.ops.incident.dto.IncidentReportResponse;
 import com.bifrost.ops.incident.dto.IncidentResponse;
+import com.bifrost.ops.incident.feedback.RcaFeedbackService;
+import com.bifrost.ops.incident.feedback.dto.RcaFeedbackRequest;
+import com.bifrost.ops.incident.feedback.dto.RcaFeedbackResponse;
 import com.bifrost.ops.global.common.error.ApiException;
 import com.bifrost.ops.global.common.error.ErrorCode;
 import com.bifrost.ops.internalops.dto.MetricsResult;
@@ -27,6 +30,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -51,6 +55,7 @@ public class MonitoringController {
     private final ObservabilityMetricsQuery metricsQuery;
     private final WorkspaceRepository workspaceRepository;
     private final UserImpactSliService sliService;
+    private final RcaFeedbackService rcaFeedbackService;
 
     public MonitoringController(MonitoringReadService monitoringReadService,
                                 IncidentService incidentService,
@@ -59,7 +64,8 @@ public class MonitoringController {
                                 WorkspaceAccessGuard accessGuard,
                                 ObservabilityMetricsQuery metricsQuery,
                                 WorkspaceRepository workspaceRepository,
-                                UserImpactSliService sliService) {
+                                UserImpactSliService sliService,
+                                RcaFeedbackService rcaFeedbackService) {
         this.monitoringReadService = monitoringReadService;
         this.incidentService = incidentService;
         this.eventService = eventService;
@@ -68,6 +74,7 @@ public class MonitoringController {
         this.metricsQuery = metricsQuery;
         this.workspaceRepository = workspaceRepository;
         this.sliService = sliService;
+        this.rcaFeedbackService = rcaFeedbackService;
     }
 
     /** 워크스페이스 전체 health 집계. */
@@ -191,6 +198,38 @@ public class MonitoringController {
         accessGuard.requireAccess(wsId, principal);
         incidentService.get(wsId, incidentId);
         return ResponseEntity.ok(incidentReportService.list(incidentId));
+    }
+
+    /** #964 RCA 운영자 피드백 제출(채택/거부/수정). 축적되면 평가·캘리브레이션용 gold set 이 된다. */
+    @PostMapping("/incidents/{incidentId}/rca-feedback")
+    public ResponseEntity<RcaFeedbackResponse> submitRcaFeedback(
+            @PathVariable UUID wsId,
+            @PathVariable UUID incidentId,
+            @RequestBody RcaFeedbackRequest request,
+            @AuthenticationPrincipal AuthenticatedUser principal) {
+        accessGuard.requireAccess(wsId, principal);
+        return ResponseEntity.ok(rcaFeedbackService.submit(
+                wsId, incidentId, request, principal == null ? null : principal.email()));
+    }
+
+    /** #964 인시던트별 RCA 피드백 목록(상세 화면에 현재 피드백 표시). */
+    @GetMapping("/incidents/{incidentId}/rca-feedback")
+    public ResponseEntity<List<RcaFeedbackResponse>> incidentRcaFeedback(
+            @PathVariable UUID wsId,
+            @PathVariable UUID incidentId,
+            @AuthenticationPrincipal AuthenticatedUser principal) {
+        accessGuard.requireAccess(wsId, principal);
+        incidentService.get(wsId, incidentId);
+        return ResponseEntity.ok(rcaFeedbackService.list(wsId, incidentId));
+    }
+
+    /** #964 워크스페이스 RCA 피드백 전체 — gold set 조회(평가·캘리브레이션 연결 지점). */
+    @GetMapping("/rca-feedback")
+    public ResponseEntity<List<RcaFeedbackResponse>> workspaceRcaFeedback(
+            @PathVariable UUID wsId,
+            @AuthenticationPrincipal AuthenticatedUser principal) {
+        accessGuard.requireAccess(wsId, principal);
+        return ResponseEntity.ok(rcaFeedbackService.listForWorkspace(wsId));
     }
 
     /** incident 리포트 본문 facade. */

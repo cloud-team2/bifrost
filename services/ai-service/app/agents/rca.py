@@ -24,6 +24,10 @@ MIN_CONFIDENT_ROOT_CAUSE = 0.60
 LLM_TIE_MARGIN = 0.10
 MAX_CANDIDATES = 5
 
+# #962 근접 증상(task 가 FAILED 다)일 뿐 "왜 실패했는지"가 더 구체적 원인으로 입증되면 그 아래로 강등할 root cause.
+_SYMPTOM_ROOT_CAUSES = frozenset({"CONNECTOR_TASK_FAILED", "PIPELINE_TASK_RETRY_EXHAUSTED"})
+_CAUSAL_DEPTH_MARGIN = 0.03
+
 logger = logging.getLogger(__name__)
 
 _TOKEN_RE = re.compile(r"[0-9A-Za-z가-힣]+")
@@ -195,6 +199,8 @@ async def run_rca(classifier_out: ClassifierOutput | None, retrieval_out: Retrie
         if llm_selection:
             candidates = _apply_llm_selection(candidates, llm_selection)
 
+    # #962 근접 증상(task FAILED)보다 입증된 심층 원인을 우선 — 마지막에 적용해 LLM 선택도 덮어쓴다.
+    candidates = _demote_symptom_below_confirmed_root_cause(candidates)
     candidates.sort(key=lambda item: item.confidence, reverse=True)
     if not candidates or candidates[0].confidence < MIN_CONFIDENT_ROOT_CAUSE:
         return _unknown_output(_collect_missing_required(candidates) or ["required_evidence_missing"])
@@ -666,6 +672,31 @@ def _score_confidence(
     if required_total and required_matched < required_total:
         confidence = min(confidence, root_cause.default_confidence_cap)
     return _clamp_confidence(confidence)
+
+
+def _demote_symptom_below_confirmed_root_cause(
+    candidates: list[_EvaluatedCandidate],
+) -> list[_EvaluatedCandidate]:
+    """#962 근접 증상(CONNECTOR_TASK_FAILED 등)은 "task 가 죽었다"는 사실일 뿐이다.
+    같은 인시던트에서 더 구체적인 root cause(sink DB 연결 실패 등)가 required 증거까지 충족되면
+    (=왜 죽었는지 입증됨) 그 심층 원인을 위로 올리도록, 증상 후보를 그 아래로 강등한다.
+    심층 원인이 입증되지 않으면(예: 일반적 task 오류) 증상이 그대로 top 을 유지한다."""
+    deeper_confidences = [
+        candidate.confidence
+        for candidate in candidates
+        if candidate.root_cause_id not in _SYMPTOM_ROOT_CAUSES
+        and candidate.required_evidence_satisfied
+        and candidate.confidence >= MIN_CONFIDENT_ROOT_CAUSE
+    ]
+    if not deeper_confidences:
+        return candidates
+    ceiling = max(deeper_confidences) - _CAUSAL_DEPTH_MARGIN
+    return [
+        replace(candidate, confidence=_clamp_confidence(ceiling))
+        if candidate.root_cause_id in _SYMPTOM_ROOT_CAUSES and candidate.confidence > ceiling
+        else candidate
+        for candidate in candidates
+    ]
 
 
 def _needs_llm_assist(candidates: list[_EvaluatedCandidate]) -> bool:
