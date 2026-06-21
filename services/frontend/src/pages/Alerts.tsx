@@ -93,6 +93,20 @@ function severityBorder(severity: string): string {
   return SEV_BORDER[severityKey(severity)] ?? 'border-l-[#d9d9d9]'
 }
 
+// #935 RCA 진행 단계 한글 라벨(에이전트명 → 사용자 표현).
+const RCA_STAGE_KO: Record<string, string> = {
+  router: '라우팅',
+  correlation: '연관 분석',
+  planner: '조사 계획',
+  retrieval: '증거 수집',
+  classifier: '분류',
+  rca: '근본 원인 분석',
+  remediation: '권장 조치 도출',
+  policy_guard: '정책 점검',
+  verifier: '검증',
+  report: '리포트 작성',
+}
+
 function isOpenIncident(incident: IncidentResponse): boolean {
   return incident.status.toUpperCase() !== 'RESOLVED'
 }
@@ -301,11 +315,15 @@ export function reportActions(reports: IncidentReportResponse[]): ReportAction[]
       const id = pickString(raw, ['action_id', 'actionId', 'id'])
       const label = pickString(raw, ['action_name', 'actionName', 'name', 'label']) ?? id
       if (!label) continue
-      const key = `${report.id}:${id ?? label}`
-      if (seen.has(key)) continue
-      seen.add(key)
       const expectedEffect = pickString(raw, ['expected_effect', 'expectedEffect', 'effect'])
       const reason = pickString(raw, ['reason', 'detail', 'description'])
+      const toolName = pickString(raw, ['tool_name', 'toolName'])
+      const toolParams = pickRecordValue(raw, ['tool_params', 'toolParams', 'params'])
+      // #937: 같은 조치가 여러 리포트/후보로 중복 노출되지 않도록 기능 정체성으로 dedup한다.
+      // (report.id·인스턴스 action_id 가 달라도 이름·도구·파라미터·효과가 같으면 한 번만 표시)
+      const key = [label, toolName ?? '', JSON.stringify(toolParams ?? {}), expectedEffect ?? reason ?? ''].join('|')
+      if (seen.has(key)) continue
+      seen.add(key)
       actions.push({
         key,
         actionId: id ?? label,
@@ -321,8 +339,8 @@ export function reportActions(reports: IncidentReportResponse[]): ReportAction[]
         reason,
         expectedEffect,
         rollbackPlan: pickString(raw, ['rollback_plan', 'rollbackPlan']),
-        toolName: pickString(raw, ['tool_name', 'toolName']),
-        toolParams: pickRecordValue(raw, ['tool_params', 'toolParams', 'params']),
+        toolName,
+        toolParams,
       })
     }
   }
@@ -1069,6 +1087,9 @@ function IncidentDetailScreen({
   const [selectedReport, setSelectedReport] = useState<IncidentReportResponse | null>(null)
   const [reportLoadingId, setReportLoadingId] = useState<string | null>(null)
   const [reportError, setReportError] = useState<string | null>(null)
+  // #935 RCA 진행 표시: 이 인시던트의 자동 분석 run 이 도는 중인지(분석 중) + 현재 단계.
+  const [analysisRunning, setAnalysisRunning] = useState(false)
+  const [analysisStage, setAnalysisStage] = useState<string | null>(null)
   const completedRunMarker = app.agentRunState.status === 'completed' ? app.agentRunState.updatedAt : null
 
   useEffect(() => {
@@ -1115,6 +1136,46 @@ function IncidentDetailScreen({
   }, [wsId, incident.id, completedRunMarker])
 
   const panelIncident = detailIncident ?? incident
+  const hasRca = !!panelIncident.rca?.trim()
+  // #935: RCA 리포트가 아직 없고 인시던트가 열려 있으면 이 인시던트의 분석 run 진행 상태를 폴링해
+  // '분석 중'(+현재 단계)을 표시하고, 결과(리포트)가 도착하면 자동 반영한다(#936 보조).
+  useEffect(() => {
+    if (!wsId || hasRca || !isOpenIncident(panelIncident)) {
+      setAnalysisRunning(false)
+      setAnalysisStage(null)
+      return
+    }
+    let alive = true
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const IN_PROGRESS = new Set(['running', 'created', 'queued', 'pending'])
+    const tick = async () => {
+      try {
+        const [detail, runsResp] = await Promise.all([
+          api.getIncidentDetail(wsId, incident.id).catch(() => null),
+          api.agentRuns(wsId, 20).catch(() => null),
+        ])
+        if (!alive) return
+        if (detail) {
+          setDetailIncident(detail.incident)
+          setReports(detail.reports)
+          setEventRows(detail.events)
+          setDetailImpactPipelineIds(detail.impactPipelineIds)
+        }
+        const mine = (runsResp?.runs ?? []).filter((r) => r.incident_id === incident.id)
+        const active = mine.find((r) => IN_PROGRESS.has((r.status ?? '').toLowerCase()))
+        setAnalysisRunning(!!active)
+        setAnalysisStage(active?.current_agent ?? null)
+      } catch {
+        /* 폴링 실패는 무시 */
+      }
+      if (alive) timer = setTimeout(tick, 5000)
+    }
+    tick()
+    return () => {
+      alive = false
+      if (timer) clearTimeout(timer)
+    }
+  }, [wsId, incident.id, hasRca, panelIncident.status])
   const timelineEvents = useMemo(
     () => (detailLoaded ? buildEvents(eventRows, []).sort(eventSortAsc) : relatedEvents),
     [detailLoaded, eventRows, relatedEvents],
@@ -1233,6 +1294,14 @@ function IncidentDetailScreen({
               {panelIncident.rca?.trim() ? (
                 <div className="text-[13px] leading-relaxed text-gray-700">
                   <Markdown>{panelIncident.rca}</Markdown>
+                </div>
+              ) : analysisRunning ? (
+                <div className="flex items-center gap-3 rounded-lg bg-gray-50 px-3.5 py-3">
+                  <span className="bifrost-spin h-3.5 w-3.5 shrink-0 rounded-full border-2 border-gray-300 border-t-gray-600" />
+                  <span className="flex-1 text-[12.5px] leading-relaxed text-gray-600">
+                    AI가 근본 원인을 분석하고 있습니다…
+                    {analysisStage ? <span className="text-gray-400"> · {RCA_STAGE_KO[analysisStage] ?? analysisStage}</span> : null}
+                  </span>
                 </div>
               ) : (
                 <div className="flex items-center gap-3 rounded-lg bg-gray-50 px-3.5 py-3">

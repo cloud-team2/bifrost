@@ -98,6 +98,24 @@ describe('incident report actions', () => {
     expect(actions).toHaveLength(0)
   })
 
+  it('dedups duplicate recommended actions within and across reports (#937)', () => {
+    const candidate = (id: string) => ({
+      action_id: id,
+      action_type: 'escalation',
+      action_name: 'escalate_to_operator',
+      risk: 'low',
+      reason: '확정 불가 상태로 운영자에게 전달',
+    })
+    // 한 리포트 내 동일 조치 2개(action_id만 다름) + 다른 리포트의 동일 조치 1개 → 1개로 합쳐져야 함
+    const r1 = { ...report({ action_candidates: [candidate('a1'), candidate('a2')] }), id: 'report-1' }
+    const r2 = { ...report({ action_candidates: [candidate('a3')] }), id: 'report-2' }
+
+    const actions = reportActions([r1, r2])
+
+    expect(actions).toHaveLength(1)
+    expect(actions[0].actionName).toBe('escalate_to_operator')
+  })
+
   it('builds a runnable candidate from explicit low-risk report tool_params', () => {
     const [action] = reportActions([
       report({
