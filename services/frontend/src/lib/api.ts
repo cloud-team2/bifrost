@@ -639,6 +639,8 @@ export interface AgentRunSummary {
   incident_id: string | null
   status: string | null
   current_agent: string | null
+  /** #936 진행 단계 분류용 — incident_analysis(분석) vs action_execution(조치 실행) */
+  mode: string | null
 }
 export interface AgentRunEvent {
   event_id: string
