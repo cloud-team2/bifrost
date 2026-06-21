@@ -3721,9 +3721,9 @@ export function ClusterInfoPanel({ result, onView }: { result: Record<string, un
         <span className="w-11 shrink-0 text-[9.5px] font-semibold uppercase tracking-wide text-gray-400">브로커</span>
         <span className="flex items-center gap-1.5">
           {data.brokers.length > 0 ? data.brokers.map((b, i) => (
-            <span key={b.id ?? i} className="relative inline-flex">
+            <span key={b.id ?? i} className="relative inline-flex h-2.5 w-2.5">
               <span className="h-2.5 w-2.5 rounded-full bg-[#157f4a]" />
-              {b.controller && <span className="absolute -top-2 left-1/2 -translate-x-1/2 text-[8px] text-[#d97316]">★</span>}
+              {b.controller && <span className="pointer-events-none absolute -top-2.5 left-0 w-2.5 text-center text-[9px] leading-none text-[#d97316]">★</span>}
             </span>
           )) : <span className="h-2.5 w-2.5 rounded-full bg-gray-300" />}
         </span>
@@ -3995,7 +3995,17 @@ export function TracesPanel({
   const durMs = recordNumber(result, 'durationMs', 'duration_ms')
   const pid = recordString(result, 'pipelineId', 'pipeline_id')
   const spans = recordArray(result, 'spans')
+  const note = recordString(result, 'note')
   const bad = status === 'error' || status === 'failed'
+  // 트래픽이 없으면 백엔드가 spans=[] + note("구간 내 trace 없음")를 준다 — 고장과 구분되게 안내
+  if (spans.length === 0) {
+    return (
+      <div className="text-[12px]">
+        <PanelEmpty text={note ?? '수집된 trace 없음 (트래픽 없음)'} />
+        <PanelNav label="파이프라인 상세" onClick={pid && onOpenPipeline ? () => onOpenPipeline(pid) : undefined} />
+      </div>
+    )
+  }
   const spanDur = (s: Record<string, unknown>) => {
     const ms = recordNumber(s, 'durationMs', 'duration_ms')
     if (ms != null && ms > 0) return ms
@@ -4130,13 +4140,22 @@ export function MetricsPanel({
   if (!result) return <PanelEmpty text="지표 데이터 없음" />
   const metric = recordString(result, 'metric', 'name') ?? '지표'
   const unit = recordString(result, 'unit') ?? ''
-  const dps = recordArray(result, 'datapoints', 'series', 'points')
+  // 백엔드(Prometheus)는 dataPoints(대문자) 로 반환 — 소문자/기타는 폴백
+  const dps = recordArray(result, 'dataPoints', 'datapoints', 'series', 'points')
   const values = dps.map((d) => recordNumber(d, 'value', 'v')).filter((v): v is number => v != null)
   if (values.length === 0) return <PanelEmpty text="데이터 포인트 없음" />
   const latest = values[values.length - 1]
   const avg = values.reduce((a, b) => a + b, 0) / values.length
   const max = Math.max(...values), min = Math.min(...values)
-  const fmt = (n: number) => Math.round(n).toLocaleString()
+  // 소수 지표(예: broker_cpu_cores 0.178)가 반올림으로 0이 되지 않도록 적응형 포맷
+  const fmt = (n: number) => {
+    const a = Math.abs(n)
+    if (a === 0) return '0'
+    if (a < 1) return n.toFixed(3)
+    if (a < 10) return n.toFixed(2)
+    if (a < 100) return n.toFixed(1)
+    return Math.round(n).toLocaleString()
+  }
   return (
     <div className="text-[12px]">
       <div className="flex items-center">
