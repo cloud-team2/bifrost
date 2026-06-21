@@ -27,7 +27,12 @@ async def get_run_report(run_id: str) -> ApiResponse:
 @router.get("/incidents/{incident_id}/reports")
 async def list_incident_reports(incident_id: str) -> ApiResponse:
     request_id = _request_id()
-    snapshots = await get_report_repo().list_by_incident(incident_id)
+    repo = get_report_repo()
+    snapshots = await repo.list_by_incident(incident_id)
+    if not snapshots:
+        # #932: 승인 대기(approval pause) 등으로 verified 리포트가 아직 없으면, unverified
+        # 리포트(=pause 시점 RCA+권장조치)로 폴백해 인시던트 상세에 권장조치가 표시되도록 한다.
+        snapshots = await repo.list_by_incident(incident_id, verified_only=False)
     return ApiResponse.success(
         request_id,
         {"incident_id": incident_id, "reports": [s.model_dump(mode="json") for s in snapshots]},

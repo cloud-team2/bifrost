@@ -82,3 +82,32 @@ async def test_report_snapshot_exposes_rca_on_public_surface() -> None:
     assert body["root_cause_candidates"]
     assert body["root_cause_candidates"][0]["root_cause_id"] == "SOURCE_AUTH_EXPIRED"
     assert body["root_cause_candidates"][0]["confidence"] == pytest.approx(0.84)
+
+
+@pytest.mark.asyncio
+async def test_incident_reports_fall_back_to_unverified_pause_report() -> None:
+    """#932 — 승인 대기로 verified 리포트가 없을 때, incident reports 는 unverified
+    pause 리포트(RCA+권장조치)로 폴백해 노출한다(권장조치가 비어 보이지 않게)."""
+    from app.api.routes_reports import list_incident_reports
+
+    incident_id = f"inc-{uuid.uuid4().hex[:8]}"
+    run_id = f"run-{uuid.uuid4().hex[:8]}"
+
+    await _persist_report_snapshot(
+        run_id=run_id,
+        answer="원인 후보 + 권장조치",
+        mode=AgentMode.INCIDENT_ANALYSIS,
+        retrieval_out=RetrievalOutput(evidence_items=[]),
+        rca_out=_rca(),
+        verifier_out=None,  # 승인 전 — verifier 미실행 → verified=False
+        incident_id=incident_id,
+    )
+
+    # 기본(verified_only=True)으로는 제외된다.
+    assert await get_report_repo().list_by_incident(incident_id) == []
+
+    # 라우트는 verified 가 없으면 unverified 로 폴백해 노출한다.
+    resp = await list_incident_reports(incident_id)
+    reports = resp.model_dump(mode="json")["data"]["reports"]
+    assert len(reports) == 1
+    assert reports[0]["root_cause_id"] == "SOURCE_AUTH_EXPIRED"
