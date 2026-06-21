@@ -754,6 +754,9 @@ export const api = {
   // 일반 설정(#145): name/timezone PATCH (OWNER/ADMIN)
   updateWorkspace: (wsId: string, body: { name?: string; timezone?: string | null }) =>
     request<WorkspaceResponse>('PATCH', `/api/v1/workspaces/${wsId}`, body),
+  // #954 워크스페이스 삭제 (OWNER/ADMIN, 파이프라인 없는 빈 워크스페이스만 — 백엔드가 검증)
+  deleteWorkspace: (wsId: string) =>
+    request<void>('DELETE', `/api/v1/workspaces/${wsId}`),
 
   // members (#145) — 멤버 작업은 OWNER/ADMIN만
   listMembers: (wsId: string) =>
