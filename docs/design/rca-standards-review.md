@@ -43,8 +43,8 @@
 현재 RCA 구조는 표준이 권고하는 방향과 상당 부분 맞아 있다.
 
 - RCA는 로그를 그대로 LLM에 던지지 않는다.
-- 8계층 35개 root cause 카탈로그로 후보를 제한한다.
-- required/supporting/negative 증거 매트릭스로 후보별 근거를 평가한다.
+- 8계층 35개 root cause 카탈로그로 후보를 제한하고, actionable 32개 root cause에 evidence profile을 붙인다.
+- required/supporting/negative 증거 매트릭스로 후보별 근거를 평가하며, 일부 규칙은 `causality_type`·`temporality_required`·`causal_chain_step`을 가진다.
 - confidence가 낮으면 `UNKNOWN_WITH_EVIDENCE_GAP`으로 빠진다.
 - LLM은 최종 판단자가 아니라 근접 후보의 타이브레이커로만 쓰인다.
 - 조치 실행은 정책 게이트, 승인 게이트, 변경 게이트, 멱등성 키, append-only 감사 이력을 거친다.
@@ -64,8 +64,8 @@
 - 평가셋을 만들더라도 trigger/symptom/root cause/contributing factor를 구분하는 라벨링 프로토콜이 아직 없다.
 - 알림은 consumer lag, error rate, connector failed 같은 원인 기반 정적 임계값에 많이 의존한다.
 - RCA 결과에서 트리거와 근본원인이 충분히 분리되어 있지 않다.
-- 단순 상관 증거와 인과 증거의 차이가 evidence rule에 명시적으로 반영되어 있지 않다.
-- 자연어 단순 질의에도 Router, Planner, Retrieval, Verifier, Report와 ReAct tool loop가 과도하게 호출될 수 있다.
+- 단순 상관 증거와 인과 증거의 차이를 표현하는 evidence rule 필드는 생겼지만, 모든 profile에 일관되게 보강하고 평가로 검증해야 한다.
+- 자연어 단순 질의의 depth-aware 짧은 경로는 생겼지만, Router 휴리스틱 품질과 agent/tool 호출량 회귀 테스트가 아직 부족하다.
 - agent/tool 호출 수, 단계별 latency/cost, handoff 이유 같은 운영 관측 지표가 run 단위로 집계되지 않는다.
 
 ### 코드 개선 방향
@@ -87,9 +87,9 @@
 7. **원인 지표는 page가 아니라 진단 근거로 재배치한다.**
    - consumer lag, connector FAILED, replication lag 같은 정적 임계값은 사용자 영향이 있으면 page/ticket으로 올리고, 없으면 RCA evidence 또는 diagnostic signal로 낮춘다.
 8. **RCA 설명에서 인과와 상관을 구분한다.**
-   - 시간 선행성(temporality)이 있는 증거만 required 인과 증거로 승격하고, 단순 동시 발생은 supporting까지만 인정한다.
+   - `temporality_required=True` 규칙은 시간 선행성이 있을 때만 required evidence로 인정하고, 단순 동시 발생은 supporting으로 낮춘다.
 9. **자연어 질의는 필요한 agent만 호출하게 만든다.**
-   - Router가 `execution_depth`와 tool budget을 정하고, 단순 조회는 direct/single/bounded lookup으로 끝내며, ReAct는 인시던트 분석이나 식별자 chaining이 필요할 때만 켠다.
+   - 구현된 `execution_depth`와 tool budget 경로를 회귀 테스트로 고정하고, 단순 조회는 direct/single/bounded lookup으로 끝내며, ReAct는 인시던트 분석이나 식별자 chaining이 필요할 때만 켠다.
 10. **agent 실행을 관측 가능하게 만든다.**
     - run마다 호출된 agent/tool, 호출 수, 단계별 latency, 실패·재시도·handoff 이유, 비용을 기록한다.
 
@@ -152,13 +152,16 @@
 ### 2.1 RCA 파이프라인
 
 ```text
-Classifier(인시던트 분류)
+Router(mode/depth 판정)
+  -> Planner(수집 계획)
   -> Retrieval(증거 수집)
+  -> Classifier(인시던트 분류)
   -> RCA
   -> Remediation(조치 제안)
   -> Policy/Approval/Change Gate
   -> Executor(실행)
   -> Verifier
+  -> Report
 ```
 
 | 구성요소 | 코드 위치 | 역할 |
@@ -166,14 +169,14 @@ Classifier(인시던트 분류)
 | RCA 에이전트 | [services/ai-service/app/agents/rca.py](../../services/ai-service/app/agents/rca.py) | `run_rca()` |
 | 프롬프트 | [services/ai-service/app/prompts/rca.py](../../services/ai-service/app/prompts/rca.py) | RCA 출력 제약 |
 | 근본원인 카탈로그 | [services/ai-service/app/catalogs/root_causes.py](../../services/ai-service/app/catalogs/root_causes.py) | **8계층 35개** `root_cause_id` |
-| 증거 매트릭스 | [services/ai-service/app/catalogs/evidence_matrix.py](../../services/ai-service/app/catalogs/evidence_matrix.py) | required/supporting/negative 증거 규칙 |
+| 증거 매트릭스 | [services/ai-service/app/catalogs/evidence_matrix.py](../../services/ai-service/app/catalogs/evidence_matrix.py) | actionable **32개** evidence profile, required/supporting/negative 증거 규칙 |
 
 **판별 로직 요약**
 
 1. 후보별 required/supporting/negative 증거를 lexical + semantic 매칭한다.
 2. confidence를 계산한다.
    - required 전부 충족: 0.82~0.92
-   - required 부분 충족: `default_confidence_cap`(기본 0.79)로 상한
+   - required 부분 충족: `default_confidence_cap`(RootCause 기본 0.88, evidence 미충족 scoring에서는 action-ready가 아닌 낮은 confidence)와 missing evidence로 상한
    - negative 증거: 건당 -0.10
 3. 최상위 후보가 `MIN_CONFIDENT_ROOT_CAUSE`(0.60) 미만이면 `UNKNOWN_WITH_EVIDENCE_GAP`로 폴백한다.
 4. LLM은 상위 2후보 신뢰도차가 0.10 미만일 때만 타이브레이커로 호출한다.
@@ -218,22 +221,22 @@ Classifier(인시던트 분류)
 
 ### 2.5 코드 기준 미구현·부분 구현 목록
 
-아래 표는 2026-06-19 현재 코드 검색 기준이다. "부분 구현"은 필드·테이블·기초 안전장치는 있으나 이 문서가 목표로 하는 운영 수준의 동작은 아직 없는 상태를 뜻한다.
+아래 표는 2026-06-22 코드 기준이다. "부분 구현"은 필드·테이블·기초 안전장치는 있으나 이 문서가 목표로 하는 운영 수준의 동작은 아직 없는 상태를 뜻한다.
 
 보안 redaction과 raw evidence store는 이미 일부 구현되어 있다. [evidence/redaction.py](../../services/ai-service/app/evidence/redaction.py), [evidence_repository.py](../../services/ai-service/app/persistence/evidence_repository.py), [state.py](../../services/ai-service/app/schemas/state.py)가 원문 로그·시크릿을 State에 직접 넣지 않는 방향을 갖고 있으므로, 이 문서의 주요 미구현 갭에서는 제외한다.
 
 | 영역 | 현재 코드 상태 | 미구현·부분 구현 갭 | 개선 시 필요한 산출물 |
 |---|---|---|---|
-| 자연어 질의 실행 깊이 제어 | [RouterOutput](../../services/ai-service/app/schemas/outputs.py)은 `mode`, `remediation_requested`, `reuse_existing_analysis`, `required_flow`만 가진다. [transitions.py](../../services/ai-service/app/supervisor/transitions.py)는 `simple_query`도 고정 stage chain을 탄다. | `execution_depth`, `max_tool_calls`, `allow_react_loop`, `history_policy`가 없다. direct/single/bounded lookup fast path가 없다. | depth-aware RouterOutput, mode+depth 기반 stage selection, 대표 자연어 질의별 agent/tool 호출량 테스트 |
+| 자연어 질의 실행 깊이 제어 | [RouterOutput](../../services/ai-service/app/schemas/outputs.py)은 `execution_depth`, `max_tool_calls`, `allow_react_loop`, `history_policy`를 가진다. [transitions.py](../../services/ai-service/app/supervisor/transitions.py)는 simple-query lookup depth를 `planner -> retrieval -> report`로 줄이고 Verifier를 제외한다. | Router는 휴리스틱 기반이라 오분류 가능성이 있고, 대표 자연어 질의별 agent/tool 호출량 회귀 테스트가 부족하다. direct_answer도 transition상 planner/retrieval/report stage를 지난다. | depth 분류 테스트, tool budget 회귀 테스트, direct answer fast-path 품질 검증 |
 | agent 실행 관측성 | `agent_run`, `state_patch`, `run_event` 테이블은 있다. `Settings`에는 전체 run budget(`max_llm_calls_per_run`, `max_tokens_per_run`)이 있다. | run 단위 `called_agents`, `called_tools`, `tool_call_count`, `latency_by_stage`, `cost_by_stage`, `handoff_reason`, `budget_used` 집계가 없다. | run telemetry schema, stage timing/cost collector, agent/tool count 회귀 테스트 |
 | run 단위 재현성 | [agent_run](../../services/ai-service/alembic/versions/001_create_agent_run_store.py)은 `catalog_version`만 저장한다. [model_router.py](../../services/ai-service/app/llm/model_router.py)는 agent tier별 기본 모델 별칭을 반환한다. | `model_id` 스냅샷, provider model revision, prompt hash/version, evidence matrix version, runbook version, corpus manifest hash, eval dataset version, code commit SHA가 run record에 없다. | run metadata 확장 migration, prompt/catalog/runbook/corpus manifest hash 저장, 재현성 조회 API |
 | 자동 롤백 | `rollback_plan`은 [ActionCandidateOutput](../../services/ai-service/app/schemas/outputs.py)과 change ticket에 존재하고, [change_gate.py](../../services/ai-service/app/workflow/stages/change_gate.py)는 필수 메타데이터로 검증한다. | Verifier 실패 후 `rollback_plan`을 실행하는 rollback stage, `pre_change_snapshot`, `rollback_action_id`, `rollback_status`, rollback audit event가 없다. | rollback executor stage, risk-tiered rollback policy, rollback 결과 검증·감사로그 |
-| threshold governance | RCA는 [rca.py](../../services/ai-service/app/agents/rca.py)의 `MIN_CONFIDENT_ROOT_CAUSE=0.60`, `LLM_TIE_MARGIN=0.10`을 사용한다. [types.py](../../services/ai-service/app/catalogs/types.py)는 `default_confidence_cap=0.79`, `min_confidence_for_action=0.80`을 기본값으로 둔다. Spring은 [PipelineStatusServiceImpl.java](../../services/operations-backend/src/main/java/com/bifrost/ops/pipeline/status/PipelineStatusServiceImpl.java)의 error rate 0.5%/2.0%, workspace lag threshold 기본값을 사용한다. | 임계값 이름·버전·근거·owner·보정 데이터셋·마지막 보정 시각·rollback 값이 없다. 코드 상수와 DB 기본값이 섞여 있어 "왜 이 값인가"를 추적하기 어렵다. | threshold registry/config table, `threshold_version`, calibration report linkage, 변경 이력·rollback 값 |
+| threshold governance | RCA는 [rca.py](../../services/ai-service/app/agents/rca.py)의 `MIN_CONFIDENT_ROOT_CAUSE=0.60`, `LLM_TIE_MARGIN=0.10`을 사용한다. [types.py](../../services/ai-service/app/catalogs/types.py)는 `RootCause.default_confidence_cap=0.88`, `EvidenceProfile.min_confidence_for_action=0.80`, `needs_more_evidence_band=(0.60, 0.79)`를 기본값으로 둔다. RCA scoring은 required 부분 충족 후보를 0.79 이하로 제한한다. Spring은 [PipelineStatusServiceImpl.java](../../services/operations-backend/src/main/java/com/bifrost/ops/pipeline/status/PipelineStatusServiceImpl.java)의 error rate 0.5%/2.0%, workspace lag threshold 기본값을 사용한다. | 임계값 이름·버전·근거·owner·보정 데이터셋·마지막 보정 시각·rollback 값이 없다. 코드 상수와 DB 기본값이 섞여 있어 "왜 이 값인가"를 추적하기 어렵다. | threshold registry/config table, `threshold_version`, calibration report linkage, 변경 이력·rollback 값 |
 | RCA gold set·라벨링 | `services/ai-service/tests/test_rca_classification_accuracy.py` 같은 fixture 기반 회귀 테스트는 있다. | resolved incident 기반 gold set 저장소와 `accepted_root_cause_id`, `trigger`, `symptom`, `contributing_factor`, `human_verdict` 라벨링 프로토콜이 없다. | gold set schema, 운영자 검수 UI/API, 라벨링 가이드, inter-review consistency check |
 | AC@k·ECE 평가 리포트 | RCA 후보와 confidence는 산출하지만, 평가 job/report는 없다. | AC@1/AC@3/AC@5/Avg@5, confidence bin별 accuracy/gap/ECE, UNKNOWN 오답 회피율을 정기 산출하지 않는다. | offline eval script, monthly calibration report, threshold recommendation artifact |
 | online feedback·drift 감시 | incident 저장과 report snapshot은 있으나, 운영자 채택·수정·override를 평가 신호로 묶는 구조는 제한적이다. | confidence distribution drift, UNKNOWN 비율 급증, 특정 root cause 과다 예측, operator override 증가를 감시하지 않는다. | online feedback event, drift dashboard, threshold 재보정 trigger |
 | 사용자 영향 SLI/SLO | [IncidentService.java](../../services/operations-backend/src/main/java/com/bifrost/ops/incident/IncidentService.java)는 threshold violation 중심으로 인시던트를 만든다. lag/error rate/connector state 신호는 있다. | `good_event/total_event` 기반 freshness, end-to-end latency, success, completeness SLI와 SLO burn-rate page 조건이 없다. | SLI metric schema, SLO config, burn-rate alert rule, page/ticket/diagnostic routing |
-| 인과/상관 증거 태그 | [EvidenceRule](../../services/ai-service/app/catalogs/types.py)은 `kind`와 `semantic_allowed`만 가진다. | `causality_type`, `temporality_required`, `causal_chain_step`이 없어 단순 동시발생과 인과 증거를 구조적으로 구분하지 못한다. | evidence rule schema 확장, RCA scoring 수정, 인과 사슬 explanation |
+| 인과/상관 증거 태그 | [EvidenceRule](../../services/ai-service/app/catalogs/types.py)은 `kind`, `semantic_allowed`, `causality_type`, `temporality_required`, `causal_chain_step`을 가진다. [rca.py](../../services/ai-service/app/agents/rca.py)는 시간 선행성이 없는 `temporality_required` required match를 supporting으로 강등한다. | 현재 temporal rule은 일부 profile에만 적용되어 있고, 전체 evidence matrix의 인과/상관 태그 일관성과 평가 기반 confidence 보정이 아직 부족하다. | evidence rule 태그 전수 보강, RCA scoring/eval fixture 확장, 인과 사슬 explanation 검증 |
 | KEDB형 운영 지식화 | root cause catalog, evidence matrix, runbook catalog는 있다. | root cause별 owner, known symptoms, verified fixes, rollback, recurrence count, last_seen, incident links가 KEDB 레코드로 축적되지 않는다. | KEDB schema/API, RCA 결과와 runbook·owner·재발 이력 연결 |
 
 ---
@@ -444,29 +447,30 @@ evidence matrix를 인과 사다리에 매핑한다.
 
 ---
 
-## 6. 자연어 질의 Agent 과다 호출 문제
+## 6. 자연어 질의 Agent 호출량 제어
 
 ### 6.1 문제 정의
 
-현재 사용자가 자연어로 "상태 한번 봐줘", "지금 잘 돌아가?", "lag 확인해줘"처럼 묻는 경우, 실제 의도보다 많은 agent와 tool이 호출될 수 있다. 이 문제는 단순히 LLM이 말을 많이 해서 생기는 문제가 아니라, **현재 workflow가 자연어 질의를 최소 실행 경로로 줄이지 못하고 정해진 stage chain을 끝까지 타도록 설계되어 있기 때문**이다.
+사용자가 자연어로 "상태 한번 봐줘", "지금 잘 돌아가?", "lag 확인해줘"처럼 묻는 경우, 실제 의도보다 많은 agent와 tool이 호출될 수 있다. 이 문제는 단순히 LLM이 말을 많이 해서 생기는 문제가 아니라, workflow가 자연어 질의를 최소 실행 경로로 줄이고 tool budget을 지키는지의 문제다.
+
+현재 코드는 `execution_depth`와 depth별 tool budget을 도입해 과다 호출 문제의 1차 구조를 해결했다. 단순 조회 depth는 Verifier를 건너뛰고 `planner -> retrieval -> report`로 끝난다. 남은 문제는 Router 휴리스틱이 의도를 잘 분류하는지, Planner/ReAct가 budget을 실제로 넘지 않는지, 대표 질의별 호출량이 테스트로 고정되어 있는지다.
 
 서비스 관점에서 문제는 세 가지다.
 
-1. 사용자는 단순 조회를 기대했는데 Router, Planner, Retrieval, Verifier, Report가 모두 뜬다.
-2. Retrieval 안에서 ReAct tool loop가 추가로 여러 read-only tool을 호출할 수 있다.
+1. Router 휴리스틱이 단순 조회를 인시던트 분석으로 오분류하면 여전히 무거운 stage를 탈 수 있다.
+2. Retrieval/ReAct가 허용된 `max_tool_calls`와 `allow_react_loop`를 모든 경로에서 지키는지 회귀 테스트가 필요하다.
 3. 같은 질문에 대화 히스토리가 붙으면서 Router/Planner가 이전 장애 맥락까지 보고 더 무거운 mode/tool을 고를 수 있다.
 
-### 6.2 현재 코드 기준 원인
+### 6.2 현재 코드 기준 상태
 
-| 원인 | 코드 근거 | 영향 |
+| 항목 | 코드 근거 | 현재 상태와 남은 영향 |
 |---|---|---|
-| `simple_query`도 고정 stage chain을 탄다 | [transitions.py](../../services/ai-service/app/supervisor/transitions.py)의 `SIMPLE_QUERY_STAGES = ("planner", "retrieval", "verifier", "report")` | 단순 지식/상태 질의도 최소 4단계를 실행한다. |
-| Router는 mode만 고르고 "최소 실행 깊이"를 고르지 않는다 | [agents/router.py](../../services/ai-service/app/agents/router.py)는 `mode`, `remediation_requested`, `reuse_existing_analysis`, `required_flow`만 반환한다 | "지식 답변만", "단일 tool 조회", "incident RCA" 같은 execution depth가 분리되지 않는다. |
+| `simple_query` depth-aware 경로 | [transitions.py](../../services/ai-service/app/supervisor/transitions.py)의 `SIMPLE_QUERY_LOOKUP_STAGES = ("planner", "retrieval", "report")`와 `_LOOKUP_DEPTHS` | 단순 조회는 Verifier를 건너뛰지만, direct answer도 stage상 planner/retrieval/report를 지난다. |
+| Router가 실행 깊이를 고른다 | [agents/router.py](../../services/ai-service/app/agents/router.py)는 `_classify_depth()`로 `execution_depth`를 정하고 `depth_budget()` 결과를 `RouteDecision`에 넣는다 | 구현은 휴리스틱 기반이므로 오분류 회귀 테스트가 필요하다. |
 | Planner prompt가 tool을 많이 고르도록 유도한다 | [prompts/planner.py](../../services/ai-service/app/prompts/planner.py)의 규칙: "상세·현황 류는 보통 2~4개를 함께 쓴다", "깊게 조회하라" | 자연어 현황 질의가 과도한 multi-tool plan으로 확장된다. |
-| Retrieval이 ReAct 루프를 flat plan 위에 추가한다 | [agents/retrieval.py](../../services/ai-service/app/agents/retrieval.py)는 `mode in (SIMPLE_QUERY, INCIDENT_ANALYSIS)`이고 tool-calling 가능하면 `run_tool_loop(...)`를 실행한다 | Planner가 고른 tool 외에도 LLM이 추가 tool을 반복 호출한다. 이후 `remaining_steps`까지 실행해 중복·확장이 생길 수 있다. |
-| ReAct 루프 max_steps가 6이고 tool budget이 intent별로 다르지 않다 | [agents/agentic.py](../../services/ai-service/app/agents/agentic.py)의 `run_tool_loop(..., max_steps=6)` | 단순 질의와 인시던트 분석이 같은 최대 tool loop 예산을 공유한다. |
-| 대화 히스토리가 Router/Planner 입력에 그대로 붙는다 | [workflow/runner.py](../../services/ai-service/app/workflow/runner.py)의 `_contextualize(...)`가 이전 대화 블록을 현재 질문 앞에 붙이고, 그 결과가 Router/Planner/Retrieval에 전달된다 | "그거 봐줘" 같은 후속 질문은 좋아지지만, 이전 장애 키워드가 현재 단순 질의를 incident로 오염시킬 수 있다. |
-| Verifier가 simple_query에도 들어간다 | `SIMPLE_QUERY_STAGES`에 `verifier`가 포함되어 있고, [runner.py](../../services/ai-service/app/workflow/runner.py)는 report 후에도 `run_verifier(... report_body=answer)`를 호출한다 | 단순 조회·지식 답변에도 검증 agent가 추가 호출된다. |
+| Retrieval/ReAct budget | [agents/retrieval.py](../../services/ai-service/app/agents/retrieval.py)는 `max_tool_calls==0`이면 운영 tool 호출을 건너뛰고, `allow_react_loop`가 켜진 depth에서만 ReAct를 돈다 | budget 집행은 구현됐지만 대표 자연어 질의별 호출량 테스트가 필요하다. |
+| 대화 히스토리 제한 | [workflow/runner.py](../../services/ai-service/app/workflow/runner.py)는 depth budget의 `history_policy`를 사용한다 | `HistoryPolicy.NONE` 경로는 생겼지만, summary/full 정책의 오염 방지 품질은 별도 검증이 필요하다. |
+| Verifier 제외 | simple-query lookup depth는 `SIMPLE_QUERY_LOOKUP_STAGES`를 타므로 Verifier를 포함하지 않는다 | 운영 변경·RCA 결론 경로에서는 Verifier가 유지된다. |
 | 설계 문서와 현재 구현 설명이 일부 불일치한다 | [contract-agent-roles.md](./backend-fastapi/contract/contract-agent-roles.md)는 Retrieval이 depends_on 순차 chain을 아직 해석하지 않는다고 쓰지만, 현재 [retrieval.py](../../services/ai-service/app/agents/retrieval.py)는 `_run_plan_steps(...)`에서 `depends_on` wave 실행을 구현한다 | 문서가 실제 agent 구조 검증의 기준으로 쓰이기 어렵다. 문서와 코드 동기화가 필요하다. |
 
 ### 6.3 외부 기준에서 본 올바른 방향
@@ -479,11 +483,11 @@ evidence matrix를 인과 사다리에 매핑한다.
 | [AutoGen Termination](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/termination.html) | multi-agent run은 무한히 이어질 수 있으므로 message/token/timeout/handoff 등 termination condition이 필요하다 | 현재 step/loop guard는 있지만, simple_query 전용 `max_agents=2`, `max_tool_calls=1~2`, `no_tool_direct_answer` 같은 intent별 termination이 필요하다. |
 | [ReAct](https://arxiv.org/abs/2210.03629) | reasoning과 acting을 interleave해 외부 지식을 쓰되, action은 필요한 정보를 얻기 위한 수단이다 | Bifrost의 ReAct 루프는 타당하지만 모든 simple_query에 켜면 과하다. 식별자 chaining이나 실제 운영 데이터가 필요한 경우에만 켜고, 지식/RAG 질의는 단락해야 한다. |
 
-### 6.4 해결 방향
+### 6.4 해결 방향과 현재 구현 상태
 
-#### 6.4.1 Router 출력에 `execution_depth`를 추가
+#### 6.4.1 Router 출력의 `execution_depth`
 
-현재 Router의 mode만으로는 실행 깊이를 통제할 수 없다. RouterOutput에 다음 필드를 추가한다.
+현재 Router는 mode와 함께 다음 필드를 반환한다. 외부 mock이나 구버전 출력에서 depth가 비어 있으면 runner가 mode 기준 기본 depth로 보정한다.
 
 | 필드 | 값 | 의미 |
 |---|---|---|
@@ -497,7 +501,7 @@ evidence matrix를 인과 사다리에 매핑한다.
 | `allow_react_loop` | bool | ReAct tool loop 허용 여부 |
 | `history_policy` | `none`/`summary`/`full` | 다음 agent에 전달할 대화 이력 범위 |
 
-서비스 기준 기본값:
+현재 서비스 기준 기본값:
 
 | 사용자 의도 | 권장 depth | max_tool_calls | allow_react_loop |
 |---|---|---|---|
@@ -508,14 +512,15 @@ evidence matrix를 인과 사다리에 매핑한다.
 | "원인과 조치 후보 알려줘" | `remediation_planning` | 4~6 | true |
 | "재시작해줘/승인할게" | `action_execution` | 0 read-only, mutation은 governance 경로 | false |
 
-#### 6.4.2 `simple_query`를 세 갈래로 분리
+#### 6.4.2 `simple_query` lookup 경로
 
-현재 `simple_query`는 planner→retrieval→verifier→report를 항상 탄다. 아래처럼 분리한다.
+현재 `simple_query`는 depth에 따라 tool budget을 달리하지만 stage 경로는 lookup depth에서 공통적으로 `planner -> retrieval -> report`다. `direct_answer`는 `max_tool_calls=0`으로 운영 tool을 호출하지 않는다.
 
 ```text
 simple_query.direct_answer
-  -> knowledge retrieval
-  -> deterministic/report answer
+  -> planner
+  -> retrieval(max_tool_calls=0)
+  -> report
 
 simple_query.single_lookup
   -> planner
@@ -543,7 +548,7 @@ Verifier는 모든 simple_query에 넣지 않는다. 운영 변경, RCA 결론, 
 
 `run_tool_loop`는 chaining이 필요한 경우 유용하다. 예를 들어 topology에서 connector 이름을 찾고 이어서 connector status를 확인하는 흐름은 ReAct가 잘 맞는다. 하지만 모든 `simple_query`에 켜면 과도하다.
 
-조건:
+현재 조건:
 
 - `allow_react_loop=true`일 때만 실행한다.
 - `execution_depth in {"incident_diagnosis", "remediation_planning"}` 또는 식별자 chaining이 필요한 `bounded_lookup`에서만 허용한다.
@@ -553,13 +558,13 @@ Verifier는 모든 simple_query에 넣지 않는다. 운영 변경, RCA 결론, 
   - bounded: 2
   - incident/remediation: 4~6
 
-#### 6.4.5 대화 히스토리 input filter 도입
+#### 6.4.5 대화 히스토리 input filter
 
-현재 `_contextualize(...)`는 이전 대화를 그대로 현재 질문 앞에 붙인다. 이 방식은 후속 질문에는 좋지만 Router/Planner에 불필요한 장애 키워드를 주입할 수 있다.
+현재 depth budget은 `history_policy`를 함께 반환하고, runner가 일부 경로에서 이 정책을 사용한다. 이 방식은 후속 질문에는 좋지만 Router/Planner에 불필요한 장애 키워드를 주입할 수 있으므로 정책별 품질 검증이 필요하다.
 
 개선:
 
-- Router에는 "최근 사용자 발화 + 짧은 thread summary + 직전 run mode/action 상태"만 전달한다.
+- Router에는 "최근 사용자 발화 + 짧은 thread summary + 직전 run mode/action 상태"만 전달하는 방향을 유지한다.
 - Planner에는 Router가 추출한 `normalized_intent`, `entities`, `execution_depth`만 전달한다.
 - Retrieval/ReAct에는 필요한 tool 입력만 전달하고, 전체 대화 히스토리는 기본 차단한다.
 - Report만 사용자 친화성을 위해 요약된 history를 볼 수 있게 한다.
@@ -568,7 +573,7 @@ Verifier는 모든 simple_query에 넣지 않는다. 운영 변경, RCA 결론, 
 
 #### 판정
 
-현재 Bifrost의 agent 구조는 **큰 방향은 맞지만, 자연어 질의 경로에서는 과분해되어 있다**.
+현재 Bifrost의 agent 구조는 **큰 방향은 맞고, 자연어 질의 과분해를 줄이는 depth-aware 경로가 구현되어 있다**. 남은 위험은 routing 휴리스틱과 호출량 회귀 검증이다.
 
 맞는 부분:
 
@@ -579,11 +584,10 @@ Verifier는 모든 simple_query에 넣지 않는다. 운영 변경, RCA 결론, 
 
 문제 있는 부분:
 
-- Router가 "어떤 agent까지 실행할지"를 충분히 결정하지 못한다.
-- `simple_query`가 너무 무거운 기본 경로를 갖는다.
-- Planner와 ReAct가 둘 다 tool 선택권을 가져 중복된다.
-- Verifier가 단순 조회에도 들어가 agent 수를 늘린다.
-- 대화 히스토리가 agent별로 필터링되지 않는다.
+- Router의 depth 휴리스틱이 실제 사용자 질의를 충분히 잘 분류하는지 검증이 부족하다.
+- `simple_query.direct_answer`도 stage상 planner/retrieval/report를 지나므로 no-stage fast path는 별도 개선 여지가 있다.
+- Planner와 ReAct가 둘 다 tool 선택권을 갖는 경로는 budget 회귀 테스트로 묶어야 한다.
+- 대화 히스토리 정책이 summary/full 경로에서 이전 장애 맥락 오염을 막는지 검증이 필요하다.
 - 설계 문서의 일부 설명이 현재 코드와 맞지 않는다.
 
 서비스에 맞는 목표 구조:
@@ -613,11 +617,11 @@ Router / Query Scope Guard
 
 | 우선순위 | 개선 | 코드 영역 | 완료 기준 |
 |---|---|---|---|
-| 높음 | RouterOutput에 `execution_depth`, `max_tool_calls`, `allow_react_loop`, `history_policy` 추가 | [schemas/outputs.py](../../services/ai-service/app/schemas/outputs.py), [agents/router.py](../../services/ai-service/app/agents/router.py), [prompts/router.py](../../services/ai-service/app/prompts/router.py) | 자연어 질의별 실행 깊이가 테스트로 고정됨 |
-| 높음 | `stages_for_mode`를 depth-aware로 변경 | [supervisor/transitions.py](../../services/ai-service/app/supervisor/transitions.py), [workflow/runner.py](../../services/ai-service/app/workflow/runner.py) | simple direct/single lookup이 classifier/rca/verifier를 호출하지 않음 |
+| 구현됨·검증 필요 | RouterOutput에 `execution_depth`, `max_tool_calls`, `allow_react_loop`, `history_policy` 추가 | [schemas/outputs.py](../../services/ai-service/app/schemas/outputs.py), [agents/router.py](../../services/ai-service/app/agents/router.py), [prompts/router.py](../../services/ai-service/app/prompts/router.py) | 자연어 질의별 실행 깊이가 테스트로 고정됨 |
+| 구현됨·검증 필요 | `stages_for_mode`를 depth-aware로 변경 | [supervisor/transitions.py](../../services/ai-service/app/supervisor/transitions.py), [workflow/runner.py](../../services/ai-service/app/workflow/runner.py) | simple direct/single lookup이 classifier/rca/verifier를 호출하지 않음 |
 | 높음 | Planner prompt를 최소 충분 조회 원칙으로 수정 | [prompts/planner.py](../../services/ai-service/app/prompts/planner.py), [agents/planner.py](../../services/ai-service/app/agents/planner.py) | "현황" 질의가 기본 1~2개 tool로 제한됨 |
-| 높음 | ReAct loop를 `allow_react_loop`와 `max_tool_calls`로 제한 | [agents/retrieval.py](../../services/ai-service/app/agents/retrieval.py), [agents/agentic.py](../../services/ai-service/app/agents/agentic.py) | simple_query에서 의도치 않은 3개 이상 tool 호출이 발생하지 않음 |
-| 중간 | agent별 history input filter 도입 | [workflow/runner.py](../../services/ai-service/app/workflow/runner.py) | Router/Planner가 전체 대화 원문 대신 요약 intent만 받음 |
+| 구현됨·검증 필요 | ReAct loop를 `allow_react_loop`와 `max_tool_calls`로 제한 | [agents/retrieval.py](../../services/ai-service/app/agents/retrieval.py), [agents/agentic.py](../../services/ai-service/app/agents/agentic.py) | simple_query에서 의도치 않은 3개 이상 tool 호출이 발생하지 않음 |
+| 부분 구현 | agent별 history input filter 도입 | [workflow/runner.py](../../services/ai-service/app/workflow/runner.py) | Router/Planner가 전체 대화 원문 대신 요약 intent만 받음 |
 | 중간 | no-tool/direct-answer fast path 추가 | [workflow/runner.py](../../services/ai-service/app/workflow/runner.py), [agents/retrieval.py](../../services/ai-service/app/agents/retrieval.py) | 용어/문서 질의는 운영 API 호출 없이 답변 |
 | 중간 | 호출량 회귀 테스트 추가 | `tests/test_router_llm_routing.py`, `tests/test_planner_llm_routing.py`, `tests/test_agentic_loop.py`, `tests/test_routes_agent.py` | 대표 자연어 질의별 agent count/tool count가 assertion됨 |
 | 낮음 | 설계 문서와 구현 차이 정리 | [contract-agent-roles.md](./backend-fastapi/contract/contract-agent-roles.md), [agent-principles.md](./backend-fastapi/agent-principles.md) | Retrieval depends_on/ReAct/Verifier 현재 구현 설명이 코드와 일치 |
@@ -628,7 +632,7 @@ Router / Query Scope Guard
 
 | 단계 | 개선 항목 | 주요 코드/문서 영역 | Bifrost 산출물 | 완료 기준 |
 |---|---|---|---|---|
-| 1 | 자연어 질의 실행 깊이 제어 | `RouterOutput`, `transitions.py`, `runner.py`, `planner.py`, `retrieval.py`, `agentic.py` | `execution_depth`, `max_tool_calls`, `allow_react_loop`, `history_policy`, direct/single/bounded lookup flow | 단순 질의가 필요한 agent/tool만 호출하고, 대표 질의별 호출량이 테스트로 고정됨 |
+| 1 | 자연어 질의 실행 깊이 제어 | `RouterOutput`, `transitions.py`, `runner.py`, `planner.py`, `retrieval.py`, `agentic.py` | `execution_depth`, `max_tool_calls`, `allow_react_loop`, `history_policy`, direct/single/bounded lookup flow | 기본 구현은 완료. 단순 질의가 필요한 agent/tool만 호출하는지 대표 질의별 호출량 테스트로 고정 필요 |
 | 2 | agent 실행 관측성 | `agent_run`, `run_event`, `runner.py`, tool registry, tracing 설정 | `called_agents`, `called_tools`, `tool_call_count`, `latency_by_stage`, `cost_by_stage`, `handoff_reason`, `budget_used` 저장 | 자연어 질의/인시던트 분석별 호출량·latency·비용을 run_id로 설명 가능 |
 | 3 | threshold governance | RCA threshold config, Spring workspace settings, threshold registry migration | `threshold_name`, `value`, `version`, `basis`, `owner`, `last_calibrated_at`, `dataset_version`, `rollback_value` | 0.60/0.80/0.5%/2.0% 같은 값의 변경 근거와 이력이 조회됨 |
 | 4 | run 단위 재현성 스키마 확장 | `services/ai-service/app/workflow/**`, run/state schema, `services/ai-service/app/llm/model_router.py` | RCA run record에 `model_id`, `prompt_version/hash`, `catalog_version`, `evidence_matrix_version`, `runbook_version`, `corpus_manifest_hash`, `code_commit_sha` 저장 | 과거 run 하나를 골라 당시 입력·버전·후보 랭킹을 재구성할 수 있음 |
@@ -639,7 +643,7 @@ Router / Query Scope Guard
 | 9 | online feedback·drift 감시 | report snapshot, incident review API/UI, run metrics dashboard | operator override, 채택률, UNKNOWN 비율, root cause 분포, confidence distribution drift | 월별 리포트 외에도 threshold 재보정 trigger가 운영 지표로 발생 |
 | 10 | 사용자 영향 SLI 정의 | operations-backend monitoring/incident service, metrics schema, Prometheus queries, `docs/design/backend-springboot/monitoring.md` | freshness, latency, success, completeness, provisioning SLI 명세 | `good_event/total_event` 계산식이 Prometheus/DB 쿼리로 구현 가능 |
 | 11 | SLO burn-rate 알림 도입 | `IncidentService.java`, alert rule config, severity mapping, notification routing | page/ticket alert rule, severity mapping | page는 SLO burn-rate 위반 중심, lag/FAILED 등 원인 지표는 ticket/diagnostic으로 분리 |
-| 12 | 인과/상관 증거 태그 | `catalogs/evidence_matrix.py`, `catalogs/root_causes.py`, `agents/rca.py`, RCA prompt/output schema | `EvidenceRule.causality_type`, `temporality_required`, `causal_chain_step` | 단순 동시발생은 supporting까지만 반영, 선행성 있는 증거만 required로 승격 |
+| 12 | 인과/상관 증거 태그 | `catalogs/evidence_matrix.py`, `catalogs/root_causes.py`, `agents/rca.py`, RCA prompt/output schema | `EvidenceRule.causality_type`, `temporality_required`, `causal_chain_step` | 필드와 temporal required 강등 로직은 구현됨. 전체 profile 태그 일관성·평가 fixture 보강 필요 |
 | 13 | KEDB형 카탈로그 확장 | root cause catalog, remediation runbooks, policy matrix, owner metadata | root cause별 원인, 증상, 대응, rollback, owner, 직접조치정책, 재발 이력 | RCA 결과가 조치·rollback·운영 소유자·재발 방지까지 이어짐 |
 
 ---

@@ -14,7 +14,7 @@ Bifrost의 **플랫폼 본체이자 운영 제어의 최종 집행자**. 한 서
 | Pipeline | EDA/CDC 생성 마법사 → **KafkaConnector CR 프로비저닝**·pause/resume/delete·생명주기 | FR-003~005 |
 | 모니터링 read | produce/consume·consumer lag·connector·CDC sync·messages·cluster | FR-006~009·023 |
 | 이벤트·인시던트 | 이벤트 로그. 현재 poller는 incident 자동 생성을 호출하지 않으며 `IncidentService` 메서드는 연결 보강 대상 | FR-019~021·024·026(탐지) |
-| 운영 조치 집행 | 현재는 agent action 중 Kafka Connect connector restart/pause/resume, managed consumer group restart를 **approval·idempotency·ownership** 검증 후 실행. policy/audit/evidence/change gate는 보강 대상 | FR-022(실행) |
+| 운영 조치 집행 | 현재는 agent action 중 Kafka Connect connector restart/pause/resume, managed consumer group restart를 **ownership·idempotency·PolicyGuard·approval 또는 change-ticket·audit/evidence** 경로로 실행. response envelope에는 audit/evidence id를 아직 연결하지 않음 | FR-022(실행) |
 | 실시간 | 플랫폼 SSE — `pipeline_status_changed`·`connector_state_changed`·`incident_opened` | — |
 
 ## 아키텍처 (구성)

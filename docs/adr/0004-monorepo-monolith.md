@@ -18,18 +18,18 @@ Frontend ─┬─► Spring Boot Operations Backend  (플랫폼 본체, 단일 
 ## Decision
 
 1. **모노레포** 유지 (폴리레포 폐기).
-2. **Spring Boot는 단일 모놀리스** `services/operations-backend`로 통합한다.
+2. **Spring Boot는 단일 모놀리스** `services/operations-backend`로 통합한다. 현재 Gradle 모듈은 `services:operations-backend`와 Kafka Connect 이미지에 동봉되는 `connect-plugins:timestamptz-converter`만 포함한다.
    - `core-service` + `orchestrator-service` → `services/operations-backend` 병합.
    - base 패키지 `com.platform.*` → **`com.bifrost.ops`** 통일.
    - 패키지 구조는 설계 [springboot/DETAILS.md §5](../design/backend-springboot/server.md#5-패키지-구조)를 따른다.
-3. **Agent는 FastAPI(Python)** 로 별도 서비스 유지(`services/ai-service`). Spring Boot의 `/internal/ops`만 호출하며 K8s/Kafka에 직접 접근하지 않는다. (현재 Java 스캐폴드 → FastAPI 전환은 별도 이슈)
+3. **Agent는 FastAPI(Python)** 로 별도 서비스 유지(`services/ai-service`). Spring Boot의 `/internal/ops`만 호출하며 K8s/Kafka에 직접 접근하지 않는다.
 4. **`libs/common-dto` 흡수** — 모놀리스 내부 패키지로 옮기고 Gradle 모듈 제거. Spring ↔ FastAPI 계약은 공유 lib 대신 `/internal/ops` HTTP(JSON)/OpenAPI로 관리(언어가 갈리므로 공유 jar 불가).
 
 ## Consequences
 
 ### 긍정적
 - 서비스 간 호출/인증 경계 제거, `PipelineStatusService` in-process 단일 writer 그대로 구현.
-- 단일 빌드·배포물(Dockerfile/Helm 1개), 통합 테스트 단순화.
+- Spring 도메인은 단일 Gradle 모듈·단일 Dockerfile·단일 Helm release로 유지된다. 플랫폼 전체 배포 단위는 GitOps 브랜치의 `frontend`·`operations-backend`·`ai-service` 차트와 Kafka Connect 커스텀 이미지로 나뉜다.
 - 설계 문서(§2, §5)와 코드 구조 일치.
 
 ### 부정적

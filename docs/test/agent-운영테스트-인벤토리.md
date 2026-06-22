@@ -10,19 +10,21 @@
 
 | 수치 | 상태 | 근거 |
 |---|---|---|
-| **top-1 89.6% / top-5 100% / 367 케이스** | ⛔ **사용 금지** | 코드 어디에도 없음(grep 0건). [docs/test/rca-test-campaign-20260622.md](docs/test/rca-test-campaign-20260622.md)가 "산출법·데이터셋이 달라 출처 검증 전까지 사용 금지"로 명시 |
-| **AC@1 65.7%(23/35) / AC@3=AC@5 80%(28/35) / Avg@5 0.724 / ECE 0.073 / 기권 7/35** | ✅ **재현 가능** | `scripts/rca_eval_campaign.py` 실행값 = 캠페인 문서 실측치와 일치 |
-| 확신 시 정확도(precision) 82%(23/28), 환각 ≈0, 정보유출 0, 무승인 실행 0 | ✅ 문서 단일 출처 | [docs/presentation/03-ai-metrics.md](docs/presentation/03-ai-metrics.md) |
-| 라이브 NL 라우팅 routing@1 83.3%(18케이스) | ✅ 실측 존재 | `eval/reports/nl_tool_routing_live_20260622T060606Z.json` |
+| **top-1 89.6% / top-5 100% / 367 케이스** | ⛔ **사용 금지** | 코드·커밋된 결과물 어디에도 없음. [rca-test-campaign-20260622.md](rca-test-campaign-20260622.md)가 "출처 검증 전까지 사용하지 말 것"으로 명시 |
+| **현재 `rca_eval_campaign.py` 재현값** | ✅ **재현 가능** | `docs/test/results-20260622/rca_campaign_current.json`: oracle incident-type replay 35건, AC@1/3/5 100.0%, Avg@5 1.0000, ECE 0.1595, 기권 0/35 |
+| **보존 floor 결과물** | ✅ **커밋된 결과물 존재** | `docs/test/results-20260622/rca_campaign_floor.json`: AC@1 71.43%, AC@3/5 85.71%, Avg@5 0.781, ECE 0.0832, 기권 5/35 |
+| AC@1 65.7%(23/35) / AC@3=AC@5 80%(28/35) / Avg@5 0.724 / ECE 0.073 / 기권 7/35 | ⚠️ **과거 초안 수치** | 현재 커밋된 JSON과 불일치. 발표 지표로는 current/floor JSON 값을 우선 사용 |
+| 확신 시 정확도 82%(23/28), 환각 ≈0, 정보유출 0, 무승인 실행 0 | ⚠️ **부분 근거** | 82%(23/28)는 위 과거 초안에서 파생. 정보유출·무승인 실행 공격 건수 하네스는 ai-service에 없음 |
+| 라이브 NL 라우팅 routing@1 83.3%(18케이스) | ⚠️ **커밋 근거 없음** | `eval/reports/`는 `.gitignore`만 커밋됨. 소스에는 NL 라우팅 라벨 18건과 dry-run/채점 하네스만 존재 |
 | Macro-F1 / Wilson 95% CI / NO_FAULT | ⚠️ **미구현** | 코드에 산출 로직 없음 — 발표에 쓰려면 별도 계산 필요 |
 
-→ 첨부된 팀원 보고서(2026-06-16/18)의 89.6%/367은 **구버전**. 오늘자 재측정의 목적이 바로 이 수치를 재현 가능한 값으로 교체하는 것.
+→ 첨부된 팀원 보고서(2026-06-16/18)의 89.6%/367은 이 저장소의 코드·커밋된 결과물로 재현되지 않는다. 오늘자 재측정의 목적은 이 수치를 재현 가능한 값으로 교체하는 것.
 
 ---
 
 ## 1. 지금 바로 수치를 뽑는 법 (즉시 실행 하네스)
 
-작업 디렉토리: `cd /Users/hvvnnn/Desktop/dev/bifrost/services/ai-service`
+작업 디렉토리: `cd /Users/gwonsebin/bifrost-docsync/services/ai-service`
 
 | # | 하네스 | 명령 | 산출 수치 | 파괴성 |
 |---|---|---|---|---|
@@ -33,7 +35,7 @@
 | 5 | 회귀 단위 수치 | `.venv/bin/python -m pytest tests/test_eval_accuracy.py tests/test_calibration.py tests/test_rca_classification_accuracy.py -q` | AC@k/ECE/분류 회귀 통과 | 비파괴 |
 | 6 | **RCA 라이브 fault 주입**(파괴적) | `.venv/bin/python -m eval.online.live_eval --live --confirm --faults sink_db_down` | 실주입 AC@k, captured, 복구확인 | ⚠️ 파괴적(이중 가드 `--live`+`--confirm`) |
 
-- 케이스 데이터: gold set 35건([app/evaluation/seed_gold_set.py](services/ai-service/app/evaluation/seed_gold_set.py) `SEED_ENTRIES`), 라이브 fault 13개(auto 2 / manual 5 / unsafe 6, [eval/online/live_fault_specs.py](services/ai-service/eval/online/live_fault_specs.py)), NL 라우팅 18케이스([eval/online/nl_tool_routing.py](services/ai-service/eval/online/nl_tool_routing.py) `ROUTING_CASES`).
+- 케이스 데이터: gold set 35건([app/evaluation/seed_gold_set.py](../../services/ai-service/app/evaluation/seed_gold_set.py) `SEED_ENTRIES`), 라이브 fault 13개(auto 2 / manual 5 / unsafe 6, [eval/online/live_fault_specs.py](../../services/ai-service/eval/online/live_fault_specs.py)), safe-live fault 5개([eval/online/safe_live_fault_specs.py](../../services/ai-service/eval/online/safe_live_fault_specs.py)), NL 라우팅 18케이스([eval/online/nl_tool_routing.py](../../services/ai-service/eval/online/nl_tool_routing.py) `ROUTING_CASES`).
 - 라이브 자동 주입 가능 fault는 `sink_db_down`/`source_db_down` 2건뿐. 나머지는 안전상 수동/금지. selfHeal·dedup 제약으로 사전 OPEN incident resolve 필요할 수 있음(캠페인 문서 Part B).
 
 ---
@@ -171,11 +173,11 @@ DoD(시연 합격선, [docs/scenario.md](docs/scenario.md)): 자동감지(lag≥
 
 ## 8. 권장 실행 순서
 
-1. **하네스 1**(`rca_eval_campaign.py`) — 발표 핵심 정확도 floor 즉시 확보(AC@1 65.7%/AC@5 80%/ECE 0.073).
+1. **하네스 1**(`rca_eval_campaign.py`) — 발표 핵심 정확도 즉시 확보. 현재 커밋 기준은 oracle incident-type replay 35건 AC@1/3/5 100.0%, ECE 0.1595이며 보존 floor JSON은 AC@1 71.43%, AC@5 85.71%, ECE 0.0832.
 2. **하네스 3**(NL 라우팅 라이브) — routing@1·latency, 자격증명 있으면 즉시.
 3. **C2/C4 negative control** + **C6 mutation 4/4** + **C7 `/ready`** — "실데이터·빈성공 아님·무접촉 안전" 묶음.
 4. **B-1/B-2 새 스크립트**(§7) — 유출 0·무승인 0 발표 수치.
 5. **D1 telemetry** + **D5 동시성** — latency/부하 곡선.
 6. (승인 후, 파괴적) **하네스 6** `--live --confirm --faults sink_db_down` — 라이브 RCA + A6 disambiguation.
 
-**발표 문구**: 89.6%/367·Macro-F1·Wilson CI·"유도공격 32/20"은 재현 근거 확보 전 사용 금지. 재현 가능한 값(AC@5 80%, precision 82%, ECE 0.073, 환각 0, 라이브 routing@1 83.3%)으로 대체.
+**발표 문구**: 89.6%/367·65.7%/80%/0.073·precision 82%·라이브 routing@1 83.3%·Macro-F1·Wilson CI·"유도공격 32/20"은 커밋된 재현 근거 확보 전 단정 금지. 현재는 `rca_campaign_current.json`과 `rca_campaign_floor.json`의 조건부 수치, 그리고 NL 라우팅 18케이스 하네스 존재까지만 단정.
