@@ -14,6 +14,7 @@ from app.catalogs.incident_rootcause_map import get_root_cause_candidates
 from app.catalogs.root_causes import get_root_cause, list_root_causes
 from app.catalogs.types import EvidenceProfile, EvidenceRule, RootCause
 from app.core.config import settings
+from app.evidence.metadata import strip_control_metadata
 from app.prompts.rca import SYSTEM_PROMPT, build_user_prompt
 from app.schemas.outputs import ClassifierOutput, RcaOutput, RetrievalOutput
 from app.schemas.state import EvidenceItem, EvidenceType, RootCauseCandidate
@@ -34,14 +35,6 @@ _DOMINANT_CAUSES: dict[str, frozenset[str]] = {
 logger = logging.getLogger(__name__)
 
 _TOKEN_RE = re.compile(r"[0-9A-Za-z가-힣]+")
-_CONTROL_METADATA_RE = re.compile(
-    r"\b(?:answer(?:_phrase)?|case[_ -]?id|expected(?:_root[_ -]?cause(?:_id)?)?|"
-    r"accepted[_ -]?root[_ -]?cause(?:[_ -]?id)?|corrected[_ -]?root[_ -]?cause(?:[_ -]?id)?|"
-    r"predicted[_ -]?root[_ -]?cause(?:[_ -]?id)?|gold|label|oracle|prediction|"
-    r"root[_ -]?cause(?:[_ -]?id)?)\b"
-    r"\s*(?:[:=]|is|는|은)?\s*[0-9A-Za-z_.-]+",
-    re.IGNORECASE,
-)
 _CONNECTOR_TASK_FAILED_ID = "CONNECTOR_TASK_FAILED"
 _TOKEN_ALIASES = {
     "상태": "status",
@@ -181,7 +174,7 @@ class _SemanticEvidenceMatcher:
         if not self.enabled:
             return False
 
-        evidence_vector = self._vectors.get(item.summary)
+        evidence_vector = self._vectors.get(_sanitize_summary(item.summary))
         if not evidence_vector:
             return False
 
@@ -419,7 +412,7 @@ def _has_lexical_anchor(matches: list[_RuleMatch]) -> bool:
 def _allows_semantic_rule_match(rule: EvidenceRule, item: EvidenceItem) -> bool:
     if not settings.rca_embedding_match_enabled:
         return False
-    if not item.summary.strip():
+    if not _sanitize_summary(item.summary):
         return False
     return _allows_semantic_rule(rule)
 
@@ -462,7 +455,7 @@ def _semantic_texts(candidate_ids: list[str], evidence_items: list[EvidenceItem]
             texts.append(value)
 
     for item in evidence_items:
-        add(item.summary)
+        add(_sanitize_summary(item.summary))
 
     for candidate_id in candidate_ids:
         profile = get_evidence_profile(candidate_id)
@@ -508,7 +501,7 @@ def _cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
 
 
 def _rule_matches_evidence(rule: EvidenceRule, item: EvidenceItem, incident_types: list[str]) -> bool:
-    summary = _strip_control_metadata(item.summary)
+    summary = _sanitize_summary(item.summary)
     evidence_text = f"{item.type} {summary}".casefold()
     if _connector_failed_status_rule(rule):
         return _has_connector_failed_status(summary)
@@ -518,6 +511,8 @@ def _rule_matches_evidence(rule: EvidenceRule, item: EvidenceItem, incident_type
         return _has_scoped_auth_evidence(rule, summary, incident_types)
     if _consumer_lag_trend_rule(rule):
         return _has_consumer_lag_trend_evidence(rule, summary)
+    if _source_network_sink_negative_rule(rule) and not _has_sink_context(summary):
+        return False
     if _negates_rule_fault(rule, summary):
         return False
 
@@ -547,13 +542,14 @@ def _rule_matches_evidence(rule: EvidenceRule, item: EvidenceItem, incident_type
 
 
 def _has_temporal_precedence(item: EvidenceItem) -> bool:
-    normalized = _normalize_text(item.summary)
+    summary = _sanitize_summary(item.summary)
+    normalized = _normalize_text(summary)
     return bool(
         re.search(
             r"\b(?:after|since|following|followed|before|prior|preced(?:e|ed|ing)|then|subsequent)\b",
             normalized,
         )
-        or re.search(r"(?:이후|직후|후|뒤이어|이어서|다음|전후|전에|먼저|선행)", item.summary)
+        or re.search(r"(?:이후|직후|후|뒤이어|이어서|다음|전후|전에|먼저|선행)", summary)
     )
 
 
@@ -585,9 +581,25 @@ def _auth_rule(rule: EvidenceRule) -> bool:
     return rule.root_cause_id in {"SOURCE_AUTH_EXPIRED", "SINK_AUTH_EXPIRED"} and rule.kind == "required"
 
 
+def _source_network_sink_negative_rule(rule: EvidenceRule) -> bool:
+    return (
+        rule.root_cause_id == "SOURCE_NETWORK_REACHABILITY"
+        and rule.kind == "negative"
+        and "sink dependency" in rule.evidence.casefold()
+    )
+
+
+def _has_sink_context(summary: str) -> bool:
+    normalized = _normalize_text(summary)
+    return bool(
+        re.search(r"\b(?:sink|write|jdbc|flush|batch)\b", normalized)
+        or re.search(r"(?:싱크|쓰기)", summary)
+    )
+
+
 def _has_scoped_auth_evidence(rule: EvidenceRule, summary: str, incident_types: list[str]) -> bool:
     normalized = _normalize_text(summary)
-    if _has_auth_negation(normalized):
+    if _has_auth_negation(summary) or _has_auth_negation(normalized):
         return False
     has_auth_signal = bool(
         re.search(
@@ -638,8 +650,13 @@ def _has_scoped_fault_hint(summary: str, scope: str, fault: str) -> bool:
 def _has_auth_negation(normalized: str) -> bool:
     return bool(
         re.search(r"\b(?:no|not|without)\s+(?:\w+\s+){0,3}(?:auth|authentication|permission|credential|token)\b", normalized)
-        or re.search(r"\b(?:auth|authentication|credential|token)\s+(?:status\s+)?(?:normal|valid|healthy)\b", normalized)
-        or re.search(r"(?:인증|권한|토큰|credential)\s*(?:오류|실패|문제)?\s*(?:없음|정상|유효)", normalized)
+        or re.search(r"\b(?:auth|authentication|permission|credential|token)\s+(?:status\s+)?(?:normal|valid|healthy)\b", normalized)
+        or re.search(
+            r"\b(?:auth|authentication|permission|credential|token)\s+"
+            r"(?:error|failure|issue|problem|문제)?\s*(?:없음|아님|아닌|없다|정상|유효)\b",
+            normalized,
+        )
+        or re.search(r"(?:인증|권한|토큰|credential)\s*(?:오류|실패|문제)?\s*(?:없음|아님|아닌|없다|정상|유효)", normalized)
     )
 
 
@@ -755,8 +772,8 @@ def _normalize_text(value: str) -> str:
     return " ".join(_tokens(value))
 
 
-def _strip_control_metadata(value: str) -> str:
-    return _CONTROL_METADATA_RE.sub(" ", value)
+def _sanitize_summary(value: str) -> str:
+    return strip_control_metadata(value).strip()
 
 
 def _meaningful_tokens(value: str) -> set[str]:
@@ -871,7 +888,7 @@ async def _run_llm_assist(
             "role": "user",
             "content": build_user_prompt(
                 candidate_pool=[(candidate.root_cause, candidate.profile) for candidate in candidates[:MAX_CANDIDATES]],
-                evidence_summaries=[(item.evidence_id, item.summary) for item in evidence_items],
+                evidence_summaries=[(item.evidence_id, _sanitize_summary(item.summary)) for item in evidence_items],
                 classifier_types=classifier_types,
             ),
         },

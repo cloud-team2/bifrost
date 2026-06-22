@@ -9,7 +9,7 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
     EvidenceProfile(
         root_cause_id='SOURCE_DB_CONNECTION_TIMEOUT',
         required=(
-            EvidenceRule(root_cause_id='SOURCE_DB_CONNECTION_TIMEOUT', kind='required', evidence='source connection timeout 증가', example='`pipeline_source_connection_timeout_total` 증가, source DB 과부하, timeout error'),
+            EvidenceRule(root_cause_id='SOURCE_DB_CONNECTION_TIMEOUT', kind='required', evidence='source connection timeout 증가', example='`pipeline_source_connection_timeout_total` 증가, database saturation, read deadline exceeded'),
             EvidenceRule(root_cause_id='SOURCE_DB_CONNECTION_TIMEOUT', kind='required', evidence='pipeline extract/read 단계 timeout log', example='`extract_users` task `ConnectionTimeout`'),
             EvidenceRule(root_cause_id='SOURCE_DB_CONNECTION_TIMEOUT', kind='required', evidence='pipeline read latency 증가', example='extract duration p95 증가, extract latency 급증'),
         ),
@@ -25,7 +25,7 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
     EvidenceProfile(
         root_cause_id='SOURCE_AUTH_EXPIRED',
         required=(
-            EvidenceRule(root_cause_id='SOURCE_AUTH_EXPIRED', kind='required', evidence='auth/permission error log', example='extract stage auth error, source credential expired, source credential 만료, permission denied, access denied, 인증 실패, 권한 거부, 토큰 만료'),
+            EvidenceRule(root_cause_id='SOURCE_AUTH_EXPIRED', kind='required', evidence='auth/permission error log', example='read path authentication failure, source secret expired, permission denied, access denied, 인증 실패, 권한 거부, 토큰 만료'),
         ),
         supporting=(
             EvidenceRule(root_cause_id='SOURCE_AUTH_EXPIRED', kind='supporting', evidence='credential rotation 또는 secret 변경 이력', example='rotate 직후 실패'),
@@ -37,8 +37,8 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
     EvidenceProfile(
         root_cause_id='SOURCE_READ_LATENCY',
         required=(
-            EvidenceRule(root_cause_id='SOURCE_READ_LATENCY', kind='required', evidence='source read latency 증가', example='p95 read latency 증가, extract 단계 p95 증가, full scan'),
-            EvidenceRule(root_cause_id='SOURCE_READ_LATENCY', kind='required', evidence='extract task duration 증가', example='task runtime 증가, extract duration 증가, extract 단계 p95 증가, read stage duration 증가'),
+            EvidenceRule(root_cause_id='SOURCE_READ_LATENCY', kind='required', evidence='source read latency 증가', example='p95 read latency 상승, scan volume 증가'),
+            EvidenceRule(root_cause_id='SOURCE_READ_LATENCY', kind='required', evidence='extract task duration 증가', example='task runtime 증가, extract duration 증가, read stage duration 증가'),
         ),
         supporting=(
             EvidenceRule(root_cause_id='SOURCE_READ_LATENCY', kind='supporting', evidence='downstream 처리 정상', example='Kafka/sink 지표 정상'),
@@ -92,8 +92,8 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
     EvidenceProfile(
         root_cause_id='PIPELINE_TASK_RETRY_EXHAUSTED',
         required=(
-            EvidenceRule(root_cause_id='PIPELINE_TASK_RETRY_EXHAUSTED', kind='required', evidence='retry count exhausted', example='max retry reached, max retries exceeded, retry 소진'),
-            EvidenceRule(root_cause_id='PIPELINE_TASK_RETRY_EXHAUSTED', kind='required', evidence='동일 task 반복 실패', example='retry history, task 반복 실패, repeated task failure, max retries exceeded'),
+            EvidenceRule(root_cause_id='PIPELINE_TASK_RETRY_EXHAUSTED', kind='required', evidence='retry count exhausted', example='retry budget exhausted, retry limit reached'),
+            EvidenceRule(root_cause_id='PIPELINE_TASK_RETRY_EXHAUSTED', kind='required', evidence='동일 task 반복 실패', example='retry history, repeated task failure, retry attempts all failed'),
         ),
         supporting=(
             EvidenceRule(root_cause_id='PIPELINE_TASK_RETRY_EXHAUSTED', kind='supporting', evidence='transient dependency error', example='source/sink timeout'),
@@ -131,7 +131,7 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
     EvidenceProfile(
         root_cause_id='PIPELINE_CONFIG_INVALID',
         required=(
-            EvidenceRule(root_cause_id='PIPELINE_CONFIG_INVALID', kind='required', evidence='config validation error 또는 invalid option log', example='unknown config, invalid converter, config validation failed, 잘못된 transforms, 설정 오타'),
+            EvidenceRule(root_cause_id='PIPELINE_CONFIG_INVALID', kind='required', evidence='config validation error 또는 invalid option log', example='unknown config, invalid converter, config validation failed, unsupported transform alias, malformed connector option'),
             EvidenceRule(root_cause_id='PIPELINE_CONFIG_INVALID', kind='required', evidence='최근 pipeline/connector config 변경', example='config diff 존재, connector config 변경, config created or updated', causality_type='temporal', temporality_required=True, causal_chain_step=1),
         ),
         supporting=(
@@ -185,7 +185,7 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
         root_cause_id='TOPIC_INGRESS_SPIKE',
         required=(
             EvidenceRule(root_cause_id='TOPIC_INGRESS_SPIKE', kind='required', evidence='topic ingress rate 급증', example='messages in/sec 또는 bytes in/sec 증가'),
-            EvidenceRule(root_cause_id='TOPIC_INGRESS_SPIKE', kind='required', evidence='upstream volume 증가와 시간 상관', example='source row count 급증, upstream 이벤트 폭증, upstream 배치 job 대량 이벤트 발행', causality_type='temporal', temporality_required=True, causal_chain_step=1),
+            EvidenceRule(root_cause_id='TOPIC_INGRESS_SPIKE', kind='required', evidence='upstream volume 증가와 시간 상관', example='source row count 급증, upstream 이벤트 폭증, scheduled producer burst', causality_type='temporal', temporality_required=True, causal_chain_step=1),
         ),
         supporting=(
             EvidenceRule(root_cause_id='TOPIC_INGRESS_SPIKE', kind='supporting', evidence='consumer lag가 ingress 증가 직후 동반', example='lag start time correlation', causality_type='temporal', temporality_required=True, causal_chain_step=2),
@@ -240,7 +240,7 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
     EvidenceProfile(
         root_cause_id='SINK_AUTH_EXPIRED',
         required=(
-            EvidenceRule(root_cause_id='SINK_AUTH_EXPIRED', kind='required', evidence='sink auth/permission error log', example='write stage auth error, sink credential expired, sink credential 만료, permission denied, access denied, 인증 실패, 권한 거부, 토큰 만료'),
+            EvidenceRule(root_cause_id='SINK_AUTH_EXPIRED', kind='required', evidence='sink auth/permission error log', example='write path authentication failure, sink secret expired, permission denied, access denied, 인증 실패, 권한 거부, 토큰 만료'),
         ),
         supporting=(
             EvidenceRule(root_cause_id='SINK_AUTH_EXPIRED', kind='supporting', evidence='credential rotation 또는 secret 변경 이력', example='rotate 직후 실패'),
@@ -396,7 +396,7 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
         root_cause_id='PIPELINE_DUPLICATE_SPIKE',
         required=(
             EvidenceRule(root_cause_id='PIPELINE_DUPLICATE_SPIKE', kind='required', evidence='duplicate count 또는 duplicate key error 증가', example='duplicate metric 증가, repeated records'),
-            EvidenceRule(root_cause_id='PIPELINE_DUPLICATE_SPIKE', kind='required', evidence='retry/replay/backfill 또는 idempotency gap', example='repeated processing evidence, exactly-once missing, offset reset, idempotency gap'),
+            EvidenceRule(root_cause_id='PIPELINE_DUPLICATE_SPIKE', kind='required', evidence='retry/replay/backfill 또는 idempotency gap', example='repeated processing evidence, exactly-once missing, replay boundary reset, idempotency gap'),
         ),
         supporting=(
             EvidenceRule(root_cause_id='PIPELINE_DUPLICATE_SPIKE', kind='supporting', evidence='최근 transform/config 변경', example='key derivation change'),

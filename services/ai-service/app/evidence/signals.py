@@ -10,6 +10,8 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
+from app.evidence.metadata import is_control_id, is_control_metadata_key, strip_control_metadata
+
 _FAILED_RE = re.compile(r"\bFAILED\b|failed|failure|exception|\berror\b|오류|에러|실패", re.IGNORECASE)
 _TASK_FAILURE_RE = re.compile(r"\bFAILED\b|failed|failure|exception|오류|에러|실패", re.IGNORECASE)
 _TRACE_RE = re.compile(r"trace|stack|exception|worker log|stacktrace|로그|트레이스", re.IGNORECASE)
@@ -88,38 +90,9 @@ _NORMAL_RE = re.compile(
 
 _SOURCE_HINT_RE = re.compile(r"\bsource\b|extract|read stage|source_reader|source connector|소스", re.IGNORECASE)
 _SINK_HINT_RE = re.compile(r"\bsink\b|write stage|sink_writer|sink connector|flush|batch|jdbc sink", re.IGNORECASE)
-_CONTROL_METADATA_KEYS = {
-    "accepted",
-    "accepted_root_cause_id",
-    "answer",
-    "answer_phrase",
-    "case_id",
-    "corrected_root_cause_id",
-    "expected",
-    "expected_root_cause",
-    "expected_root_cause_id",
-    "gold",
-    "label",
-    "oracle",
-    "prediction",
-    "predicted_root_cause_id",
-    "root_cause",
-    "root_cause_id",
-}
-_CONTROL_ID_RE = re.compile(r"^[A-Z0-9]+(?:_[A-Z0-9]+){1,}$")
-_CONTROL_METADATA_RE = re.compile(
-    r"\b(?:answer(?:_phrase)?|case[_ -]?id|expected(?:_root[_ -]?cause(?:_id)?)?|"
-    r"accepted[_ -]?root[_ -]?cause(?:[_ -]?id)?|corrected[_ -]?root[_ -]?cause(?:[_ -]?id)?|"
-    r"predicted[_ -]?root[_ -]?cause(?:[_ -]?id)?|gold|label|oracle|prediction|"
-    r"root[_ -]?cause(?:[_ -]?id)?)\b"
-    r"\s*(?:[:=]|is|는|은)?\s*[0-9A-Za-z_.-]+",
-    re.IGNORECASE,
-)
-
-
 def evidence_signal_summary(tool_name: str, raw_payload: Any) -> str:
     """Return semicolon-separated general RCA evidence signals."""
-    pieces = [_CONTROL_METADATA_RE.sub(" ", item) for item in _flatten_text(raw_payload)]
+    pieces = [strip_control_metadata(item) for item in _flatten_text(raw_payload)]
     text = " ".join(pieces)
     if not text:
         return ""
@@ -238,7 +211,7 @@ def _flatten_text(value: Any, context: str = "") -> Iterable[str]:
         return
     if isinstance(value, str):
         stripped = value.strip()
-        if stripped and not _CONTROL_ID_RE.fullmatch(stripped):
+        if stripped and not is_control_id(stripped):
             yield f"{context} {stripped}".strip()
         return
     if isinstance(value, (bool, int, float)):
@@ -247,7 +220,7 @@ def _flatten_text(value: Any, context: str = "") -> Iterable[str]:
     if isinstance(value, dict):
         for key, item in value.items():
             key_text = str(key)
-            if _is_control_metadata_key(key_text):
+            if is_control_metadata_key(key_text):
                 continue
             yield key_text
             next_context = f"{context} {key_text}".strip()
@@ -316,11 +289,6 @@ def _is_normal_only(text: str) -> bool:
         or _DEGRADATION_RE.search(fault_text)
     )
     return bool(_NORMAL_RE.search(text)) and not fault_observed
-
-
-def _is_control_metadata_key(key: str) -> bool:
-    normalized = key.strip().casefold()
-    return normalized in _CONTROL_METADATA_KEYS or "root_cause" in normalized
 
 
 def _has_auth_negation(text: str) -> bool:

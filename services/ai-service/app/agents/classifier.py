@@ -9,6 +9,7 @@ from typing import Any
 
 from app.catalogs.failure_types import list_failure_types
 from app.catalogs.types import FailureType
+from app.evidence.metadata import strip_control_metadata
 from app.prompts.classifier import SYSTEM_PROMPT, build_user_prompt
 from app.schemas.outputs import Classification, ClassifierOutput, IncidentTypeOutput, RetrievalOutput
 from app.schemas.state import EvidenceItem, EvidenceType, IncidentScope
@@ -57,15 +58,16 @@ async def run_classifier(user_message: str, retrieval_out: RetrievalOutput | Non
     known_type_ids = {item.incident_type for item in failure_types}
     evidence_items = retrieval_out.evidence_items if retrieval_out else []
     observed_evidence_items = [item for item in evidence_items if _is_observed_evidence(item)]
-    evidence_summaries = [item.summary for item in observed_evidence_items]
+    sanitized_user_message = strip_control_metadata(user_message)
+    evidence_summaries = [_sanitize_summary(item.summary) for item in observed_evidence_items]
 
-    rule_candidates = _rank_rule_candidates(user_message, retrieval_out, failure_types)
+    rule_candidates = _rank_rule_candidates(sanitized_user_message, retrieval_out, failure_types)
     incident_scope = _infer_scope(evidence_summaries)
     needs_group_analysis = incident_scope == IncidentScope.INCIDENT_GROUP
 
     if _needs_llm_assist(rule_candidates):
         llm_candidates, llm_scope = await _run_llm_assist(
-            user_message=user_message,
+            user_message=sanitized_user_message,
             evidence_summaries=evidence_summaries,
             rule_candidates=rule_candidates,
             failure_types=failure_types,
@@ -105,10 +107,10 @@ def _rank_rule_candidates(
     retrieval_out: RetrievalOutput | None,
     failure_types: tuple[FailureType, ...],
 ) -> list[_Candidate]:
-    sources: list[tuple[str | None, str]] = [(None, user_message)]
+    sources: list[tuple[str | None, str]] = [(None, strip_control_metadata(user_message))]
     if retrieval_out:
         sources.extend(
-            (item.evidence_id, item.summary)
+            (item.evidence_id, _sanitize_summary(item.summary))
             for item in retrieval_out.evidence_items
             if _is_observed_evidence(item)
         )
@@ -262,6 +264,10 @@ def _classifier_model_name() -> str | None:
         return model_for_agent("classifier")
     except Exception:
         return None
+
+
+def _sanitize_summary(value: str) -> str:
+    return strip_control_metadata(value).strip()
 
 
 def _parse_json_object(raw_response: str) -> dict[str, Any] | None:

@@ -86,7 +86,7 @@ class RootCause:
     description: str
     owned_by: str
     direct_action_allowed: DirectActionPolicy
-    default_confidence_cap: float = 0.90
+    default_confidence_cap: float = 0.88
     notes: tuple[str, ...] = ()
 
 

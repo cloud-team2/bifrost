@@ -16,8 +16,10 @@ from app.schemas.state import EvidenceItem, EvidenceType, IncidentScope
 class _DummyLLMProvider:
     def __init__(self, response: str = "") -> None:
         self.response = response
+        self.messages: list[dict] = []
 
     async def generate(self, messages: list[dict], model: str | None = None) -> str:
+        self.messages = messages
         return self.response
 
 
@@ -358,6 +360,31 @@ async def test_normal_auth_evidence_does_not_commit_auth_expired(
     result = await run_rca(
         _classifier("SOURCE_AUTH_FAILURE"),
         _retrieval("source auth status normal. auth 변경 없음. token valid. no auth error."),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "UNKNOWN_WITH_EVIDENCE_GAP"
+    assert top.confidence < 0.60
+
+
+@pytest.mark.parametrize(
+    "summary",
+    [
+        "source 인증 오류 없음",
+        "source 인증 실패 없음",
+        "source 권한 문제 없음",
+        "source 토큰 정상",
+    ],
+)
+@pytest.mark.asyncio
+async def test_korean_auth_negation_does_not_commit_auth_expired(
+    monkeypatch: pytest.MonkeyPatch,
+    summary: str,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier("SOURCE_AUTH_FAILURE"),
+        _retrieval(summary),
     )
 
     top = result.root_cause_candidates[0]
@@ -825,6 +852,24 @@ async def test_catalog_only_root_cause_ids(monkeypatch: pytest.MonkeyPatch) -> N
     known_ids = set(root_cause_ids())
     assert all(item.root_cause_id in known_ids for item in result.root_cause_candidates)
     assert result.root_cause_candidates[0].root_cause_id != "MADE_UP_ROOT_CAUSE"
+
+
+@pytest.mark.asyncio
+async def test_control_metadata_is_removed_from_rca_llm_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _DummyLLMProvider("")
+    monkeypatch.setattr("app.llm.provider.get_llm_provider", lambda: provider)
+
+    result = await run_rca(
+        _classifier("SOURCE_AUTH_FAILURE", "SINK_AUTH_FAILURE"),
+        _retrieval("source 인증 실패 sink 인증 실패 expected_root_cause=PIPELINE_DUPLICATE_SPIKE"),
+    )
+
+    assert result.root_cause_candidates[0].root_cause_id in {"SOURCE_AUTH_EXPIRED", "SINK_AUTH_EXPIRED"}
+    prompt = provider.messages[1]["content"]
+    assert "expected_root_cause" not in prompt
+    assert "PIPELINE_DUPLICATE_SPIKE" not in prompt
 
 
 @pytest.mark.asyncio

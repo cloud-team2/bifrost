@@ -14,13 +14,13 @@ FAILURE_TYPES: tuple[FailureType, ...] = (
         incident_type='SOURCE_AUTH_FAILURE',
         layer='source',
         description='source credential, 권한, token 문제',
-        signals=('source auth error', 'extract stage auth error', 'expired token', 'permission error', 'credential 만료'),
+        signals=('source auth error', 'read path authentication failure', 'expired token', 'permission error', 'expired secret'),
     ),
     FailureType(
         incident_type='SOURCE_READ_LATENCY',
         layer='source',
         description='source read 단계 지연',
-        signals=('extract duration 증가', 'source read latency 증가', 'extract 단계 p95 증가', 'full scan'),
+        signals=('extract duration 증가', 'source read latency 증가', 'read duration p95 상승', 'scan volume 증가'),
     ),
     FailureType(
         incident_type='SOURCE_DATA_NOT_AVAILABLE',
@@ -32,7 +32,7 @@ FAILURE_TYPES: tuple[FailureType, ...] = (
         incident_type='PIPELINE_TASK_FAILED',
         layer='pipeline',
         description='pipeline task 또는 job 실패',
-        signals=('task failed', 'retry exhausted', 'max retries exceeded', 'retry 소진'),
+        signals=('task failed', 'retry exhausted', 'retry budget exhausted', 'retry limit reached'),
     ),
     FailureType(
         incident_type='CONNECTOR_TASK_FAILED',
@@ -98,7 +98,7 @@ FAILURE_TYPES: tuple[FailureType, ...] = (
         incident_type='SINK_AUTH_FAILURE',
         layer='sink',
         description='sink credential 또는 권한 문제',
-        signals=('sink auth error', 'write stage auth error', 'permission error', 'credential 만료'),
+        signals=('sink auth error', 'write path permission denied', 'permission error', 'expired secret'),
     ),
     FailureType(
         incident_type='SINK_WRITE_LATENCY',
@@ -182,7 +182,7 @@ FAILURE_TYPES: tuple[FailureType, ...] = (
         incident_type='DUPLICATE_SPIKE',
         layer='data_quality',
         description='중복 증가',
-        signals=('duplicate count 증가', 'record duplication increase', 'idempotency guarantee missing', 'offset reset'),
+        signals=('duplicate count 증가', 'record duplication increase', 'idempotency guarantee missing', 'replay window'),
     ),
     FailureType(
         incident_type='NULL_RATE_SPIKE',

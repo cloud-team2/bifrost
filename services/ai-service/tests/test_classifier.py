@@ -18,6 +18,16 @@ class _DummyLLMProvider:
         return self.response
 
 
+class _CapturingLLMProvider(_DummyLLMProvider):
+    def __init__(self, response: str = "") -> None:
+        super().__init__(response)
+        self.messages: list[dict] = []
+
+    async def generate(self, messages: list[dict], model: str | None = None) -> str:
+        self.messages = messages
+        return self.response
+
+
 def _patch_llm(monkeypatch: pytest.MonkeyPatch, response: str = "") -> None:
     monkeypatch.setattr("app.llm.provider.get_llm_provider", lambda: _DummyLLMProvider(response))
 
@@ -105,6 +115,43 @@ async def test_unknown_when_no_signal(monkeypatch: pytest.MonkeyPatch) -> None:
     top = result.classification.incident_types[0]
     assert top.type == "UNKNOWN_NEEDS_MORE_EVIDENCE"
     assert top.confidence < 0.6
+
+
+@pytest.mark.asyncio
+async def test_control_metadata_does_not_drive_rule_classification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    retrieval = _retrieval_with_summary(
+        "expected_root_cause=SINK_AUTH_EXPIRED normal observation only",
+        "ev-label",
+    )
+
+    result = await run_classifier("상태 확인", retrieval)
+
+    assert [item.type for item in result.classification.incident_types] == [
+        "UNKNOWN_NEEDS_MORE_EVIDENCE"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_control_metadata_is_removed_from_classifier_llm_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _CapturingLLMProvider("")
+    monkeypatch.setattr("app.llm.provider.get_llm_provider", lambda: provider)
+    retrieval = _retrieval_with_summary(
+        "accepted_root_cause_id=SINK_AUTH_EXPIRED normal observation only",
+        "ev-label",
+    )
+
+    await run_classifier("expected_root_cause=SOURCE_AUTH_EXPIRED 상태 확인", retrieval)
+
+    prompt = provider.messages[1]["content"]
+    assert "expected_root_cause" not in prompt
+    assert "accepted_root_cause_id" not in prompt
+    assert "SOURCE_AUTH_EXPIRED" not in prompt
+    assert "SINK_AUTH_EXPIRED" not in prompt
 
 
 @pytest.mark.asyncio

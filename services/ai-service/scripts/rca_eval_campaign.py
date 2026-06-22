@@ -4,6 +4,10 @@
 만으로 배포된 RCA 로직(run_rca)에 통과시켜 AC@1/AC@3/AC@5/Avg@5/ECE/기권율을 산출한다.
 human_verdict(사후 결론)는 증거에서 제외해 정답 누출을 막는다.
 
+주의: 이 캠페인은 accepted root cause에서 incident type을 역매핑해 classifier output을
+구성하는 oracle incident-type RCA replay다. classifier 포함 end-to-end 정확도나
+unseen production holdout이 아니다.
+
 실행(floor, 재현):  cd services/ai-service && .venv/bin/python scripts/rca_eval_campaign.py
 실행(LLM-on, 라이브 정확도):  RCA_EVAL_USE_LLM=1 python scripts/rca_eval_campaign.py
   └ 실 LLM/임베딩 구성이 있는 곳(배포 pod/Job)에서만 의미. 비파괴(read-only RCA 평가).
@@ -128,6 +132,11 @@ async def main() -> None:
     report = build_eval_report(cases, layer_map)
     abstain = sum(1 for c in cases if not c.predicted_ranking or c.predicted_ranking[0] == UNKNOWN_ROOT_CAUSE_ID)
     out = {
+        "evaluation_condition": (
+            "35 seed oracle incident-type RCA replay; evidence uses symptom, trigger, "
+            "contributing_factors only; human_verdict excluded; not classifier end-to-end; "
+            "not unseen production holdout"
+        ),
         "total_cases": report.total_cases,
         "AC@1": round(report.ac_at_1.accuracy, 4),
         "AC@3": round(report.ac_at_3.accuracy, 4),
