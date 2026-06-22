@@ -948,6 +948,7 @@ async def _run_workflow_impl(
                     planner_out = await planner_agent.run_planner(
                         planner_message,
                         project_id,
+                        mode=mode,
                         registry=registry,
                         tool_context=planner_context,
                     )

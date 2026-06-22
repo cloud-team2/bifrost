@@ -81,6 +81,7 @@ coverage/
 # ─── Claude Plugin ───
 .claude/
 .understand-anything/
+CLAUDE.md
 
 # superpowers brainstorm visual companion (local only)
 .superpowers/
