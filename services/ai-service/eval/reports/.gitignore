@@ -1,0 +1,5 @@
+# 생성된 eval 리포트는 커밋하지 않는다(디렉터리만 유지).
+live_eval_*.json
+live_eval_*.md
+nl_tool_routing_*.json
+nl_tool_routing_*.md
