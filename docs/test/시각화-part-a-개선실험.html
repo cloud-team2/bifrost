@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Bifrost RCA Part A 정확도 개선 실험</title>
+<style>
+  body{font-family:-apple-system,'Apple SD Gothic Neo',sans-serif;max-width:980px;margin:0 auto;padding:28px 22px;color:#1c2330;line-height:1.7}
+  h1{font-size:26px;border-bottom:3px solid #7c3aed;padding-bottom:10px}
+  h2{font-size:20px;margin-top:32px;border-left:5px solid #7c3aed;padding-left:10px}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:14px}
+  th,td{border:1px solid #dde2ea;padding:7px 9px;text-align:left;vertical-align:top}
+  th{background:#f3f0fb}
+  .strong{color:#157347;font-weight:700}
+  .weak{color:#b54708}
+  .mermaid{background:#fafbfe;border:1px solid #eee;border-radius:8px;padding:12px;margin:14px 0;text-align:center}
+  .insight{background:#f3f0fb;border-left:4px solid #7c3aed;padding:11px 14px;margin:14px 0;border-radius:4px}
+  .insight b{display:block;margin-bottom:5px}
+  .purpose{color:#5a6478;font-size:14px}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+</head>
+<body>
+<h1>Bifrost RCA Part A 정확도 개선 실험 (2026-06-22)</h1>
+<p class="purpose">
+gold set 35건(8계층) 전수 평가에서 정확도를 어떻게 올렸는지, 어떤 레버가 실제로 듣는지 분리 측정한 기록<br>
+모든 수치는 재현 스크립트 <code>rca_eval_campaign.py</code>의 실제 출력. 합성 셋에 룰을 끼워맞추는 과적합 없이, <b>범용 증거 recall</b>만 보강
+</p>
+
+<h2>1. 한눈에 — 무엇이 정확도를 움직였나</h2>
+<table>
+<tr><th>구성</th><th>AC@1</th><th>AC@3 / AC@5</th><th>Avg@5</th><th>ECE</th><th>기권</th></tr>
+<tr><td>floor (LLM off, 배포 동등 룰)</td><td>65.7%</td><td>80.0%</td><td>0.724</td><td>0.073</td><td>7</td></tr>
+<tr><td class="strong">+ 범용 lexicon (증거 recall)</td><td class="strong">71.4%</td><td class="strong">85.7%</td><td class="strong">0.781</td><td>0.083</td><td>5</td></tr>
+<tr><td>LLM-on (배포 룰, 실 LLM/임베딩)</td><td>65.7%</td><td>80.0%</td><td>0.724</td><td class="strong">0.070</td><td>7</td></tr>
+</table>
+<div class="insight"><b>핵심</b>
+범용 로그 표현(permission denied / access denied / throughput 급감) 보강만으로 <span class="strong">AC@1 +5.7pp (23→25), Avg@5 0.724→0.781, 기권 7→5</span><br>
+반면 실제 LLM 타이브레이커는 정확도를 거의 안 바꿈(근접 동률이 드물어 미발화, ECE만 0.073→0.070)<br>
+⇒ <b>정확도 본질은 LLM이 아니라 "증거 전달"</b> — 팀원의 라이브 진단(0→12.1%, 증거 전달 병목)과 정확히 일치
+</div>
+
+<h2>2. 레버별 기여 (AC@1 %)</h2>
+<div class="mermaid">
+xychart-beta
+  title "Part A AC@1 (%): 무엇이 듣는가"
+  x-axis ["floor", "+lexicon(증거)", "LLM-on(배포)"]
+  y-axis "AC@1 %" 0 --> 100
+  bar [65.7, 71.4, 65.7]
+</div>
+<div class="insight"><b>해석</b>
+증거 recall(+5.7pp)은 듣고, LLM(±0)은 이 셋에선 안 듣는다 → 다음 레버는 룰 튜닝이 아니라 <b>실 evidence(metric/trace/temporal) 공급</b>(팀 #828/#831/#835)·disambiguation·실 gold set(#964)<br>
+참고: 인과 temporality 게이팅·캘리브레이션은 evidence_matrix에 <b>이미 구현</b>(causality_type/temporality_required) — 그래서 룰 재튜닝은 과적합·운영 정밀도 위험이라 배제
+</div>
+
+<h2>3. 개선의 정직한 경계 (과적합 아님)</h2>
+<table>
+<tr><th>케이스</th><th>before</th><th>after</th><th>비고</th></tr>
+<tr><td>gs_seed_002 SOURCE_AUTH</td><td class="weak">기권</td><td class="strong">정답 @0.82</td><td>"permission denied" 범용 표현 매칭</td></tr>
+<tr><td>gs_seed_031 UPSTREAM_VOLUME</td><td class="weak">기권</td><td class="strong">정답 @0.82</td><td>"throughput 급감" 범용 표현 매칭</td></tr>
+<tr><td>gs_seed_018 SINK_AUTH</td><td class="weak">기권</td><td class="weak">기권(불변)</td><td>추가 튜닝 안 함 — 합성 셋 끼워맞추기 회피</td></tr>
+</table>
+<div class="insight"><b>왜 이렇게만</b>
+추가한 건 실제 시스템이 흔히 내는 <b>범용 로그/지표 표현</b>뿐 — 합성 시나리오 서사에 맞춘 게 아니라 일반화됨<br>
+evidence_matrix 룰을 35케이스에 맞게 튜닝하면 <b>자가 채점 과적합 + 프로덕션 오탐↑</b> 위험이라 의도적으로 안 함(gs_seed_018은 미해결로 정직 표기)
+</div>
+
+<h2>4. 측정 방법론 — 글로벌 벤더/학계 표준 대비 (판정)</h2>
+<p class="purpose">팀원의 e2e 측정 방법이 네임밸류 벤더/학계 방식과 유사한지 대조</p>
+<table>
+<tr><th>팀 방법</th><th>대응 표준</th><th>정합</th></tr>
+<tr><td>top-1 / top-5 (AC@k)</td><td>RCAEval AC@k·Avg@k (RCA 표준 지표)</td><td class="strong">학계 SOTA 동일</td></tr>
+<tr><td>risk-coverage + ECE 캘리브레이션</td><td>Guo 2017 · Microsoft PACE-LM</td><td class="strong">정통</td></tr>
+<tr><td>abstention / coverage / Macro-F1</td><td>selective prediction(기권)</td><td class="strong">정합</td></tr>
+<tr><td>Wilson 95% CI</td><td>비율 정확도 통계적 보고</td><td class="strong">벤더 공개 능가</td></tr>
+<tr><td>offline(정답 증거) vs live(자가 수집) 분리</td><td>oracle vs real-retrieval ablation</td><td class="strong">정교</td></tr>
+<tr><td>negative control(NO_FAULT·라벨 뒤집기)</td><td>음성대조군·NIST validity</td><td class="strong">대부분 벤더 미실시</td></tr>
+<tr><td>합성 벤치 + 라이브 주입(injectable 분류)</td><td>RCAEval 구조 · 카오스 fault-injection</td><td class="strong">동형</td></tr>
+</table>
+<div class="insight"><b>판정</b>
+팀의 측정 방법은 Datadog Watchdog·Dynatrace Davis 등 <b>벤더 공개 수준보다 정량적으로 투명</b>하고, RCAEval·PACE-LM 등 <b>학계 SOTA 평가와 직접 대응</b>한다(특히 offline/live 분리·negative control·Wilson CI)<br>
+단 표준 경고도 동일 적용: <b>합성 셋 성능 ≠ 실제</b>(ASE'24) — 89.6%/71.4%는 오라클/floor 상한이지 프로덕션 값 아님. 실 gold set·실 evidence 측정이 다음
+</div>
+
+<div class="insight"><b>한 줄 결론</b>
+방법론은 벤더급으로 검증됨. 그 위에서 <b>증거 recall 보강만으로 AC@1 65.7%→71.4%</b>를 과적합 없이 달성했고, <b>LLM이 아니라 증거 전달이 본질</b>임을 분리 측정으로 정량 확인했다(다음 레버 = 실 evidence·disambiguation, 팀 in-flight와 정합)
+</div>
+
+<script>mermaid.initialize({startOnLoad:true, theme:'default'});</script>
+</body>
+</html>

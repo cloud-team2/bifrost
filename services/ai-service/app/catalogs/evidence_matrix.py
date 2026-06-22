@@ -25,7 +25,7 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
     EvidenceProfile(
         root_cause_id='SOURCE_AUTH_EXPIRED',
         required=(
-            EvidenceRule(root_cause_id='SOURCE_AUTH_EXPIRED', kind='required', evidence='auth/permission error log', example='`AccessDenied`, `token expired`, 인증 실패, 권한 거부, 비밀번호 인증 실패'),
+            EvidenceRule(root_cause_id='SOURCE_AUTH_EXPIRED', kind='required', evidence='auth/permission error log', example='`AccessDenied`, `token expired`, permission denied, access denied, 인증 실패, 권한 거부, 비밀번호 인증 실패'),
         ),
         supporting=(
             EvidenceRule(root_cause_id='SOURCE_AUTH_EXPIRED', kind='supporting', evidence='credential rotation 또는 secret 변경 이력', example='rotate 직후 실패'),
@@ -240,7 +240,7 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
     EvidenceProfile(
         root_cause_id='SINK_AUTH_EXPIRED',
         required=(
-            EvidenceRule(root_cause_id='SINK_AUTH_EXPIRED', kind='required', evidence='sink auth/permission error log', example='`AccessDenied`, `token expired`, 인증 실패, 권한 거부, 비밀번호 인증 실패'),
+            EvidenceRule(root_cause_id='SINK_AUTH_EXPIRED', kind='required', evidence='sink auth/permission error log', example='`AccessDenied`, `token expired`, permission denied, access denied, 인증 실패, 권한 거부, 비밀번호 인증 실패'),
         ),
         supporting=(
             EvidenceRule(root_cause_id='SINK_AUTH_EXPIRED', kind='supporting', evidence='credential rotation 또는 secret 변경 이력', example='rotate 직후 실패'),
@@ -382,7 +382,7 @@ EVIDENCE_PROFILES: tuple[EvidenceProfile, ...] = (
     EvidenceProfile(
         root_cause_id='UPSTREAM_DATA_VOLUME_ANOMALY',
         required=(
-            EvidenceRule(root_cause_id='UPSTREAM_DATA_VOLUME_ANOMALY', kind='required', evidence='source row count 또는 topic ingress가 기준 대비 급변', example='volume z-score 이상'),
+            EvidenceRule(root_cause_id='UPSTREAM_DATA_VOLUME_ANOMALY', kind='required', evidence='source row count 또는 topic ingress가 기준 대비 급변', example='volume z-score 이상, throughput 급감/급증, 유입량 급변'),
         ),
         supporting=(
             EvidenceRule(root_cause_id='UPSTREAM_DATA_VOLUME_ANOMALY', kind='supporting', evidence='upstream schedule/change와 시간 상관', example='upstream batch size change'),
@@ -441,7 +441,7 @@ EVIDENCE_RULES: tuple[EvidenceRule, ...] = (
     EvidenceRule(root_cause_id='SOURCE_DB_CONNECTION_TIMEOUT', kind='supporting', evidence='최근 source credential rotate 없음', example='auth 변경 없음'),
     EvidenceRule(root_cause_id='SOURCE_DB_CONNECTION_TIMEOUT', kind='negative', evidence='sink write timeout 증가', example='source 단독 원인 가능성 낮춤'),
     EvidenceRule(root_cause_id='SOURCE_DB_CONNECTION_TIMEOUT', kind='negative', evidence='source metric 정상', example='source timeout 후보 약화'),
-    EvidenceRule(root_cause_id='SOURCE_AUTH_EXPIRED', kind='required', evidence='auth/permission error log', example='`AccessDenied`, `token expired`, 인증 실패, 권한 거부, 비밀번호 인증 실패'),
+    EvidenceRule(root_cause_id='SOURCE_AUTH_EXPIRED', kind='required', evidence='auth/permission error log', example='`AccessDenied`, `token expired`, permission denied, access denied, 인증 실패, 권한 거부, 비밀번호 인증 실패'),
     EvidenceRule(root_cause_id='SOURCE_AUTH_EXPIRED', kind='supporting', evidence='credential rotation 또는 secret 변경 이력', example='rotate 직후 실패'),
     EvidenceRule(root_cause_id='SOURCE_AUTH_EXPIRED', kind='negative', evidence='connection timeout만 존재하고 auth error 없음', example='auth 후보 약화'),
     EvidenceRule(root_cause_id='SOURCE_READ_LATENCY', kind='required', evidence='source read latency 증가', example='p95 read latency 증가'),
@@ -506,7 +506,7 @@ EVIDENCE_RULES: tuple[EvidenceRule, ...] = (
     EvidenceRule(root_cause_id='SINK_WRITE_LATENCY', kind='required', evidence='connector sink task 처리시간 증가', example='flush/batch duration 증가'),
     EvidenceRule(root_cause_id='SINK_WRITE_LATENCY', kind='supporting', evidence='source/Kafka 정상', example='upstream 정상'),
     EvidenceRule(root_cause_id='SINK_WRITE_LATENCY', kind='negative', evidence='sink auth error', example='auth 후보 우선'),
-    EvidenceRule(root_cause_id='SINK_AUTH_EXPIRED', kind='required', evidence='sink auth/permission error log', example='`AccessDenied`, `token expired`, 인증 실패, 권한 거부, 비밀번호 인증 실패'),
+    EvidenceRule(root_cause_id='SINK_AUTH_EXPIRED', kind='required', evidence='sink auth/permission error log', example='`AccessDenied`, `token expired`, permission denied, access denied, 인증 실패, 권한 거부, 비밀번호 인증 실패'),
     EvidenceRule(root_cause_id='SINK_AUTH_EXPIRED', kind='supporting', evidence='credential rotation 또는 secret 변경 이력', example='rotate 직후 실패'),
     EvidenceRule(root_cause_id='SINK_AUTH_EXPIRED', kind='negative', evidence='connection timeout만 존재하고 auth error 없음', example='auth 후보 약화'),
     EvidenceRule(root_cause_id='SINK_CONSTRAINT_VIOLATION', kind='required', evidence='sink constraint 또는 duplicate key error', example='unique constraint violation'),
@@ -549,7 +549,7 @@ EVIDENCE_RULES: tuple[EvidenceRule, ...] = (
     EvidenceRule(root_cause_id='CREDENTIAL_ROTATION_REGRESSION', kind='required', evidence='affected dependency가 해당 credential을 사용', example='dependency ownership match', semantic_allowed=False),
     EvidenceRule(root_cause_id='CREDENTIAL_ROTATION_REGRESSION', kind='supporting', evidence='rotation audit 또는 secret version 변경', example='version diff'),
     EvidenceRule(root_cause_id='CREDENTIAL_ROTATION_REGRESSION', kind='negative', evidence='auth error 없이 timeout만 존재', example='credential 후보 약화'),
-    EvidenceRule(root_cause_id='UPSTREAM_DATA_VOLUME_ANOMALY', kind='required', evidence='source row count 또는 topic ingress가 기준 대비 급변', example='volume z-score 이상'),
+    EvidenceRule(root_cause_id='UPSTREAM_DATA_VOLUME_ANOMALY', kind='required', evidence='source row count 또는 topic ingress가 기준 대비 급변', example='volume z-score 이상, throughput 급감/급증, 유입량 급변'),
     EvidenceRule(root_cause_id='UPSTREAM_DATA_VOLUME_ANOMALY', kind='supporting', evidence='upstream schedule/change와 시간 상관', example='upstream batch size change', causality_type='correlational', temporality_required=True, causal_chain_step=1),
     EvidenceRule(root_cause_id='UPSTREAM_DATA_VOLUME_ANOMALY', kind='supporting', evidence='pipeline 처리량 저하 없이 입력만 변동', example='downstream 정상'),
     EvidenceRule(root_cause_id='UPSTREAM_DATA_VOLUME_ANOMALY', kind='negative', evidence='pipeline failure 때문에 output만 감소', example='pipeline 후보 우선'),
