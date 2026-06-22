@@ -331,8 +331,8 @@ function ConsoleShot() {
         src="/landing-pipelines.png"
         alt="bifrost 콘솔 — 파이프라인 목록과 AI 에이전트 인시던트 조회"
         className="block w-full"
-        width={2032}
-        height={440}
+        width={1920}
+        height={435}
         loading="lazy"
       />
     </div>
