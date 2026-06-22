@@ -315,11 +315,6 @@ TRAFFIC_SQL = (
     "select 'live-eval-'||g,'rca-test',(random()*100)::numeric(10,2),"
     "(random()*1000)::int,now() from generate_series(1,300) g;"
 )
-GENERATE_TRAFFIC = (
-    'kubectl -n tenantdb exec deploy/tenant-postgres -- '
-    'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "' + TRAFFIC_SQL + '"'
-)
-
 # Connect REST 재시작 — connect pod 이름을 grep 으로 동적 해석(deploy 이름이 환경마다 다름).
 _CONNECT_POD = (
     "CPOD=$(kubectl -n platform-kafka get pods -o name | grep -i connect | head -1 "
@@ -358,15 +353,20 @@ def _kubectl_psql(namespace: str, deploy: str, sql: str, *, timeout: int = 60) -
     """`kubectl exec` 로 psql 을 돌려 결과(stdout)를 돌려준다(live 전용).
 
     -tA -F'|' 로 헤더/정렬 없는 pipe 구분 결과를 받는다. 자격증명은 컨테이너 env 참조.
+    sh -c 로 감싸 컨테이너 *내부*에서 $POSTGRES_USER/$POSTGRES_DB 를 확장하고(로컬 셸이
+    빈 값으로 확장하던 버그 방지), SQL 은 stdin(psql -f -)으로 넘겨 따옴표 충돌을 없앤다.
     """
     cmd = (
-        f'kubectl -n {namespace} exec deploy/{deploy} -- '
-        f'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tA -F\'|\' -c "{sql}"'
+        f"kubectl -n {namespace} exec -i deploy/{deploy} -- "
+        "sh -c 'psql -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\" -tA -F\"|\" -f -'"
     )
-    rc, out = _run_cmd(cmd, timeout=timeout)
-    if rc != 0:
+    proc = subprocess.run(  # noqa: S602 - 신뢰된 spec/상수 커맨드만 실행
+        cmd, shell=True, capture_output=True, text=True, timeout=timeout, input=sql,
+    )
+    if proc.returncode != 0:
+        out = (proc.stdout + proc.stderr).strip()
         raise RuntimeError(f"psql failed on {namespace}/{deploy}: {out}")
-    return out
+    return proc.stdout.strip()
 
 
 def _capture_baseline(spec: FaultSpec) -> str:
@@ -540,9 +540,11 @@ def _run_inject_steps(spec: FaultSpec) -> None:
     # sink 가 죽은 동안 source 에 row 를 넣어 CDC 가 sink write 를 시도하다 실패하게 한다.
     if spec.fault_id == "sink_db_down":
         time.sleep(3)  # mariadb pod 가 내려갈 시간을 잠깐 준다.
-        rc, out = _run_cmd(GENERATE_TRAFFIC)
-        if rc != 0:
-            print(f"  [WARN] 트래픽 유발 실패(무시하고 진행): {out}")
+        # _kubectl_psql(sh -c + stdin)로 실행 — 컨테이너 내부 env 확장 + 따옴표 충돌 회피.
+        try:
+            _kubectl_psql("tenantdb", "tenant-postgres", TRAFFIC_SQL)
+        except Exception as exc:  # 트래픽 유발 실패는 무시하고 진행.
+            print(f"  [WARN] 트래픽 유발 실패(무시하고 진행): {exc}")
 
 
 def _run_recover_steps(spec: FaultSpec) -> None:
