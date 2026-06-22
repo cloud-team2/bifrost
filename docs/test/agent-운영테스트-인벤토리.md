@@ -42,7 +42,7 @@
 
 ## 2. 카테고리 A — RCA 판단 정확도·신뢰도
 
-RCA 파이프라인: Classifier → (incident→rootcause map) → RCA evaluator → Verifier → Report. **자유 생성 금지, 카탈로그 후보를 evidence로 점수화·선택·보류.** 카탈로그 규모: failure_types 32 · root_causes 35 · evidence_profiles 42 · incident→rootcause map 32.
+RCA 파이프라인: Classifier → (incident→rootcause map) → RCA evaluator → Verifier → Report. **자유 생성 금지, 카탈로그 후보를 evidence로 점수화·선택·보류.** 카탈로그 규모: failure_types 33 · root_causes 35 · evidence_profiles 32 · incident_rootcause_map 33.
 
 | 항목 | 검증 대상 | 코드 | 운영 테스트 방법 | 산출 수치 |
 |---|---|---|---|---|
@@ -52,7 +52,7 @@ RCA 파이프라인: Classifier → (incident→rootcause map) → RCA evaluator
 | **A4 환각 0 (catalog 밖 차단)** | 카탈로그 밖 root_cause_id를 RCA/Report가 거부 | [verifier.py](services/ai-service/app/agents/verifier.py)`_verify_incident_analysis`(95, non_catalog FAIL 113)·report 검증(208) | RCA 출력 root_cause_id가 전부 35개 카탈로그 안인지 전수 검사 | 카탈로그-외 생성 건수(목표 0) |
 | **A5 Evidence 게이트** | required 전부 충족해야 ≥0.82, negative 감점, semantic-only 폐기 | [rca.py](services/ai-service/app/agents/rca.py)`_evaluate_candidate`(241)·`_match_rules`(304) | required 전부/일부/+negative/supporting만 4변형 입력으로 confidence 밴드 검증 | required-cap(0.79) 위반 건수, false-accept rate |
 | **A6 Disambiguation**(증상 강등) | CONNECTOR_TASK_FAILED 같은 증상보다 입증된 심층 원인을 위로 | [rca.py](services/ai-service/app/agents/rca.py)`_demote_symptom_below_confirmed_root_cause`(677), `_CAUSAL_DEPTH_MARGIN=0.03` | 하네스 6 `sink_db_down` 주입 → top이 SINK_DB_CONNECTION_TIMEOUT, 증상은 2위 보존 | disambiguation 정확도, confusion matrix |
-| **A7 장애유형 분류** | 관측증거→failure_types 32개 중 선택 | [classifier.py](services/ai-service/app/agents/classifier.py)`run_classifier`(55)·`_score_failure_type`(128) | offline 라벨셋(증거→정답 incident_type) | top-1, Macro-F1*, UNKNOWN율 |
+| **A7 장애유형 분류** | 관측증거→failure_types 33개 중 선택 | [classifier.py](services/ai-service/app/agents/classifier.py)`run_classifier`(55)·`_score_failure_type`(128) | offline 라벨셋(증거→정답 incident_type) | top-1, Macro-F1*, UNKNOWN율 |
 | **A8 Knowledge RAG** | pgvector 코사인 검색 top-k·min_score | [vector_store.py](services/ai-service/app/knowledge/vector_store.py)`search_by_embedding`(159), 설정 `knowledge_search_limit=3`·`min_score=0.05` | 알려진 질의로 EVIDENCE_COLLECTED(type=KNOWLEDGE) score 확인 | RAG recall@3, 무관질의 빈결과율 |
 
 주의: `rca_eval_campaign.py`는 incident_type을 역매핑으로 주입(분류 제외) → **RCA 단독** 정확도. end-to-end(classifier→RCA)는 별도(`test_rca_classification_accuracy.py` 패턴). RCA confidence는 이산 밴드(0.82+/0.60~0.79/≤0.59)에 몰려 ECE 해석에 N≥30 표본 권장. RAG는 RCA 점수에 직접 기여 안 함(observed evidence만 게이팅) — RCA 정확도와 혼동 금지. `*` Macro-F1은 코드 미구현.

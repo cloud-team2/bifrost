@@ -58,8 +58,7 @@
 - 조치가 실패했을 때 `rollback_plan`은 검증하지만, 자동 롤백 실행은 없다.
 - 모델이 `gpt-4o` 같은 별칭으로 남아 있어 같은 인시던트 판단을 나중에 재현하기 어렵다.
 - prompt, catalog, evidence matrix, runbook, corpus, 평가셋 버전이 run 단위로 충분히 고정되어 있지 않다.
-- confidence가 실제 정답률과 맞는지 ECE 같은 지표로 검증하지 않는다.
-- RCA 후보 랭킹이 실제 인시던트 정답셋에서 AC@k 기준으로 얼마나 맞는지 평가하지 않는다.
+- 35건 seed oracle replay의 AC@k/ECE 결과는 보존되어 있지만, resolved incident 기반 정기 평가·캘리브레이션 job은 아직 없다.
 - 임계값이 코드 상수·기본값으로 흩어져 있고, `threshold_version`, 보정 근거, 마지막 보정 시각, owner가 남지 않는다.
 - 평가셋을 만들더라도 trigger/symptom/root cause/contributing factor를 구분하는 라벨링 프로토콜이 아직 없다.
 - 알림은 consumer lag, error rate, connector failed 같은 원인 기반 정적 임계값에 많이 의존한다.
@@ -136,7 +135,7 @@
 | 구분 | 판정 | 내용 |
 |---|---|---|
 | 강점 | 충족 | 증거기반 RCA, UNKNOWN abstain, 사람 승인 게이트, 멱등성 키, 완전 감사로그, 카탈로그 버전 추적 |
-| 갭 | 개선 필요 | 조치 실패 시 자동 롤백 부재, 모델 ID 스냅샷 핀고정 부재, 알림의 정적 임계값 의존, 트리거와 근본원인 미분리, 상관/인과 증거 구분 부재, 신뢰도 캘리브레이션(ECE) 미측정 |
+| 갭 | 개선 필요 | 조치 실패 시 자동 롤백 부재, 모델 ID 스냅샷 핀고정 부재, 알림의 정적 임계값 의존, 트리거와 근본원인 미분리, 상관/인과 증거 구분 부재, resolved incident 기반 정기 캘리브레이션 부재 |
 
 ### 1.3 우선 개선 항목
 
@@ -233,7 +232,7 @@ Router(mode/depth 판정)
 | 자동 롤백 | `rollback_plan`은 [ActionCandidateOutput](../../services/ai-service/app/schemas/outputs.py)과 change ticket에 존재하고, [change_gate.py](../../services/ai-service/app/workflow/stages/change_gate.py)는 필수 메타데이터로 검증한다. | Verifier 실패 후 `rollback_plan`을 실행하는 rollback stage, `pre_change_snapshot`, `rollback_action_id`, `rollback_status`, rollback audit event가 없다. | rollback executor stage, risk-tiered rollback policy, rollback 결과 검증·감사로그 |
 | threshold governance | RCA는 [rca.py](../../services/ai-service/app/agents/rca.py)의 `MIN_CONFIDENT_ROOT_CAUSE=0.60`, `LLM_TIE_MARGIN=0.10`을 사용한다. [types.py](../../services/ai-service/app/catalogs/types.py)는 `RootCause.default_confidence_cap=0.88`, `EvidenceProfile.min_confidence_for_action=0.80`, `needs_more_evidence_band=(0.60, 0.79)`를 기본값으로 둔다. RCA scoring은 required 부분 충족 후보를 0.79 이하로 제한한다. Spring은 [PipelineStatusServiceImpl.java](../../services/operations-backend/src/main/java/com/bifrost/ops/pipeline/status/PipelineStatusServiceImpl.java)의 error rate 0.5%/2.0%, workspace lag threshold 기본값을 사용한다. | 임계값 이름·버전·근거·owner·보정 데이터셋·마지막 보정 시각·rollback 값이 없다. 코드 상수와 DB 기본값이 섞여 있어 "왜 이 값인가"를 추적하기 어렵다. | threshold registry/config table, `threshold_version`, calibration report linkage, 변경 이력·rollback 값 |
 | RCA gold set·라벨링 | `services/ai-service/tests/test_rca_classification_accuracy.py` 같은 fixture 기반 회귀 테스트는 있다. | resolved incident 기반 gold set 저장소와 `accepted_root_cause_id`, `trigger`, `symptom`, `contributing_factor`, `human_verdict` 라벨링 프로토콜이 없다. | gold set schema, 운영자 검수 UI/API, 라벨링 가이드, inter-review consistency check |
-| AC@k·ECE 평가 리포트 | RCA 후보와 confidence는 산출하지만, 평가 job/report는 없다. | AC@1/AC@3/AC@5/Avg@5, confidence bin별 accuracy/gap/ECE, UNKNOWN 오답 회피율을 정기 산출하지 않는다. | offline eval script, monthly calibration report, threshold recommendation artifact |
+| AC@k·ECE 평가 리포트 | [scripts/rca_eval_campaign.py](../../services/ai-service/scripts/rca_eval_campaign.py)와 [results-20260622](../test/results-20260622/) JSON 결과가 있다. 35건 seed oracle incident-type replay 기준 current/floor AC@k·Avg@5·ECE·기권율을 보존한다. | resolved incident 기반 정기 평가 job, monthly calibration report, threshold recommendation artifact는 아직 없다. | scheduled eval job, monthly calibration report, threshold recommendation artifact |
 | online feedback·drift 감시 | incident 저장과 report snapshot은 있으나, 운영자 채택·수정·override를 평가 신호로 묶는 구조는 제한적이다. | confidence distribution drift, UNKNOWN 비율 급증, 특정 root cause 과다 예측, operator override 증가를 감시하지 않는다. | online feedback event, drift dashboard, threshold 재보정 trigger |
 | 사용자 영향 SLI/SLO | [IncidentService.java](../../services/operations-backend/src/main/java/com/bifrost/ops/incident/IncidentService.java)는 threshold violation 중심으로 인시던트를 만든다. lag/error rate/connector state 신호는 있다. | `good_event/total_event` 기반 freshness, end-to-end latency, success, completeness SLI와 SLO burn-rate page 조건이 없다. | SLI metric schema, SLO config, burn-rate alert rule, page/ticket/diagnostic routing |
 | 인과/상관 증거 태그 | [EvidenceRule](../../services/ai-service/app/catalogs/types.py)은 `kind`, `semantic_allowed`, `causality_type`, `temporality_required`, `causal_chain_step`을 가진다. [rca.py](../../services/ai-service/app/agents/rca.py)는 시간 선행성이 없는 `temporality_required` required match를 supporting으로 강등한다. | 현재 temporal rule은 일부 profile에만 적용되어 있고, 전체 evidence matrix의 인과/상관 태그 일관성과 평가 기반 confidence 보정이 아직 부족하다. | evidence rule 태그 전수 보강, RCA scoring/eval fixture 확장, 인과 사슬 explanation 검증 |
@@ -467,7 +466,7 @@ evidence matrix를 인과 사다리에 매핑한다.
 |---|---|---|
 | `simple_query` depth-aware 경로 | [transitions.py](../../services/ai-service/app/supervisor/transitions.py)의 `SIMPLE_QUERY_LOOKUP_STAGES = ("planner", "retrieval", "report")`와 `_LOOKUP_DEPTHS` | 단순 조회는 Verifier를 건너뛰지만, direct answer도 stage상 planner/retrieval/report를 지난다. |
 | Router가 실행 깊이를 고른다 | [agents/router.py](../../services/ai-service/app/agents/router.py)는 `_classify_depth()`로 `execution_depth`를 정하고 `depth_budget()` 결과를 `RouteDecision`에 넣는다 | 구현은 휴리스틱 기반이므로 오분류 회귀 테스트가 필요하다. |
-| Planner prompt가 tool을 많이 고르도록 유도한다 | [prompts/planner.py](../../services/ai-service/app/prompts/planner.py)의 규칙: "상세·현황 류는 보통 2~4개를 함께 쓴다", "깊게 조회하라" | 자연어 현황 질의가 과도한 multi-tool plan으로 확장된다. |
+| Planner prompt가 최소 충분 조회를 권장한다 | [prompts/planner.py](../../services/ai-service/app/prompts/planner.py)의 규칙: 기본은 가장 좁은 tool 1개이며, 단순 조회·현황 질의는 1~2개로 끝낸다 | prompt는 이미 보수적이다. 남은 리스크는 Router 오분류와 대표 자연어 질의별 호출량 회귀 테스트 부재다. |
 | Retrieval/ReAct budget | [agents/retrieval.py](../../services/ai-service/app/agents/retrieval.py)는 `max_tool_calls==0`이면 운영 tool 호출을 건너뛰고, `allow_react_loop`가 켜진 depth에서만 ReAct를 돈다 | budget 집행은 구현됐지만 대표 자연어 질의별 호출량 테스트가 필요하다. |
 | 대화 히스토리 제한 | [workflow/runner.py](../../services/ai-service/app/workflow/runner.py)는 depth budget의 `history_policy`를 사용한다 | `HistoryPolicy.NONE` 경로는 생겼지만, summary/full 정책의 오염 방지 품질은 별도 검증이 필요하다. |
 | Verifier 제외 | simple-query lookup depth는 `SIMPLE_QUERY_LOOKUP_STAGES`를 타므로 Verifier를 포함하지 않는다 | 운영 변경·RCA 결론 경로에서는 Verifier가 유지된다. |
@@ -493,7 +492,7 @@ evidence matrix를 인과 사다리에 매핑한다.
 |---|---|---|
 | `execution_depth` | `direct_answer` | RAG 또는 cached context로 바로 답변. 운영 tool 호출 없음 |
 |  | `single_lookup` | read-only tool 1개만 호출 |
-|  | `bounded_lookup` | read-only tool 2~3개까지 호출 |
+|  | `bounded_lookup` | read-only tool 2개까지 호출 |
 |  | `incident_diagnosis` | classifier/RCA까지 실행 |
 |  | `remediation_planning` | RCA 뒤 remediation/policy_guard까지 실행 |
 |  | `action_execution` | 승인/변경관리/실행 경로 |
@@ -535,9 +534,9 @@ simple_query.bounded_lookup
 
 Verifier는 모든 simple_query에 넣지 않는다. 운영 변경, RCA 결론, 사용자 영향 판단처럼 검증 가치가 큰 출력에만 둔다. 단순 조회 답변은 schema validation과 evidence citation check로 대체한다.
 
-#### 6.4.3 Planner prompt를 "최소 충분 조회"로 변경
+#### 6.4.3 Planner prompt의 "최소 충분 조회" 원칙
 
-현재 prompt는 "상세·현황 류는 보통 2~4개"를 권장한다. 이를 아래 원칙으로 바꾼다.
+현재 prompt는 이미 아래 원칙을 적용한다.
 
 - 기본은 **가장 좁은 tool 1개**다.
 - 여러 tool은 사용자가 "원인 분석", "상관관계", "상세 진단"을 요청했거나 단일 tool로 답변 불가능할 때만 선택한다.

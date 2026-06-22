@@ -188,14 +188,14 @@ FastAPI `get_kafka_lag`는 별도 Spring operation이 아니라 `get_consumer_la
 
 ### 9. Mutation Runtime Tool Catalog
 
-현재 Spring에 구현된 mutation은 Kafka Connect 계열 4개뿐이다. Spring endpoint는 모두 `X-Agent-Run-Id`, `X-Agent-Step-Id`, `X-Idempotency-Key`, `X-Approval-Id`가 필요하고 `ApprovalValidator`와 `IdempotencyGuard`를 통과해야 한다. FastAPI executor는 approved action의 governance 식별자를 `ToolContext`로 전달하며, 승인 id가 없으면 Spring gate 또는 registry 승인 요구로 차단된다.
+현재 Spring에 구현된 mutation은 Kafka Connect 계열 4개뿐이다. Spring endpoint의 필수 agent header는 `X-Agent-Run-Id`, `X-Agent-Step-Id`, `X-Idempotency-Key`다. `X-Approval-Id`와 `X-Change-Ticket-Id`는 nullable이며, `PolicyGuard` 결과가 `REQUIRE_APPROVAL`이면 `ApprovalValidator`, `REQUIRE_CHANGE_MANAGEMENT`이면 `ChangeTicketValidator`를 통과해야 한다. FastAPI executor는 approved action의 governance 식별자를 `ToolContext`로 전달하며, 정책상 필요한 식별자가 없으면 Spring gate 또는 registry 승인/변경관리 요구로 차단된다.
 
 | Agent 논리 tool | Spring operation | 정책 | 현재 구현 |
 | --- | --- | --- | --- |
-| `restart_connector` | `restart_connector` | approval | 구현됨 |
-| `pause_connector` | `pause_connector` | approval | 구현됨 |
-| `resume_connector` | `resume_connector` | approval | 구현됨 |
-| `restart_consumer_group` | `restart_consumer_group` | approval | 구현됨. `connect-` prefix의 Kafka Connect-managed sink connector consumer group만 지원 |
+| `restart_connector` | `restart_connector` | `PolicyGuard`: high risk, aiProdLock이면 approval 필요 | 구현됨 |
+| `pause_connector` | `pause_connector` | `PolicyGuard`: medium risk, 기본 allow | 구현됨 |
+| `resume_connector` | `resume_connector` | `PolicyGuard`: low risk, 기본 allow | 구현됨 |
+| `restart_consumer_group` | `restart_consumer_group` | `PolicyGuard`: high risk, aiProdLock이면 approval 필요 | 구현됨. `connect-` prefix의 Kafka Connect-managed sink connector consumer group만 지원 |
 
 현재 구현에 없는 mutation:
 
