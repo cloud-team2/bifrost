@@ -30,6 +30,7 @@ RCA 근본원인 카탈로그를 **8계층 35개**로 정의하고, 33개 인시
 ### 2.1 오프라인 포괄 평가 — 전 계층 커버
 - **대상**: gold set 35건(계층별 대표 시나리오, `app/evaluation/seed_gold_set.py`).
 - **입력 증거**: 각 시나리오의 **관측 신호만**(symptom + trigger + contributing_factors). 사후 결론인 `human_verdict`는 **정답 누출 방지를 위해 제외**.
+- **중요 조건**: 캠페인 스크립트는 accepted root cause에서 incident type을 역매핑해 RCA 후보 풀을 구성하는 **oracle incident-type RCA replay**다. classifier 포함 end-to-end 정확도나 unseen production holdout으로 해석하지 않는다.
 - **조건**: LLM 타이브레이커 **비활성** → 카탈로그 + 증거 매트릭스 + 신뢰도 게이트만으로 판정(가장 보수적 floor).
 - **지표**: AC@1/AC@3/AC@5, Avg@5(RCAEval 표준), ECE(Guo et al. 캘리브레이션), 기권율.
 - **실행**: `cd services/ai-service && .venv/bin/python scripts/rca_eval_campaign.py`
@@ -49,35 +50,41 @@ RCA 근본원인 카탈로그를 **8계층 35개**로 정의하고, 33개 인시
 
 ## 3. 결과 수치 (어떻게 나왔나)
 
-### 3.1 오프라인 포괄 평가 (35건, 관측증거-only, LLM 비활성)
+### 3.1 오프라인 포괄 평가 재측정 (35 seed, oracle incident-type RCA replay)
+
+2026-06-22 #993 수정 후 현재 브랜치에서 `services/ai-service/scripts/rca_eval_campaign.py`를 재실행한 값이다. 입력은 seed의 `symptom`, `trigger`, `contributing_factors`만 사용하고 `human_verdict`는 제외한다. 단, 스크립트가 accepted root cause에서 incident type을 역매핑하므로 classifier 포함 end-to-end 정확도나 unseen production holdout으로 해석하지 않는다.
 
 | 지표 | 값 | 의미 |
 |---|---|---|
-| **AC@1** | **65.7%** (23/35) | 최상위 후보가 정답 |
-| **AC@3** | **80.0%** (28/35) | 상위 3 안에 정답 |
-| **AC@5** | **80.0%** (28/35) | 상위 5 안에 정답 |
-| **Avg@5** | **0.724** | 정답 순위 역수 평균 (현 SOTA Avg@5 0.46~0.54 상회) |
-| **ECE** | **0.073** | 신뢰도 캘리브레이션 오차 (<0.10 양호) |
-| **기권(UNKNOWN)** | **7/35 (20%)** | 증거 부족 시 정직한 보류 |
+| **AC@1** | **100.0%** (35/35) | 최상위 후보가 정답 |
+| **AC@3** | **100.0%** (35/35) | 상위 3 안에 정답 |
+| **AC@5** | **100.0%** (35/35) | 상위 5 안에 정답 |
+| **Avg@5** | **1.0000** | 정답 순위 역수 평균 |
+| **ECE** | **0.1595** | cap 없이 현재 confidence 분포로 재계산한 실측값 |
+| **기권(UNKNOWN)** | **0/35 (0%)** | seed replay 조건의 기권 수 |
 
 **계층별**
 
 | 계층 | n | AC@1 | AC@3 | AC@5 | Avg@5 |
 |---|---|---|---|---|---|
-| kafka | 6 | 0.83 | **1.00** | **1.00** | 0.92 |
-| pipeline | 7 | 0.86 | 0.86 | 0.86 | 0.86 |
-| infra | 5 | 0.80 | 0.80 | 0.80 | 0.80 |
-| sink | 4 | 0.75 | 0.75 | 0.75 | 0.75 |
-| source | 5 | 0.40 | 0.80 | 0.80 | 0.60 |
-| change | 4 | 0.25 | 0.75 | 0.75 | 0.46 |
-| data_quality | 4 | 0.50 | 0.50 | 0.50 | 0.50 |
+| kafka | 6 | 1.00 | 1.00 | 1.00 | 1.00 |
+| pipeline | 7 | 1.00 | 1.00 | 1.00 | 1.00 |
+| infra | 5 | 1.00 | 1.00 | 1.00 | 1.00 |
+| sink | 4 | 1.00 | 1.00 | 1.00 | 1.00 |
+| source | 5 | 1.00 | 1.00 | 1.00 | 1.00 |
+| change | 4 | 1.00 | 1.00 | 1.00 | 1.00 |
+| data_quality | 4 | 1.00 | 1.00 | 1.00 | 1.00 |
 
-**오답·기권 12건 분석 (환각 0의 근거)**
+**오답 분석**
 
-- **정직한 기권 7건** (top = UNKNOWN, conf 0.0): SOURCE_AUTH(2), SINK_AUTH, DEPLOYMENT_REGRESSION, IMAGE_DEPLOYMENT_REGRESSION, UPSTREAM_VOLUME, DUPLICATE_SPIKE, RETRY_EXHAUSTED → **temporal/metric 증거가 텍스트에 없어** 단정하지 않고 보류. (Bradford Hill temporality 강제 = 설계대로)
-- **인접 근접 5건** (top = 같은 계층 sibling): SOURCE_READ_LATENCY→SOURCE_DB_CONNECTION_TIMEOUT, PARTITION_IMBALANCE→BROKER_RESOURCE_PRESSURE, RECENT_CONFIG→PIPELINE_CONFIG_INVALID, RECENT_SCHEMA→SCHEMA_MISMATCH, SOURCE_AUTH→CREDENTIAL_ROTATION(둘 다 타당) → **모두 카탈로그 내 유효 원인. 날조(fabrication) 0건.**
+- 오답 0건: 35개 seed 모두 top-1 정답
+- 해석 제한: replay 조건상 incident type은 oracle로 주입되며, 100% 값은 production unseen 일반화 수치가 아님
 
-> 핵심: **확신 답변 28건 중 23건 정답(82% precision)**, 불확실 7건은 기권. **존재하지 않는 원인을 지어낸 사례 0건** → "환각 ≈ 0".
+### 3.1.1 보존 floor (develop 기준 기존 발표 수치)
+
+기존 develop 배포 이미지 `4a7ca906` 기준 보수적 floor는 본문 재측정값과 함께 인용해야 한다. 문서 본문의 과거 수치는 AC@1 65.7%, AC@3 80.0%, AC@5 80.0%, Avg@5 0.724, ECE 0.073, 기권 7/35였고, 보존 JSON `docs/test/results-20260622/rca_campaign_floor.json`은 AC@1 71.43%, AC@3 85.71%, AC@5 85.71%, Avg@5 0.781, ECE 0.0832, 기권 5/35를 기록한다.
+
+> 핵심: 현재 branch replay 수치와 보존 floor는 산출 시점과 코드 상태가 다르다. 100% 값을 단독으로 쓰지 말고 oracle incident-type, seed 내부 replay, floor 범위를 함께 표시한다.
 
 ### 3.2 라이브 장애 주입
 
@@ -91,12 +98,13 @@ RCA 근본원인 카탈로그를 **8계층 35개**로 정의하고, 33개 인시
 
 ## 4. 해석 & 슬라이드 03 반영 권고
 
-- **방법론 명시 필수**: 위 수치는 **관측증거-only + LLM 비활성**의 *보수적 floor*다. 프로덕션 Retrieval은 metric/trace/temporal 증거를 추가로 수집하고 LLM 타이브레이커가 작동하므로 실제는 더 높다.
+- **방법론 명시 필수**: 현재 재측정 수치는 **관측증거-only + LLM 비활성 + oracle incident-type**의 seed replay 결과다. 프로덕션 Retrieval은 metric/trace/temporal 증거를 추가 수집할 수 있지만 classifier 포함 end-to-end 및 unseen production holdout은 별도 측정이 필요하다.
+- **해석 제한**: 100% 값은 기존 35 seed의 조건부 replay 결과이며 본 문서의 floor(AC@1 65.7%, 보존 JSON 기준 71.43%)와 함께 표시해야 한다.
 - **권장 슬라이드 수치(재현 가능)**:
-  - AI 진단 정확도: **AC@5 80% / 확신 시 82%**
+  - AI 진단 정확도: **보존 floor AC@1 65.7~71.4%, 현재 oracle replay AC@1 100.0% (35/35, 조건부)**
   - 환각: **≈ 0** (날조 0건, 불확실 20%는 정직한 기권)
-  - 신뢰도 캘리브레이션: **ECE 0.073**
-- **약점(정직 공개)**: `change`·`data_quality` 계층은 temporal/metric 증거 의존도가 높아 텍스트-only 평가에서 AC@1이 낮다. → Retrieval의 metric/temporal 증거 강화 + gold set 확대(#964 피드백 루프)가 개선 경로.
+  - 신뢰도 캘리브레이션: **floor ECE 0.073~0.0832, 현재 replay ECE 0.1595**
+- **약점(정직 공개)**: 현재 seed replay에서는 취약 계층이 없지만 `change`·`data_quality` 계층은 production에서 temporal/metric 증거 의존도가 높다. → Retrieval의 metric/temporal 증거 강화 + gold set 확대(#964 피드백 루프)가 개선 경로.
 - ⚠️ 기존 슬라이드의 "89.6% / 367 케이스"는 본 캠페인과 산출 방식·데이터셋이 달라 **출처 검증 전까지 사용하지 말 것**. 본 문서의 재현 가능한 수치로 대체 권장.
 
 ## 부록 — 재현

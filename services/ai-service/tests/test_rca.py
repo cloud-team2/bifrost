@@ -6,7 +6,7 @@ import json
 import pytest
 
 from app.agents.rca import run_rca
-from app.catalogs.evidence_matrix import get_evidence_profile
+from app.catalogs.evidence_matrix import EVIDENCE_RULES, get_evidence_profile, list_evidence_profiles
 from app.catalogs.root_causes import root_cause_ids
 from app.core.config import Settings, settings
 from app.schemas.outputs import Classification, ClassifierOutput, IncidentTypeOutput, RcaOutput, RetrievalOutput
@@ -16,8 +16,10 @@ from app.schemas.state import EvidenceItem, EvidenceType, IncidentScope
 class _DummyLLMProvider:
     def __init__(self, response: str = "") -> None:
         self.response = response
+        self.messages: list[dict] = []
 
     async def generate(self, messages: list[dict], model: str | None = None) -> str:
+        self.messages = messages
         return self.response
 
 
@@ -366,6 +368,169 @@ async def test_normal_auth_evidence_does_not_commit_auth_expired(
 
 
 @pytest.mark.asyncio
+async def test_normal_source_auth_status_does_not_suppress_sink_auth_fault(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier("SINK_AUTH_FAILURE"),
+        _retrieval("source auth status normal. sink authentication failed token expired"),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "SINK_AUTH_EXPIRED"
+    assert top.required_evidence_satisfied is True
+    assert top.confidence >= 0.60
+
+
+@pytest.mark.parametrize(
+    "summary",
+    [
+        "source 인증 오류 없음",
+        "source 인증 실패 없음",
+        "source 권한 문제 없음",
+        "source 토큰 정상",
+        "인증 실패 없음",
+        "권한 문제 없음",
+        "토큰 정상",
+    ],
+)
+@pytest.mark.asyncio
+async def test_korean_auth_negation_does_not_commit_auth_expired(
+    monkeypatch: pytest.MonkeyPatch,
+    summary: str,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier("SOURCE_AUTH_FAILURE"),
+        _retrieval(summary),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "UNKNOWN_WITH_EVIDENCE_GAP"
+    assert top.confidence < 0.60
+
+
+@pytest.mark.asyncio
+async def test_normal_metadata_schema_does_not_commit_schema_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier("SCHEMA_MISMATCH"),
+        _retrieval(
+            "metadata schema status normal. schema registry subject unchanged. "
+            "no schema error or serialization failure. connector status RUNNING."
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "UNKNOWN_WITH_EVIDENCE_GAP"
+    assert top.confidence < 0.60
+
+
+@pytest.mark.parametrize(
+    ("incident_type", "summary"),
+    [
+        ("SCHEMA_MISMATCH", "스키마 오류 없음 connector status RUNNING"),
+        ("PIPELINE_TASK_FAILED", "설정 오류 없음"),
+        ("DUPLICATE_SPIKE", "중복 레코드 없음"),
+        ("CONSUMER_LAG_SPIKE", "lag 정상"),
+        ("CONSUMER_LAG_SPIKE", "consumer lag 정상"),
+        ("CONNECTOR_TASK_FAILED", "connector status RUNNING; no failed task"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_normal_negative_evidence_does_not_commit_matching_fault(
+    monkeypatch: pytest.MonkeyPatch,
+    incident_type: str,
+    summary: str,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier(incident_type),
+        _retrieval(summary),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "UNKNOWN_WITH_EVIDENCE_GAP"
+    assert top.confidence < 0.60
+
+
+@pytest.mark.asyncio
+async def test_control_metadata_does_not_select_root_cause(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier("CONNECTOR_TASK_FAILED"),
+        _retrieval(
+            "case_id=C3_SOURCE_DB_CONNECTION_TIMEOUT_07 "
+            "expected_root_cause=SINK_AUTH_EXPIRED unrelated connector observation"
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "UNKNOWN_WITH_EVIDENCE_GAP"
+    assert top.confidence < 0.60
+
+
+@pytest.mark.asyncio
+async def test_accepted_root_cause_metadata_does_not_select_root_cause(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier("CONNECTOR_TASK_FAILED"),
+        _retrieval(
+            "accepted_root_cause_id=SINK_AUTH_EXPIRED "
+            "corrected_root_cause_id=SOURCE_AUTH_EXPIRED connector status RUNNING"
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "UNKNOWN_WITH_EVIDENCE_GAP"
+    assert top.confidence < 0.60
+
+
+@pytest.mark.asyncio
+async def test_connector_task_unscoped_auth_does_not_default_to_source_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier("CONNECTOR_TASK_FAILED"),
+        _retrieval(
+            "connector task status FAILED",
+            "task trace worker log: authentication failed token expired",
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "CONNECTOR_TASK_FAILED"
+
+
+@pytest.mark.asyncio
+async def test_connector_task_sink_auth_context_does_not_select_source_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier("CONNECTOR_TASK_FAILED"),
+        _retrieval(
+            "source status normal",
+            "sink authentication failed token expired",
+            "connector task status FAILED",
+            "task trace worker log exception",
+        ),
+    )
+
+    ordered = [candidate.root_cause_id for candidate in result.root_cause_candidates]
+    assert ordered[0] != "SOURCE_AUTH_EXPIRED"
+    assert ordered.index("SINK_AUTH_EXPIRED") < ordered.index("SOURCE_AUTH_EXPIRED")
+
+
+@pytest.mark.asyncio
 async def test_knowledge_evidence_does_not_satisfy_required_rules(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -623,6 +788,17 @@ def test_structured_required_rules_opt_out_of_semantic_matching() -> None:
         assert rule.semantic_allowed is False
 
 
+def test_evidence_rules_are_derived_from_profiles() -> None:
+    flattened = tuple(
+        rule
+        for profile in list_evidence_profiles()
+        for rules in (profile.required, profile.supporting, profile.negative, profile.exclusion)
+        for rule in rules
+    )
+
+    assert EVIDENCE_RULES == flattened
+
+
 @pytest.mark.asyncio
 async def test_structured_semantic_opt_out_blocks_embedding_only_required_match(
     monkeypatch: pytest.MonkeyPatch,
@@ -734,6 +910,24 @@ async def test_catalog_only_root_cause_ids(monkeypatch: pytest.MonkeyPatch) -> N
     known_ids = set(root_cause_ids())
     assert all(item.root_cause_id in known_ids for item in result.root_cause_candidates)
     assert result.root_cause_candidates[0].root_cause_id != "MADE_UP_ROOT_CAUSE"
+
+
+@pytest.mark.asyncio
+async def test_control_metadata_is_removed_from_rca_llm_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _DummyLLMProvider("")
+    monkeypatch.setattr("app.llm.provider.get_llm_provider", lambda: provider)
+
+    result = await run_rca(
+        _classifier("SOURCE_AUTH_FAILURE", "SINK_AUTH_FAILURE"),
+        _retrieval("source 인증 실패 sink 인증 실패 expected_root_cause=PIPELINE_DUPLICATE_SPIKE"),
+    )
+
+    assert result.root_cause_candidates[0].root_cause_id in {"SOURCE_AUTH_EXPIRED", "SINK_AUTH_EXPIRED"}
+    prompt = provider.messages[1]["content"]
+    assert "expected_root_cause" not in prompt
+    assert "PIPELINE_DUPLICATE_SPIKE" not in prompt
 
 
 @pytest.mark.asyncio
