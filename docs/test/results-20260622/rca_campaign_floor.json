@@ -1,0 +1,455 @@
+{
+  "total_cases": 35,
+  "AC@1": 0.7143,
+  "AC@3": 0.8571,
+  "AC@5": 0.8571,
+  "Avg@5": 0.781,
+  "ECE": 0.0832,
+  "abstain_count": 5,
+  "weak_layers": [],
+  "layer_breakdown": [
+    {
+      "layer": "change",
+      "n": 4,
+      "AC@1": 0.25,
+      "AC@3": 0.75,
+      "AC@5": 0.75,
+      "Avg@5": 0.458
+    },
+    {
+      "layer": "data_quality",
+      "n": 4,
+      "AC@1": 0.75,
+      "AC@3": 0.75,
+      "AC@5": 0.75,
+      "Avg@5": 0.75
+    },
+    {
+      "layer": "infra",
+      "n": 5,
+      "AC@1": 0.8,
+      "AC@3": 0.8,
+      "AC@5": 0.8,
+      "Avg@5": 0.8
+    },
+    {
+      "layer": "kafka",
+      "n": 6,
+      "AC@1": 0.833,
+      "AC@3": 1.0,
+      "AC@5": 1.0,
+      "Avg@5": 0.917
+    },
+    {
+      "layer": "pipeline",
+      "n": 7,
+      "AC@1": 0.857,
+      "AC@3": 0.857,
+      "AC@5": 0.857,
+      "Avg@5": 0.857
+    },
+    {
+      "layer": "sink",
+      "n": 4,
+      "AC@1": 0.75,
+      "AC@3": 0.75,
+      "AC@5": 0.75,
+      "Avg@5": 0.75
+    },
+    {
+      "layer": "source",
+      "n": 5,
+      "AC@1": 0.6,
+      "AC@3": 1.0,
+      "AC@5": 1.0,
+      "Avg@5": 0.8
+    }
+  ],
+  "rows": [
+    {
+      "entry": "gs_seed_001",
+      "layer": "source",
+      "incident_type": "SOURCE_AUTH_FAILURE",
+      "expected": "SOURCE_AUTH_EXPIRED",
+      "top": "CREDENTIAL_ROTATION_REGRESSION",
+      "top_conf": 0.68,
+      "hit@1": false,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_002",
+      "layer": "source",
+      "incident_type": "SOURCE_AUTH_FAILURE",
+      "expected": "SOURCE_AUTH_EXPIRED",
+      "top": "SOURCE_AUTH_EXPIRED",
+      "top_conf": 0.82,
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_003",
+      "layer": "source",
+      "incident_type": "SOURCE_CONNECTION_TIMEOUT",
+      "expected": "SOURCE_NETWORK_REACHABILITY",
+      "top": "SOURCE_NETWORK_REACHABILITY",
+      "top_conf": 0.82,
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_004",
+      "layer": "source",
+      "incident_type": "SOURCE_CONNECTION_TIMEOUT",
+      "expected": "SOURCE_DB_CONNECTION_TIMEOUT",
+      "top": "SOURCE_DB_CONNECTION_TIMEOUT",
+      "top_conf": 0.653,
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_005",
+      "layer": "source",
+      "incident_type": "SOURCE_READ_LATENCY",
+      "expected": "SOURCE_READ_LATENCY",
+      "top": "SOURCE_DB_CONNECTION_TIMEOUT",
+      "top_conf": 0.653,
+      "hit@1": false,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_006",
+      "layer": "pipeline",
+      "incident_type": "CONNECTOR_TASK_FAILED",
+      "expected": "CONNECTOR_TASK_FAILED",
+      "top": "CONNECTOR_TASK_FAILED",
+      "top_conf": 0.68,
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_007",
+      "layer": "pipeline",
+      "incident_type": "CONNECTOR_TASK_FAILED",
+      "expected": "CONNECTOR_TASK_FAILED",
+      "top": "CONNECTOR_TASK_FAILED",
+      "top_conf": 0.82,
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_008",
+      "layer": "pipeline",
+      "incident_type": "PIPELINE_TASK_FAILED",
+      "expected": "PIPELINE_CONFIG_INVALID",
+      "top": "PIPELINE_CONFIG_INVALID",
+      "top_conf": 0.68,
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_009",
+      "layer": "pipeline",
+      "incident_type": "SCHEMA_MISMATCH",
+      "expected": "SCHEMA_MISMATCH",
+      "top": "SCHEMA_MISMATCH",
+      "top_conf": 0.72,
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_010",
+      "layer": "pipeline",
+      "incident_type": "SCHEMA_MISMATCH",
+      "expected": "SCHEMA_MISMATCH",
+      "top": "SCHEMA_MISMATCH",
+      "top_conf": 0.82,
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_011",
+      "layer": "pipeline",
+      "incident_type": "CONNECTOR_WORKER_UNHEALTHY",
+      "expected": "CONNECTOR_WORKER_REBALANCE_LOOP",
+      "top": "CONNECTOR_WORKER_REBALANCE_LOOP",
+      "top_conf": 0.68,
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_012",
+      "layer": "kafka",
+      "incident_type": "CONSUMER_LAG_SPIKE",
+      "expected": "CONSUMER_LAG_SPIKE",
+      "top": "CONSUMER_LAG_SPIKE",
+      "top_conf": 0.68,
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_013",
+      "layer": "kafka",
+      "incident_type": "CONSUMER_LAG_SPIKE",
+      "expected": "CONSUMER_LAG_SPIKE",
+      "top": "CONSUMER_LAG_SPIKE",
+      "top_conf": 0.68,
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_014",
+      "layer": "kafka",
+      "incident_type": "BROKER_RESOURCE_PRESSURE",
+      "expected": "BROKER_RESOURCE_PRESSURE",
+      "top": "BROKER_RESOURCE_PRESSURE",
+      "top_conf": 0.82,
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_015",
+      "layer": "kafka",
+      "incident_type": "PARTITION_IMBALANCE",
+      "expected": "PARTITION_IMBALANCE",
+      "top": "BROKER_RESOURCE_PRESSURE",
+      "top_conf": 0.68,
+      "hit@1": false,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_016",
+      "layer": "kafka",
+      "incident_type": "TOPIC_INGRESS_SPIKE",
+      "expected": "TOPIC_INGRESS_SPIKE",
+      "top": "TOPIC_INGRESS_SPIKE",
+      "top_conf": 0.68,
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_017",
+      "layer": "kafka",
+      "incident_type": "REBALANCE_LOOP",
+      "expected": "CONSUMER_REBALANCE_LOOP",
+      "top": "CONSUMER_REBALANCE_LOOP",
+      "top_conf": 0.72,
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_018",
+      "layer": "sink",
+      "incident_type": "SINK_AUTH_FAILURE",
+      "expected": "SINK_AUTH_EXPIRED",
+      "top": "UNKNOWN_WITH_EVIDENCE_GAP",
+      "top_conf": 0.0,
+      "hit@1": false,
+      "hit@3": false,
+      "hit@5": false
+    },
+    {
+      "entry": "gs_seed_019",
+      "layer": "sink",
+      "incident_type": "SINK_WRITE_LATENCY",
+      "expected": "SINK_WRITE_LATENCY",
+      "top": "SINK_WRITE_LATENCY",
+      "top_conf": 0.68,
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_020",
+      "layer": "sink",
+      "incident_type": "SINK_CONSTRAINT_ERROR",
+      "expected": "SINK_CONSTRAINT_VIOLATION",
+      "top": "SINK_CONSTRAINT_VIOLATION",
+      "top_conf": 0.87,
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_021",
+      "layer": "sink",
+      "incident_type": "SINK_CONNECTION_TIMEOUT",
+      "expected": "SINK_DB_CONNECTION_TIMEOUT",
+      "top": "SINK_DB_CONNECTION_TIMEOUT",
+      "top_conf": 0.853,
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_022",
+      "layer": "infra",
+      "incident_type": "POD_OOM_KILLED",
+      "expected": "POD_OOM_KILLED",
+      "top": "POD_OOM_KILLED",
+      "top_conf": 0.72,
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_023",
+      "layer": "infra",
+      "incident_type": "POD_CRASH_LOOP",
+      "expected": "POD_CRASH_LOOP",
+      "top": "POD_CRASH_LOOP",
+      "top_conf": 0.68,
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_024",
+      "layer": "infra",
+      "incident_type": "NODE_PRESSURE",
+      "expected": "NODE_PRESSURE",
+      "top": "NODE_PRESSURE",
+      "top_conf": 0.68,
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_025",
+      "layer": "infra",
+      "incident_type": "PVC_PRESSURE",
+      "expected": "PVC_PRESSURE",
+      "top": "PVC_PRESSURE",
+      "top_conf": 0.92,
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_026",
+      "layer": "infra",
+      "incident_type": "DEPLOYMENT_ROLLOUT_REGRESSION",
+      "expected": "DEPLOYMENT_REGRESSION",
+      "top": "UNKNOWN_WITH_EVIDENCE_GAP",
+      "top_conf": 0.0,
+      "hit@1": false,
+      "hit@3": false,
+      "hit@5": false
+    },
+    {
+      "entry": "gs_seed_027",
+      "layer": "change",
+      "incident_type": "CONFIG_CHANGE_REGRESSION",
+      "expected": "RECENT_CONFIG_CHANGE_REGRESSION",
+      "top": "PIPELINE_CONFIG_INVALID",
+      "top_conf": 0.68,
+      "hit@1": false,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_028",
+      "layer": "change",
+      "incident_type": "SCHEMA_CHANGE_REGRESSION",
+      "expected": "RECENT_SCHEMA_CHANGE_REGRESSION",
+      "top": "SCHEMA_MISMATCH",
+      "top_conf": 0.82,
+      "hit@1": false,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_029",
+      "layer": "change",
+      "incident_type": "IMAGE_DEPLOYMENT_REGRESSION",
+      "expected": "RECENT_IMAGE_DEPLOYMENT_REGRESSION",
+      "top": "UNKNOWN_WITH_EVIDENCE_GAP",
+      "top_conf": 0.0,
+      "hit@1": false,
+      "hit@3": false,
+      "hit@5": false
+    },
+    {
+      "entry": "gs_seed_030",
+      "layer": "change",
+      "incident_type": "CREDENTIAL_ROTATION_FAILURE",
+      "expected": "CREDENTIAL_ROTATION_REGRESSION",
+      "top": "CREDENTIAL_ROTATION_REGRESSION",
+      "top_conf": 0.68,
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_031",
+      "layer": "data_quality",
+      "incident_type": "VOLUME_ANOMALY",
+      "expected": "UPSTREAM_DATA_VOLUME_ANOMALY",
+      "top": "UPSTREAM_DATA_VOLUME_ANOMALY",
+      "top_conf": 0.82,
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_032",
+      "layer": "data_quality",
+      "incident_type": "DUPLICATE_SPIKE",
+      "expected": "PIPELINE_DUPLICATE_SPIKE",
+      "top": "UNKNOWN_WITH_EVIDENCE_GAP",
+      "top_conf": 0.0,
+      "hit@1": false,
+      "hit@3": false,
+      "hit@5": false
+    },
+    {
+      "entry": "gs_seed_033",
+      "layer": "data_quality",
+      "incident_type": "FRESHNESS_DELAY",
+      "expected": "PIPELINE_FRESHNESS_DELAY",
+      "top": "PIPELINE_FRESHNESS_DELAY",
+      "top_conf": 0.72,
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_034",
+      "layer": "data_quality",
+      "incident_type": "NULL_RATE_SPIKE",
+      "expected": "SCHEMA_NULL_RATE_SPIKE",
+      "top": "SCHEMA_NULL_RATE_SPIKE",
+      "top_conf": 0.68,
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true
+    },
+    {
+      "entry": "gs_seed_035",
+      "layer": "pipeline",
+      "incident_type": "PIPELINE_TASK_FAILED",
+      "expected": "PIPELINE_TASK_RETRY_EXHAUSTED",
+      "top": "UNKNOWN_WITH_EVIDENCE_GAP",
+      "top_conf": 0.0,
+      "hit@1": false,
+      "hit@3": false,
+      "hit@5": false
+    }
+  ]
+}
