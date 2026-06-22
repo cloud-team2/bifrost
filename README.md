@@ -1,153 +1,145 @@
-# Data Orchestration Platform
+# Bifröst
 
-AI 기반 분산 데이터 오케스트레이션 플랫폼. 사용자가 DB만 등록하고 대시보드 또는 자연어로 요청하면 Kafka 토픽과 Debezium Connector가 자동으로 구성된다.
+> **DB만 연결하면 데이터 파이프라인은 클릭 몇 번 또는 자연어로, 장애는 AI 에이전트가 진단까지.**
+> CDC·EDA 데이터 파이프라인을 셀프서비스로 구축·운영하는 AIOps 플랫폼.
 
-## Architecture
+---
 
-자세한 구조: [docs/README.md](docs/README.md), [Spring Boot 설계](docs/design/backend-springboot/overview.md)
+## 개요
 
-## 레포 구조
+**Bifröst**는 사용자가 소스·싱크 데이터베이스만 등록하면, UI 클릭 또는 자연어 채팅으로 **CDC(Change Data Capture)** 및 **EDA(Event-Driven Architecture)** 파이프라인을 생성·운영할 수 있는 플랫폼입니다.
+
+파이프라인을 만들면 플랫폼이 Kubernetes 위에 **Kafka(Strimzi)·Debezium·Kafka Connect**를 자동 프로비저닝합니다. 운영 중에는 **AI 에이전트**가 파이프라인을 모니터링하고, 장애를 감지해 **근거 기반 RCA(Root Cause Analysis)**를 수행하며, 자연어로 상태 조회와 조치를 지원합니다(변경 조치는 운영자 승인 후 실행).
+
+## 핵심 기능
+
+- **셀프서비스 파이프라인** — DB 등록 → CDC(source→sink) / EDA(fan-out) 파이프라인을 UI·자연어로 생성. Strimzi Kafka·Debezium·JDBC Sink Connector 자동 구성.
+- **AI 장애 대응(RCA)** — 8계층·35 근본원인 카탈로그 + evidence matrix 기반 진단, confidence 스코어링·캘리브레이션, 근거 부족 시 기권(`UNKNOWN_WITH_EVIDENCE_GAP`).
+- **자연어 운영** — 채팅으로 파이프라인·메트릭·로그·인시던트를 조회하고 조치. planner가 read-only 도구로 라우팅하며, 변경 조치는 HITL(Human-in-the-Loop) 승인을 거칩니다.
+- **실시간 관측성** — 파이프라인 상태·consumer lag·인시던트를 실시간 대시보드로 추적.
+- **멀티테넌시** — 프로젝트(테넌트)별 DB·파이프라인·인시던트 격리.
+
+## 아키텍처
 
 ```
-data-orchestration-platform/
-├─ docs/                       문서, ADR, 명세서
-├─ services/
-│   ├─ operations-backend/     플랫폼 API + 내부 전용 /internal/ops + K8s/Kafka 자동화 (Spring 모놀리스, B·C)
-│   ├─ ai-service/             AI 장애대응 (FastAPI, D)
-│   └─ frontend/               React UI (E)
-├─ infra/                      Terraform, Helm, K8s yaml (A)
-├─ scripts/                    로컬 dev 스크립트
-└─ docker-compose.yml          로컬 개발 환경
+   Browser
+      │ /api
+      ▼
+┌──────────────┐        /api/v1/agent        ┌──────────────────────┐
+│  frontend    │ ─────────────────────────▶  │     ai-service       │
+│  React/Vite  │                             │     FastAPI (8082)   │
+│  (5173)      │                             │  RCA 에이전트 · LLM   │
+└──────┬───────┘                             │  pgvector 지식베이스  │
+       │ /api                                └───────────┬──────────┘
+       ▼                                                 │ /internal/ops
+┌──────────────────────────┐  ◀──────────────────────────┘
+│  operations-backend       │
+│  Spring Boot (8080)       │  인증 · datasource/pipeline 도메인 · K8s/Kafka 자동화
+└──────────────┬────────────┘
+               │ provisioning
+               ▼
+┌──────────────────────────────────────────────────────┐
+│  Kubernetes (EKS) · Strimzi Kafka                      │
+│  Debezium(source) → Kafka Topic → JDBC Connect(sink)   │
+└────────────────────────────────────────────────────────┘
 ```
 
-> Spring Boot는 단일 모놀리스(`operations-backend`)다. core/orchestrator 분리와 `common-dto`는 [ADR 0004](docs/adr/0004-monorepo-monolith.md)로 폐기·흡수되었다.
+- **operations-backend** (Spring Boot 모놀리스) — 플랫폼 API, 인증, datasource·pipeline 도메인, K8s/Kafka 자동화. 에이전트 전용 내부 API `/internal/ops/**`는 외부에 노출하지 않습니다.
+- **ai-service** (FastAPI) — RCA 에이전트, LLM 도구 라우팅(planner·retrieval), 인시던트 분석, pgvector 지식베이스, 운영자 피드백 gold set.
+- **frontend** (React·Vite·TypeScript) — 콘솔 UI, 파이프라인·인시던트 대시보드, AI 채팅 패널.
 
-## 서비스 목록
+> 브라우저/외부 클라이언트는 `/api/**` 또는 FastAPI `/api/v1/agent/**`만 사용하고, FastAPI가 내부 DNS로 Spring Boot `/internal/ops/**`를 호출합니다. Spring Boot는 단일 모놀리스이며, core/orchestrator 분리는 [ADR 0004](docs/adr/0004-monorepo-monolith.md)로 흡수되었습니다.
 
-| Service | Port | 역할 | Owner |
-| --- | --- | --- | --- |
-| operations-backend | 8080 | 플랫폼 API, 인증, 도메인, K8s/Kafka 자동화, 내부 전용 `/internal/ops` | B·C |
-| ai-service | 8082 | AI 장애대응 (FastAPI) | D |
-| frontend | 5173 | React UI | E |
+## 기술 스택
 
-`/internal/ops/**`는 public frontend ingress에 노출하지 않는 agent-facing 내부 API다. 브라우저/외부 클라이언트는 `/api/**` 또는 FastAPI `/api/v1/agent/**` 경유만 사용하고, FastAPI가 내부 서비스 DNS로 Spring Boot `/internal/ops/**`를 호출한다.
+| 영역 | 스택 |
+| --- | --- |
+| Backend | Java 21, Spring Boot, Gradle |
+| AI | Python 3.11, FastAPI, LLM, pgvector |
+| Frontend | React, Vite, TypeScript, Tailwind CSS |
+| Data plane | Apache Kafka (Strimzi), Debezium, Kafka Connect (JDBC) |
+| Datastore | PostgreSQL(metadb), pgvector(agentdb), 테넌트 DB(PostgreSQL/MariaDB) |
+| Infra | AWS EKS, ArgoCD(GitOps), Harbor, Jenkins(CI/CD) |
+| Observability | Prometheus, Grafana, Loki, Tempo |
 
-## Quick Start
+## 빠른 시작
 
 ### Prerequisites
 
 - JDK 21 (Temurin 권장)
 - Node 20+
+- Python 3.11+
 - Docker + Docker Compose
-- Gradle 8.10+ (Wrapper 생성용. 한 번만 필요)
 
-### 최초 셋업
+### 로컬 실행
 
 ```bash
-# 1. 클론
-git clone https://github.com/your-org/data-orchestration-platform.git
-cd data-orchestration-platform
+# 1. 의존 인프라(Kafka, metadb, 테넌트 DB 시뮬레이터, agentdb 등) 기동
+docker compose up -d            # 또는 ./scripts/local-up.sh
 
-# 2. Gradle Wrapper 생성 (한 번만)
-gradle wrapper --gradle-version 8.10
+# 2. operations-backend (Spring Boot)
+JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew :services:operations-backend:bootRun
 
-# 3. 의존성 환경 (Kafka, MetaDB, 사용자 DB 시뮬레이터) 띄우기
-docker-compose up -d
+# 3. ai-service (FastAPI)
+cd services/ai-service
+python -m venv .venv && .venv/bin/pip install -e .
+.venv/bin/uvicorn app.main:app --reload --port 8082
 
-# 4. Backend 빌드 + 실행 (단일 모놀리스)
-./gradlew :services:operations-backend:bootRun
-
-# 5. Frontend
+# 4. frontend (React)
 cd services/frontend
-npm install  # 또는 pnpm install
-npm run dev
+npm install && npm run dev
 ```
 
-이제 접속:
-- Frontend: http://localhost:5173
-- Platform API: http://localhost:8080/swagger-ui.html
-- Kafka UI: http://localhost:8090
+접속:
 
-## Gradle 명령어 참고
+| 대상 | URL |
+| --- | --- |
+| Frontend | http://localhost:5173 |
+| Platform API (Swagger) | http://localhost:8080/swagger-ui.html |
+| AI Service (OpenAPI) | http://localhost:8082/docs |
+| Kafka UI | http://localhost:8090 |
 
-```bash
-# 전체 빌드
-./gradlew build
-
-# 특정 모듈만 빌드
-./gradlew :services:operations-backend:build
-
-# 테스트
-./gradlew test
-./gradlew :services:operations-backend:test
-
-# Docker 이미지 빌드 (Spring Boot)
-./gradlew :services:operations-backend:bootBuildImage
-
-# 의존성 트리
-./gradlew :services:operations-backend:dependencies
-```
-
-## 개발 워크플로
-
-### 브랜치 전략 (GitHub Flow)
+## 프로젝트 구조
 
 ```
-main (always deployable)
-  └─ feature/B-datasource-api
-  └─ feature/C-tenant-provisioner
-  └─ fix/login-bug
+bifrost/
+├─ docs/                     문서·ADR·명세 (Source of Truth)
+├─ services/
+│  ├─ operations-backend/    Spring Boot — 플랫폼 API·K8s/Kafka 자동화
+│  ├─ ai-service/            FastAPI — RCA 에이전트·LLM
+│  └─ frontend/              React UI
+├─ infra/                    Terraform·Helm·K8s manifest
+├─ scripts/                  로컬/배포 스크립트 (local-up.sh 등)
+└─ docker-compose.yml        로컬 의존 인프라
 ```
 
-- 모든 변경은 feature 브랜치 → PR → main 머지
-- 머지하면 자동 배포 (.github/workflows/)
-- main은 직접 푸시 금지 (보호 설정)
+## 개발
 
-### 커밋 메시지
+브랜치·커밋·PR 컨벤션은 [docs/team/git-convention.md](docs/team/git-convention.md)를 따릅니다.
 
-```
-[영역] 짧은 설명
-
-자세한 설명 (선택)
-```
-
-영역 예: `ops`, `database`, `provisioning`, `ai`, `frontend`, `infra`, `docs`.
-
-### PR 규칙
-
-- 제목: `[core] Add datasource registration API`
-- 최소 1명 리뷰
-- CI 통과 필수
-- 본인 PR은 본인이 머지 (Squash and merge)
-
-### GitHub 작업 로그 동기화
-
-GitHub 이슈/PR 이벤트는 `.github/workflows/notion_sync.yml`에서 Notion의 "GitHub 작업 로그" DB로 동기화한다. 레포 시크릿 `NOTION_TOKEN`을 설정해야 하며, `NOTION_DB_ID`는 필요 시 설정한다. `NOTION_DB_ID`를 생략하면 `37cb7cb3-2d91-81cf-b930-f137189b41c4`를 사용한다.
-
-DB 속성은 `제목`(title), `번호`(number), `타입`(select 또는 text), `상태`(select/status 또는 text), `작성자`(text), `머지일`(date), `링크`(url 또는 text)를 기대한다. select/status 속성을 쓰는 경우 옵션명은 `feat`/`fix` 같은 제목 타입과 `open`/`closed`/`merged` 상태값에 맞춘다.
-
-이전 슬랙 요약 봇을 제거했으므로 더 이상 쓰지 않는 `SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID`, `BOT_GITHUB_TOKEN`, `MONITOR_REPOS` 시크릿은 레포 설정에서 정리한다.
+- **브랜치 모델**: `main`(배포 가능) ← `develop`(통합) ← 작업 브랜치 `{type}/#{이슈번호}`
+- **작업 흐름**: GitHub Issue 생성 → 브랜치 → PR(대상 `develop`) → **Squash & merge**. `main ← develop`은 릴리스 시점에만.
+- **타입**: `feat` · `fix` · `chore` · `docs` · `refactor` (커밋은 `test` 추가)
+- **커밋 메시지**: `#{이슈번호} [type] 메시지`
+- **보호**: `main`·`develop` 직접 푸시 금지, PR·CI 통과 필수
 
 ## 팀
 
-| Role | Name | 담당 |
-| --- | --- | --- |
-| Infra Lead | A | EKS, Strimzi, Kafka, CI/CD, 모니터링 |
-| Backend Domain | B | operations-backend (도메인/DB/API) |
-| K8s Automation | C | operations-backend (provisioning/watcher) |
-| AI / LLM | D | ai-service (FastAPI, Sprint 4~) |
-| Frontend | E | frontend |
-
-자세한 R&R 전용 문서는 WIP다.
+| 이름 | 역할 | 담당 | GitHub | Email |
+| --- | --- | --- | --- | --- |
+| 이성민 | **PM** | Spring Boot | [@seongmin0229](https://github.com/seongmin0229) | leesung2925@gmail.com |
+| 정재환 | **PL** | 인프라 · Frontend · CI/CD | [@hwnnn](https://github.com/hwnnn) | 2020112023@dgu.ac.kr |
+| 백강민 | Backend | Spring Boot | [@baekkangmin](https://github.com/baekkangmin) | rkdgur1902@naver.com |
+| 권세빈 | AI | FastAPI | [@sebeeeen](https://github.com/sebeeeen) | a856412@gmail.com |
+| 김연수 | AI | FastAPI | [@sooooscode](https://github.com/sooooscode) | sooooscode@gmail.com |
 
 ## 문서
 
-- [Documentation Index](docs/README.md)
-- [Canonical Functional Spec](docs/spec.md)
-- [Spring Boot API](docs/api/springboot.md)
+- [문서 인덱스](docs/README.md)
+- [기능 명세 (Spec)](docs/spec.md)
 - [ADR (Architecture Decision Records)](docs/adr/)
-- [API Specs](docs/api/)
+- [Git 컨벤션](docs/team/git-convention.md)
 
 ## License
 
-(캡스줍 종료 후 결정)
+캡스톤 프로젝트 — 라이선스 미정.
