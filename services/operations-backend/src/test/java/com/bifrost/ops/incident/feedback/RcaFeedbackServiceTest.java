@@ -17,6 +17,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -26,7 +27,9 @@ class RcaFeedbackServiceTest {
 
     private final RcaFeedbackRepository feedbackRepository = mock(RcaFeedbackRepository.class);
     private final IncidentRepository incidentRepository = mock(IncidentRepository.class);
-    private final RcaFeedbackService service = new RcaFeedbackService(feedbackRepository, incidentRepository);
+    private final GoldSetPromoter goldSetPromoter = mock(GoldSetPromoter.class);
+    private final RcaFeedbackService service =
+            new RcaFeedbackService(feedbackRepository, incidentRepository, goldSetPromoter);
 
     private final UUID tenantId = UUID.randomUUID();
     private final UUID incidentId = UUID.randomUUID();
@@ -54,6 +57,11 @@ class RcaFeedbackServiceTest {
         assertThat(saved.getRcaRootCauseId()).isEqualTo("CONNECTOR_TASK_FAILED");
         assertThat(saved.getOperator()).isEqualTo("ops@bifrost.io");
         assertThat(response.verdict()).isEqualTo("ACCEPTED");
+
+        // #982 채택 평결은 gold set 으로 승격된다(예측 root cause 스냅샷 포함).
+        verify(goldSetPromoter).promote(
+                eq(incidentId), eq("ACCEPTED"), eq("ops@bifrost.io"),
+                eq("CONNECTOR_TASK_FAILED"), any(), eq("run-1"), any(), any());
     }
 
     @Test
@@ -66,6 +74,7 @@ class RcaFeedbackServiceTest {
                 .isInstanceOfSatisfying(ApiException.class,
                         ex -> assertThat(ex.code()).isEqualTo(ErrorCode.VALIDATION_FAILED));
         verify(feedbackRepository, never()).save(any());
+        verify(goldSetPromoter, never()).promote(any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test

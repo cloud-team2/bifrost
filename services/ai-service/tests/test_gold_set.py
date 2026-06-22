@@ -44,6 +44,7 @@ def test_label_category_enum_values() -> None:
 
 def test_review_status_enum_values() -> None:
     assert set(ReviewStatus) == {
+        ReviewStatus.UNREVIEWED,
         ReviewStatus.DRAFT,
         ReviewStatus.REVIEWED,
         ReviewStatus.DISPUTED,
@@ -263,3 +264,108 @@ def test_labeling_guide_api() -> None:
     assert "categories" in data
     assert "rules" in data
     assert len(data["rules"]) >= 5
+
+
+# ── #982 운영자 평결 승격(promote) ───────────────────────────────────────────
+def test_promote_accepted_creates_reviewed_entry(monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = InMemoryGoldSetRepository()
+    monkeypatch.setattr(routes_gold_set, "get_gold_set_repo", lambda: repo)
+
+    resp = client.post("/api/v1/agent/gold-set/promote", json={
+        "incident_id": "inc_promote_001",
+        "verdict": "accepted",
+        "reviewed_by": "ta@bifrost.io",
+        "predicted_root_cause_id": "CONSUMER_LAG_SPIKE",
+        "run_id": "run-1",
+    })
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["review_status"] == "reviewed"
+    assert data["accepted_root_cause_id"] == "CONSUMER_LAG_SPIKE"
+    assert data["predicted_root_cause_id"] == "CONSUMER_LAG_SPIKE"
+    assert data["human_verdict"] == "accepted"
+    assert data["reviewed_by"] == "ta@bifrost.io"
+
+
+def test_promote_corrected_uses_corrected_root_cause(monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = InMemoryGoldSetRepository()
+    monkeypatch.setattr(routes_gold_set, "get_gold_set_repo", lambda: repo)
+
+    resp = client.post("/api/v1/agent/gold-set/promote", json={
+        "incident_id": "inc_promote_002",
+        "verdict": "corrected",
+        "reviewed_by": "ta@bifrost.io",
+        "predicted_root_cause_id": "CONSUMER_LAG_SPIKE",
+        "corrected_root_cause_id": "SCHEMA_MISMATCH",
+    })
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["review_status"] == "reviewed"
+    assert data["accepted_root_cause_id"] == "SCHEMA_MISMATCH"
+    assert data["predicted_root_cause_id"] == "CONSUMER_LAG_SPIKE"
+
+
+def test_promote_corrected_requires_corrected_root_cause(monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = InMemoryGoldSetRepository()
+    monkeypatch.setattr(routes_gold_set, "get_gold_set_repo", lambda: repo)
+
+    resp = client.post("/api/v1/agent/gold-set/promote", json={
+        "incident_id": "inc_promote_003",
+        "verdict": "corrected",
+        "reviewed_by": "ta@bifrost.io",
+    })
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is False
+
+
+def test_promote_rejected_is_disputed_without_truth(monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = InMemoryGoldSetRepository()
+    monkeypatch.setattr(routes_gold_set, "get_gold_set_repo", lambda: repo)
+
+    resp = client.post("/api/v1/agent/gold-set/promote", json={
+        "incident_id": "inc_promote_004",
+        "verdict": "rejected",
+        "reviewed_by": "ta@bifrost.io",
+        "predicted_root_cause_id": "CONSUMER_LAG_SPIKE",
+    })
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["review_status"] == "disputed"
+    assert data["accepted_root_cause_id"] is None
+    assert data["predicted_root_cause_id"] == "CONSUMER_LAG_SPIKE"
+
+
+def test_promote_upserts_existing_unreviewed_entry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """backfill 로 적재된 미검수 항목을 운영자 평결로 in-place 갱신한다(중복 생성 금지)."""
+    import asyncio
+
+    repo = InMemoryGoldSetRepository()
+    monkeypatch.setattr(routes_gold_set, "get_gold_set_repo", lambda: repo)
+
+    # backfill 로 적재된 unreviewed 예측 항목을 모사한다.
+    asyncio.run(
+        repo.create(
+            GoldSetEntry(
+                entry_id="gs_bf_existing",
+                incident_id="inc_promote_005",
+                accepted_root_cause_id=None,
+                predicted_root_cause_id="CONSUMER_LAG_SPIKE",
+                review_status=ReviewStatus.UNREVIEWED,
+            )
+        )
+    )
+
+    resp = client.post("/api/v1/agent/gold-set/promote", json={
+        "incident_id": "inc_promote_005",
+        "verdict": "accepted",
+        "reviewed_by": "ta@bifrost.io",
+        "predicted_root_cause_id": "CONSUMER_LAG_SPIKE",
+    })
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["entry_id"] == "gs_bf_existing"  # 갱신, 신규 생성 아님
+    assert data["review_status"] == "reviewed"
+    assert data["accepted_root_cause_id"] == "CONSUMER_LAG_SPIKE"
+    # 같은 incident 항목이 1개로 유지되어야 한다.
+    count = asyncio.run(repo.count())
+    assert count == 1
