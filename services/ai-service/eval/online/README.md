@@ -9,12 +9,20 @@
 
 ```
 eval/online/
-  live_fault_specs.py   # fault 카탈로그(주입/복구 스텝, expected/confusion, 안전 등급)
-  live_eval.py          # 러너: dry-run(기본) + 가드된 --live, 채점/리포트
-  test_live_eval.py     # dry-run 단위 테스트(클러스터 무접촉)
+  live_fault_specs.py        # fault 카탈로그(주입/복구 스텝, expected/confusion, 안전 등급)
+  live_eval.py               # 러너 A(fault 주입): dry-run(기본) + 가드된 --live, 채점/리포트
+  nl_tool_routing.py         # 러너 B(NL→tool 라우팅): dry-run(기본) + 가드된 --live, 채점/리포트
+  test_live_eval.py          # live_eval dry-run/배선 단위 테스트(클러스터 무접촉)
+  test_nl_tool_routing.py    # nl_tool_routing 채점/파싱 단위 테스트(네트워크 무접촉)
   README.md
-eval/reports/           # 생성 리포트(JSON+markdown) 출력 위치(.gitignore 됨)
+eval/reports/                # 생성 리포트(JSON+markdown) 출력 위치(.gitignore 됨)
 ```
+
+이 디렉터리는 라이브 평가의 **두 축**을 담는다:
+- **A. fault 주입 → RCA 정확도** (`live_eval.py`): 실제 장애를 주입해 incident→RCA 를 포착하고
+  AC@1/AC@3/AC@5/Avg@5/ECE 를 채점.
+- **B. NL → tool 라우팅 효율** (`nl_tool_routing.py`): 자연어 채팅 질문이 *맞는* tool 로 *낭비 없이*
+  라우팅되는지(routing@1, routing@hit, wasted_steps, latency) 채점.
 
 ## 채점 방식
 
@@ -98,22 +106,73 @@ cd services/ai-service && .venv/bin/python -m pytest eval/online -q
 ### live (가드 — 실제 주입)
 
 `auto` fault 만 실제 주입/폴링/복구한다. `--live` 와 `--confirm` 이 **둘 다** 있어야 동작한다
-(이중 가드). 추가로 운영 metadb/agentdb 자격증명이 주입된 환경에서만 dedup-resolve 와 RCA 폴링이
-활성화된다(없으면 명시적으로 막힌다).
+(이중 가드). 이 하니스는 **운영자 머신**에서 돌며, 클러스터 접근은 직접 DB 자격증명이 아니라
+`kubectl exec` subprocess(psql/curl)로만 한다. DB 자격증명은 각 deployment 의 env
+(`$POSTGRES_USER`/`$POSTGRES_DB`)에 이미 있어 컨테이너 안에서 그대로 참조한다 → 운영자 머신엔
+**`kubectl` 컨텍스트만** 있으면 된다(별도 DSN 주입 불필요).
 
 ```bash
-# 운영 DB 자격증명(metadb/agentdb)이 주입된 in-cluster 환경에서만:
-.venv/bin/python -m eval.online.live_eval --live --confirm --faults sink_db_down
+# kubectl 컨텍스트가 해당 클러스터를 가리키는 운영자 머신에서:
+.venv/bin/python -m eval.online.live_eval --live --confirm --faults sink_db_down \
+  --poll-timeout 300 --poll-interval 15
 ```
 
-live 한 사이클:
-1. **clean state**: 같은 `grouping_key` 의 OPEN 인시던트를 resolve(metadb `incidents`) — dedup 방지.
-2. **inject**: spec 의 inject 스텝(필요 시 selfHeal disable 포함)을 subprocess 로 실행.
-3. **poll**: metadb `incidents`(tenant_id, grouping_key, status) + agentdb `report_snapshot`
-   (root_cause_id, confidence, created_at)을 timeout 까지 폴링해 top-k 포착.
-4. **recover**: 항상(예외 발생해도 `finally`) recover 스텝 실행 → replicas 복원 + connector restart
-   + selfHeal re-enable.
+live 한 사이클(per auto fault):
+1. **baseline 캡처**: incident resolve(게이트된 prod write)에 의존하지 **않는다**. 대신 주입 직전
+   metadb 시계(`select now() at time zone 'utc'`)로 UTC baseline 을 찍고, 이후 `created_at > baseline`
+   로 *신규* incident/RCA 만 본다. 같은 `grouping_key` 의 OPEN incident 가 이미 있으면(=dedup 으로
+   새 incident 가 안 뜰 수 있음) **WARNING** 후 timestamp 기준으로 진행.
+2. **inject**: spec inject 스텝(selfHeal disable + `scale replicas=0`) 실행. `sink_db_down` 은
+   추가로 tenant-postgres 에 row 300건 insert 해 CDC 가 죽은 sink 로 write 시도→실패하게 트래픽 유발.
+3. **poll**: timeout(기본 5분)까지 interval(기본 15s)로
+   - incident: `metadb` `incidents`(tenant_id, created_at > baseline) 신규 1건.
+   - RCA top-k: `agentdb` `report_snapshot` 의 최신 1행을 잡고
+     `body->'root_cause_candidates'`(rank 순 jsonb 배열)을 `jsonb_array_elements … with ordinality`
+     로 펼쳐 (root_cause_id, confidence) 랭킹을 만든다. *report_snapshot 은 run 당 1행*이라 컬럼의
+     `limit 5` 는 5개 *run* 을 주므로 쓰지 않는다 — 랭킹은 body 안에 있다. body 가 비면 top-1 컬럼 폴백.
+4. **recover (항상)**: `finally` 로 무조건 실행 → `scale replicas=1` + `rollout status` +
+   Connect REST `POST /connectors/<name>/restart?includeTasks=true`(connect pod 동적 grep) +
+   selfHeal re-enable. best-effort(한 스텝 실패가 나머지를 막지 않음)라 폴링 중 예외/크래시가 나도
+   클러스터가 깨진 채 남지 않는다.
 5. **score**: 포착된 관측을 `app.evaluation` 으로 채점 → `live_eval_live_<UTC>.json` + `.md`.
 
-> 이 작업(#981) 범위에서는 live 주입을 **실행하지 않는다**. 빌드 + dry-run + 단위 테스트만 수행.
-> live 경로의 클러스터/DB 접근은 전부 `--live`(+`--confirm`) 뒤에 가드돼 있다.
+## B. NL → tool 라우팅 eval (`nl_tool_routing.py`)
+
+자연어 채팅 질문이 (1) *맞는* tool 로, (2) *낭비 없이* 라우팅되는지 본다.
+
+- **라벨 세트**: 한/영 혼합 18개(`ROUTING_CASES`). 각 case 는 `expected_tool`(1순위 정답) +
+  `acceptable_tools`(대체 정답). tool 이름은 `app/tools/registry.py` 카탈로그와 일치(테스트로 검증).
+- **채점**:
+  - `routing@1`   : expected/acceptable tool 이 **첫** tool 호출이었는가(정확+효율).
+  - `routing@hit` : trace 어디에서든 호출됐는가(정확성).
+  - `wasted_steps`: 첫 정답 tool 앞에 끼어든 호출 수(미호출 시 전체 호출 수).
+  - `latency_ms`  : run 생성→완료까지(라이브).
+- **trace 관측**: agent 는 plan(planner)→실행(retrieval)하며 호출마다 SSE
+  `tool_call_started`(payload `{"tool": …}`)를 낸다. 이게 event repo 에 적재돼
+  `GET /api/v1/agent/runs/{run_id}/events/history`(plain JSON)로 시간순 조회된다.
+
+### dry-run (기본, 네트워크 무접촉)
+
+```bash
+.venv/bin/python -m eval.online.nl_tool_routing            # 기본 dry-run
+.venv/bin/python -m eval.online.nl_tool_routing --no-write # 콘솔만
+```
+
+### live (가드 — 배포 agent 실제 운전)
+
+`--live` + `--confirm`(이중 가드). 배포 agent 를 demo 계정으로 직접 운전한다:
+login → run 생성 → `events/history` 폴링 → tool trace 추출 → 채점.
+
+```bash
+BIFROST_BASE_URL=https://bifrost.skala-ai.com \
+BIFROST_EMAIL=ta@bifrost.io BIFROST_PASSWORD=ta123456 \
+.venv/bin/python -m eval.online.nl_tool_routing --live --confirm
+```
+
+- 로그인: `POST /api/v1/auth/login {email,password}` → `accessToken`(+`workspaceId`=project_id).
+- 질의: `POST /api/v1/agent/runs {project_id, message, mode:"simple_query", stream:false}`
+  (`Authorization: Bearer <token>`).
+- env override: `BIFROST_BASE_URL` / `BIFROST_EMAIL` / `BIFROST_PASSWORD` / `BIFROST_PROJECT_ID`.
+
+> 이 작업(#981) 범위에서는 live(주입·운전)를 **실행하지 않는다**. 빌드 + dry-run + 단위 테스트만 수행.
+> 두 러너 모두 클러스터/네트워크 접근은 전부 `--live`(+`--confirm`) 뒤에 가드돼 있다.

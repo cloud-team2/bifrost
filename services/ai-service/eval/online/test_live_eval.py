@@ -1,7 +1,9 @@
 """#981 dry-run unit tests for the live RCA eval harness.
 
 클러스터 무접촉. spec 카탈로그 무결성 + 채점 파이프라인(AC@k/Avg@5/ECE)이 fixture 에 대해
-정확히 계산되는지 검증한다. live 주입 경로는 가드(NotImplementedError/SystemExit) 만 확인한다.
+정확히 계산되는지 검증한다. live 주입 경로는 (1) --confirm 가드, (2) subprocess 를 전부
+가짜로 바꿔 baseline→inject→poll→recover 배선과 *복구 항상 실행(finally)* 만 검증한다.
+실제 kubectl/cluster 는 절대 건드리지 않는다.
 """
 from __future__ import annotations
 
@@ -9,6 +11,7 @@ import pytest
 
 from app.catalogs.root_causes import is_known_root_cause
 
+import eval.online.live_eval as le
 from eval.online.live_eval import (
     FaultObservation,
     build_dry_run_observations,
@@ -107,10 +110,97 @@ def test_live_requires_confirm() -> None:
         run_live(None, confirm=False)
 
 
-def test_live_inject_helpers_are_guarded() -> None:
-    # confirm 을 줘도 dedup-resolve/poll 이 NotImplementedError 가드로 막혀 실제 주입이 안 일어남.
-    with pytest.raises(NotImplementedError):
-        run_live(["sink_db_down"], confirm=True)
+def test_live_never_touches_subprocess_without_confirm(monkeypatch) -> None:
+    # confirm 없이는 어떤 subprocess(_run_cmd)도 호출되면 안 된다(SystemExit 가 먼저).
+    def _boom(*a, **k):  # pragma: no cover - 호출되면 실패
+        raise AssertionError("confirm 없이 subprocess 가 호출됨")
+
+    monkeypatch.setattr(le, "_run_cmd", _boom)
+    with pytest.raises(SystemExit):
+        run_live(["sink_db_down"], confirm=False)
+
+
+def _install_fake_cluster(monkeypatch, *, calls: list[str], baseline: str,
+                          ranking_after: int = 0, raise_on_poll: bool = False):
+    """kubectl 접근(_run_cmd/_kubectl_psql)을 전부 가짜로 갈아끼워 클러스터 무접촉으로 만든다.
+
+    - _run_cmd: 실행된 모든 inject/recover 커맨드를 calls 에 기록(실제 실행 X).
+    - _kubectl_psql: baseline/incident/RCA 쿼리를 SQL 키워드로 분기해 합성 결과를 돌려준다.
+    """
+    state = {"poll": 0}
+
+    def fake_run_cmd(cmd, *, timeout=180, check=False):
+        calls.append(cmd)
+        return 0, ""
+
+    def fake_psql(namespace, deploy, sql, *, timeout=60):
+        if "now()" in sql:
+            return baseline
+        if "count(*)" in sql:
+            return "0"  # 기존 OPEN incident 없음
+        if "from incidents" in sql:
+            return f"inc-1|CRITICAL|OPEN|sink down"
+        if "report_snapshot" in sql:
+            if raise_on_poll:
+                raise RuntimeError("poll boom")
+            state["poll"] += 1
+            if state["poll"] < ranking_after:
+                return ""  # 아직 RCA 미생성
+            return "SINK_DB_CONNECTION_TIMEOUT|0.88\nSINK_WRITE_LATENCY|0.40"
+        return ""
+
+    monkeypatch.setattr(le, "_run_cmd", fake_run_cmd)
+    monkeypatch.setattr(le, "_kubectl_psql", fake_psql)
+    monkeypatch.setattr(le.time, "sleep", lambda *_a, **_k: None)
+    return state
+
+
+def test_live_cycle_inject_poll_recover_wiring(monkeypatch, tmp_path) -> None:
+    # baseline→inject→poll(포착)→recover 가 한 사이클로 배선됐는지, 채점까지 도는지.
+    monkeypatch.setattr(le, "REPORTS_DIR", tmp_path)
+    calls: list[str] = []
+    _install_fake_cluster(monkeypatch, calls=calls, baseline="2026-06-22 00:00:00")
+
+    report = run_live(["sink_db_down"], confirm=True, poll_timeout_s=60, poll_interval_s=0)
+
+    assert report["mode"] == "live"
+    assert report["total_cases"] == 1
+    assert report["AC@1"] == 1.0  # 포착된 top-1 이 expected 와 일치.
+    # inject(scale 0) 와 recover(scale 1) 가 모두 실행됐다.
+    assert any("scale deploy tenant-mariadb --replicas=0" in c for c in calls)
+    assert any("scale deploy tenant-mariadb --replicas=1" in c for c in calls)
+
+
+def test_live_recovery_runs_even_on_poll_exception(monkeypatch, tmp_path) -> None:
+    # 폴링 중 예외가 나도 finally 로 복구(scale 1 + selfHeal on)가 *반드시* 실행돼야 한다.
+    monkeypatch.setattr(le, "REPORTS_DIR", tmp_path)
+    calls: list[str] = []
+    _install_fake_cluster(
+        monkeypatch, calls=calls, baseline="2026-06-22 00:00:00", raise_on_poll=True
+    )
+
+    with pytest.raises(RuntimeError):
+        run_live(["sink_db_down"], confirm=True, poll_timeout_s=60, poll_interval_s=0)
+
+    # 예외가 났어도 복구 스텝이 실행됐다(클러스터가 깨진 채 남지 않음).
+    assert any("scale deploy tenant-mariadb --replicas=1" in c for c in calls)
+    assert any('"selfHeal":true' in c for c in calls)
+
+
+def test_live_timeout_yields_uncaptured_miss(monkeypatch, tmp_path) -> None:
+    # RCA 가 끝까지 안 뜨면 captured=False miss 로 잡히고 복구는 그대로 실행된다.
+    monkeypatch.setattr(le, "REPORTS_DIR", tmp_path)
+    calls: list[str] = []
+    # ranking_after 를 매우 크게 줘 timeout 내 RCA 가 절대 안 채워지게.
+    _install_fake_cluster(
+        monkeypatch, calls=calls, baseline="2026-06-22 00:00:00", ranking_after=10_000
+    )
+
+    report = run_live(["sink_db_down"], confirm=True, poll_timeout_s=0, poll_interval_s=0)
+    assert report["total_cases"] == 1
+    assert report["rows"][0]["captured"] is False
+    assert report["AC@1"] == 0.0
+    assert any("scale deploy tenant-mariadb --replicas=1" in c for c in calls)
 
 
 # ── consistency: 채점이 결정적 ───────────────────────────────────────────────
