@@ -198,3 +198,39 @@ kubectl -n bifrost-system delete job rca-eval-llm # 정리
 ### 한계·확장
 - 본 하네스는 **gold set의 텍스트 evidence**를 입력으로 RCA 결정 로직을 라이브로 돈다(LLM·semantic on). **metric/trace/temporal 실evidence**까지 평가하려면 retrieval 경유가 필요 → 후속으로 합성 evidence 주입 모드(또는 합성 인시던트+evidence) 추가.
 - floor(LLM off) 수치는 회귀 기준선으로 유지하고, 본 LLM-on 수치를 발표/운영 지표로 병기.
+
+---
+
+## Part D — Part A 개선 실험 + 측정 방법론 판정 (2026-06-22)
+
+### D.1 측정 방법론 — 글로벌 벤더/학계 표준 대비 판정
+팀원의 e2e 측정 방법(offline 벤치 + 라이브 주입 + negative control)을 표준과 대조:
+
+| 팀 방법 | 대응 표준 | 정합 |
+|---|---|---|
+| top-1/top-5 (AC@k) | RCAEval `AC@k`/`Avg@k`(RCA 표준 지표) | 학계 SOTA 동일 |
+| risk-coverage + ECE 캘리브레이션 | Guo 2017 · Microsoft PACE-LM | 정통 |
+| abstention/coverage/Macro-F1 | selective prediction | 정합 |
+| Wilson 95% CI | 비율 정확도 통계 보고 | 벤더 공개 능가 |
+| offline(정답 증거) vs live(자가 수집) 분리 | oracle vs real-retrieval ablation | 정교 |
+| negative control(NO_FAULT·라벨 뒤집기) | 음성대조군 · NIST validity | 대부분 벤더 미실시 |
+| 합성 벤치 + injectable 분류 라이브 | RCAEval · 카오스 fault-injection | 동형 |
+
+> **판정**: Datadog Watchdog·Dynatrace Davis 등 벤더 공개 수준보다 정량적으로 투명하고, RCAEval·PACE-LM 학계 SOTA 평가와 직접 대응(특히 offline/live 분리·negative control·Wilson CI). 단 표준 경고도 동일: **합성 셋 성능 ≠ 실제**(ASE'24) — 오라클/floor 상한이지 프로덕션 값 아님.
+
+### D.2 개선 적용 + 분리 측정 (과적합 없이)
+- **(2) 범용 lexicon recall 보강**: auth 룰 example에 `permission denied`·`access denied`, volume 룰에 `throughput 급감/급증` 등 **실제 시스템 범용 표현만** 추가(합성 서사 끼워맞추기 회피). evidence_matrix.py.
+- **(1) LLM-on 실측**: 배포 ai-service pod에서 `RCA_EVAL_USE_LLM=1`로 실 LLM/임베딩 평가.
+
+| 구성 | AC@1 | AC@3/5 | Avg@5 | ECE | 기권 |
+|---|---|---|---|---|---|
+| floor (LLM off) | 65.7% | 80.0% | 0.724 | 0.073 | 7 |
+| **+ lexicon** | **71.4%** | **85.7%** | **0.781** | 0.083 | 5 |
+| LLM-on (배포 룰) | 65.7% | 80.0% | 0.724 | 0.070 | 7 |
+
+- **증거 recall 보강 = AC@1 +5.7pp(23→25)·Avg@5 0.724→0.781·기권 7→5**. gs_seed_002(SOURCE_AUTH)·gs_seed_031(UPSTREAM_VOLUME) 기권→정답@0.82.
+- **LLM 타이브레이커 ≈ 정확도 무변화**(근접 동률 드물어 미발화, ECE만 0.073→0.070) → **정확도 본질은 LLM이 아니라 증거**(팀원 라이브 진단과 정량 일치).
+- **정직 경계**: gs_seed_018(SINK_AUTH)은 불변 — 추가 튜닝 안 함(과적합 회피). 인과 temporality 게이팅·캘리브레이션은 evidence_matrix에 **이미 구현**(`causality_type`/`temporality_required`)이라 룰 재튜닝은 운영 정밀도 위험으로 배제.
+- **다음 레버**: 실 evidence(metric/trace/temporal) 공급(#828/#831/#835)·disambiguation·실 gold set 확대(#964) — 모두 팀 in-flight.
+
+> 재현: floor `cd services/ai-service && .venv/bin/python scripts/rca_eval_campaign.py` · LLM-on `RCA_EVAL_USE_LLM=1`(배포 pod/Job, §Part C). 시각화: `docs/test/시각화-part-a-개선실험.html`.
