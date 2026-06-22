@@ -26,7 +26,17 @@ INCIDENT_ROOT_CAUSE_MAP: tuple[IncidentRootCauseMapEntry, ...] = (
     ),
     IncidentRootCauseMapEntry(
         incident_type='CONNECTOR_TASK_FAILED',
-        root_cause_ids=('CONNECTOR_TASK_FAILED', 'SCHEMA_MISMATCH', 'PIPELINE_CONFIG_INVALID', 'SOURCE_DB_CONNECTION_TIMEOUT', 'SINK_DB_CONNECTION_TIMEOUT', 'SOURCE_NETWORK_REACHABILITY'),
+        root_cause_ids=(
+            'CONNECTOR_TASK_FAILED',
+            'SCHEMA_MISMATCH',
+            'PIPELINE_CONFIG_INVALID',
+            'SOURCE_AUTH_EXPIRED',
+            'SINK_AUTH_EXPIRED',
+            'SINK_DB_CONNECTION_TIMEOUT',
+            'SOURCE_DB_CONNECTION_TIMEOUT',
+            'SOURCE_NETWORK_REACHABILITY',
+            'SINK_CONSTRAINT_VIOLATION',
+        ),
     ),
     IncidentRootCauseMapEntry(
         incident_type='CONNECTOR_WORKER_UNHEALTHY',

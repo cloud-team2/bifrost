@@ -131,6 +131,7 @@ def _score_failure_type(
 ) -> tuple[float, set[str]]:
     evidence_ids: set[str] = set()
     signal_score = 0.0
+    strongest_signal_score = 0.0
     total_signals = len(failure_type.signals)
 
     for signal in failure_type.signals:
@@ -149,11 +150,13 @@ def _score_failure_type(
             if score > best_signal_score:
                 best_signal_score = score
                 best_evidence_id = evidence_id
+        strongest_signal_score = max(strongest_signal_score, best_signal_score)
         signal_score += best_signal_score
         if best_signal_score > 0 and best_evidence_id:
             evidence_ids.add(best_evidence_id)
 
     signal_confidence = signal_score / total_signals if total_signals else 0.0
+    signal_confidence = max(signal_confidence, strongest_signal_score * 0.85)
     context_confidence, context_evidence_ids = _context_confidence(failure_type, sources)
     evidence_ids.update(context_evidence_ids)
 
@@ -161,6 +164,8 @@ def _score_failure_type(
         confidence = max(signal_confidence, (signal_confidence * 0.55) + (context_confidence * 0.45))
     else:
         confidence = context_confidence
+    if failure_type.incident_type == "CONNECTOR_TASK_FAILED" and _has_connector_task_failure_context(sources):
+        confidence += 0.05
     return _clamp_confidence(confidence), evidence_ids
 
 
@@ -185,6 +190,16 @@ def _context_confidence(
             evidence_ids.add(evidence_id)
 
     return _clamp_confidence(best_score), evidence_ids
+
+
+def _has_connector_task_failure_context(sources: list[tuple[str | None, str]]) -> bool:
+    for _, text in sources:
+        normalized = text.casefold()
+        if "connector" not in normalized and "connect" not in normalized:
+            continue
+        if re.search(r"\btask\b.*\bfailed\b|\bfailed\b.*\btask\b", normalized):
+            return True
+    return False
 
 
 def _needs_llm_assist(candidates: list[_Candidate]) -> bool:

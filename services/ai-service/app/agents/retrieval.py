@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -9,6 +10,7 @@ from uuid import uuid4
 
 from app.agents.agentic import ToolCallRecord, run_tool_loop
 from app.core.config import settings
+from app.evidence.signals import evidence_signal_summary
 from app.evidence.redaction import redact_payload, redact_text
 from app.knowledge.vector_store import get_vector_store
 from app.llm.provider import get_llm_provider
@@ -22,6 +24,7 @@ from app.streaming.event_bus import EventBus
 from app.tools.registry import ToolClientRegistry
 
 logger = logging.getLogger(__name__)
+_ORIGINAL_RUN_TOOL_LOOP = run_tool_loop
 
 # planner 가 명시적 키워드 매칭 없이 fallback 으로 선택하는 도구. 이 도구만으로 이뤄진
 # plan 은 순수 지식/용어 질의("DLQ가 뭐야?")로 간주해 RAG 근거가 있으면 단락한다.
@@ -92,9 +95,41 @@ def _safe_task_trace_entry(entry: Any) -> dict[str, Any]:
     }
 
 
+def _summary_with_signals(tool_name: str, summary: str, result: Any) -> str:
+    signal_summary = evidence_signal_summary(tool_name, _raw_payload_for_store(result))
+    if not signal_summary or signal_summary in summary:
+        return summary
+    return f"{summary}; evidence signals: {signal_summary}"
+
+
 def _has_operational_tool(plan: PlannerOutput) -> bool:
     """planner 가 fallback 이 아닌 명시적 운영 runtime tool 을 계획했는지 여부."""
     return any(step.tool_name not in _FALLBACK_ONLY_TOOLS for step in plan.retrieval_plan)
+
+
+def _registry_supports_react_loop(registry: ToolClientRegistry) -> bool:
+    if run_tool_loop is not _ORIGINAL_RUN_TOOL_LOOP:
+        return True
+    list_tools = getattr(registry, "list_tools", None)
+    if not callable(list_tools) or inspect.iscoroutinefunction(list_tools):
+        return False
+    try:
+        tools = list_tools()
+    except TypeError:
+        return False
+    except Exception:
+        logger.warning("react loop tool catalog unavailable", exc_info=True)
+        raise
+    if inspect.isawaitable(tools):
+        close = getattr(tools, "close", None)
+        if callable(close):
+            close()
+        return False
+    try:
+        iter(tools)
+    except TypeError:
+        return False
+    return True
 
 
 async def _pub(bus: EventBus, repo: AnyEventRepo, run_id: str, event: StreamingEvent) -> None:
@@ -127,7 +162,7 @@ async def _evidence_from_executed(
     if failed:
         summary = f"{tool_name}: {redact_text(result.error.message if result.error else '조회 실패')}"
     else:
-        summary = redact_text(result.summary)
+        summary = redact_text(_summary_with_signals(tool_name, result.summary, result))
     store_ref = await evidence_repo.put(
         run_id=run_id, evidence_id=evidence_id, tool_name=tool_name, step_id=step_id,
         status=result.status.value, payload=redact_payload(_raw_payload_for_store(result)),
@@ -241,7 +276,7 @@ async def run_retrieval(
 
         evidence_id = str(uuid4())
         if result.status == ToolStatus.SUCCESS:
-            summary = redact_text(result.summary)
+            summary = redact_text(_summary_with_signals(step.tool_name, result.summary, result))
             store_ref = await evidence_repo.put(
                 run_id=run_id,
                 evidence_id=evidence_id,
@@ -341,6 +376,7 @@ async def run_retrieval(
         allow_react_loop
         and mode in (AgentMode.SIMPLE_QUERY, AgentMode.INCIDENT_ANALYSIS)
         and provider.supports_tools()
+        and _registry_supports_react_loop(registry)
     ):
         loop_result = await run_tool_loop(
             user_message=user_message or "", registry=registry, context=context,

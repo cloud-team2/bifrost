@@ -109,6 +109,14 @@ _IDENTIFIER_STOPWORDS = {
     "logs",
     "default-connector",
     "default-group",
+    "show",
+    "check",
+    "please",
+    "확인",
+    "확인해줘",
+    "봐줘",
+    "보여줘",
+    "알려줘",
 }
 _IDENTIFIER_RE = r"[A-Za-z0-9][A-Za-z0-9._:-]*"
 
@@ -139,6 +147,11 @@ async def run_planner(
         llm_selected_tools: set[str] = set()
     else:
         llm_selected_tools = {tool for tool, _ in selected}
+        keyword_selected = _keyword_select_tools(user_message)
+        if _should_prefer_keyword_selection(user_message, keyword_selected):
+            selected = keyword_selected
+            selected_by_llm = False
+            llm_selected_tools = set()
 
     selected = _augment_hypothesis_routes(selected, user_message.lower())
     # #988 SIMPLE_QUERY 단일 데이터 의도(로그/메트릭 수치) 질의는 정답 project-scope tool 을
@@ -246,7 +259,7 @@ def _keyword_select_tools(user_message: str) -> list[tuple[str, dict]]:
             seen_tools.add(dedupe_key)
 
     has_stack = _has_any(msg, {"스택", "스택트레이스", "stacktrace", "예외", "exception"})
-    has_trace = _has_any(msg, {"trace", "span", "latency", "분산추적", "지연추적"})
+    has_trace = _has_any(msg, {"trace", "span", "latency", "트레이스", "분산추적", "지연추적"})
     has_event_summary = _has_any(msg, {"이벤트", "event", "인시던트", "incident", "장애"})
     has_pipeline = _has_any(msg, {"파이프라인", "pipeline"})
     has_pipeline_list = _has_any(msg, {"리스트", "목록", "연결"})
@@ -285,7 +298,7 @@ def _keyword_select_tools(user_message: str) -> list[tuple[str, dict]]:
     if _has_any(msg, {"consumer group", "consumer-group", "컨슈머", "consumer"}) or (
         has_lag and not has_pipeline and not metrics_requested
     ):
-        if has_lag:
+        if has_lag and identifier is not None:
             add("get_consumer_lag", {})
         else:
             add("get_consumer_groups", _PROJECT_SCOPE_PARAMS)
@@ -302,6 +315,60 @@ def _keyword_select_tools(user_message: str) -> list[tuple[str, dict]]:
     if not selected:
         selected.append(_DEFAULT_TOOL)
     return selected
+
+
+def _should_prefer_keyword_selection(
+    user_message: str,
+    keyword_selected: list[tuple[str, dict]],
+) -> bool:
+    """Prefer deterministic keyword routing for explicit lookup phrases.
+
+    Planner LLM selection is useful for broad incident prompts, but short runtime
+    lookups have an established public contract in tests and UI behavior. For
+    those, keywords are the less surprising source of truth.
+    """
+    if keyword_selected == [_DEFAULT_TOOL]:
+        return False
+
+    msg = user_message.lower()
+    if _has_any(
+        msg,
+        {
+            "incident_analysis",
+            "active incident",
+            "root cause",
+            "root_cause",
+            "근본 원인",
+            "원인 분석",
+        },
+    ):
+        return False
+
+    return _has_any(
+        msg,
+        {
+            "파이프라인",
+            "pipeline",
+            "커넥터",
+            "connector",
+            "consumer",
+            "컨슈머",
+            "trace",
+            "트레이스",
+            "스택",
+            "stacktrace",
+            "alert",
+            "알람",
+            "이벤트",
+            "event",
+            "로그",
+            "log",
+            "메트릭",
+            "metric",
+            "배포",
+            "deploy",
+        },
+    )
 
 
 def _augment_hypothesis_routes(selected: list[tuple[str, dict]], msg: str) -> list[tuple[str, dict]]:

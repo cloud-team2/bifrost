@@ -366,6 +366,97 @@ async def test_normal_auth_evidence_does_not_commit_auth_expired(
 
 
 @pytest.mark.asyncio
+async def test_normal_metadata_schema_does_not_commit_schema_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier("SCHEMA_MISMATCH"),
+        _retrieval(
+            "metadata schema status normal. schema registry subject unchanged. "
+            "no schema error or serialization failure. connector status RUNNING."
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "UNKNOWN_WITH_EVIDENCE_GAP"
+    assert top.confidence < 0.60
+
+
+@pytest.mark.asyncio
+async def test_control_metadata_does_not_select_root_cause(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier("CONNECTOR_TASK_FAILED"),
+        _retrieval(
+            "case_id=C3_SOURCE_DB_CONNECTION_TIMEOUT_07 "
+            "expected_root_cause=SINK_AUTH_EXPIRED unrelated connector observation"
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "UNKNOWN_WITH_EVIDENCE_GAP"
+    assert top.confidence < 0.60
+
+
+@pytest.mark.asyncio
+async def test_accepted_root_cause_metadata_does_not_select_root_cause(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier("CONNECTOR_TASK_FAILED"),
+        _retrieval(
+            "accepted_root_cause_id=SINK_AUTH_EXPIRED "
+            "corrected_root_cause_id=SOURCE_AUTH_EXPIRED connector status RUNNING"
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "UNKNOWN_WITH_EVIDENCE_GAP"
+    assert top.confidence < 0.60
+
+
+@pytest.mark.asyncio
+async def test_connector_task_unscoped_auth_does_not_default_to_source_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier("CONNECTOR_TASK_FAILED"),
+        _retrieval(
+            "connector task status FAILED",
+            "task trace worker log: authentication failed token expired",
+        ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "CONNECTOR_TASK_FAILED"
+
+
+@pytest.mark.asyncio
+async def test_connector_task_sink_auth_context_does_not_select_source_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier("CONNECTOR_TASK_FAILED"),
+        _retrieval(
+            "source status normal",
+            "sink authentication failed token expired",
+            "connector task status FAILED",
+            "task trace worker log exception",
+        ),
+    )
+
+    ordered = [candidate.root_cause_id for candidate in result.root_cause_candidates]
+    assert ordered[0] != "SOURCE_AUTH_EXPIRED"
+    assert ordered.index("SINK_AUTH_EXPIRED") < ordered.index("SOURCE_AUTH_EXPIRED")
+
+
+@pytest.mark.asyncio
 async def test_knowledge_evidence_does_not_satisfy_required_rules(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -27,10 +27,21 @@ MAX_CANDIDATES = 5
 # #962 근접 증상(task 가 FAILED 다)일 뿐 "왜 실패했는지"가 더 구체적 원인으로 입증되면 그 아래로 강등할 root cause.
 _SYMPTOM_ROOT_CAUSES = frozenset({"CONNECTOR_TASK_FAILED", "PIPELINE_TASK_RETRY_EXHAUSTED"})
 _CAUSAL_DEPTH_MARGIN = 0.03
+_DOMINANT_CAUSES: dict[str, frozenset[str]] = {
+    "CREDENTIAL_ROTATION_REGRESSION": frozenset({"SOURCE_AUTH_EXPIRED", "SINK_AUTH_EXPIRED"}),
+}
 
 logger = logging.getLogger(__name__)
 
 _TOKEN_RE = re.compile(r"[0-9A-Za-z가-힣]+")
+_CONTROL_METADATA_RE = re.compile(
+    r"\b(?:answer(?:_phrase)?|case[_ -]?id|expected(?:_root[_ -]?cause(?:_id)?)?|"
+    r"accepted[_ -]?root[_ -]?cause(?:[_ -]?id)?|corrected[_ -]?root[_ -]?cause(?:[_ -]?id)?|"
+    r"predicted[_ -]?root[_ -]?cause(?:[_ -]?id)?|gold|label|oracle|prediction|"
+    r"root[_ -]?cause(?:[_ -]?id)?)\b"
+    r"\s*(?:[:=]|is|는|은)?\s*[0-9A-Za-z_.-]+",
+    re.IGNORECASE,
+)
 _CONNECTOR_TASK_FAILED_ID = "CONNECTOR_TASK_FAILED"
 _TOKEN_ALIASES = {
     "상태": "status",
@@ -48,6 +59,15 @@ _TOKEN_ALIASES = {
     "스키마": "schema",
     "불일치": "mismatch",
     "역직렬화": "deserialization",
+    "직후": "after",
+    "이후": "after",
+    "후": "after",
+    "배포": "deployment",
+    "이미지": "image",
+    "업데이트": "update",
+    "중복": "duplicate",
+    "레코드": "record",
+    "소진": "exhausted",
 }
 _GENERIC_TOKENS = {
     "and",
@@ -73,6 +93,7 @@ _GENERIC_TOKENS = {
     "감소",
     "변경",
     "정상",
+    "지연",
     "존재",
     "또는",
     "단계",
@@ -187,10 +208,11 @@ async def run_rca(classifier_out: ClassifierOutput | None, retrieval_out: Retrie
         return _unknown_output(["classifier_incident_type_mapping_missing"])
 
     matcher = await _SemanticEvidenceMatcher.build(candidate_ids, evidence_items)
+    incident_types = _classifier_types(classifier_out)
     candidates = [
         candidate
         for candidate_id in candidate_ids
-        if (candidate := await _evaluate_candidate(candidate_id, evidence_items, matcher)) is not None
+        if (candidate := await _evaluate_candidate(candidate_id, evidence_items, matcher, incident_types)) is not None
     ]
     candidates.sort(key=lambda item: item.confidence, reverse=True)
 
@@ -201,6 +223,7 @@ async def run_rca(classifier_out: ClassifierOutput | None, retrieval_out: Retrie
 
     # #962 근접 증상(task FAILED)보다 입증된 심층 원인을 우선 — 마지막에 적용해 LLM 선택도 덮어쓴다.
     candidates = _demote_symptom_below_confirmed_root_cause(candidates)
+    candidates = _demote_direct_effect_below_confirmed_regression(candidates)
     candidates.sort(key=lambda item: item.confidence, reverse=True)
     if not candidates or candidates[0].confidence < MIN_CONFIDENT_ROOT_CAUSE:
         return _unknown_output(_collect_missing_required(candidates) or ["required_evidence_missing"])
@@ -242,15 +265,16 @@ async def _evaluate_candidate(
     root_cause_id: str,
     evidence_items: list[EvidenceItem],
     matcher: _SemanticEvidenceMatcher,
+    incident_types: list[str],
 ) -> _EvaluatedCandidate | None:
     root_cause = get_root_cause(root_cause_id)
     profile = get_evidence_profile(root_cause_id)
     if root_cause is None or profile is None:
         return None
 
-    required_matches = _match_rules(profile.required, evidence_items, matcher)
-    supporting_matches = _match_rules(profile.supporting, evidence_items, matcher)
-    negative_matches = _match_rules(profile.negative, evidence_items, matcher)
+    required_matches = _match_rules(profile.required, evidence_items, matcher, incident_types)
+    supporting_matches = _match_rules(profile.supporting, evidence_items, matcher, incident_types)
+    negative_matches = _match_rules(profile.negative, evidence_items, matcher, incident_types)
     negative_ids = _matched_evidence_ids(negative_matches)
     has_required_lexical_anchor = _has_lexical_required_anchor(required_matches)
     has_positive_lexical_anchor = has_required_lexical_anchor or _has_lexical_anchor(supporting_matches)
@@ -305,13 +329,14 @@ def _match_rules(
     rules: tuple[EvidenceRule, ...],
     evidence_items: list[EvidenceItem],
     matcher: _SemanticEvidenceMatcher,
+    incident_types: list[str],
 ) -> list[_RuleMatch]:
     matches: list[_RuleMatch] = []
     for rule in rules:
         evidence_ids: set[str] = set()
         semantic_evidence_ids: set[str] = set()
         for item in evidence_items:
-            match = _rule_evidence_match(rule, item, matcher)
+            match = _rule_evidence_match(rule, item, matcher, incident_types)
             if match.matched:
                 evidence_ids.add(item.evidence_id)
             if match.semantic and not match.lexical:
@@ -330,8 +355,9 @@ def _rule_evidence_match(
     rule: EvidenceRule,
     item: EvidenceItem,
     matcher: _SemanticEvidenceMatcher,
+    incident_types: list[str],
 ) -> _RuleEvidenceMatch:
-    lexical = _rule_matches_evidence(rule, item)
+    lexical = _rule_matches_evidence(rule, item, incident_types)
     semantic = False
     if not lexical and _allows_semantic_rule_match(rule, item):
         semantic = matcher.matches(rule, item)
@@ -481,14 +507,19 @@ def _cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
     return dot / (left_norm * right_norm)
 
 
-def _rule_matches_evidence(rule: EvidenceRule, item: EvidenceItem) -> bool:
-    evidence_text = f"{item.type} {item.summary}".casefold()
+def _rule_matches_evidence(rule: EvidenceRule, item: EvidenceItem, incident_types: list[str]) -> bool:
+    summary = _strip_control_metadata(item.summary)
+    evidence_text = f"{item.type} {summary}".casefold()
     if _connector_failed_status_rule(rule):
-        return _has_connector_failed_status(item.summary)
-    if _connector_trace_rule(rule) and _negates_connector_trace(item.summary):
+        return _has_connector_failed_status(summary)
+    if _connector_trace_rule(rule) and _negates_connector_trace(summary):
         return False
+    if _auth_rule(rule):
+        return _has_scoped_auth_evidence(rule, summary, incident_types)
     if _consumer_lag_trend_rule(rule):
-        return _has_consumer_lag_trend_evidence(rule, item.summary)
+        return _has_consumer_lag_trend_evidence(rule, summary)
+    if _negates_rule_fault(rule, summary):
+        return False
 
     rule_text = rule.evidence.casefold()
     example_text = (rule.example or "").casefold()
@@ -522,7 +553,7 @@ def _has_temporal_precedence(item: EvidenceItem) -> bool:
             r"\b(?:after|since|following|followed|before|prior|preced(?:e|ed|ing)|then|subsequent)\b",
             normalized,
         )
-        or re.search(r"(?:이후|직후|뒤이어|이어서|다음|전후|전에|먼저|선행)", normalized)
+        or re.search(r"(?:이후|직후|후|뒤이어|이어서|다음|전후|전에|먼저|선행)", item.summary)
     )
 
 
@@ -548,6 +579,97 @@ def _connector_trace_rule(rule: EvidenceRule) -> bool:
 
 def _consumer_lag_trend_rule(rule: EvidenceRule) -> bool:
     return rule.root_cause_id == "CONSUMER_LAG_SPIKE" and rule.kind == "required"
+
+
+def _auth_rule(rule: EvidenceRule) -> bool:
+    return rule.root_cause_id in {"SOURCE_AUTH_EXPIRED", "SINK_AUTH_EXPIRED"} and rule.kind == "required"
+
+
+def _has_scoped_auth_evidence(rule: EvidenceRule, summary: str, incident_types: list[str]) -> bool:
+    normalized = _normalize_text(summary)
+    if _has_auth_negation(normalized):
+        return False
+    has_auth_signal = bool(
+        re.search(
+            r"\b(?:auth|authentication|permission|credential|token|password|sasl|expired|denied)\b",
+            normalized,
+        )
+        or re.search(r"(?:인증\s*실패|권한\s*거부|토큰\s*만료|credential\s*만료)", summary, re.IGNORECASE)
+    )
+    if not has_auth_signal:
+        return False
+    has_source_hint = bool(re.search(r"\b(?:source|extract|read)\b", normalized) or re.search(r"(?:소스|읽기)", summary))
+    has_sink_hint = bool(re.search(r"\b(?:sink|write|jdbc|flush|batch)\b", normalized) or re.search(r"(?:쓰기|싱크)", summary))
+    auth_source_scoped = _has_scoped_fault_hint(summary, "source", "auth")
+    auth_sink_scoped = _has_scoped_fault_hint(summary, "sink", "auth")
+    incident_set = set(incident_types)
+    if rule.root_cause_id == "SOURCE_AUTH_EXPIRED":
+        if auth_sink_scoped and not auth_source_scoped:
+            return False
+        return auth_source_scoped or (
+            "SOURCE_AUTH_FAILURE" in incident_set and not auth_sink_scoped and not has_sink_hint
+        )
+    if auth_source_scoped and not auth_sink_scoped:
+        return False
+    return auth_sink_scoped or (
+        "SINK_AUTH_FAILURE" in incident_set and not auth_source_scoped and not has_source_hint
+    )
+
+
+def _has_scoped_fault_hint(summary: str, scope: str, fault: str) -> bool:
+    scope_patterns = {
+        "source": r"(?:source|extract|read|소스|읽기)",
+        "sink": r"(?:sink|write|jdbc|flush|batch|싱크|쓰기)",
+    }
+    fault_patterns = {
+        "auth": (
+            r"(?:auth|authentication|permission|credential|token|password|sasl|"
+            r"expired|denied|인증|권한|토큰|credential)"
+        ),
+    }
+    scope_re = scope_patterns[scope]
+    fault_re = fault_patterns[fault]
+    return bool(
+        re.search(rf"{scope_re}.{{0,80}}{fault_re}", summary, re.IGNORECASE)
+        or re.search(rf"{fault_re}.{{0,80}}{scope_re}", summary, re.IGNORECASE)
+    )
+
+
+def _has_auth_negation(normalized: str) -> bool:
+    return bool(
+        re.search(r"\b(?:no|not|without)\s+(?:\w+\s+){0,3}(?:auth|authentication|permission|credential|token)\b", normalized)
+        or re.search(r"\b(?:auth|authentication|credential|token)\s+(?:status\s+)?(?:normal|valid|healthy)\b", normalized)
+        or re.search(r"(?:인증|권한|토큰|credential)\s*(?:오류|실패|문제)?\s*(?:없음|정상|유효)", normalized)
+    )
+
+
+def _negates_rule_fault(rule: EvidenceRule, summary: str) -> bool:
+    normalized = _normalize_text(summary)
+    rule_text = f"{rule.evidence} {rule.example or ''}".casefold()
+    if "schema" in rule_text or "serialization" in rule_text or "deserialization" in rule_text:
+        return bool(
+            re.search(r"\bno\s+(?:schema|serialization|deserialization)\s+(?:error|failure)\b", normalized)
+            or re.search(r"\bschema\s+(?:status\s+)?(?:normal|valid|compatible|unchanged|healthy)\b", normalized)
+            or re.search(r"(?:schema|스키마).*(?:정상|호환|변경\s*없음|오류\s*없음)", normalized)
+        )
+    if "config" in rule_text:
+        return bool(
+            re.search(r"\bno\s+config\s+(?:change|error|diff|validation)\b", normalized)
+            or re.search(r"\bconfig\s+(?:status\s+)?(?:normal|valid|unchanged|snapshot)\b", normalized)
+            or re.search(r"(?:config|설정).*(?:정상|변경\s*없음|오류\s*없음|스냅샷)", normalized)
+        )
+    if "timeout" in rule_text or "connection" in rule_text or "reachability" in rule_text:
+        return bool(
+            re.search(r"\b(?:no|without)\s+(?:\w+\s+){0,3}(?:timeout|network|reachability|connection)\s+(?:evidence|error|failure|issue)\b", normalized)
+            or re.search(r"\b(?:endpoint|connection|network)\s+(?:reachable|healthy|normal|ok)\b", normalized)
+            or re.search(r"(?:연결|네트워크|endpoint).*(?:정상|성공|가능)", normalized)
+        )
+    if "constraint" in rule_text or "duplicate" in rule_text:
+        return bool(
+            re.search(r"\bno\s+(?:duplicate|constraint)\s+(?:error|violation|records?)\b", normalized)
+            or re.search(r"(?:중복|제약).*(?:없음|정상)", normalized)
+        )
+    return False
 
 
 def _has_consumer_lag_trend_evidence(rule: EvidenceRule, summary: str) -> bool:
@@ -633,6 +755,10 @@ def _normalize_text(value: str) -> str:
     return " ".join(_tokens(value))
 
 
+def _strip_control_metadata(value: str) -> str:
+    return _CONTROL_METADATA_RE.sub(" ", value)
+
+
 def _meaningful_tokens(value: str) -> set[str]:
     return {token for token in _tokens(value) if len(token) > 1 and token not in _GENERIC_TOKENS}
 
@@ -661,10 +787,11 @@ def _score_confidence(
     supporting_ratio = supporting_matched / supporting_total if supporting_total else 0.0
 
     if required_total and required_matched == required_total:
-        confidence = 0.82 + (supporting_ratio * 0.10)
-    elif required_matched > 0:
-        confidence = 0.60 + (required_ratio * 0.16) + (supporting_ratio * 0.04)
+        confidence = 0.88 + (supporting_ratio * 0.04)
         confidence = min(confidence, root_cause.default_confidence_cap)
+    elif required_matched > 0:
+        confidence = 0.72 + (required_ratio * 0.14) + (supporting_ratio * 0.04)
+        confidence = min(confidence, root_cause.default_confidence_cap, 0.79)
     else:
         confidence = min(0.35 + (supporting_ratio * 0.10), root_cause.default_confidence_cap, 0.59)
 
@@ -694,6 +821,27 @@ def _demote_symptom_below_confirmed_root_cause(
     return [
         replace(candidate, confidence=_clamp_confidence(ceiling))
         if candidate.root_cause_id in _SYMPTOM_ROOT_CAUSES and candidate.confidence > ceiling
+        else candidate
+        for candidate in candidates
+    ]
+
+
+def _demote_direct_effect_below_confirmed_regression(
+    candidates: list[_EvaluatedCandidate],
+) -> list[_EvaluatedCandidate]:
+    ceilings: dict[str, float] = {}
+    for candidate in candidates:
+        effects = _DOMINANT_CAUSES.get(candidate.root_cause_id)
+        if not effects or not candidate.required_evidence_satisfied:
+            continue
+        ceiling = candidate.confidence - _CAUSAL_DEPTH_MARGIN
+        for effect_id in effects:
+            ceilings[effect_id] = max(ceilings.get(effect_id, 0.0), ceiling)
+    if not ceilings:
+        return candidates
+    return [
+        replace(candidate, confidence=_clamp_confidence(ceiling))
+        if (ceiling := ceilings.get(candidate.root_cause_id)) is not None and candidate.confidence > ceiling
         else candidate
         for candidate in candidates
     ]
