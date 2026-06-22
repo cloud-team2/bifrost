@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from app.catalogs.root_causes import root_cause_ids
 from app.evidence.signals import evidence_signal_summary
 
@@ -86,6 +88,15 @@ def test_signal_summary_uses_nearest_auth_scope_in_single_text() -> None:
     assert "source auth/permission error log" not in summary
 
 
+def test_signal_summary_keeps_auth_fault_when_normal_auth_status_is_mixed() -> None:
+    payload = {"message": "source auth status normal. sink authentication failed token expired"}
+
+    summary = evidence_signal_summary("get_connector_task_trace", payload)
+
+    assert "sink auth/permission error log" in summary
+    assert "source auth/permission error log" not in summary
+
+
 def test_signal_summary_does_not_synthesize_deployment_regression_from_single_observation() -> None:
     payload = {"deployment": {"image": "orders-worker:v2", "status": "rolled out"}}
 
@@ -122,3 +133,37 @@ def test_signal_summary_does_not_synthesize_no_fault_from_single_normal_observat
 
     assert summary == ""
     assert "NO_FAULT" not in root_cause_ids()
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "스키마 오류 없음 connector status RUNNING",
+        "schema registry subject unchanged; schema valid; no schema error",
+        "설정 오류 없음",
+        "config valid; no config error",
+        "중복 레코드 없음",
+        "duplicate count 0; no duplicate records",
+        "lag 정상",
+        "consumer lag within threshold; offset progression normal",
+        "connector status RUNNING; no failed task",
+        "healthy valid no error",
+    ],
+)
+def test_signal_summary_does_not_emit_fault_signals_for_normal_negative_observations(
+    message: str,
+) -> None:
+    summary = evidence_signal_summary("get_connector_task_trace", {"message": message})
+
+    assert summary == ""
+
+
+def test_signal_summary_keeps_fault_when_negative_and_fault_fragments_are_distinct() -> None:
+    payload = {
+        "status": "스키마 오류 없음",
+        "logs": ["deserialization error: incompatible schema"],
+    }
+
+    summary = evidence_signal_summary("search_logs", payload)
+
+    assert "serialization/deserialization/schema error" in summary

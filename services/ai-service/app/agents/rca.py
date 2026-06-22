@@ -598,22 +598,23 @@ def _has_sink_context(summary: str) -> bool:
 
 
 def _has_scoped_auth_evidence(rule: EvidenceRule, summary: str, incident_types: list[str]) -> bool:
-    normalized = _normalize_text(summary)
-    if _has_auth_negation(summary) or _has_auth_negation(normalized):
+    observed_summary = _without_auth_negation_fragments(summary)
+    normalized = _without_auth_negation_fragments(_normalize_text(summary))
+    if not observed_summary.strip() and not normalized.strip():
         return False
     has_auth_signal = bool(
         re.search(
             r"\b(?:auth|authentication|permission|credential|token|password|sasl|expired|denied)\b",
             normalized,
         )
-        or re.search(r"(?:인증\s*실패|권한\s*거부|토큰\s*만료|credential\s*만료)", summary, re.IGNORECASE)
+        or re.search(r"(?:인증\s*실패|권한\s*거부|토큰\s*만료|credential\s*만료)", observed_summary, re.IGNORECASE)
     )
     if not has_auth_signal:
         return False
-    has_source_hint = bool(re.search(r"\b(?:source|extract|read)\b", normalized) or re.search(r"(?:소스|읽기)", summary))
-    has_sink_hint = bool(re.search(r"\b(?:sink|write|jdbc|flush|batch)\b", normalized) or re.search(r"(?:쓰기|싱크)", summary))
-    auth_source_scoped = _has_scoped_fault_hint(summary, "source", "auth")
-    auth_sink_scoped = _has_scoped_fault_hint(summary, "sink", "auth")
+    has_source_hint = bool(re.search(r"\b(?:source|extract|read)\b", normalized) or re.search(r"(?:소스|읽기)", observed_summary))
+    has_sink_hint = bool(re.search(r"\b(?:sink|write|jdbc|flush|batch)\b", normalized) or re.search(r"(?:쓰기|싱크)", observed_summary))
+    auth_source_scoped = _has_scoped_fault_hint(observed_summary, "source", "auth")
+    auth_sink_scoped = _has_scoped_fault_hint(observed_summary, "sink", "auth")
     incident_set = set(incident_types)
     if rule.root_cause_id == "SOURCE_AUTH_EXPIRED":
         if auth_sink_scoped and not auth_source_scoped:
@@ -648,43 +649,82 @@ def _has_scoped_fault_hint(summary: str, scope: str, fault: str) -> bool:
 
 
 def _has_auth_negation(normalized: str) -> bool:
-    return bool(
-        re.search(r"\b(?:no|not|without)\s+(?:\w+\s+){0,3}(?:auth|authentication|permission|credential|token)\b", normalized)
-        or re.search(r"\b(?:auth|authentication|permission|credential|token)\s+(?:status\s+)?(?:normal|valid|healthy)\b", normalized)
-        or re.search(
-            r"\b(?:auth|authentication|permission|credential|token)\s+"
-            r"(?:error|failure|issue|problem|문제)?\s*(?:없음|아님|아닌|없다|정상|유효)\b",
-            normalized,
-        )
-        or re.search(r"(?:인증|권한|토큰|credential)\s*(?:오류|실패|문제)?\s*(?:없음|아님|아닌|없다|정상|유효)", normalized)
-    )
+    return any(pattern.search(normalized) for pattern in _AUTH_NEGATION_FRAGMENT_PATTERNS)
+
+
+_AUTH_NEGATION_FRAGMENT_PATTERNS = (
+    re.compile(
+        r"\b(?:no|without)\s+(?:(?!\bbut\b|[.;,\n]).){0,80}"
+        r"(?:auth|authentication|permission|credential|token)"
+        r"(?:(?!\bbut\b|[.;,\n]).){0,80}"
+        r"(?:error|failure|issue|problem|change|rotation|expired|denied)?\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bnot\s+(?:an?\s+)?(?:auth|authentication|permission|credential|token)"
+        r"(?:(?!\bbut\b|[.;,\n]).){0,80}"
+        r"(?:error|failure|issue|problem|change|rotation|expired|denied)?\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:auth|authentication|permission|credential|token)"
+        r"(?:(?!\bbut\b|[.;,\n]).){0,32}(?:normal|valid|healthy|unchanged)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:auth|authentication|permission|credential|token).{0,80}"
+        r"(?:error|failure|issue|problem|change|rotation|문제)?\s*"
+        r"(?:없음|아님|아닌|없다|정상|유효)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:인증|권한|토큰|credential)\s*(?:오류|실패|문제|변경|만료)?\s*"
+        r"(?:없음|아님|아닌|없다|정상|유효)",
+        re.IGNORECASE,
+    ),
+)
+
+
+def _without_auth_negation_fragments(text: str) -> str:
+    observed = text
+    for pattern in _AUTH_NEGATION_FRAGMENT_PATTERNS:
+        observed = pattern.sub(" ", observed)
+    return observed
 
 
 def _negates_rule_fault(rule: EvidenceRule, summary: str) -> bool:
     normalized = _normalize_text(summary)
+    raw = summary.casefold()
     rule_text = f"{rule.evidence} {rule.example or ''}".casefold()
+
+    def matches(pattern: str) -> bool:
+        return bool(re.search(pattern, normalized, re.IGNORECASE) or re.search(pattern, raw, re.IGNORECASE))
+
     if "schema" in rule_text or "serialization" in rule_text or "deserialization" in rule_text:
         return bool(
-            re.search(r"\bno\s+(?:schema|serialization|deserialization)\s+(?:error|failure)\b", normalized)
-            or re.search(r"\bschema\s+(?:status\s+)?(?:normal|valid|compatible|unchanged|healthy)\b", normalized)
-            or re.search(r"(?:schema|스키마).*(?:정상|호환|변경\s*없음|오류\s*없음)", normalized)
+            matches(r"\bno\s+(?:schema|serialization|deserialization)\s+(?:error|failure)\b")
+            or matches(r"\bschema\s+(?:status\s+)?(?:normal|valid|compatible|unchanged|healthy)\b")
+            or matches(r"\bschema\s+(?:error|failure|issue|problem|change)?\s*(?:없음|없다|아님|아닌|정상|유효|호환)\b")
+            or matches(r"(?:schema|스키마).*(?:정상|호환|변경\s*없음|오류\s*없음)")
         )
     if "config" in rule_text:
         return bool(
-            re.search(r"\bno\s+config\s+(?:change|error|diff|validation)\b", normalized)
-            or re.search(r"\bconfig\s+(?:status\s+)?(?:normal|valid|unchanged|snapshot)\b", normalized)
-            or re.search(r"(?:config|설정).*(?:정상|변경\s*없음|오류\s*없음|스냅샷)", normalized)
+            matches(r"\bno\s+config\s+(?:change|error|diff|validation)\b")
+            or matches(r"\bconfig\s+(?:status\s+)?(?:normal|valid|unchanged|snapshot)\b")
+            or matches(r"\bconfig\s+(?:error|change|diff|validation|issue|problem)?\s*(?:없음|없다|아님|아닌|정상|유효)\b")
+            or matches(r"(?:config|설정).*(?:정상|변경\s*없음|오류\s*없음|스냅샷)")
         )
     if "timeout" in rule_text or "connection" in rule_text or "reachability" in rule_text:
         return bool(
-            re.search(r"\b(?:no|without)\s+(?:\w+\s+){0,3}(?:timeout|network|reachability|connection)\s+(?:evidence|error|failure|issue)\b", normalized)
-            or re.search(r"\b(?:endpoint|connection|network)\s+(?:reachable|healthy|normal|ok)\b", normalized)
-            or re.search(r"(?:연결|네트워크|endpoint).*(?:정상|성공|가능)", normalized)
+            matches(r"\b(?:no|without)\s+(?:\w+\s+){0,3}(?:timeout|network|reachability|connection)\s+(?:evidence|error|failure|issue)\b")
+            or matches(r"\b(?:endpoint|connection|network)\s+(?:reachable|healthy|normal|ok)\b")
+            or matches(r"(?:연결|네트워크|endpoint).*(?:정상|성공|가능)")
         )
     if "constraint" in rule_text or "duplicate" in rule_text:
         return bool(
-            re.search(r"\bno\s+(?:duplicate|constraint)\s+(?:error|violation|records?)\b", normalized)
-            or re.search(r"(?:중복|제약).*(?:없음|정상)", normalized)
+            matches(r"\bno\s+(?:duplicate|constraint)\s+(?:error|violation|records?)\b")
+            or matches(r"\b(?:duplicate|constraint)(?:\s+\w+){0,4}\s*(?:없음|없다|아님|아닌|normal|healthy|zero)\b")
+            or matches(r"(?:중복|제약).*(?:없음|정상)")
         )
     return False
 

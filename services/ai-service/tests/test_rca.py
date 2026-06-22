@@ -367,6 +367,22 @@ async def test_normal_auth_evidence_does_not_commit_auth_expired(
     assert top.confidence < 0.60
 
 
+@pytest.mark.asyncio
+async def test_normal_source_auth_status_does_not_suppress_sink_auth_fault(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier("SINK_AUTH_FAILURE"),
+        _retrieval("source auth status normal. sink authentication failed token expired"),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "SINK_AUTH_EXPIRED"
+    assert top.required_evidence_satisfied is True
+    assert top.confidence >= 0.60
+
+
 @pytest.mark.parametrize(
     "summary",
     [
@@ -406,6 +422,34 @@ async def test_normal_metadata_schema_does_not_commit_schema_mismatch(
             "metadata schema status normal. schema registry subject unchanged. "
             "no schema error or serialization failure. connector status RUNNING."
         ),
+    )
+
+    top = result.root_cause_candidates[0]
+    assert top.root_cause_id == "UNKNOWN_WITH_EVIDENCE_GAP"
+    assert top.confidence < 0.60
+
+
+@pytest.mark.parametrize(
+    ("incident_type", "summary"),
+    [
+        ("SCHEMA_MISMATCH", "스키마 오류 없음 connector status RUNNING"),
+        ("PIPELINE_TASK_FAILED", "설정 오류 없음"),
+        ("DUPLICATE_SPIKE", "중복 레코드 없음"),
+        ("CONSUMER_LAG_SPIKE", "lag 정상"),
+        ("CONSUMER_LAG_SPIKE", "consumer lag 정상"),
+        ("CONNECTOR_TASK_FAILED", "connector status RUNNING; no failed task"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_normal_negative_evidence_does_not_commit_matching_fault(
+    monkeypatch: pytest.MonkeyPatch,
+    incident_type: str,
+    summary: str,
+) -> None:
+    _patch_llm(monkeypatch)
+    result = await run_rca(
+        _classifier(incident_type),
+        _retrieval(summary),
     )
 
     top = result.root_cause_candidates[0]

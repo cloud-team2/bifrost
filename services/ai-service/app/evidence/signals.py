@@ -84,9 +84,189 @@ _IDEMPOTENCY_RE = re.compile(
 )
 _NORMAL_RE = re.compile(
     r"no\s+(?:open\s+)?incidents?|all connectors running|tasks running|"
-    r"no error logs|normal|healthy|정상|없음",
+    r"no error logs|normal|healthy|valid|running|정상|없음|유효",
     re.IGNORECASE,
 )
+_CONNECTOR_FAILED_RE = re.compile(
+    r"(?:connector|커넥터|task|태스크)[^.;,\n]{0,80}"
+    r"(?:status|state|상태)?\s*[:=]?\s*(?:FAILED|failed|failure|error|실패|오류|에러)"
+    r"|(?:status|state|상태)\s*[:=]?\s*(?:FAILED|failed|failure|error|실패|오류|에러)"
+    r"[^.;,\n]{0,80}(?:connector|커넥터|task|태스크)",
+    re.IGNORECASE,
+)
+_CONNECTOR_STATE_FAILED_RE = re.compile(
+    r"\b(?:status|state)\s*[:=]?\s*(?:FAILED|failed|failure|error)\b"
+    r"|상태\s*[:=]?\s*(?:FAILED|실패|오류|에러)",
+    re.IGNORECASE,
+)
+_SCHEMA_VERSION_RE = re.compile(r"schema version|subject version|schema registry", re.IGNORECASE)
+_SCHEMA_STRUCTURE_RE = re.compile(r"type mismatch|field type|필드 타입", re.IGNORECASE)
+_CONFIG_CHANGE_RE = re.compile(r"config change|config diff|config 변경", re.IGNORECASE)
+_DUPLICATE_COUNT_RE = re.compile(r"duplicate count|중복\s*레코드", re.IGNORECASE)
+_READ_LATENCY_RE = re.compile(
+    r"read_latency|read latency|extract duration|extract 단계 p95|full scan",
+    re.IGNORECASE,
+)
+_WRITE_LATENCY_RE = re.compile(r"write_latency|write latency|write duration|write p95", re.IGNORECASE)
+_LAG_SPIKE_RE = re.compile(
+    r"consumer lag|lag p95|total lag|lag_total|lag high|lag\s*증가|lag\s*급증",
+    re.IGNORECASE,
+)
+_OFFSET_PROGRESS_RE = re.compile(r"offset progression|commit rate|offset_progression", re.IGNORECASE)
+_INGRESS_RE = re.compile(r"topic ingress|incoming messages|bytes-in", re.IGNORECASE)
+
+_NEGATED_SIGNAL_PATTERNS = {
+    "global": (
+        re.compile(r"\bno\s+(?:open\s+)?incidents?\b", re.IGNORECASE),
+        re.compile(r"\bno\s+error\s+logs?\b", re.IGNORECASE),
+        re.compile(r"\ball\s+connectors\s+running\b|\btasks\s+running\b", re.IGNORECASE),
+        re.compile(r"\b(?:status|state)\s*[:=]?\s*(?:running|ok|healthy|normal|valid)\b", re.IGNORECASE),
+        re.compile(r"\b(?:status|state)\s*[:=]?\s*(?:RUNNING|정상|유효)\b|상태\s*[:=]?\s*(?:RUNNING|정상|유효)", re.IGNORECASE),
+    ),
+    "failure": (
+        re.compile(
+            r"\b(?:no|not|without)\s+(?:(?!\bbut\b|[.;,\n]).){0,80}"
+            r"(?:failed|failure|error|exception|issue|problem)s?\b",
+            re.IGNORECASE,
+        ),
+        re.compile(r"(?:오류|에러|실패|예외|문제)\s*(?:없음|없다|아님|아닌|미확인)", re.IGNORECASE),
+    ),
+    "connector": (
+        re.compile(
+            r"\b(?:connector|task)s?\s+(?:status|state)?\s*[:=]?\s*"
+            r"(?:running|ok|healthy|normal|valid)\b",
+            re.IGNORECASE,
+        ),
+        re.compile(r"\b(?:no|not|without)\s+(?:(?!\bbut\b|[.;,\n]).){0,80}(?:failed|failure)\s+tasks?\b", re.IGNORECASE),
+        re.compile(r"\bno\s+(?:task\s+)?failures?\b", re.IGNORECASE),
+        re.compile(r"(?:connector|커넥터|task|태스크).{0,80}(?:RUNNING|정상|유효)", re.IGNORECASE),
+        re.compile(r"(?:task|태스크)?\s*(?:실패|오류|에러)\s*(?:없음|없다|아님|아닌)", re.IGNORECASE),
+    ),
+    "trace": (
+        re.compile(r"\bno\s+(?:task\s+)?(?:trace|worker log)s?\b", re.IGNORECASE),
+        re.compile(r"\b(?:trace|worker log)s?\s+(?:not found|missing|unavailable)\b", re.IGNORECASE),
+        re.compile(r"(?:trace|worker log|트레이스|로그)\s*(?:없음|없다|미확인|누락)", re.IGNORECASE),
+    ),
+    "auth": (
+        re.compile(
+            r"\b(?:no|without)\s+(?:(?!\bbut\b|[.;,\n]).){0,80}"
+            r"(?:auth|authentication|permission|credential|token|password|sasl)"
+            r"(?:(?!\bbut\b|[.;,\n]).){0,80}(?:error|failure|issue|problem|expired|denied)s?\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\bnot\s+(?:an?\s+)?(?:auth|authentication|permission|credential|token|password|sasl)"
+            r"(?:(?!\bbut\b|[.;,\n]).){0,80}(?:error|failure|issue|problem|expired|denied)s?\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\b(?:auth|authentication|permission|credential|token|password|sasl)"
+            r"(?:(?!\bbut\b|[.;,\n]).){0,32}(?:normal|valid|healthy|unchanged|ok)\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\b(?:auth|authentication|permission|credential|token|password|sasl)"
+            r".{0,80}(?:change|rotation|변경|문제)?\s*"
+            r"(?:없음|없다|아님|아닌|정상|유효|normal|valid|healthy|unchanged)\b",
+            re.IGNORECASE,
+        ),
+        re.compile(r"(?:인증|권한|토큰|credential).{0,80}(?:오류|실패|문제|만료)?\s*(?:없음|없다|아님|아닌|정상|유효)", re.IGNORECASE),
+    ),
+    "schema": (
+        re.compile(
+            r"\b(?:no|not|without)\s+(?:(?!\bbut\b|[.;,\n]).){0,80}"
+            r"(?:schema|serialization|deserialization|compatibility|converter|avro|serde)"
+            r"(?:(?!\bbut\b|[.;,\n]).){0,80}(?:error|failure|issue|problem|mismatch)s?\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\b(?:schema|serialization|deserialization|compatibility|converter|subject)"
+            r"(?:(?!\bbut\b|[.;,\n]).){0,80}(?:normal|healthy|valid|compatible|unchanged|ok)\b",
+            re.IGNORECASE,
+        ),
+        re.compile(r"(?:스키마|역직렬화|직렬화|호환성).{0,80}(?:오류|에러|실패|문제|변경)?\s*(?:없음|없다|아님|아닌|정상|유효|호환)", re.IGNORECASE),
+    ),
+    "schema_change": (
+        re.compile(r"\b(?:no|not|without)\s+(?:(?!\bbut\b|[.;,\n]).){0,80}(?:schema|subject)\s+(?:change|diff|update)s?\b", re.IGNORECASE),
+        re.compile(r"\b(?:schema|subject|schema registry).{0,80}(?:unchanged|same|stable|valid|healthy)\b", re.IGNORECASE),
+        re.compile(r"(?:스키마|subject).{0,80}(?:변경|차이|업데이트)?\s*(?:없음|없다|아님|아닌|정상|유효)", re.IGNORECASE),
+    ),
+    "config": (
+        re.compile(
+            r"\b(?:no|not|without)\s+(?:(?!\bbut\b|[.;,\n]).){0,80}"
+            r"(?:config|configuration|option|setting)"
+            r"(?:(?!\bbut\b|[.;,\n]).){0,80}(?:error|failure|issue|problem|validation|diff|change)s?\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\b(?:config|configuration|option|setting)"
+            r"(?:(?!\bbut\b|[.;,\n]).){0,80}(?:normal|healthy|valid|unchanged|same|ok|snapshot)\b",
+            re.IGNORECASE,
+        ),
+        re.compile(r"(?:config|configuration|설정).{0,80}(?:오류|에러|실패|문제|변경|차이|오타)?\s*(?:없음|없다|아님|아닌|정상|유효)", re.IGNORECASE),
+    ),
+    "config_change": (
+        re.compile(r"\b(?:no|not|without)\s+(?:(?!\bbut\b|[.;,\n]).){0,80}(?:config|configuration)\s+(?:change|diff|update)s?\b", re.IGNORECASE),
+        re.compile(r"\b(?:config|configuration).{0,80}(?:unchanged|same|stable|snapshot)\b", re.IGNORECASE),
+        re.compile(r"(?:config|configuration|설정).{0,80}(?:변경|차이|diff)?\s*(?:없음|없다|아님|아닌|정상|유효)", re.IGNORECASE),
+    ),
+    "duplicate": (
+        re.compile(
+            r"\b(?:no|not|without)\s+(?:(?!\bbut\b|[.;,\n]).){0,80}"
+            r"(?:duplicate|constraint|unique|foreign key|not null|data integrity)"
+            r"(?:(?!\bbut\b|[.;,\n]).){0,80}(?:error|failure|issue|problem|violation|records?|keys?)s?\b",
+            re.IGNORECASE,
+        ),
+        re.compile(r"\bduplicate\s+count\s*[:=]?\s*0\b", re.IGNORECASE),
+        re.compile(r"\b(?:duplicate|constraint).{0,80}(?:normal|healthy|valid|unchanged|zero)\b", re.IGNORECASE),
+        re.compile(r"(?:중복|제약).{0,80}(?:레코드|키|위반|오류|에러|문제)?\s*(?:없음|없다|아님|아닌|정상|해소)", re.IGNORECASE),
+    ),
+    "lag": (
+        re.compile(
+            r"\b(?:consumer\s+)?lag(?:(?!\bbut\b|[.;,\n]).){0,80}"
+            r"(?:normal|healthy|stable|within\s+threshold|below\s+threshold|ok)\b",
+            re.IGNORECASE,
+        ),
+        re.compile(r"\b(?:offset progression|commit rate).{0,80}(?:normal|healthy|stable|ok)\b", re.IGNORECASE),
+        re.compile(r"\bno\s+(?:consumer\s+)?lag\s+(?:spike|increase|surge|issue|problem)\b", re.IGNORECASE),
+        re.compile(r"(?:consumer\s*)?lag.{0,80}(?:정상|안정|임계.*이내|증가\s*없음|급증\s*없음)", re.IGNORECASE),
+        re.compile(r"(?:offset progression|commit rate).{0,80}(?:정상|안정|둔화\s*없음|감소\s*없음)", re.IGNORECASE),
+    ),
+    "timeout": (
+        re.compile(r"\b(?:no|not|without)\s+(?:(?!\bbut\b|[.;,\n]).){0,80}(?:timeout|timed out)\b", re.IGNORECASE),
+        re.compile(r"(?:timeout|타임아웃).{0,80}(?:없음|없다|아님|아닌|정상)", re.IGNORECASE),
+    ),
+    "network": (
+        re.compile(
+            r"\b(?:no|not|without)\s+(?:(?!\bbut\b|[.;,\n]).){0,80}"
+            r"(?:network|reachability|connection|endpoint|dns)\s+(?:error|failure|issue|problem)\b",
+            re.IGNORECASE,
+        ),
+        re.compile(r"\b(?:endpoint|connection|network|dns).{0,80}(?:reachable|healthy|normal|ok|available)\b", re.IGNORECASE),
+        re.compile(r"(?:연결|네트워크|endpoint|호스트).{0,80}(?:정상|성공|가능|문제\s*없음)", re.IGNORECASE),
+    ),
+    "deployment": (
+        re.compile(r"\b(?:deployment|rollout|deploy|image).{0,80}(?:healthy|normal|successful|completed|ok)\b", re.IGNORECASE),
+        re.compile(r"(?:배포|이미지).{0,80}(?:정상|성공|완료|문제\s*없음)", re.IGNORECASE),
+    ),
+    "retry": (
+        re.compile(r"\bno\s+(?:(?!\bbut\b|[.;,\n]).){0,80}(?:retry|retries).{0,80}(?:exhausted|failure|issue|problem)\b", re.IGNORECASE),
+        re.compile(r"\b(?:retry|retries).{0,80}(?:normal|healthy|available|remaining|ok)\b", re.IGNORECASE),
+        re.compile(r"(?:retry|재시도).{0,80}(?:소진|실패|문제)?\s*(?:없음|없다|아님|아닌|정상|잔여)", re.IGNORECASE),
+    ),
+    "idempotency": (
+        re.compile(r"\b(?:idempotency|replay|backfill|duplicate).{0,80}(?:normal|healthy|gap\s*closed|ok)\b", re.IGNORECASE),
+        re.compile(r"(?:멱등|중복|replay|backfill).{0,80}(?:정상|해소|gap\s*없음|문제\s*없음)", re.IGNORECASE),
+    ),
+    "latency": (
+        re.compile(r"\b(?:read|write|extract|sink|source)?\s*latency.{0,80}(?:normal|healthy|stable|within\s+threshold|ok)\b", re.IGNORECASE),
+        re.compile(r"(?:read|write|extract|sink|source|읽기|쓰기)?\s*latency.{0,80}(?:정상|안정|임계.*이내)", re.IGNORECASE),
+    ),
+    "ingress": (
+        re.compile(r"\b(?:topic ingress|incoming messages|bytes-in).{0,80}(?:normal|healthy|stable|within\s+threshold|ok)\b", re.IGNORECASE),
+        re.compile(r"(?:topic ingress|incoming messages|bytes-in|유입).{0,80}(?:정상|안정|임계.*이내)", re.IGNORECASE),
+    ),
+}
 
 _SOURCE_HINT_RE = re.compile(r"\bsource\b|extract|read stage|source_reader|source connector|소스", re.IGNORECASE)
 _SINK_HINT_RE = re.compile(r"\bsink\b|write stage|sink_writer|sink connector|flush|batch|jdbc sink", re.IGNORECASE)
@@ -102,25 +282,30 @@ def evidence_signal_summary(tool_name: str, raw_payload: Any) -> str:
     side = _side_hint(lower, tool_name)
     auth_side = _auth_side_hint(pieces, tool_name)
 
-    failed = bool(_TASK_FAILURE_RE.search(text))
-    trace = bool(_TRACE_RE.search(text))
-    auth = bool(_AUTH_RE.search(text))
-    schema = bool(_SCHEMA_RE.search(text))
-    config = bool(_CONFIG_RE.search(text))
-    constraint = bool(_CONSTRAINT_RE.search(text))
-    timeout = bool(_TIMEOUT_RE.search(text))
-    network = bool(_NETWORK_RE.search(text))
-    lag = bool(_LAG_RE.search(text))
-    deployment = bool(_DEPLOYMENT_RE.search(text))
-    retry = bool(_RETRY_RE.search(text))
-    idempotency = bool(_IDEMPOTENCY_RE.search(text))
+    failed = _has_signal(pieces, _TASK_FAILURE_RE, "failure")
+    connector_failed = _has_signal(pieces, _CONNECTOR_FAILED_RE, "connector") or (
+        "connector" in lower and _has_signal(pieces, _CONNECTOR_STATE_FAILED_RE, "connector")
+    )
+    trace = _has_signal(pieces, _TRACE_RE, "trace")
+    auth = _has_signal(pieces, _AUTH_RE, "auth")
+    schema = _has_signal(pieces, _SCHEMA_RE, "schema")
+    config = _has_signal(pieces, _CONFIG_RE, "config")
+    constraint = _has_signal(pieces, _CONSTRAINT_RE, "duplicate")
+    timeout = _has_signal(pieces, _TIMEOUT_RE, "timeout")
+    network = _has_signal(pieces, _NETWORK_RE, "network")
+    lag_spike = _has_signal(pieces, _LAG_SPIKE_RE, "lag")
+    offset_slow = _has_signal(pieces, _OFFSET_PROGRESS_RE, "lag")
+    deployment = _has_signal(pieces, _DEPLOYMENT_RE, "deployment")
+    degradation = _has_signal(pieces, _DEGRADATION_RE, "failure")
+    retry = _has_signal(pieces, _RETRY_RE, "retry")
+    idempotency = _has_signal(pieces, _IDEMPOTENCY_RE, "idempotency")
 
-    if failed and "connector" in lower:
+    if connector_failed:
         _add(tags, "connector task status FAILED")
     if trace and failed:
         _add(tags, "task trace 또는 worker log")
 
-    if auth and not _is_normal_only(text) and not _has_auth_negation(text):
+    if auth:
         if auth_side == "source":
             _add(tags, "source auth/permission error log")
         elif auth_side == "sink":
@@ -128,21 +313,21 @@ def evidence_signal_summary(tool_name: str, raw_payload: Any) -> str:
         else:
             _add(tags, "auth/permission error log")
 
-    if schema and not _is_normal_only(text):
+    if schema:
         _add(tags, "serialization/deserialization/schema error")
-    if "schema version" in lower or "subject version" in lower or "schema registry" in lower:
+    if _has_signal(pieces, _SCHEMA_VERSION_RE, "schema_change"):
         _add(tags, "schema version 변경 이력")
-    if "type mismatch" in lower or "field type" in lower or "필드 타입" in lower:
+    if _has_signal(pieces, _SCHEMA_STRUCTURE_RE, "schema"):
         _add(tags, "데이터 샘플 구조 변화")
 
-    if config and not _is_normal_only(text):
+    if config:
         _add(tags, "config validation error 또는 invalid option log")
-    if "config change" in lower or "config diff" in lower or "config 변경" in lower:
+    if _has_signal(pieces, _CONFIG_CHANGE_RE, "config_change"):
         _add(tags, "최근 pipeline/connector config 변경")
 
     if (
         deployment
-        and _DEGRADATION_RE.search(text)
+        and degradation
         and _TEMPORAL_DEPLOYMENT_RE.search(text)
         and not _is_normal_only(text)
     ):
@@ -153,7 +338,7 @@ def evidence_signal_summary(tool_name: str, raw_payload: Any) -> str:
     if constraint:
         _add(tags, "sink constraint 또는 duplicate key error")
         _add(tags, "동일 record 반복 실패")
-    if "duplicate count" in lower or "중복 레코드" in lower:
+    if _has_signal(pieces, _DUPLICATE_COUNT_RE, "duplicate"):
         _add(tags, "duplicate count 또는 duplicate key error 증가")
     if idempotency:
         _add(tags, "retry/replay/backfill 또는 idempotency gap")
@@ -176,12 +361,10 @@ def evidence_signal_summary(tool_name: str, raw_payload: Any) -> str:
         else:
             _add(tags, "pipeline extract/read 단계 timeout log")
 
-    if "read_latency" in lower or "read latency" in lower or "extract duration" in lower or "extract 단계 p95" in lower:
+    if _has_signal(pieces, _READ_LATENCY_RE, "latency"):
         _add(tags, "source read latency 증가")
         _add(tags, "extract task duration 증가")
-    if "full scan" in lower:
-        _add(tags, "source read latency 증가")
-    if "write_latency" in lower or "write latency" in lower or "write duration" in lower or "write p95" in lower:
+    if _has_signal(pieces, _WRITE_LATENCY_RE, "latency"):
         _add(tags, "sink write latency 증가")
     if "source_healthy" in lower or "source 정상" in lower or "upstream normal" in lower:
         _add(tags, "source read 정상")
@@ -190,12 +373,11 @@ def evidence_signal_summary(tool_name: str, raw_payload: Any) -> str:
     if "credential_rotation" in lower or "secret rotation" in lower or "rotate" in lower or "credential rotation" in lower:
         _add(tags, "credential rotation 또는 secret 변경 이력")
 
-    lag_is_normal = any(token in lower for token in ("consumer lag 정상", "lag within threshold", "lag normal"))
-    if lag and not lag_is_normal:
+    if lag_spike:
         _add(tags, "consumer lag 급증")
-    if "offset progression" in lower or "commit rate" in lower or "offset_progression" in lower:
+    if offset_slow:
         _add(tags, "offset progression 둔화")
-    if "topic ingress" in lower or "incoming messages" in lower or "bytes-in" in lower:
+    if _has_signal(pieces, _INGRESS_RE, "ingress"):
         _add(tags, "topic ingress rate 급증")
 
     if retry:
@@ -246,10 +428,11 @@ def _side_hint(text: str, tool_name: str) -> str:
 def _auth_side_hint(pieces: list[str], tool_name: str) -> str:
     sides: set[str] = set()
     for piece in pieces:
-        if _has_auth_negation(piece) or _is_normal_only(piece):
+        observed = _without_normal_fragments(piece, "auth", "failure")
+        if not _AUTH_RE.search(observed) or _is_normal_only(observed):
             continue
-        for match in _AUTH_RE.finditer(piece):
-            side = _nearest_side_for_match(piece, match.start(), tool_name)
+        for match in _AUTH_RE.finditer(observed):
+            side = _nearest_side_for_match(observed, match.start(), tool_name)
             if side in {"source", "sink"}:
                 sides.add(side)
     if len(sides) == 1:
@@ -272,40 +455,58 @@ def _nearest_side_for_match(piece: str, index: int, tool_name: str) -> str:
 
 
 def _is_normal_only(text: str) -> bool:
-    fault_text = re.sub(
-        r"\bno\s+(?:open\s+)?incidents?\b|\bno\s+error\s+logs?\b|"
-        r"\bno\s+(?:schema|serialization|deserialization|auth|authentication|permission|credential|token)\s+"
-        r"(?:error|failure|issue)\b",
-        " ",
-        text,
-        flags=re.IGNORECASE,
-    )
+    fault_text = _without_normal_fragments(text, *_NEGATED_SIGNAL_PATTERNS.keys())
     fault_observed = bool(
         _FAILED_RE.search(fault_text)
         or _SCHEMA_RE.search(fault_text)
+        or _CONFIG_RE.search(fault_text)
         or _CONSTRAINT_RE.search(fault_text)
         or _TIMEOUT_RE.search(fault_text)
         or _NETWORK_RE.search(fault_text)
+        or _LAG_RE.search(fault_text)
         or _DEGRADATION_RE.search(fault_text)
     )
-    return bool(_NORMAL_RE.search(text)) and not fault_observed
+    return _has_normal_fragment(text) and not fault_observed
 
 
 def _has_auth_negation(text: str) -> bool:
-    return bool(
-        re.search(
-            r"\b(?:no|not|without)\s+(?:\w+\s+){0,3}"
-            r"(?:auth|authentication|permission|credential|token)\s+(?:error|failure|issue)\b",
-            text,
-            re.IGNORECASE,
-        )
-        or re.search(
-            r"\b(?:auth|authentication|credential|token)\s+(?:status\s+)?(?:normal|valid|healthy)\b",
-            text,
-            re.IGNORECASE,
-        )
-        or re.search(r"(?:인증|권한|토큰|credential).*(?:없음|정상|유효)", text, re.IGNORECASE)
+    return _has_fault_negation(text, "auth")
+
+
+def _has_signal(pieces: list[str], pattern: re.Pattern[str], fault: str) -> bool:
+    for piece in pieces:
+        observed = _without_normal_fragments(piece, "failure", fault)
+        if pattern.search(observed):
+            return True
+    return False
+
+
+def _without_normal_fragments(text: str, *faults: str) -> str:
+    cleaned = text
+    seen: set[str] = set()
+    ordered_faults = [fault for fault in faults if fault not in {"global", "failure"}]
+    ordered_faults.append("global")
+    if "failure" in faults:
+        ordered_faults.append("failure")
+    for fault in ordered_faults:
+        if fault in seen:
+            continue
+        seen.add(fault)
+        for pattern in _NEGATED_SIGNAL_PATTERNS.get(fault, ()):
+            cleaned = pattern.sub(" ", cleaned)
+    return cleaned
+
+
+def _has_normal_fragment(text: str) -> bool:
+    return bool(_NORMAL_RE.search(text)) or any(
+        pattern.search(text)
+        for patterns in _NEGATED_SIGNAL_PATTERNS.values()
+        for pattern in patterns
     )
+
+
+def _has_fault_negation(text: str, fault: str) -> bool:
+    return any(pattern.search(text) for pattern in _NEGATED_SIGNAL_PATTERNS.get(fault, ()))
 
 
 def _add(tags: list[str], tag: str) -> None:
