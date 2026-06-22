@@ -6,7 +6,7 @@ import json
 import pytest
 
 from app.agents.rca import run_rca
-from app.catalogs.evidence_matrix import get_evidence_profile
+from app.catalogs.evidence_matrix import EVIDENCE_RULES, get_evidence_profile, list_evidence_profiles
 from app.catalogs.root_causes import root_cause_ids
 from app.core.config import Settings, settings
 from app.schemas.outputs import Classification, ClassifierOutput, IncidentTypeOutput, RcaOutput, RetrievalOutput
@@ -374,6 +374,9 @@ async def test_normal_auth_evidence_does_not_commit_auth_expired(
         "source 인증 실패 없음",
         "source 권한 문제 없음",
         "source 토큰 정상",
+        "인증 실패 없음",
+        "권한 문제 없음",
+        "토큰 정상",
     ],
 )
 @pytest.mark.asyncio
@@ -739,6 +742,17 @@ def test_structured_required_rules_opt_out_of_semantic_matching() -> None:
         assert profile is not None
         rule = next(rule for rule in profile.required if rule.evidence == evidence)
         assert rule.semantic_allowed is False
+
+
+def test_evidence_rules_are_derived_from_profiles() -> None:
+    flattened = tuple(
+        rule
+        for profile in list_evidence_profiles()
+        for rules in (profile.required, profile.supporting, profile.negative, profile.exclusion)
+        for rule in rules
+    )
+
+    assert EVIDENCE_RULES == flattened
 
 
 @pytest.mark.asyncio

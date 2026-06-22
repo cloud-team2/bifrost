@@ -38,7 +38,7 @@ FAILURE_TYPES: tuple[FailureType, ...] = (
         incident_type='CONNECTOR_TASK_FAILED',
         layer='pipeline',
         description='Kafka Connect connector task 실패',
-        signals=('task FAILED', 'trace 포함'),
+        signals=('terminal task failure state', 'connector trace error'),
     ),
     FailureType(
         incident_type='CONNECTOR_WORKER_UNHEALTHY',
@@ -146,7 +146,7 @@ FAILURE_TYPES: tuple[FailureType, ...] = (
         incident_type='CONFIG_CHANGE_REGRESSION',
         layer='change',
         description='설정 변경 이후 장애',
-        signals=('config diff와 시간 상관', 'config change followed by connector failure'),
+        signals=('config diff와 시간 상관', 'configuration change followed by error increase'),
     ),
     FailureType(
         incident_type='SCHEMA_CHANGE_REGRESSION',
@@ -158,7 +158,7 @@ FAILURE_TYPES: tuple[FailureType, ...] = (
         incident_type='IMAGE_DEPLOYMENT_REGRESSION',
         layer='change',
         description='image 배포 이후 장애',
-        signals=('new image rollout 이후 failure', 'image rollout followed by connector failure', 'worker image update followed by restart'),
+        signals=('new image rollout 이후 failure', 'image rollout followed by runtime error increase', 'runtime image rollout followed by restart'),
     ),
     FailureType(
         incident_type='CREDENTIAL_ROTATION_FAILURE',
@@ -182,7 +182,7 @@ FAILURE_TYPES: tuple[FailureType, ...] = (
         incident_type='DUPLICATE_SPIKE',
         layer='data_quality',
         description='중복 증가',
-        signals=('duplicate count 증가', 'record duplication increase', 'idempotency guarantee missing', 'replay window'),
+        signals=('duplicate count 증가', 'record duplication increase', 'idempotency policy gap', 'replay/backfill window'),
     ),
     FailureType(
         incident_type='NULL_RATE_SPIKE',
