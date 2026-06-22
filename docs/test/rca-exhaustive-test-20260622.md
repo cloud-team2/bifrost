@@ -255,4 +255,4 @@ kubectl -n bifrost-system delete job rca-eval-llm # 정리
 
 > **결론**: 배포 웹에서 **실제 장애 → 자동 감지 → 자동 RCA(0.82) → 권장조치 렌더까지 e2e 정상 동작을 시각 확인**. 권장조치 [실행] 게이팅(읽기전용 자동수집형만 활성, 변경형은 비활성)도 실화면에서 확인됨.
 > 주의: **이 검증은 "동작 정상성"이지 라이브 "정확도(0.85 목표)" 측정이 아님** — 정확도는 §Part D/Part A 참조.
-> 미해결(정직 표기): 검증용 인시던트 `127c4721`은 sink 복구 후에도 **OPEN**(연결형 인시던트 자동 resolve 미동작) — UI에서 수동 resolve 필요. DB 직접 resolve는 운영 안전상 차단됨.
+> 정정(works-as-designed, 초안의 "자동 resolve 미동작" 표현 철회): 검증용 인시던트 `127c4721`이 sink 복구 후에도 OPEN으로 남은 것은 **버그가 아니라 설계**다(스펙 B.7, `IncidentService.onRecovery` 200–226줄: "자동 닫기 없음 — CRITICAL은 상태 유지(사용자 확인 필수), WARNING만 OPEN→INVESTIGATING"). 복구 자체는 **정상 감지·표시**됨 — events에 `03:52:59 INFO PIPELINE_STATUS_CHANGED 'pipeline cdc-products ERROR → ACTIVE (트리거 복구 — 확인 후 직접 해소 필요)'` 기록. 본 검증은 사용자 승인 하에 resolve API로 RESOLVED 처리(04:03). → 별도 버그 이슈 불필요. (선택적 UX 개선 여지: 복구 감지 시 인시던트 상세에 "원클릭 해소" 힌트 노출.)
