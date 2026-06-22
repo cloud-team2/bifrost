@@ -15,6 +15,7 @@ from typing import Any
 
 from app.prompts import planner as planner_prompt
 from app.schemas.outputs import PlannerOutput, RetrievalPlanStep
+from app.schemas.state import AgentMode
 from app.schemas.tools import ToolContext, ToolStatus
 from app.tools.registry import ToolClientRegistry
 
@@ -127,6 +128,7 @@ async def run_planner(
     user_message: str,
     project_id: str,
     *,
+    mode: AgentMode | None = None,
     registry: ToolClientRegistry | None = None,
     tool_context: ToolContext | None = None,
 ) -> PlannerOutput:
@@ -139,6 +141,12 @@ async def run_planner(
         llm_selected_tools = {tool for tool, _ in selected}
 
     selected = _augment_hypothesis_routes(selected, user_message.lower())
+    # #988 SIMPLE_QUERY 단일 데이터 의도(로그/메트릭 수치) 질의는 정답 project-scope tool 을
+    # 선두에 보장한다(LLM 이 식별자 의존 tool 을 비결정적으로 골라 clarification→knowledge-only
+    # 로 새던 변동 제거). incident/action mode 는 영향 없음.
+    if mode == AgentMode.SIMPLE_QUERY:
+        selected = _force_clear_intent_primary(selected, user_message)
+        llm_selected_tools &= {tool for tool, _ in selected}
     selected_tools = {tool for tool, _ in selected}
     if selected_tools & _PIPELINE_ID_PARAM_TOOLS:
         pipeline_id = _extract_pipeline_id(user_message)
@@ -369,6 +377,47 @@ def _augment_hypothesis_routes(selected: list[tuple[str, dict]], msg: str) -> li
         add("get_deployments", {})
 
     return augmented
+
+
+# #988 단일 데이터 의도 keyword (SIMPLE_QUERY 가드레일용).
+_LOG_INTENT_KEYWORDS = {"로그", "log", "logs"}
+_METRIC_VALUE_KEYWORDS = {"메트릭", "metric", "metrics", "지표", "수치"}
+_INTENT_EVENTISH_KEYWORDS = {"이벤트", "event", "인시던트", "incident", "장애"}
+
+
+def _force_clear_intent_primary(
+    selected: list[tuple[str, dict]], user_message: str
+) -> list[tuple[str, dict]]:
+    """SIMPLE_QUERY 에서 단일 데이터 의도(로그 검색 / 메트릭 수치)가 분명하고 식별자가 없으면
+    project-scope 정답 tool(search_logs / get_metrics)을 plan 선두에 보장한다.
+
+    LLM 이 식별자 의존 tool(get_consumer_lag, get_connector_task_trace 등)을 비결정적으로 골라
+    식별자 없음 → clarification(빈 plan) → knowledge-only 로 새던 변동을 막는다. 식별자가 명시된
+    질의는 식별자 의존 조회가 정당하므로 LLM 선택을 존중한다(가드레일 미적용).
+    """
+    msg = user_message.lower()
+    has_log = _has_any(msg, _LOG_INTENT_KEYWORDS) and not _has_any(msg, _INTENT_EVENTISH_KEYWORDS)
+    has_metric = _has_any(msg, _METRIC_VALUE_KEYWORDS)
+    if not (has_log or has_metric):
+        return selected
+    if _extract_identifier(user_message) is not None:
+        return selected
+
+    if has_log:
+        primary: tuple[str, dict] = ("search_logs", dict(_LOG_PARAMS))
+    else:
+        metric_params = _metric_param_list_for_message(msg)
+        primary = (
+            "get_metrics",
+            metric_params[0] if metric_params else dict(_READ_TOOL_DEFAULT_PARAMS["get_metrics"]),
+        )
+    # primary 를 선두에, 허위 clarification 을 유발하는 식별자 의존 tool 은 제거(나머지 유지).
+    rest = [
+        (tool, params)
+        for tool, params in selected
+        if tool != primary[0] and tool not in _IDENTIFIER_DEPENDENT_TOOLS
+    ]
+    return [primary, *rest]
 
 
 async def _llm_select_tools(user_message: str) -> list[tuple[str, dict]] | None:
