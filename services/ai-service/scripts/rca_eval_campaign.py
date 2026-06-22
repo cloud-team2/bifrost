@@ -4,12 +4,16 @@
 만으로 배포된 RCA 로직(run_rca)에 통과시켜 AC@1/AC@3/AC@5/Avg@5/ECE/기권율을 산출한다.
 human_verdict(사후 결론)는 증거에서 제외해 정답 누출을 막는다.
 
-실행:  cd services/ai-service && .venv/bin/python scripts/rca_eval_campaign.py
+실행(floor, 재현):  cd services/ai-service && .venv/bin/python scripts/rca_eval_campaign.py
+실행(LLM-on, 라이브 정확도):  RCA_EVAL_USE_LLM=1 python scripts/rca_eval_campaign.py
+  └ 실 LLM/임베딩 구성이 있는 곳(배포 pod/Job)에서만 의미. 비파괴(read-only RCA 평가).
+    in-cluster 전체 35 라이브 평가 Job 생성법은 docs/test/rca-exhaustive-test-20260622.md §Part C 참고.
 """
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 
 import app.llm.provider as _prov
 from app.agents.rca import UNKNOWN_ROOT_CAUSE_ID, run_rca
@@ -26,13 +30,15 @@ from app.schemas.outputs import (
 from app.schemas.state import EvidenceItem, EvidenceType, IncidentScope
 
 
-# 카탈로그-only 평가: LLM 타이브레이커 비활성(증거·신뢰도 게이트만으로 판정).
+# 기본: 카탈로그-only floor(LLM 타이브레이커 비활성, 재현 가능).
+# RCA_EVAL_USE_LLM=1 → 실제 LLM provider 사용(타이브레이커 포함 라이브 정확도 측정).
 class _DummyLLM:
     async def generate(self, messages, model=None):  # noqa: ANN001
         return ""
 
 
-_prov.get_llm_provider = lambda: _DummyLLM()
+if os.getenv("RCA_EVAL_USE_LLM") != "1":
+    _prov.get_llm_provider = lambda: _DummyLLM()
 
 
 # root_cause -> incident_type (분류기가 줄 법한 유형). 1순위 후보로 등장하는 유형을 우선.

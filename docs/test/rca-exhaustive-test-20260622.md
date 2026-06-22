@@ -166,3 +166,35 @@
   - (3) 정확도 향상: 실 evidence(metric/trace/temporal)+LLM 타이브레이커 활성, 실인시던트 gold set 확대(#964 루프), 약계층(change·data_quality) 증거규칙 보강.
 
 > 최종 상태: 모든 커넥터 RUNNING/Ready, tenant DB 1/1, ArgoCD selfHeal=true·Synced, sink lag drain. 주입 데이터(`products` 테스트행 ~60.5k, 테스트 tenant 한정) 운영 영향 없음.
+
+---
+
+## Part C — 비파괴 라이브 평가 하네스 (③)
+
+라이브 주입이 일부 계층에만 가능한 한계를 우회해 **전체 35 gold set을 실제 배포 로직·실 LLM/임베딩으로** 평가하는 비파괴 경로. 운영 자원을 건드리지 않고(인프라 mutation 없음, read-only `run_rca` 평가) 카탈로그 전수를 라이브 정확도로 측정한다.
+
+### 동작
+- `rca_eval_campaign.py`에 **`RCA_EVAL_USE_LLM=1`** 플래그 추가 — 기본은 floor(LLM off, 재현 가능), 플래그 시 실제 provider 사용(타이브레이커 포함).
+- ai-service **배포 pod와 동일 env**(LLM 키·임베딩·DB 구성)로 in-cluster Job을 띄워 실행 → floor 대비 LLM·실evidence 상승폭 측정.
+
+### 실행 (배포 이미지에 스크립트 반영 후 = chore/#979 머지·CI 배포 이후)
+배포 deployment에서 **env를 그대로 상속**해 Job 생성(시크릿은 secretKeyRef 참조라 평문 노출 없음):
+```bash
+kubectl -n bifrost-system get deploy ai-service -o json \
+| jq '{apiVersion:"batch/v1",kind:"Job",
+   metadata:{name:"rca-eval-llm",namespace:"bifrost-system"},
+   spec:{backoffLimit:0,template:{spec:{restartPolicy:"Never",
+     serviceAccountName:.spec.template.spec.serviceAccountName,
+     containers:[(.spec.template.spec.containers[0]
+       | {name:"rca-eval",image:.image,workingDir:"/app",
+          env:((.env)+[{name:"RCA_EVAL_USE_LLM",value:"1"}]),
+          command:["python","scripts/rca_eval_campaign.py"]})]}}}}' \
+| kubectl apply -f -
+
+kubectl -n bifrost-system logs job/rca-eval-llm   # AC@k/Avg@5/ECE/계층별 JSON
+kubectl -n bifrost-system delete job rca-eval-llm # 정리
+```
+
+### 한계·확장
+- 본 하네스는 **gold set의 텍스트 evidence**를 입력으로 RCA 결정 로직을 라이브로 돈다(LLM·semantic on). **metric/trace/temporal 실evidence**까지 평가하려면 retrieval 경유가 필요 → 후속으로 합성 evidence 주입 모드(또는 합성 인시던트+evidence) 추가.
+- floor(LLM off) 수치는 회귀 기준선으로 유지하고, 본 LLM-on 수치를 발표/운영 지표로 병기.
