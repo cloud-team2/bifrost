@@ -140,7 +140,10 @@
 - 01:37 sink 커넥터 `state=paused` 확인 + source `products`에 60,000건 INSERT(총 208,738).
 - 01:38~01:43 (~5분) 폴링 → **신규 인시던트 0 · 신규 RCA 0**.
 - 01:43 sink `state=running` 원복 → **RUNNING/Ready:True**. 직후 `kafka-consumer-groups --describe` 실측: 파티션 0~5 각 lag ≈ 9,900~10,090 → **합계 ≈ 60,000 (CRITICAL 임계 50,000 초과)**.
-- **발견**: lag이 임계를 넘었음에도 자동 인시던트가 생성되지 않음. 원인 추정 = **pause 시 consumer group 활성 멤버가 빠져** lag 모니터가 "느린 RUNNING 컨슈머"(#957 방식)만 감지하고 paused 컨슈머는 스킵(또는 모니터 poll 주기 미도달). → resume 후 lag drain.
+- **발견(코드 대조 후 정정)**: lag ~60k가 임계(테스트 워크스페이스는 `workspace_settings` 행 없음 → **기본 critical 50,000** 사용)를 넘었는데도 자동 인시던트 미생성.
+  - `KafkaAdminPoller`의 #926 정책은 **커밋오프셋이 없는 컨슈머(미시작·pause-from-empty)만 의도적으로 제외**(오탐 방지). 본 케이스는 running하다 pause돼 **커밋오프셋이 있었으므로 제외 대상 아님** → lag 계산·CRITICAL 평가가 됐어야 함. ⇒ "paused라 스킵"이라는 1차 추정은 코드와 불일치(철회).
+  - 실제 미발생 원인은 **edge-trigger in-memory 상태(`lagAlarmState`)가 과거 #957 테스트에서 ERROR로 남아 재발화(rising-edge) 억제**일 가능성이 큼(operations-backend pod 10일 연속 가동). **확정엔 bifrost-system 로그 필요(현 권한 밖)** — 미확정으로 표기.
+  - resume 후 lag 0으로 drain.
 
 ## Part B 결론
 
@@ -149,6 +152,9 @@
   - `bfd38509` sink DB 연결 불가 → RCA **SINK_DB_CONNECTION_TIMEOUT @0.82**
   - `5aed2e00`·`ea315de3` Consumer lag (critical) → 자동 인시던트 + RCA run
 - **카탈로그 전수 정확도는 Part A(35케이스 실측)로 확보**: AC@5 80% · Avg@5 0.724 · ECE 0.073 · 환각 0.
-- **개선 제언**: (1) lag 모니터가 paused/empty consumer group의 backlog도 감지하도록 보강, (2) 테스트 재현을 위해 ArgoCD `3-data-tenantdb` self-heal을 일시 비활성화할 수 있는 주입 런북, (3) 비파괴 주입 경로(메트릭 모킹/이벤트 직접 주입) 마련.
+- **개선 제언(정정)**:
+  - (1) ~~paused/empty backlog 감지 추가~~ → **주의: 미커밋·paused 컨슈머 제외는 #926의 의도적 오탐 방지 설계**라 단순 감지 추가는 부적절. 진짜 후보 개선은 **인시던트 resolved 후 edge-trigger 상태(`lagAlarmState`) 재무장**(해소된 lag이 재발하면 다시 알림) — 단 위 미발생 원인을 bifrost-system 로그로 확정한 뒤 진행.
+  - (2) 테스트 재현용 ArgoCD `3-data-tenantdb` self-heal 일시 비활성 런북(테스트 후 복구).
+  - (3) **비파괴 주입 하네스**(메트릭/이벤트 신호 직접 주입) — 운영 자원을 안 건드리고 **전체 35 gold set을 라이브 감지→RCA 경로로 흘릴 수 있음**(현재 라이브 일부만 가능한 근본 한계 해소).
 
 > 주입 데이터: source `products`에 테스트행 ~60,180건 추가(`rca-l1*`/`rca-l3*`, 테스트 tenant 한정). 운영 영향 없음. 최종 상태: 모든 커넥터 RUNNING/Ready, tenant DB 1/1, connection.url 원상.
