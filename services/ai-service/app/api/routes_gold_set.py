@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter
@@ -15,6 +16,8 @@ from app.schemas.gold_set import (
     GoldSetEntry,
     GoldSetLabel,
     LabelCategory,
+    PromoteGoldSetRequest,
+    PromoteVerdict,
     ReviewGoldSetEntryRequest,
     ReviewStatus,
 )
@@ -56,6 +59,82 @@ async def create_gold_set_entry(req: CreateGoldSetEntryRequest) -> ApiResponse:
         evidence_ids=req.evidence_ids,
         human_verdict=req.human_verdict,
         labels=labels,
+    )
+    await repo.create(entry)
+    return ApiResponse.success(request_id, entry.model_dump(mode="json"))
+
+
+@router.post("/gold-set/promote")
+async def promote_gold_set_entry(req: PromoteGoldSetRequest) -> ApiResponse:
+    """#982 운영자 RCA 평결을 gold set 으로 승격한다.
+
+    operations-backend 의 RCA 피드백(채택/거부/수정)이 호출하는 진입점.
+    - accepted/corrected: 정답(accepted_root_cause_id)이 확정되므로 reviewed 행으로 기록한다.
+    - rejected: 정답을 모르므로 disputed 로 기록한다(AC@k/ECE 평가에서 제외).
+    같은 incident 의 기존 항목(예: backfill 로 적재된 unreviewed 예측)이 있으면 갱신하고,
+    없으면 새 항목을 생성한다(멱등 upsert).
+    """
+    request_id = _request_id()
+    repo = get_gold_set_repo()
+
+    if req.verdict == PromoteVerdict.CORRECTED and not (req.corrected_root_cause_id or "").strip():
+        return ApiResponse.failure(
+            request_id,
+            ErrorCode.VALIDATION_FAILED,
+            "corrected verdict requires corrected_root_cause_id",
+        )
+
+    if req.verdict == PromoteVerdict.ACCEPTED:
+        accepted = (req.predicted_root_cause_id or "").strip() or None
+        review_status = ReviewStatus.REVIEWED
+        if accepted is None:
+            return ApiResponse.failure(
+                request_id,
+                ErrorCode.VALIDATION_FAILED,
+                "accepted verdict requires predicted_root_cause_id to accept",
+            )
+    elif req.verdict == PromoteVerdict.CORRECTED:
+        accepted = req.corrected_root_cause_id.strip()
+        review_status = ReviewStatus.REVIEWED
+    else:  # REJECTED — 예측이 틀렸으나 정답 미상. 평가셋 제외(disputed).
+        accepted = None
+        review_status = ReviewStatus.DISPUTED
+
+    predicted = (req.predicted_root_cause_id or "").strip() or None
+
+    existing = await repo.find_latest_by_incident(req.incident_id)
+    if existing is not None:
+        updated = await repo.set_verdict(
+            existing.entry_id,
+            review_status=review_status,
+            reviewed_by=req.reviewed_by,
+            human_verdict=req.verdict.value,
+            accepted_root_cause_id=accepted,
+        )
+        return ApiResponse.success(request_id, updated.model_dump(mode="json"))
+
+    labels: list[GoldSetLabel] = []
+    if accepted is not None:
+        labels.append(
+            GoldSetLabel(
+                label_id=f"lbl_{uuid.uuid4().hex[:8]}",
+                category=LabelCategory.ROOT_CAUSE,
+                value=accepted,
+                notes=f"operator {req.verdict.value}",
+            )
+        )
+    entry = GoldSetEntry(
+        entry_id=_entry_id(),
+        incident_id=req.incident_id,
+        accepted_root_cause_id=accepted,
+        predicted_root_cause_id=predicted,
+        trigger=req.trigger,
+        symptom=req.symptom,
+        human_verdict=req.verdict.value,
+        labels=labels,
+        review_status=review_status,
+        reviewed_by=req.reviewed_by,
+        reviewed_at=datetime.now(timezone.utc),
     )
     await repo.create(entry)
     return ApiResponse.success(request_id, entry.model_dump(mode="json"))

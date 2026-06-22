@@ -3,7 +3,7 @@ package com.bifrost.ops.incident;
 import java.net.URI;
 import java.util.Locale;
 
-final class AiServiceEndpoint {
+public final class AiServiceEndpoint {
 
     private final String baseUrl;
     private final String disabledReason;
@@ -13,7 +13,7 @@ final class AiServiceEndpoint {
         this.disabledReason = disabledReason;
     }
 
-    static AiServiceEndpoint from(String value) {
+    public static AiServiceEndpoint from(String value) {
         if (value == null || value.isBlank()) {
             return disabled("AI_SERVICE_URL is not configured");
         }
@@ -34,15 +34,15 @@ final class AiServiceEndpoint {
         return new AiServiceEndpoint(normalized, null);
     }
 
-    boolean configured() {
+    public boolean configured() {
         return disabledReason == null;
     }
 
-    String baseUrl() {
+    public String baseUrl() {
         return baseUrl;
     }
 
-    String disabledReason() {
+    public String disabledReason() {
         return disabledReason;
     }
 

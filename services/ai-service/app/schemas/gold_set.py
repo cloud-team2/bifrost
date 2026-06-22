@@ -25,6 +25,9 @@ class LabelCategory(str, Enum):
 
 
 class ReviewStatus(str, Enum):
+    # #982 backfill 로 적재된 미검수 예측. 정답(accepted_root_cause_id) 없이
+    # predicted_root_cause_id 만 가진다. 운영자 검수 전이므로 평가(AC@k/ECE)에서 제외된다.
+    UNREVIEWED = "unreviewed"
     DRAFT = "draft"
     REVIEWED = "reviewed"
     DISPUTED = "disputed"
@@ -41,7 +44,10 @@ class GoldSetLabel(StrictModel):
 class GoldSetEntry(StrictModel):
     entry_id: str
     incident_id: str
-    accepted_root_cause_id: str
+    # 운영자가 검수해 채택한 정답 root cause. 미검수(unreviewed) 항목은 정답이 없으므로 None.
+    accepted_root_cause_id: str | None = None
+    # #982 RCA 가 예측한 root cause. 정답이 아닌 "예측"이며 검수 시 채택/거부/수정 대상이 된다.
+    predicted_root_cause_id: str | None = None
     trigger: str | None = None
     symptom: str | None = None
     contributing_factors: list[str] = Field(default_factory=list)
@@ -55,8 +61,9 @@ class GoldSetEntry(StrictModel):
 
     @field_validator("accepted_root_cause_id")
     @classmethod
-    def _root_cause_not_empty(cls, v: str) -> str:
-        if not v.strip():
+    def _root_cause_not_empty(cls, v: str | None) -> str | None:
+        # None 은 미검수(정답 미확정) 상태로 허용하되, 빈 문자열은 거부한다.
+        if v is not None and not v.strip():
             raise ValueError("accepted_root_cause_id must not be empty")
         return v
 
@@ -76,6 +83,31 @@ class ReviewGoldSetEntryRequest(BaseModel):
     review_status: ReviewStatus
     reviewed_by: str
     human_verdict: str | None = None
+
+
+class PromoteVerdict(str, Enum):
+    """#982 운영자 RCA 평결 — operations-backend RcaFeedback verdict 와 1:1 대응."""
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    CORRECTED = "corrected"
+
+
+class PromoteGoldSetRequest(BaseModel):
+    """#982 운영자 평결을 gold set 으로 승격(reviewed/disputed 행 생성·갱신).
+
+    accepted → 정답 = predicted_root_cause_id (예측 채택).
+    corrected → 정답 = corrected_root_cause_id (운영자 정정).
+    rejected → 정답 없음(disputed), 평가셋에서 제외.
+    """
+    incident_id: str
+    verdict: PromoteVerdict
+    reviewed_by: str
+    predicted_root_cause_id: str | None = None
+    corrected_root_cause_id: str | None = None
+    run_id: str | None = None
+    trigger: str | None = None
+    symptom: str | None = None
+    comment: str | None = None
 
 
 LABELING_GUIDE = {
