@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -41,6 +42,10 @@ from eval.online.live_fault_specs import (
     FaultSpec,
     get_root_cause,
     list_fault_specs,
+)
+from eval.online.safe_live_fault_specs import (
+    SAFE_FAULT_SPECS,
+    list_safe_fault_specs,
 )
 
 REPORTS_DIR = Path(__file__).resolve().parents[2] / "eval" / "reports"
@@ -627,6 +632,283 @@ def run_live(
     return report
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# SAFE-LIVE — operations-backend safe-injection API only.
+# No kubectl, DB exec, DB scale, direct SQL mutation, or existing-resource patch.
+# ─────────────────────────────────────────────────────────────────────────────
+def _safe_internal_headers() -> dict[str, str]:
+    from app.core.config import settings
+    from app.tools.spring_client import INTERNAL_OPS_TOKEN_HEADER
+
+    headers = {
+        "Content-Type": "application/json",
+        "X-Agent-Request-Id": "safeinject-eval",
+    }
+    if settings.internal_ops_token:
+        headers[INTERNAL_OPS_TOKEN_HEADER] = settings.internal_ops_token
+    return headers
+
+
+def _safe_login(client, *, base_url: str, email: str, password: str) -> tuple[str, str]:
+    resp = client.post(
+        f"{base_url}/api/v1/auth/login",
+        json={"email": email, "password": password},
+        headers={"Content-Type": "application/json"},
+    )
+    resp.raise_for_status()
+    body = resp.json()
+    token = body.get("accessToken")
+    project_id = body.get("workspaceId")
+    if not token or not project_id:
+        raise RuntimeError(f"login response missing accessToken/workspaceId: {body}")
+    return str(token), str(project_id)
+
+
+def _safe_inject_connector(
+    client,
+    *,
+    ops_base_url: str,
+    project_id: str,
+    run_id: str,
+    fault_id: str,
+) -> dict:
+    resp = client.post(
+        f"{ops_base_url}/internal/ops/projects/{project_id}/safe-injection/connectors",
+        headers=_safe_internal_headers(),
+        json={"runId": run_id, "fault": fault_id},
+    )
+    resp.raise_for_status()
+    env = resp.json()
+    if not env.get("ok"):
+        raise RuntimeError(f"safe injection failed: {env}")
+    return env["result"]
+
+
+def _safe_cleanup(client, *, ops_base_url: str, project_id: str, run_id: str) -> dict:
+    resp = client.delete(
+        f"{ops_base_url}/internal/ops/projects/{project_id}/safe-injection/runs/{run_id}",
+        headers=_safe_internal_headers(),
+    )
+    resp.raise_for_status()
+    env = resp.json()
+    if not env.get("ok"):
+        raise RuntimeError(f"safe cleanup failed: {env}")
+    return env["result"]
+
+
+def _run_completed(events: Sequence[dict]) -> bool:
+    return any(e.get("type") == "run_completed" for e in events)
+
+
+def _extract_candidates(payload: dict) -> tuple[list[str], list[float]]:
+    candidates = payload.get("root_cause_candidates")
+    if not candidates and isinstance(payload.get("body"), dict):
+        candidates = payload["body"].get("root_cause_candidates")
+    if not candidates and isinstance(payload.get("data"), dict):
+        return _extract_candidates(payload["data"])
+    if not candidates and payload.get("root_cause_id"):
+        candidates = [{
+            "root_cause_id": payload.get("root_cause_id"),
+            "confidence": payload.get("confidence") or 0.0,
+        }]
+    ranking: list[str] = []
+    confidences: list[float] = []
+    for item in candidates or []:
+        if not isinstance(item, dict):
+            continue
+        root_cause_id = item.get("root_cause_id")
+        if not root_cause_id:
+            continue
+        ranking.append(str(root_cause_id))
+        try:
+            confidences.append(float(item.get("confidence") or 0.0))
+        except (TypeError, ValueError):
+            confidences.append(0.0)
+    return ranking, confidences
+
+
+def _poll_agent_ranking(
+    client,
+    *,
+    agent_base_url: str,
+    token: str,
+    agent_project_id: str,
+    connector_name: str,
+    timeout_s: int,
+    interval_s: float,
+) -> tuple[str | None, list[str], list[float], str]:
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    message = (
+        f"커넥터 {connector_name} 상태를 조회하고 근본 원인을 분석해줘. "
+        "필요하면 상태, 로그, 최근 변경, lag 같은 운영 증거를 수집해줘."
+    )
+    resp = client.post(
+        f"{agent_base_url}/api/v1/agent/runs",
+        headers=headers,
+        json={
+            "project_id": agent_project_id,
+            "message": message,
+            "mode": "incident_analysis",
+            "stream": False,
+        },
+    )
+    resp.raise_for_status()
+    env = resp.json()
+    run_id = ((env.get("data") or {}).get("run_id"))
+    if not run_id:
+        raise RuntimeError(f"agent run_id missing: {env}")
+
+    deadline = time.monotonic() + timeout_s
+    events: list[dict] = []
+    while time.monotonic() < deadline:
+        ev = client.get(
+            f"{agent_base_url}/api/v1/agent/runs/{run_id}/events/history",
+            headers=headers,
+        )
+        ev.raise_for_status()
+        events = ((ev.json().get("data") or {}).get("events")) or []
+        if _run_completed(events):
+            break
+        time.sleep(interval_s)
+
+    # Report snapshot is the preferred actual RCA artifact. Reproducibility is a state-patch fallback.
+    for path in (
+        f"/api/v1/agent/runs/{run_id}/report",
+        f"/api/v1/agent/runs/{run_id}/reproducibility",
+    ):
+        got = client.get(f"{agent_base_url}{path}", headers=headers)
+        if got.status_code >= 400:
+            continue
+        body = got.json()
+        data = body.get("data") or {}
+        ranking, confidences = _extract_candidates(data)
+        if ranking:
+            return run_id, ranking, confidences, "safe-live agent rca"
+
+    return run_id, [], [], "safe-live agent rca not captured"
+
+
+def run_safe_live(
+    fault_ids: Sequence[str] | None,
+    *,
+    confirm: bool = False,
+    ops_base_url: str | None = None,
+    safe_project_id: str | None = None,
+    agent_base_url: str | None = None,
+    agent_project_id: str | None = None,
+    email: str | None = None,
+    password: str | None = None,
+    run_id: str | None = None,
+    poll_timeout_s: int = 180,
+    poll_interval_s: float = 2.0,
+) -> dict:
+    """Safe live injection using only new labelled test connector resources.
+
+    This mode deliberately avoids the destructive live_fault_specs inject/recover steps.
+    It requires --confirm because it creates and deletes labelled test resources.
+    """
+    if not confirm:
+        raise SystemExit("safe-live requires --confirm because it creates labelled test resources.")
+    import httpx
+    from app.core.config import settings
+
+    ops_base_url = (ops_base_url or os.getenv("SAFE_INJECT_OPS_BASE_URL")
+                    or settings.spring_ops_base_url).rstrip("/")
+    agent_base_url = (agent_base_url or os.getenv("BIFROST_BASE_URL")
+                      or "http://localhost:8000").rstrip("/")
+    safe_project_id = safe_project_id or os.getenv("SAFE_INJECT_PROJECT_ID")
+    if not safe_project_id:
+        raise SystemExit("safe-live requires --safe-project-id or SAFE_INJECT_PROJECT_ID")
+    email = email or os.getenv("BIFROST_EMAIL")
+    password = password or os.getenv("BIFROST_PASSWORD")
+    run_id = run_id or "safeinject-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+    spec_index = {s.fault_id: s for s in list_safe_fault_specs()}
+    selected = [spec_index[f] for f in fault_ids if f in spec_index] if fault_ids else list(SAFE_FAULT_SPECS)
+    if not selected:
+        raise SystemExit("selected safe-live faults are empty")
+
+    observations: list[FaultObservation] = []
+    cleanup_results: list[dict] = []
+    with httpx.Client(timeout=30.0) as client:
+        token: str | None = None
+        if email and password:
+            token, resolved_project = _safe_login(
+                client, base_url=agent_base_url, email=email, password=password
+            )
+            agent_project_id = agent_project_id or os.getenv("BIFROST_PROJECT_ID") or resolved_project
+        elif not agent_project_id:
+            agent_project_id = os.getenv("BIFROST_PROJECT_ID")
+
+        try:
+            for spec in selected:
+                print(f"\n=== safe-live fault: {spec.fault_id} ===")
+                injection = _safe_inject_connector(
+                    client,
+                    ops_base_url=ops_base_url,
+                    project_id=safe_project_id,
+                    run_id=run_id,
+                    fault_id=spec.fault_id,
+                )
+                connector_name = str(injection["connector_name"])
+                print(f"  injected connector={connector_name}")
+
+                if token and agent_project_id:
+                    agent_run, ranking, confidences, note = _poll_agent_ranking(
+                        client,
+                        agent_base_url=agent_base_url,
+                        token=token,
+                        agent_project_id=agent_project_id,
+                        connector_name=connector_name,
+                        timeout_s=poll_timeout_s,
+                        interval_s=poll_interval_s,
+                    )
+                    print(f"  rca run={agent_run} ranking={ranking[:5]}")
+                    observations.append(FaultObservation(
+                        fault_id=spec.fault_id,
+                        expected_root_cause_ids=spec.expected_root_cause_ids,
+                        predicted_ranking=ranking,
+                        predicted_confidences=confidences,
+                        incident_id=agent_run,
+                        grouping_key=connector_name,
+                        captured=bool(ranking),
+                        note=note,
+                    ))
+                else:
+                    observations.append(FaultObservation(
+                        fault_id=spec.fault_id,
+                        expected_root_cause_ids=spec.expected_root_cause_ids,
+                        predicted_ranking=[],
+                        predicted_confidences=[],
+                        grouping_key=connector_name,
+                        captured=False,
+                        note="safe-live injection completed; agent credentials not supplied",
+                    ))
+        finally:
+            cleanup = _safe_cleanup(
+                client,
+                ops_base_url=ops_base_url,
+                project_id=safe_project_id,
+                run_id=run_id,
+            )
+            cleanup_results.append(cleanup)
+            if cleanup.get("residual_count") != 0:
+                raise RuntimeError(f"safe-live cleanup residuals remain: {cleanup}")
+
+    report = score_observations(observations)
+    report["mode"] = "safe-live"
+    report["safe_run_id"] = run_id
+    report["safe_project_id"] = safe_project_id
+    report["cleanup"] = cleanup_results
+    report["spec_summary"] = {
+        "safe": [s.fault_id for s in SAFE_FAULT_SPECS],
+        "forbidden_surfaces": ["kubectl exec", "scale/patch/delete existing resources", "direct DB SQL"],
+    }
+    json_path, md_path = write_reports(report, mode="safe-live")
+    report["_report_paths"] = {"json": str(json_path), "md": str(md_path)}
+    return report
+
+
 def _print_summary(report: dict) -> None:
     keys = ["mode", "total_cases", "AC@1", "AC@3", "AC@5", "Avg@5", "ECE", "weak_layers"]
     summary = {k: report.get(k) for k in keys if k in report}
@@ -649,9 +931,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="가드. auto fault 실제 주입/폴링/복구(--confirm 필수).",
     )
+    mode.add_argument(
+        "--safe-live",
+        action="store_true",
+        help="가드. 신규 라벨 테스트 커넥터만 생성/정리하는 안전 주입 모드(--confirm 필수).",
+    )
     parser.add_argument("--confirm", action="store_true", help="live 이중 가드.")
     parser.add_argument(
-        "--faults", nargs="*", default=None, help="live 에서 주입할 auto fault id 들(미지정 시 전체)."
+        "--faults", nargs="*", default=None, help="live/safe-live 에서 주입할 fault id 들(미지정 시 전체)."
     )
     parser.add_argument(
         "--poll-timeout", type=int, default=300, help="live: RCA 결과 폴링 timeout(초, 기본 300=5분)."
@@ -659,12 +946,33 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--poll-interval", type=int, default=15, help="live: 폴링 간격(초, 기본 15)."
     )
+    parser.add_argument("--safe-project-id", default=None, help="safe-live: Spring internal-ops project id/slug.")
+    parser.add_argument("--agent-project-id", default=None, help="safe-live: FastAPI agent project UUID.")
+    parser.add_argument("--ops-base-url", default=None, help="safe-live: operations-backend base URL.")
+    parser.add_argument("--agent-base-url", default=None, help="safe-live: ai-service/API base URL.")
+    parser.add_argument("--email", default=None, help="safe-live: agent login email.")
+    parser.add_argument("--password", default=None, help="safe-live: agent login password.")
+    parser.add_argument("--safe-run-id", default=None, help="safe-live: deterministic cleanup run id.")
     parser.add_argument(
         "--no-write", action="store_true", help="dry-run: 리포트 파일 미기록(콘솔만)."
     )
     args = parser.parse_args(argv)
 
-    if args.live:
+    if args.safe_live:
+        report = run_safe_live(
+            args.faults,
+            confirm=args.confirm,
+            ops_base_url=args.ops_base_url,
+            safe_project_id=args.safe_project_id,
+            agent_base_url=args.agent_base_url,
+            agent_project_id=args.agent_project_id,
+            email=args.email,
+            password=args.password,
+            run_id=args.safe_run_id,
+            poll_timeout_s=args.poll_timeout,
+            poll_interval_s=float(args.poll_interval),
+        )
+    elif args.live:
         report = run_live(
             args.faults,
             poll_timeout_s=args.poll_timeout,

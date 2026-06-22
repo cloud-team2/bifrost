@@ -18,12 +18,14 @@ from eval.online.live_eval import (
     observations_to_cases,
     run_dry_run,
     run_live,
+    run_safe_live,
     score_observations,
 )
 from eval.online.live_fault_specs import (
     FAULT_SPECS,
     list_fault_specs,
 )
+from eval.online.safe_live_fault_specs import SAFE_FAULT_SPECS
 
 
 # ── spec 카탈로그 무결성 ──────────────────────────────────────────────────────
@@ -50,6 +52,15 @@ def test_safety_levels_are_valid_and_auto_have_steps() -> None:
 def test_auto_faults_present() -> None:
     auto = list_fault_specs("auto")
     assert {s.fault_id for s in auto} == {"sink_db_down", "source_db_down"}
+
+
+def test_safe_faults_present_and_catalog_backed() -> None:
+    assert {s.fault_id for s in SAFE_FAULT_SPECS} == {
+        "auth", "schema", "lag", "sink-fail", "no-fault",
+    }
+    for spec in SAFE_FAULT_SPECS:
+        for root_cause_id in spec.expected_root_cause_ids:
+            assert is_known_root_cause(root_cause_id)
 
 
 # ── 채점 파이프라인(테스트 더블에 안 기댄 순수 계산) ──────────────────────────
@@ -108,6 +119,11 @@ def test_dry_run_writes_reports(tmp_path, monkeypatch) -> None:
 def test_live_requires_confirm() -> None:
     with pytest.raises(SystemExit):
         run_live(None, confirm=False)
+
+
+def test_safe_live_requires_confirm() -> None:
+    with pytest.raises(SystemExit):
+        run_safe_live(["auth"], confirm=False, safe_project_id="e2e-rca-test")
 
 
 def test_live_never_touches_subprocess_without_confirm(monkeypatch) -> None:
@@ -201,6 +217,127 @@ def test_live_timeout_yields_uncaptured_miss(monkeypatch, tmp_path) -> None:
     assert report["rows"][0]["captured"] is False
     assert report["AC@1"] == 0.0
     assert any("scale deploy tenant-mariadb --replicas=1" in c for c in calls)
+
+
+class _FakeResponse:
+    def __init__(self, payload: dict, status_code: int = 200):
+        self._payload = payload
+        self.status_code = status_code
+
+    def json(self) -> dict:
+        return self._payload
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+class _FakeSafeClient:
+    calls: list[tuple[str, str, dict | None]] = []
+
+    def __init__(self, *args, **kwargs):
+        _ = (args, kwargs)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def post(self, url: str, **kwargs):
+        self.calls.append(("POST", url, kwargs.get("json")))
+        if url.endswith("/api/v1/auth/login"):
+            return _FakeResponse({
+                "accessToken": "token",
+                "workspaceId": "00000000-0000-0000-0000-000000000001",
+            })
+        if url.endswith("/safe-injection/connectors"):
+            return _FakeResponse({
+                "ok": True,
+                "result": {
+                    "run_id": kwargs["json"]["runId"],
+                    "fault": kwargs["json"]["fault"],
+                    "expected_root_cause_id": "SINK_AUTH_EXPIRED",
+                    "pipeline_id": "00000000-0000-0000-0000-000000000002",
+                    "datasource_id": "00000000-0000-0000-0000-000000000003",
+                    "connector_name": "safeinject-r123-a1",
+                    "namespace": "platform-kafka",
+                    "labels": {"bifrost.io/safe-inject": "true"},
+                    "safe_scope": "safeinject:test-connector-only",
+                },
+            }, status_code=201)
+        if url.endswith("/api/v1/agent/runs"):
+            return _FakeResponse({"data": {"run_id": "run_safe_001", "status": "running"}})
+        raise AssertionError(f"unexpected POST {url}")
+
+    def get(self, url: str, **kwargs):
+        self.calls.append(("GET", url, None))
+        if url.endswith("/events/history"):
+            return _FakeResponse({"data": {"events": [{"type": "run_completed"}]}})
+        if url.endswith("/report"):
+            return _FakeResponse({"data": {"body": {"root_cause_candidates": [
+                {"root_cause_id": "SINK_AUTH_EXPIRED", "confidence": 0.86},
+                {"root_cause_id": "CONNECTOR_TASK_FAILED", "confidence": 0.2},
+            ]}}})
+        if url.endswith("/reproducibility"):
+            return _FakeResponse({"data": {"root_cause_candidates": []}})
+        raise AssertionError(f"unexpected GET {url}")
+
+    def delete(self, url: str, **kwargs):
+        self.calls.append(("DELETE", url, None))
+        if "/safe-injection/runs/" in url:
+            return _FakeResponse({
+                "ok": True,
+                "result": {
+                    "run_id": "safe-run",
+                    "deleted_k8s_connectors": 1,
+                    "deleted_metadata_rows": 3,
+                    "residual_count": 0,
+                    "residuals": [],
+                },
+            })
+        raise AssertionError(f"unexpected DELETE {url}")
+
+
+def test_safe_live_injects_scores_and_cleans_without_destructive_helpers(monkeypatch, tmp_path) -> None:
+    import httpx
+
+    _FakeSafeClient.calls = []
+    monkeypatch.setattr(httpx, "Client", _FakeSafeClient)
+    monkeypatch.setattr(le, "REPORTS_DIR", tmp_path)
+    monkeypatch.setattr(
+        le, "_run_cmd",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("destructive command")),
+    )
+    monkeypatch.setattr(
+        le, "_kubectl_psql",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("db exec")),
+    )
+
+    report = run_safe_live(
+        ["auth"],
+        confirm=True,
+        ops_base_url="http://ops",
+        safe_project_id="e2e-rca-test",
+        agent_base_url="http://agent",
+        email="ta@bifrost.io",
+        password="pw",
+        run_id="safe-run",
+        poll_timeout_s=1,
+        poll_interval_s=0,
+    )
+
+    assert report["mode"] == "safe-live"
+    assert report["AC@1"] == 1.0
+    assert report["cleanup"][0]["residual_count"] == 0
+    assert any(
+        call[0] == "POST" and call[1].endswith("/safe-injection/connectors")
+        for call in _FakeSafeClient.calls
+    )
+    assert any(
+        call[0] == "DELETE" and "/safe-injection/runs/safe-run" in call[1]
+        for call in _FakeSafeClient.calls
+    )
 
 
 # ── consistency: 채점이 결정적 ───────────────────────────────────────────────

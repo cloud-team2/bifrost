@@ -58,6 +58,10 @@ internal:
   ops:
     token: ${INTERNAL_OPS_TOKEN:}
 
+# safe live fault injection 전용 내부 경로. 기본값은 테스트 workspace slug만 허용한다.
+safe-inject:
+  allowed-projects: ${SAFE_INJECT_ALLOWED_PROJECTS:safeinject,e2e-rca-test,e2e-rca-test-0621}
+
 # 라이브 read-tool 스모크 프로젝트 복구 seed(#650). 수동 DB INSERT 대신 앱 부트스트랩에서
 # 고정 UUID(11111111-2222-3333-4444-555555555555) 프로젝트와 최소 샘플 데이터를 보장한다.
 smoke:
