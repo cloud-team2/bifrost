@@ -105,13 +105,13 @@
 
 ---
 
-## Part B — 운영 클러스터 라이브 주입 매트릭스 (⏳ 진행 예정)
+## Part B — 운영 클러스터 라이브 주입 매트릭스 (✅ 실측)
 
 각 케이스: **주입 → sink/source 커넥터 상태 → 자동 인시던트(metadb) → 자동 RCA(agentdb, root_cause + confidence) → 복구**. 증거 컬럼에 커넥터 상태·인시던트 ID·RCA run을 기록.
 
 | # | 계층 | 기대 root cause | 실제 주입 방법 | 상태 | 증거 |
 |---|---|---|---|---|---|
-| L1 | sink | SINK_DB_CONNECTION_TIMEOUT | DB scale=0 / connector url 패치 | ⚠️ 라이브 재현 불가(아래 §환경제약) — 과거 #962로 입증됨 | 인시던트 `bfd38509`(06-21) → RCA `SINK_DB_CONNECTION_TIMEOUT` @0.82 |
+| L1 | sink | SINK_DB_CONNECTION_TIMEOUT | **selfHeal off** + mariadb scale=0 + 트래픽 | ✅ 주입 성공(sink task 3개 FAILED 4.5분 유지) · 신규 인시던트는 정상 dedup | sink task 0/1/2 `ConnectException` FAILED, mariadb 0 유지. open `bfd38509`(동일 datasource grouping_key)로 중복제거 → 신규 0. capability=`bfd38509`@0.82 |
 | L3 | kafka | CONSUMER_LAG_SPIKE | sink 커넥터 **pause** + source 60k 적재 | ⚠️ lag은 발생(~60k) but 인시던트 미생성 | lag 합계 ≈60,000(>50k) 실측 / 신규 인시던트 0 — 과거 #957로 입증 |
 
 ### ⚠️ 환경 제약 — 라이브 주입의 현실적 한계 (실측 발견)
@@ -136,25 +136,33 @@
 - `scale tenant-mariadb=0` → ~40초 만에 ArgoCD `3-data-tenantdb` self-heal로 replicas=1 복원(새 pod 확인). 트래픽은 복구 후 정상 처리 → 장애 미발생.
 - sink `connection.url` → 도달불가 호스트 패치 → Kafka Connect가 **config 검증 HTTP 400 거부**(CR NotReady, 실행 task는 옛 config로 RUNNING). 런타임 실패 미발생 → 인시던트 0. **즉시 원복(connection.url 원상, RUNNING/Ready).**
 
+**L1-live — selfHeal off 후 sink DB 다운 재현 (02:11~02:18 UTC, argocd 권한 부여 후)**
+- ArgoCD `3-data-tenantdb` `selfHeal=false` → mariadb scale=0가 **유지됨**(자동복구 안 됨) + source 300건 INSERT.
+- **02:13(주입 ~1.5분 후) sink task 0/1/2 모두 FAILED**(`ConnectException: Exiting WorkerSinkTask due to unrecoverable exception`), mariadb 0으로 4.5분 유지 → **런타임 sink 실패 주입 성공·유지**.
+- 단 **신규 인시던트 0 · 신규 RCA 0**: open `bfd38509`(grouping_key=`datasource:1b67be8b…`=동일 mariadb 데이터소스)로 **정상 중복제거(dedup)**. 감지 누락 아님(신규 발화하려면 `bfd38509` resolve 선행 필요).
+- 원복: mariadb=1 + selfHeal=true 재활성 + sink Connect REST 재시작 → **tasks RUNNING/Ready, lag drain**. 최종 운영 정상.
+
 **L3 — consumer lag (sink pause + source 60,000 INSERT)**
 - 01:37 sink 커넥터 `state=paused` 확인 + source `products`에 60,000건 INSERT(총 208,738).
 - 01:38~01:43 (~5분) 폴링 → **신규 인시던트 0 · 신규 RCA 0**.
 - 01:43 sink `state=running` 원복 → **RUNNING/Ready:True**. 직후 `kafka-consumer-groups --describe` 실측: 파티션 0~5 각 lag ≈ 9,900~10,090 → **합계 ≈ 60,000 (CRITICAL 임계 50,000 초과)**.
 - **발견(코드 대조 후 정정)**: lag ~60k가 임계(테스트 워크스페이스는 `workspace_settings` 행 없음 → **기본 critical 50,000** 사용)를 넘었는데도 자동 인시던트 미생성.
   - `KafkaAdminPoller`의 #926 정책은 **커밋오프셋이 없는 컨슈머(미시작·pause-from-empty)만 의도적으로 제외**(오탐 방지). 본 케이스는 running하다 pause돼 **커밋오프셋이 있었으므로 제외 대상 아님** → lag 계산·CRITICAL 평가가 됐어야 함. ⇒ "paused라 스킵"이라는 1차 추정은 코드와 불일치(철회).
-  - 실제 미발생 원인은 **edge-trigger in-memory 상태(`lagAlarmState`)가 과거 #957 테스트에서 ERROR로 남아 재발화(rising-edge) 억제**일 가능성이 큼(operations-backend pod 10일 연속 가동). **확정엔 bifrost-system 로그 필요(현 권한 밖)** — 미확정으로 표기.
+  - **로그 확인(권한 부여 후)**: `KafkaAdminPoller` 정상 폴링(예외 없음)·해당 그룹에 **CONSUMER_LAG_CRITICAL 미발화**. operations-backend pod는 7.5h 가동 → edge-trigger 잔존 가설도 기각. 결론: **pause된 sink 컨슈머는 #926 정책상 lag 평가에서 제외되는 게 정상**(의도적 정지 오탐 방지). FAILED 커넥터는 별도 감지, RUNNING-but-lagging은 #957로 감지. ⇒ ①은 **works-as-designed, 코드 변경 불필요**.
   - resume 후 lag 0으로 drain.
 
 ## Part B 결론
 
-- **현 운영 환경에서 권한 범위 내 신규 라이브 주입으로는 자동 인시던트를 재현하지 못함.** 원인은 RCA/감지 로직 결함이 아니라 **주입 경로의 환경 제약**: ① DB scale=0 → ArgoCD self-heal 복원, ② connector url 오설정 → Connect config 사전검증 거부, ③ consumer pause → lag 모니터 active-member 요건 미충족.
-- **자동 감지→인시던트→자동 RCA capability는 과거 #962/#957 실(實)인시던트로 입증**(현재 DB 잔존):
-  - `bfd38509` sink DB 연결 불가 → RCA **SINK_DB_CONNECTION_TIMEOUT @0.82**
-  - `5aed2e00`·`ea315de3` Consumer lag (critical) → 자동 인시던트 + RCA run
-- **카탈로그 전수 정확도는 Part A(35케이스 실측)로 확보**: AC@5 80% · Avg@5 0.724 · ECE 0.073 · 환각 0.
-- **개선 제언(정정)**:
-  - (1) ~~paused/empty backlog 감지 추가~~ → **주의: 미커밋·paused 컨슈머 제외는 #926의 의도적 오탐 방지 설계**라 단순 감지 추가는 부적절. 진짜 후보 개선은 **인시던트 resolved 후 edge-trigger 상태(`lagAlarmState`) 재무장**(해소된 lag이 재발하면 다시 알림) — 단 위 미발생 원인을 bifrost-system 로그로 확정한 뒤 진행.
-  - (2) 테스트 재현용 ArgoCD `3-data-tenantdb` self-heal 일시 비활성 런북(테스트 후 복구).
-  - (3) **비파괴 주입 하네스**(메트릭/이벤트 신호 직접 주입) — 운영 자원을 안 건드리고 **전체 35 gold set을 라이브 감지→RCA 경로로 흘릴 수 있음**(현재 라이브 일부만 가능한 근본 한계 해소).
+- **라이브 주입은 재현됨**: ArgoCD selfHeal을 끄자(권한 부여 후) **sink task가 런타임 FAILED로 4.5분 유지**(L1-live) → 주입 경로가 실제로 동작. (scale-only는 self-heal, connector-url은 Connect 사전검증으로 막혔던 것일 뿐.)
+- **신규 인시던트 미발화는 결함이 아니라 정상 동작**:
+  - L1-live(sink FAILED): open `bfd38509`(동일 datasource grouping_key)로 **dedup** → 중복 인시던트 억제(정상).
+  - L3(consumer lag): **#926 정책상 paused 컨슈머는 lag 평가 제외**(오탐 방지). 로그상 폴러 정상.
+- **자동 감지→인시던트→자동 RCA capability는 과거 #962/#957 실인시던트로 입증**: `bfd38509`→**SINK_DB_CONNECTION_TIMEOUT @0.82**, `5aed2e00`·`ea315de3`→consumer lag.
+- **카탈로그 전수 정확도는 Part A(35 실측)**: AC@5 80% · Avg@5 0.724 · ECE 0.073 · 환각 0. (단 자가작성 텍스트 gold set·LLM-off floor → SOTA 직접비교 부적절, 실데이터·LLM-on 재측정 필요.)
+- **① lag 모니터 = works-as-designed**(코드 변경 불필요). paused 제외는 #926 의도. 유일 후보는 'resolved 후 edge-trigger 재무장'이나 현 데이터상 결함 근거 없음.
+- **개선 제언**:
+  - (1) **비파괴 주입 하네스**(메트릭/이벤트 신호 직접 주입) — 운영 무영향으로 **전체 35 gold set을 라이브 감지→RCA 경로**에 흘림(라이브 부분-커버 한계의 근본 해소).
+  - (2) 테스트 재현 런북: ArgoCD self-heal 일시 비활성 **+ 동일-키 기존 인시던트 선(先) resolve**(dedup 우회).
+  - (3) 정확도 향상: 실 evidence(metric/trace/temporal)+LLM 타이브레이커 활성, 실인시던트 gold set 확대(#964 루프), 약계층(change·data_quality) 증거규칙 보강.
 
-> 주입 데이터: source `products`에 테스트행 ~60,180건 추가(`rca-l1*`/`rca-l3*`, 테스트 tenant 한정). 운영 영향 없음. 최종 상태: 모든 커넥터 RUNNING/Ready, tenant DB 1/1, connection.url 원상.
+> 최종 상태: 모든 커넥터 RUNNING/Ready, tenant DB 1/1, ArgoCD selfHeal=true·Synced, sink lag drain. 주입 데이터(`products` 테스트행 ~60.5k, 테스트 tenant 한정) 운영 영향 없음.
