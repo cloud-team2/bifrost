@@ -28,10 +28,14 @@ public class RcaFeedbackService {
 
     private final RcaFeedbackRepository feedbackRepository;
     private final IncidentRepository incidentRepository;
+    private final GoldSetPromoter goldSetPromoter;
 
-    public RcaFeedbackService(RcaFeedbackRepository feedbackRepository, IncidentRepository incidentRepository) {
+    public RcaFeedbackService(RcaFeedbackRepository feedbackRepository,
+                              IncidentRepository incidentRepository,
+                              GoldSetPromoter goldSetPromoter) {
         this.feedbackRepository = feedbackRepository;
         this.incidentRepository = incidentRepository;
+        this.goldSetPromoter = goldSetPromoter;
     }
 
     @Transactional
@@ -62,7 +66,20 @@ public class RcaFeedbackService {
         entity.setSymptomLabel(trimToNull(request.symptomLabel()));
         entity.setOperator(trimToNull(operator));
 
-        return RcaFeedbackResponse.from(feedbackRepository.save(entity));
+        RcaFeedbackEntity saved = feedbackRepository.save(entity);
+
+        // #982 누적된 평결을 ai-service gold set 으로 승격(best-effort, 비동기). 로컬 영속화가 SoT.
+        goldSetPromoter.promote(
+                incidentId,
+                verdict,
+                saved.getOperator(),
+                saved.getRcaRootCauseId(),
+                saved.getCorrectedRootCauseId(),
+                saved.getRunId(),
+                saved.getTriggerLabel(),
+                saved.getSymptomLabel());
+
+        return RcaFeedbackResponse.from(saved);
     }
 
     @Transactional(readOnly = true)
