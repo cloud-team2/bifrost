@@ -133,8 +133,9 @@ public class SafeInjectionService {
                 .withLabel(LABEL_RUN, runKey)
                 .list();
         for (GenericKubernetesResource item : list.getItems()) {
-            if (isSafeResource(item, runKey) && item.getMetadata() != null) {
-                out.add("k8s:KafkaConnector/" + item.getMetadata().getName());
+            String name = item.getMetadata() == null ? null : item.getMetadata().getName();
+            if (name != null && name.startsWith(CONNECTOR_PREFIX) && isSafeResource(item, runKey)) {
+                out.add("k8s:KafkaConnector/" + name);
             }
         }
         return List.copyOf(out);
