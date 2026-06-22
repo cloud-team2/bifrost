@@ -329,10 +329,10 @@ function ConsoleShot() {
     <div className="overflow-hidden rounded-xl border border-white/10 bg-white shadow-[0_30px_80px_rgba(4,5,12,.6)] ring-1 ring-[rgba(120,140,255,.12)]">
       <img
         src="/landing-pipelines.png"
-        alt="bifrost 콘솔 — 파이프라인 목록과 AI 에이전트로 파이프라인 생성"
+        alt="bifrost 콘솔 — 파이프라인 목록과 AI 에이전트 인시던트 조회"
         className="block w-full"
-        width={3360}
-        height={1840}
+        width={2032}
+        height={440}
         loading="lazy"
       />
     </div>
