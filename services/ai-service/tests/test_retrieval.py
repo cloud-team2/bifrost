@@ -517,6 +517,65 @@ async def test_simple_query_with_operational_tool_calls_runtime_tool_despite_kno
     assert "tool_result" in types
 
 
+@pytest.mark.asyncio
+async def test_simple_query_operational_tool_fires_before_knowledge_search() -> None:
+    """#985: 운영 tool 이 계획된 simple_query 에선 운영 tool 호출이 knowledge_search 보다
+    먼저 emit 돼야 한다(직접 데이터 질의의 1순위를 RAG 가 잠식하지 않게). knowledge 근거는
+    그대로 결과에 포함된다(#478 유지)."""
+    from app.knowledge.vector_store import KnowledgeSearchResult
+
+    class FakeVectorStore:
+        async def search(self, query: str, **kwargs):
+            return [
+                KnowledgeSearchResult(
+                    chunk_id="chunk-1",
+                    doc_id="ops_doc:pipeline",
+                    doc_type="ops_doc",
+                    title="가이드",
+                    content="list_project_pipelines 로 조회한다.",
+                    scope="global",
+                    doc_version="test",
+                    metadata={},
+                    score=0.9,
+                )
+            ]
+
+    registry = AsyncMock()
+    registry.call_tool.return_value = ToolResult(
+        tool_name="list_project_pipelines",
+        status=ToolStatus.SUCCESS,
+        risk=RiskLevel.READ_ONLY,
+        summary="파이프라인 3건: orders, payments, audit",
+        evidence_ids=[],
+    )
+    bus = EventBus()
+    published = []
+    bus.publish = AsyncMock(side_effect=lambda run_id, evt: published.append(evt))
+
+    out = await run_retrieval(
+        "r1",
+        _plan("list_project_pipelines"),
+        _context(),
+        registry,
+        bus,
+        InMemoryEventRepository(),
+        user_message="파이프라인 리스트 알려줘",
+        mode=AgentMode.SIMPLE_QUERY,
+        vector_store=FakeVectorStore(),
+    )
+
+    started = [
+        e.payload.get("tool")
+        for e in published
+        if e.type == StreamingEventType.TOOL_CALL_STARTED
+    ]
+    # 운영 tool 이 knowledge_search 보다 *먼저* emit (routing@1 잠식 방지).
+    assert "list_project_pipelines" in started and "knowledge_search" in started, started
+    assert started.index("list_project_pipelines") < started.index("knowledge_search"), started
+    # knowledge 근거는 여전히 결과에 포함(#478).
+    assert "knowledge" in {item.type.value for item in out.evidence_items}
+
+
 # ── #481 depends_on 순차 chain 해석 ───────────────────────────────────────────
 def _ok(tool_name: str) -> ToolResult:
     return ToolResult(

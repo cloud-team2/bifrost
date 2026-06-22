@@ -185,15 +185,32 @@ async def run_retrieval(
         bus=bus,
         event_repo=event_repo,
     )
-    knowledge_items = await _collect_knowledge_evidence(
-        run_id=run_id,
-        user_message=user_message,
-        mode=mode,
-        context=context,
-        bus=bus,
-        event_repo=event_repo,
-        vector_store=vector_store,
+    async def _collect_knowledge() -> list[EvidenceItem]:
+        return await _collect_knowledge_evidence(
+            run_id=run_id,
+            user_message=user_message,
+            mode=mode,
+            context=context,
+            bus=bus,
+            event_repo=event_repo,
+            vector_store=vector_store,
+        )
+
+    # #985 직접 데이터 질의(운영 tool 이 계획된 SIMPLE_QUERY: "커넥터 목록 보여줘" 등)에선
+    # knowledge_search(RAG)를 운영 tool *뒤로* 미뤄, 운영 tool 이 첫 호출이 되게 한다(RAG 가
+    # 1순위를 잠식하고 헛스텝/지연을 만들던 문제 제거). knowledge 는 그대로 수집해 답변 근거에
+    # 포함한다(#478). 순수지식질의(운영 tool 미계획)·INCIDENT_ANALYSIS·max_tool_calls==0 은
+    # 기존대로 knowledge 를 먼저 수집한다.
+    defer_knowledge = (
+        mode == AgentMode.SIMPLE_QUERY
+        and max_tool_calls != 0
+        and _has_operational_tool(plan)
     )
+    knowledge_items: list[EvidenceItem] = [] if defer_knowledge else await _collect_knowledge()
+
+    # 미뤄둔 knowledge 를 운영 tool 실행 후 수집(미루지 않았으면 이미 모은 것을 그대로 반환).
+    async def _resolve_knowledge() -> list[EvidenceItem]:
+        return await _collect_knowledge() if defer_knowledge else knowledge_items
 
     # #882 max_tool_calls=0(direct_answer 등) → 운영 tool 을 호출하지 않고 지식/요청 근거만 쓴다.
     if max_tool_calls == 0:
@@ -341,13 +358,15 @@ async def run_retrieval(
             if remaining_steps:
                 tool_evidence.extend(await _run_plan_steps(remaining_steps, call_step))
             return RetrievalOutput(
-                evidence_items=[*request_items, *knowledge_items, *tool_evidence],
+                evidence_items=[*request_items, *(await _resolve_knowledge()), *tool_evidence],
                 answer=loop_result.answer or None,
             )
 
     # depends_on을 해석해 독립 tool은 병렬(fan-out), 의존 tool은 선행 완료 후 순차 실행
     tool_evidence = await _run_plan_steps(plan_steps, call_step)
-    return RetrievalOutput(evidence_items=[*request_items, *knowledge_items, *tool_evidence])
+    return RetrievalOutput(
+        evidence_items=[*request_items, *(await _resolve_knowledge()), *tool_evidence]
+    )
 
 
 async def _run_plan_steps(steps: list, call_step) -> list[EvidenceItem]:
