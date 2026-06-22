@@ -19,6 +19,7 @@ from app.schemas.outputs import (
     ExecutorOutput,
     PolicyDecisionOutput,
     PolicyGuardOutput,
+    RcaOutput,
     RemediationOutput,
     RouteDecision,
     RouterOutput,
@@ -31,13 +32,19 @@ from app.schemas.state import (
     AgentMode,
     PolicyDecisionType,
     RiskLevel,
+    RootCauseCandidate,
     VerificationStatus,
 )
 from app.streaming.event_bus import EventBus
 from app.supervisor.graph import Supervisor
 from app.supervisor.retry_policy import RetryPolicy
 from app.supervisor.state_store import InMemoryStateStore
-from app.workflow.runner import _coerce_requested_action_candidate, _ready_action_candidate, run_workflow
+from app.workflow.runner import (
+    _approval_wait_answer,
+    _coerce_requested_action_candidate,
+    _ready_action_candidate,
+    run_workflow,
+)
 
 
 class _FakeToolDefinition:
@@ -218,6 +225,37 @@ def test_requested_action_candidate_allows_consumer_group_restart():
 
     assert candidate is not None
     assert candidate.risk == RiskLevel.HIGH
+
+
+def test_approval_wait_answer_preserves_rca_and_action_context():
+    rca = RcaOutput(root_cause_candidates=[
+        RootCauseCandidate(
+            root_cause_id="CONNECTOR_TASK_FAILED",
+            confidence=0.82,
+            required_evidence_satisfied=True,
+            evidence_gap=[],
+            explanation="connector task failed",
+        )
+    ])
+    remediation = RemediationOutput(action_candidates=[
+        ActionCandidateOutput(
+            action_id="act_restart",
+            action_type=ActionType.RUNTIME_TOOL,
+            action_name="restart_connector",
+            risk=RiskLevel.HIGH,
+            reason="runbook",
+            expected_effect="restart connector",
+            tool_name="restart_connector",
+            tool_params={"connector_name": "orders"},
+        )
+    ])
+    approval = MagicMock()
+    approval.approval_requests = [MagicMock(action_id="act_restart")]
+
+    answer = _approval_wait_answer(rca, remediation, approval)
+
+    assert "CONNECTOR_TASK_FAILED" in answer
+    assert "restart_connector" in answer
 
 
 def test_requested_action_candidate_escalates_medium_tool_to_human_approval():

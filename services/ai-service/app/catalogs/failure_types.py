@@ -14,13 +14,13 @@ FAILURE_TYPES: tuple[FailureType, ...] = (
         incident_type='SOURCE_AUTH_FAILURE',
         layer='source',
         description='source credential, 권한, token 문제',
-        signals=('auth denied', 'expired token', 'permission error'),
+        signals=('source auth error', 'read path authentication failure', 'expired token', 'permission error', 'expired secret'),
     ),
     FailureType(
         incident_type='SOURCE_READ_LATENCY',
         layer='source',
         description='source read 단계 지연',
-        signals=('extract duration 증가', 'source read latency 증가'),
+        signals=('extract duration 증가', 'source read latency 증가', 'read duration p95 상승', 'scan volume 증가'),
     ),
     FailureType(
         incident_type='SOURCE_DATA_NOT_AVAILABLE',
@@ -32,13 +32,13 @@ FAILURE_TYPES: tuple[FailureType, ...] = (
         incident_type='PIPELINE_TASK_FAILED',
         layer='pipeline',
         description='pipeline task 또는 job 실패',
-        signals=('task failed', 'retry exhausted'),
+        signals=('task failed', 'retry exhausted', 'retry budget exhausted', 'retry limit reached'),
     ),
     FailureType(
         incident_type='CONNECTOR_TASK_FAILED',
         layer='pipeline',
         description='Kafka Connect connector task 실패',
-        signals=('task FAILED', 'trace 포함'),
+        signals=('terminal task failure state', 'connector trace error'),
     ),
     FailureType(
         incident_type='CONNECTOR_WORKER_UNHEALTHY',
@@ -98,7 +98,7 @@ FAILURE_TYPES: tuple[FailureType, ...] = (
         incident_type='SINK_AUTH_FAILURE',
         layer='sink',
         description='sink credential 또는 권한 문제',
-        signals=('auth denied', 'permission error'),
+        signals=('sink auth error', 'write path permission denied', 'permission error', 'expired secret'),
     ),
     FailureType(
         incident_type='SINK_WRITE_LATENCY',
@@ -134,7 +134,7 @@ FAILURE_TYPES: tuple[FailureType, ...] = (
         incident_type='DEPLOYMENT_ROLLOUT_REGRESSION',
         layer='infra',
         description='배포 이후 상태 악화',
-        signals=('rollout event 이후 error 증가',),
+        signals=('rollout event 이후 error 증가', 'image rollout followed by error increase', 'deployment followed by failure'),
     ),
     FailureType(
         incident_type='PVC_PRESSURE',
@@ -146,19 +146,19 @@ FAILURE_TYPES: tuple[FailureType, ...] = (
         incident_type='CONFIG_CHANGE_REGRESSION',
         layer='change',
         description='설정 변경 이후 장애',
-        signals=('config diff와 시간 상관',),
+        signals=('config diff와 시간 상관', 'configuration change followed by error increase'),
     ),
     FailureType(
         incident_type='SCHEMA_CHANGE_REGRESSION',
         layer='change',
         description='schema 변경 이후 장애',
-        signals=('schema version 변경 후 error',),
+        signals=('schema version 변경 후 error', 'schema subject change followed by serialization error'),
     ),
     FailureType(
         incident_type='IMAGE_DEPLOYMENT_REGRESSION',
         layer='change',
         description='image 배포 이후 장애',
-        signals=('new image rollout 이후 failure',),
+        signals=('new image rollout 이후 failure', 'image rollout followed by runtime error increase', 'runtime image rollout followed by restart'),
     ),
     FailureType(
         incident_type='CREDENTIAL_ROTATION_FAILURE',
@@ -182,7 +182,7 @@ FAILURE_TYPES: tuple[FailureType, ...] = (
         incident_type='DUPLICATE_SPIKE',
         layer='data_quality',
         description='중복 증가',
-        signals=('duplicate count 증가',),
+        signals=('duplicate count 증가', 'record duplication increase', 'idempotency policy gap', 'replay/backfill window'),
     ),
     FailureType(
         incident_type='NULL_RATE_SPIKE',

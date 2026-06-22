@@ -173,6 +173,29 @@ def _action_execution_answer(executor_out, verifier_out) -> str:
     return "\n".join(lines)
 
 
+def _approval_wait_answer(rca_out, remediation_out, approval_out) -> str:
+    lines = ["승인 대기 중입니다."]
+    candidates = getattr(rca_out, "root_cause_candidates", []) or []
+    if candidates:
+        top = candidates[0]
+        lines.append(f"원인 후보: {top.root_cause_id} (confidence: {top.confidence:.0%})")
+
+    pending_ids = {
+        request.action_id
+        for request in (getattr(approval_out, "approval_requests", []) or [])
+    }
+    action_candidates = getattr(remediation_out, "action_candidates", []) or []
+    pending_actions = [
+        candidate
+        for candidate in action_candidates
+        if not pending_ids or candidate.action_id in pending_ids
+    ]
+    if pending_actions:
+        names = ", ".join(candidate.action_name for candidate in pending_actions)
+        lines.append(f"승인 필요 조치: {names}")
+    return "\n".join(lines)
+
+
 async def _run_auto_rollback(
     executor_out,
     candidates,
@@ -953,9 +976,11 @@ async def _run_workflow_impl(
                         tool_context=planner_context,
                     )
                     # (#692) ReAct 루프가 있으면 커넥터 이름을 list_connectors/topology 체이닝으로
-                    # 알아낼 수 있으므로, '이름을 알려달라'며 단축하지 않고 retrieval(루프)로 넘긴다.
-                    # 루프 불가(LLM 미연결)일 때만 clarification 으로 종료한다.
-                    if planner_out.clarification_message and not get_llm_provider().supports_tools():
+                    # 알아낼 수 있으므로, 식별자 탐색 plan 이 있을 때만 retrieval 로 넘긴다.
+                    # plan 이 비어 있는 명시적 clarification 은 뒤 단계로 흘리지 않고 여기서 종료한다.
+                    if planner_out.clarification_message and (
+                        not planner_out.retrieval_plan or not get_llm_provider().supports_tools()
+                    ):
                         answer = planner_out.clarification_message
                         retrieval_out = RetrievalOutput(
                             evidence_items=[
@@ -1312,13 +1337,7 @@ async def _run_workflow_impl(
                         # #922: 승인 대기 중에도 인시던트 상세에 RCA·권장조치(action_candidates)가
                         # 표시되도록 이 시점의 report snapshot 을 남긴다. run 은 승인 전까지 report
                         # 단계에 도달하지 못하므로(여기서 return), 권장조치가 비어 보이던 문제를 해소한다.
-                        try:
-                            pause_answer = await report_agent.run_report(
-                                user_message, retrieval_out, mode, get_llm_provider(),
-                                rca_out=rca_out, classifier_out=classifier_out,
-                            )
-                        except Exception:
-                            pause_answer = ""
+                        pause_answer = _approval_wait_answer(rca_out, remediation_out, approval_out)
                         await _persist_report_snapshot(
                             run_id=run_id,
                             answer=pause_answer,
