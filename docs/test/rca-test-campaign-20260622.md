@@ -80,9 +80,9 @@ RCA 근본원인 카탈로그를 **8계층 35개**로 정의하고, 33개 인시
 - 오답 0건: 35개 seed 모두 top-1 정답
 - 해석 제한: replay 조건상 incident type은 oracle로 주입되며, 100% 값은 production unseen 일반화 수치가 아님
 
-### 3.1.1 보존 floor (develop 기준 기존 발표 수치)
+### 3.1.1 보존 floor (develop 기준 커밋된 결과물)
 
-기존 develop 배포 이미지 `4a7ca906` 기준 보수적 floor는 본문 재측정값과 함께 인용해야 한다. 문서 본문의 과거 수치는 AC@1 65.7%, AC@3 80.0%, AC@5 80.0%, Avg@5 0.724, ECE 0.073, 기권 7/35였고, 보존 JSON `docs/test/results-20260622/rca_campaign_floor.json`은 AC@1 71.43%, AC@3 85.71%, AC@5 85.71%, Avg@5 0.781, ECE 0.0832, 기권 5/35를 기록한다.
+기존 develop 배포 이미지 `4a7ca906` 기준 보수적 floor는 본문 재측정값과 함께 인용해야 한다. 커밋된 보존 JSON `docs/test/results-20260622/rca_campaign_floor.json`은 AC@1 71.43%, AC@3 85.71%, AC@5 85.71%, Avg@5 0.781, ECE 0.0832, 기권 5/35를 기록한다. 문서 초안에 남아 있던 AC@1 65.7%, AC@3/5 80.0%, Avg@5 0.724, ECE 0.073, 기권 7/35는 현재 커밋된 결과물과 불일치하므로 발표 지표로 쓰지 않는다.
 
 > 핵심: 현재 branch replay 수치와 보존 floor는 산출 시점과 코드 상태가 다르다. 100% 값을 단독으로 쓰지 말고 oracle incident-type, seed 내부 replay, floor 범위를 함께 표시한다.
 
@@ -99,11 +99,11 @@ RCA 근본원인 카탈로그를 **8계층 35개**로 정의하고, 33개 인시
 ## 4. 해석 & 슬라이드 03 반영 권고
 
 - **방법론 명시 필수**: 현재 재측정 수치는 **관측증거-only + LLM 비활성 + oracle incident-type**의 seed replay 결과다. 프로덕션 Retrieval은 metric/trace/temporal 증거를 추가 수집할 수 있지만 classifier 포함 end-to-end 및 unseen production holdout은 별도 측정이 필요하다.
-- **해석 제한**: 100% 값은 기존 35 seed의 조건부 replay 결과이며 본 문서의 floor(AC@1 65.7%, 보존 JSON 기준 71.43%)와 함께 표시해야 한다.
+- **해석 제한**: 100% 값은 기존 35 seed의 조건부 replay 결과이며 커밋된 보존 floor(AC@1 71.43%)와 함께 표시해야 한다.
 - **권장 슬라이드 수치(재현 가능)**:
-  - AI 진단 정확도: **보존 floor AC@1 65.7~71.4%, 현재 oracle replay AC@1 100.0% (35/35, 조건부)**
-  - 환각: **≈ 0** (날조 0건, 불확실 20%는 정직한 기권)
-  - 신뢰도 캘리브레이션: **floor ECE 0.073~0.0832, 현재 replay ECE 0.1595**
+  - AI 진단 정확도: **보존 floor AC@1 71.43%, 현재 oracle replay AC@1 100.0% (35/35, 조건부)**
+  - 환각: **카탈로그 밖 root cause 생성 0건** (현재 replay 기권 0/35, 보존 floor 기권 5/35)
+  - 신뢰도 캘리브레이션: **floor ECE 0.0832, 현재 replay ECE 0.1595**
 - **약점(정직 공개)**: 현재 seed replay에서는 취약 계층이 없지만 `change`·`data_quality` 계층은 production에서 temporal/metric 증거 의존도가 높다. → Retrieval의 metric/temporal 증거 강화 + gold set 확대(#964 피드백 루프)가 개선 경로.
 - ⚠️ 기존 슬라이드의 "89.6% / 367 케이스"는 본 캠페인과 산출 방식·데이터셋이 달라 **출처 검증 전까지 사용하지 말 것**. 본 문서의 재현 가능한 수치로 대체 권장.
 

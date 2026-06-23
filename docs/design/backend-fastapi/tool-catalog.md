@@ -120,7 +120,7 @@ Tool result는 Agent State에 들어가기 전에 표준화한다.
 | RCA | evidence 조회 결과 참조, 추가 read 요청 |
 | Remediation | action template 조회, mutation 실행 금지 |
 | Policy Guard | policy/runbook/action catalog 조회, approval 필요 여부 판단 |
-| Executor | runtime tool 실행. 현재 FastAPI executor는 `X-Idempotency-Key`만 만들고 `X-Approval-Id`를 Spring으로 전파하지 않아, Spring mutation은 approval 누락 시 403 `APPROVAL_REQUIRED`로 차단된다 |
+| Executor | runtime tool 실행. 승인된 mutation은 action별 `approval_id`와 `change_ticket_id`를 `ToolContext`에 실어 Spring `X-Approval-Id`/`X-Change-Ticket-Id`로 전파한다 |
 | Verifier | read-only after-check tool |
 | Report | tool 직접 호출 금지 |
 
@@ -128,7 +128,7 @@ Report는 tool을 직접 호출하지 않는다. 검증된 State만 사용한다
 
 ### 8. Runtime Tool Catalog
 
-현재 FastAPI `ToolClientRegistry`에는 20개 논리 tool definition이 있다. 이 표는 FastAPI registry의 실제 목록이고, Spring `GET /internal/ops/admin/tool-catalog`와 동일하지 않다.
+현재 FastAPI `ToolClientRegistry`에는 23개 논리 tool definition이 있다. 이 표는 FastAPI registry의 실제 목록이고, Spring `GET /internal/ops/admin/tool-catalog`와 동일하지 않다. 구성은 read-only 19개와 approval-gated mutation 4개다.
 
 | Tool | Operation | Method | Path template | Risk | Approval |
 | --- | --- | --- | --- | --- | --- |
@@ -137,6 +137,9 @@ Report는 tool을 직접 호출하지 않는다. 검증된 State만 사용한다
 | `get_deployments` | `get_recent_changes` | `GET` | `/internal/ops/projects/{project_id}/pipelines/changes` | `read_only` | no |
 | `get_connector_status` | `get_connector_status` | `GET` | `/internal/ops/projects/{project_id}/kafka/connectors/{connector_name}/status` | `read_only` | no |
 | `list_connectors` | `list_connectors` | `GET` | `/internal/ops/projects/{project_id}/kafka/connectors/status` | `read_only` | no |
+| `list_datasources` | `list_datasources` | `GET` | `/internal/ops/projects/{project_id}/datasources` | `read_only` | no |
+| `get_cluster_info` | `get_cluster_info` | `GET` | `/internal/ops/projects/{project_id}/kafka/cluster` | `read_only` | no |
+| `sql_read` | `sql_read` | `POST` | `/internal/ops/projects/{project_id}/datasources/{datasource_id}/query` | `read_only` | no |
 | `get_consumer_lag` | `get_consumer_lag` | `GET` | `/internal/ops/projects/{project_id}/kafka/consumer-groups/{consumer_group}/lag` | `read_only` | no |
 | `get_consumer_groups` | `get_consumer_groups` | `GET` | `/internal/ops/projects/{project_id}/kafka/consumer-groups` | `read_only` | no |
 | `get_kafka_lag` | `get_consumer_lag` | `GET` | `/internal/ops/projects/{project_id}/kafka/consumer-groups/{consumer_group}/lag` | `read_only` | no. Alias for `get_consumer_lag` |
@@ -153,7 +156,7 @@ Report는 tool을 직접 호출하지 않는다. 검증된 State만 사용한다
 | `get_alerts` | `list_alerts` | `GET` | `/internal/ops/projects/{project_id}/observability/alerts` | `read_only` | no |
 | `analyze_event_log` | `analyze_event_log` | `GET` | `/internal/ops/projects/{project_id}/observability/events/summary` | `read_only` | no |
 
-Spring runtime catalog는 현재 18개 operation을 반환한다(read operation + approval-gated mutation). FastAPI registry는 사용자 친화 alias(`get_metrics`, `get_deployments`, `get_alerts`, `get_traces`, `get_kafka_lag`)와 Spring catalog operation 이름을 분리할 수 있다.
+Spring runtime catalog는 현재 22개 operation을 반환한다(read operation 18개 + mutation 4개). FastAPI registry는 사용자 친화 alias(`get_metrics`, `get_deployments`, `get_alerts`, `get_traces`, `get_kafka_lag`)와 Spring catalog operation 이름을 분리할 수 있다. Spring mutation의 approval 필요 여부는 `PolicyGuard`가 operation risk와 workspace policy로 결정한다.
 
 | Spring catalog operation | FastAPI registry 대응 |
 | --- | --- |
@@ -171,25 +174,28 @@ Spring runtime catalog는 현재 18개 operation을 반환한다(read operation 
 | `get_pipeline_topology` | `get_pipeline_topology` |
 | `get_connector_status` | `get_connector_status` |
 | `list_connectors` | `list_connectors` |
+| `list_datasources` | `list_datasources` |
+| `get_cluster_info` | `get_cluster_info` |
+| `sql_read` | `sql_read` |
 | `restart_connector` | `restart_connector` |
 | `pause_connector` | `pause_connector` |
 | `resume_connector` | `resume_connector` |
 | `restart_consumer_group` | `restart_consumer_group` |
 
-현재 path/operation 매핑과 result schema는 완전히 호환되지 않는다. FastAPI `ToolResult`는 strict schema를 검증하므로 그대로 호출하면 일부 read tool은 response parsing 실패가 날 수 있다. 예: Spring `get_consumer_lag`는 `consumerGroup`/`totalLag`/`source`를 반환하지만 FastAPI schema는 `consumer_group`/`total_lag`와 optional `partitions`를 요구한다. Spring `search_logs`는 `logs`/`total`/`note`를 반환하지만 FastAPI schema는 `match_count`/`summary`를 요구한다. Spring `get_connector_status`는 `connectorName`/`connectorState`/`tasks[].id`를 반환하지만 FastAPI schema는 `connector_name`/`state`/`tasks[].task_id`를 요구한다. Spring `get_incident_summary`는 `incidentId`/`status`/`note`만 반환하지만 FastAPI schema는 `incident_id`/`severity`/`trigger_event`/`related_event_count`/`grouping_key`를 요구한다. Spring `list_project_pipelines`는 bare `PipelineResponse[]`를 반환하지만 FastAPI schema는 `{"pipelines": [...]}` object를 요구한다. Spring `get_pipeline_topology`는 `pipelineId`/`sourceDbId`/`topic`/`sourceConnector`/`sinkConnector` 형태지만 FastAPI schema는 `pipeline_id`/nested `source`/`topics`/connector `cr_name` 형태를 요구한다.
+FastAPI result schema는 Spring 응답의 camelCase와 일부 flat field를 수용하도록 `SpringResponseModel` alias/normalizer를 사용한다. 예: `search_logs`는 `total`/`note`를 `match_count`/`summary`로 보강하고, `get_connector_status`는 `connectorState`와 `tasks[].id`를 수용하며, `get_pipeline_topology`는 `sourceDbId`/`sinkDbId`/`topic`을 nested `source`/`sink`/`topics`로 normalize한다. `SpringOpsClient`는 bare list 응답을 필요한 wrapper 형태로 감싼다.
 
-FastAPI `get_kafka_lag`는 별도 Spring operation이 아니라 `get_consumer_lag` alias다. FastAPI `get_connector_task_trace`는 Spring endpoint를 가리키지만 현재 Spring admin `tool-catalog`에는 별도 operation으로 노출되지 않는다.
+FastAPI `get_kafka_lag`는 별도 Spring operation이 아니라 `get_consumer_lag` alias다. `get_connector_task_trace`는 Spring admin `tool-catalog`에도 별도 operation으로 노출된다.
 
 ### 9. Mutation Runtime Tool Catalog
 
-현재 Spring에 구현된 mutation은 Kafka Connect 계열 4개뿐이다. Spring endpoint는 모두 `X-Agent-Run-Id`, `X-Agent-Step-Id`, `X-Idempotency-Key`, `X-Approval-Id`가 필요하고 `ApprovalValidator`와 `IdempotencyGuard`를 통과해야 한다. FastAPI executor의 현재 `ToolContext`는 `X-Approval-Id`를 전송하지 않는다.
+현재 Spring에 구현된 mutation은 Kafka Connect 계열 4개뿐이다. Spring endpoint의 필수 agent header는 `X-Agent-Run-Id`, `X-Agent-Step-Id`, `X-Idempotency-Key`다. `X-Approval-Id`와 `X-Change-Ticket-Id`는 nullable이며, `PolicyGuard` 결과가 `REQUIRE_APPROVAL`이면 `ApprovalValidator`, `REQUIRE_CHANGE_MANAGEMENT`이면 `ChangeTicketValidator`를 통과해야 한다. FastAPI executor는 approved action의 governance 식별자를 `ToolContext`로 전달하며, 정책상 필요한 식별자가 없으면 Spring gate 또는 registry 승인/변경관리 요구로 차단된다.
 
 | Agent 논리 tool | Spring operation | 정책 | 현재 구현 |
 | --- | --- | --- | --- |
-| `restart_connector` | `restart_connector` | approval | 구현됨 |
-| `pause_connector` | `pause_connector` | approval | 구현됨 |
-| `resume_connector` | `resume_connector` | approval | 구현됨 |
-| `restart_consumer_group` | `restart_consumer_group` | approval | 구현됨. `connect-` prefix의 Kafka Connect-managed sink connector consumer group만 지원 |
+| `restart_connector` | `restart_connector` | `PolicyGuard`: high risk, aiProdLock이면 approval 필요 | 구현됨 |
+| `pause_connector` | `pause_connector` | `PolicyGuard`: medium risk, 기본 allow | 구현됨 |
+| `resume_connector` | `resume_connector` | `PolicyGuard`: low risk, 기본 allow | 구현됨 |
+| `restart_consumer_group` | `restart_consumer_group` | `PolicyGuard`: high risk, aiProdLock이면 approval 필요 | 구현됨. `connect-` prefix의 Kafka Connect-managed sink connector consumer group만 지원 |
 
 현재 구현에 없는 mutation:
 
@@ -207,7 +213,7 @@ FastAPI `get_kafka_lag`는 별도 Spring operation이 아니라 `get_consumer_la
 
 | Action | action_type | 처리 |
 | --- | --- | --- |
-| `collect_source_timeout_evidence` | `workflow_action` | 설계상 `search_logs`, `get_connector_status`, `get_pipeline_topology`, `list_project_pipelines` 조합이지만 현재 `get_pipeline_topology`/`list_project_pipelines`는 Spring result shape과 FastAPI schema가 맞지 않아 adapter 없이는 직접 실행 후보로 보면 안 된다 |
+| `collect_source_timeout_evidence` | `workflow_action` | 설계상 `search_logs`, `get_connector_status`, `get_pipeline_topology`, `list_project_pipelines` 조합으로 변환 |
 | `collect_connector_trace` | `workflow_action` | `get_traces`(Tempo 분산 trace), `get_connector_task_trace`(task 예외 stack trace, #373), `search_logs`, `get_connector_status` 실행 계획으로 변환 |
 | `collect_lag_evidence` | `workflow_action` | `get_consumer_lag`, `get_connector_status`, `search_logs`, `get_alerts` 실행 계획으로 변환 |
 | `collect_additional_evidence` | `workflow_action` | Planner가 현재 registry에 있는 read-only tool만 사용해 추가 retrieval plan 생성 |

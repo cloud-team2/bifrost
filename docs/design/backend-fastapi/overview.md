@@ -40,7 +40,7 @@ flowchart TB
     SUP --> LLM[LLM Provider<br/>역할별 tier]
 ```
 
-워크플로는 **evidence 기반 판단·생성 8개 LLM agent**와 **룰/도구 실행 결정론적 단계**로 나뉘고, Supervisor가 분기·재시도·승인 게이트·루프 가드를 제어한다.
+워크플로는 **evidence 기반 판단·생성 8개 LLM agent**와 **룰/도구 실행 결정론적 단계**로 나뉘고, Supervisor가 mode·execution depth별 분기, 재시도, 승인 게이트, 루프 가드를 제어한다.
 
 **LLM agent (8)**: `Router`(mode 재판정) → `Planner`(수집 계획) → `Retrieval`(RAG·read tool) → `Classifier`(유형 분류) → `RCA`(원인 후보 선택) → `Remediation`(조치 후보) → `Verifier`(검증 차단기) → `Report`(최종 응답).
 **결정론적 단계**: `Correlation Engine`(alert 병합) · `Policy Guard`(allow/approval/change/deny) · `Approval/Change Gate` · `Executor`(승인된 tool 실행).
@@ -54,7 +54,7 @@ flowchart LR
     V -->|fail/needs_revision| P
 ```
 
-현재 구현은 router가 사용자 메시지마다 mode를 다시 판정하고, mode별 transition table을 실행한다. `action_execution`/`approval_decision`은 같은 run의 이전 action 후보와 policy 결정을 State patch에서 복원해 재사용한다. `verifier` 결과가 `fail`/`needs_revision`이면 Supervisor가 책임 Agent로 loopback을 등록하고, `fail_loops`/`gap_loops` 예산 초과 시 Report로 보내지 않고 run을 `failed`로 종료한다.
+현재 구현은 router가 사용자 메시지마다 mode와 execution depth를 다시 판정하고, mode+depth별 transition table을 실행한다. 단순 조회 depth(`direct_answer`/`single_lookup`/`bounded_lookup`)는 `planner -> retrieval -> report`로 끝나며 Verifier를 건너뛴다. `incident_analysis`는 기본적으로 `correlation -> planner -> retrieval -> classifier -> rca -> verifier -> report`를 타고, remediation depth/요청이 있으면 RCA 뒤 `remediation -> policy_guard -> approval_gate`가 추가된다. `action_execution`/`approval_decision`은 같은 run의 이전 action 후보와 policy 결정을 State patch에서 복원해 재사용한다. `verifier` 결과가 `fail`/`needs_revision`이면 Supervisor가 책임 Agent로 loopback을 등록하고, `fail_loops`/`gap_loops` 예산 초과 시 Report로 보내지 않고 run을 `failed`로 종료한다.
 
 ## 데이터 — agentdb ERD
 
@@ -76,11 +76,12 @@ erDiagram
 | 항목 | 내용 |
 | --- | --- |
 | mode | `simple_query` / `incident_analysis`(기본 `diagnose_only`) / `action_execution` / `approval_decision` — 매 메시지 재판정 |
+| execution depth | `direct_answer` / `single_lookup` / `bounded_lookup` / `incident_diagnosis` / `remediation_planning` / `action_execution` — stage와 tool budget을 제한 |
 | evidence-first | State엔 원문 inline 금지(`evidence_id`/`store_ref`/`summary`만), 수집 단계 redaction |
-| catalog 제한 | 장애유형·root cause·evidence·runbook·policy 밖 생성 금지, 불충분 시 `UNKNOWN_WITH_EVIDENCE_GAP` |
+| catalog 제한 | 장애유형·root cause·evidence·runbook·policy 밖 생성 금지, 불충분 시 `UNKNOWN_WITH_EVIDENCE_GAP`. 현재 root cause catalog는 35개 ID이고 actionable 32개에 evidence profile이 붙는다 |
 | Verifier 차단기 | `pass`만 Report로 진행한다. `fail`은 `fail_loops`, `needs_revision`은 `gap_loops` 예산 안에서 책임 Agent로 loopback하며, 예산 초과 시 Report stage 없이 `failed` 종료한다 |
 | 종료 보장 | 현재 구현은 step/gap/fail/scope/revise_action counter guard를 중앙 집행한다. token/time budget은 policy field만 있고 guard check에는 없다 |
-| SoT / MCP | Approval 원본·실행 allowlist = **Spring**. FastAPI approval link는 현재 in-memory facade 상태이며 executor는 Spring mutation에 `X-Approval-Id`를 전달하지 않는다 · MCP v1 미사용 |
+| SoT / MCP | Approval 원본·실행 allowlist = **Spring**. FastAPI approval link는 local facade이며 사용자 승인 후 Spring pre-approved approval id를 저장할 수 있다. Executor는 approved action의 `approval_id`/`change_ticket_id`를 Spring mutation header로 전달한다 · MCP v1 미사용 |
 | 분산 추적(#372) | OTel 자동 계측(FastAPI·httpx) + runner 가 여는 루트 span `agent.run`. run 은 `BackgroundTasks` 로 요청 span 밖에서 돌아 자동 계측만으론 안 묶이므로 루트 span 을 직접 연다. `httpx` 가 Spring 호출에 `traceparent` 주입 → Spring(#366)이 추출해 **한 trace**. `AI_OTLP_TRACING_ENDPOINT` 설정 시에만 활성(로컬/CI 비활성). Collector tail-sampling(#370) 공유 |
 
 ## 더 읽기

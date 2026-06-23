@@ -1,7 +1,8 @@
 # CICD 스택 — Jenkins / ArgoCD / Harbor
 
-EKS 클러스터에 Jenkins, ArgoCD, Harbor를 Helm으로 배포하고
-ALB Ingress로 외부에 노출하는 구성.
+EKS 클러스터에 Jenkins, ArgoCD, Harbor를 Helm으로 bootstrap하고, Jenkins `bifrost-ci`와 Argo CD GitOps 배포 흐름을 구성한다.
+
+현재 외부 노출 정본은 `gitops` 브랜치 `infra/` Helm chart다. 단일 NLB → ingress-nginx → cert-manager(Let's Encrypt)로 `harbor.skala-ai.com`, `jenkins.skala-ai.com`, `argocd.skala-ai.com`을 노출한다. 이 브랜치의 `infra/k8s/ingress/*-ingress.yaml` ALB manifest와 `deploy.sh ingress`는 초기 bootstrap/이력용이다.
 
 ## 파일 구조
 
@@ -14,22 +15,20 @@ infra/
 │   └── harbor-values.yaml     # Harbor Helm values
 └── k8s/
     └── ingress/
-        ├── harbor-ingress.yaml   # Harbor  ALB (port 80,  group.order 10)
-        ├── jenkins-ingress.yaml  # Jenkins ALB (port 8080, group.order 20)
-        └── argocd-ingress.yaml   # ArgoCD  ALB (port 8081, group.order 30)
+        ├── harbor-ingress.yaml   # legacy/bootstrap ALB manifest
+        ├── jenkins-ingress.yaml  # legacy/bootstrap ALB manifest
+        └── argocd-ingress.yaml   # legacy/bootstrap ALB manifest
 ```
 
-## ALB 구성
+## 외부 노출
 
-세 Ingress가 **`cicd-shared-alb`** 단일 ALB를 공유 (`group.name: cicd-shared`).
+현재 운영 노출은 `gitops` 브랜치의 `infra` chart가 관리한다.
 
-| 서비스 | 포트 | group.order |
-|--------|------|-------------|
-| Harbor | 80   | 10          |
-| Jenkins | 8080 | 20         |
-| ArgoCD | 8081 | 30          |
-
-Public Subnets: `subnet-0d8a1dcc1e064b04d`, `subnet-05e64cd452e9a3c55`
+| 서비스 | URL | 내부 서비스 |
+|--------|-----|-------------|
+| Harbor | `https://harbor.skala-ai.com` | `harbor:80` |
+| Jenkins | `https://jenkins.skala-ai.com` | `jenkins:8080` |
+| Argo CD | `https://argocd.skala-ai.com` | `argocd-server:80` |
 
 ## 배포
 
@@ -67,31 +66,25 @@ CI 파이프라인은 Jenkins의 **`bifrost-ci`** Pipeline job이 실행한다. 
 
 > `disableConcurrentBuilds`는 `Jenkinsfile`의 `options{}`가 런타임에 설정한다.
 
-GitHub webhook은 `http://<ALB>:8080/github-webhook/` (push 이벤트)로 등록돼 있어야 한다.
+GitHub webhook은 `https://jenkins.skala-ai.com/github-webhook/` (push 이벤트)로 등록돼 있어야 한다.
+
+## Jenkinsfile 배포 흐름
+
+1. `bifrost-ci`는 JCasC에서 `*/main`만 checkout하므로 `Jenkinsfile` 내부에 branch gate를 두지 않는다.
+2. 직전 성공 빌드 대비 변경 파일을 보고 `services/ai-service`, `services/operations-backend`, `services/frontend` 중 변경된 서비스만 `TO_BUILD`에 넣는다.
+3. 앱 서비스는 서비스별 Kaniko 컨테이너에서 Harbor `harbor.harbor.svc.cluster.local/library/bifrost-<svc>:<git-sha>`와 `:latest`로 push한다. `operations-backend`는 멀티모듈 Gradle 때문에 빌드 컨텍스트가 레포 루트이고, 다른 앱 서비스는 각 서비스 디렉터리다.
+4. 앱 서비스가 빌드되면 `gitops` 브랜치를 clone하고 `charts/<svc>/values.yaml`의 `image.tag`만 git sha로 갱신해 push한다. Argo CD는 polling/reconcile로 이를 배포한다.
+5. `infra/docker/kafka-connect/` 또는 `connect-plugins/` 변경 시 Kafka Connect 커스텀 이미지를 별도 Kaniko 컨테이너에서 빌드해 `bifrost-kafka-connect:1.0.0-converter`, git sha, `latest`로 Harbor에 push한다. 이 단계는 GitOps tag를 자동 변경하지 않는다.
 
 ## 현재 배포 버전
 
-| 차트 | 버전 | App 버전 |
-|------|------|---------|
-| jenkins/jenkins | 5.9.22 | 2.555.2 |
-| argo/argo-cd | 9.5.17 | v3.4.3 |
-| harbor/harbor | 1.18.0 | 2.14.0 |
+`deploy.sh`가 사용하는 chart version 기본값이다. 실제 app version은 chart 릴리스에 종속되므로 여기서 별도 고정하지 않는다.
 
-## 접근 정보
-
-ALB DNS: `cicd-shared-alb-1042102888.ap-northeast-2.elb.amazonaws.com`
-
-| 서비스 | URL |
-|--------|-----|
-| Harbor  | http://cicd-shared-alb-...:80 |
-| Jenkins | http://cicd-shared-alb-...:8080 |
-| ArgoCD  | http://cicd-shared-alb-...:8081 |
-
-```bash
-# DNS 확인
-kubectl get ingress -n harbor harbor-alb \
-  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
-```
+| 차트 | 버전 |
+|------|------|
+| jenkins/jenkins | 5.9.22 |
+| argo/argo-cd | 9.5.17 |
+| harbor/harbor | 1.18.0 |
 
 ## 기본 계정
 
