@@ -56,7 +56,7 @@ Spring Boot는 FastAPI Agent의 판단을 신뢰하지 않는다. FastAPI가 이
 
 | 항목 | 설명 |
 | --- | --- |
-| service identity | `internal.ops.token` 설정 시 `X-Internal-Token` 일치를 요구한다. 토큰이 비어 있으면 로컬/기존 배포 호환을 위해 게이트가 비활성화된다 |
+| service identity | `internal.ops.token`과 `X-Internal-Token` 일치를 요구한다. 토큰이 비어 있으면 fail-closed로 거부하며, 로컬/테스트 우회는 `internal.ops.auth-disabled=true`일 때만 허용된다 |
 | user/project scope | 요청 사용자가 project 권한을 갖는가 |
 | resource ownership | resource가 해당 project 소유 또는 허용 범위인가 |
 | operation allowlist | 현재는 controller endpoint와 `/internal/ops/admin/tool-catalog` 22개 항목이 agent-callable boundary |
@@ -328,7 +328,7 @@ Mutation timeout이 발생해도 Spring은 자동 재시도하지 않는다. Kaf
 - idempotency replay가 중복 실행을 만들지 않아야 한다.
 - before/after evidence row 생성은 `MutationGate` regression으로 확인하고, 현재 API regression 기준에서는 envelope field가 비어 있음을 확인한다.
 - forbidden operation은 endpoint가 없거나 policy deny되어야 한다.
-- `internal.ops.token`이 설정된 환경에서는 FastAPI service identity header가 없거나 다르면 실패해야 한다. 토큰 미설정 로컬/기존 환경은 호환을 위해 허용된다.
+- FastAPI service identity header가 없거나 `internal.ops.token`과 다르면 실패해야 한다. 토큰 미설정은 fail-closed이며, 로컬/테스트 우회는 `internal.ops.auth-disabled=true`일 때만 허용된다.
 
 ### 14. 결론
 

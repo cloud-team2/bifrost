@@ -263,9 +263,7 @@ public class SafeInjectionService {
         candidates.add(nullToEmpty(workspace.getName()));
         boolean allowed = candidates.stream()
                 .map(v -> v.toLowerCase(Locale.ROOT))
-                .anyMatch(v -> allowedProjects.contains(v)
-                        || v.startsWith("safeinject")
-                        || v.startsWith("e2e-rca-test"));
+                .anyMatch(allowedProjects::contains);
         if (!allowed) {
             throw new ApiException(ErrorCode.WORKSPACE_FORBIDDEN,
                     "safe injection is allowed only for configured test workspaces");

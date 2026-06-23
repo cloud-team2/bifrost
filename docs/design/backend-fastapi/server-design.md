@@ -387,7 +387,7 @@ Retrieval 에이전트의 **문서 RAG**([§1 Agent Principles](agent-principles
 ### 10. 보안
 
 1. 현재 FastAPI route에는 frontend 사용자 JWT 검증 dependency가 연결되어 있지 않다.
-2. Spring `/internal/ops/**`는 service-to-service identity gate로 보호한다(#646). FastAPI(spring_client)가 `X-Internal-Token`(설정 `AI_INTERNAL_OPS_TOKEN`)을 동봉하고, ops-backend는 `internal.ops.token`과 일치할 때만 허용한다. 토큰 미설정 시 게이트 비활성(로컬/기존 환경 호환) — gitops가 양쪽에 동일 시크릿을 주입해 활성화한다. 추가로 공개 진입점인 frontend는 `/internal/ops`를 프록시하지 않는다(에이전트 전용).
+2. Spring `/internal/ops/**`는 service-to-service identity gate로 보호한다(#646). FastAPI(spring_client)가 `X-Internal-Token`(설정 `AI_INTERNAL_OPS_TOKEN`)을 동봉하고, ops-backend는 `internal.ops.token`과 일치할 때만 허용한다. 토큰 미설정은 fail-closed이며, 로컬/테스트 우회는 `internal.ops.auth-disabled=true`일 때만 허용된다. 추가로 공개 진입점인 frontend는 `/internal/ops`를 프록시하지 않는다(에이전트 전용).
 3. LLM output으로 API path를 직접 만들지 않는다.
 4. tool allowlist 밖 요청은 거부한다.
 5. Secret, token, connection string은 prompt와 report에 넣지 않는다.

@@ -96,7 +96,7 @@ RCA 파이프라인: Classifier → (incident→rootcause map) → RCA evaluator
 
 ### B-4. 내부 토큰 우회 차단 (Spring 합동)
 - agent는 Spring 호출에 `X-Internal-Token` 동봉([spring_client.py](services/ai-service/app/tools/spring_client.py)76-89), 승인 시 `X-Approval-Id` 동봉. **집행은 Spring SecurityConfig/MutationGate**.
-- 측정: 무토큰으로 `/internal/ops/**` 직접 호출 시 401/403 차단율(=공개 API 우회 차단). 단 운영 토큰 설정 여부(`INTERNAL_OPS_TOKEN`) 먼저 확인 — 비면 게이트 비활성.
+- 측정: 무토큰으로 `/internal/ops/**` 직접 호출 시 401/403 차단율(=공개 API 우회 차단). `INTERNAL_OPS_TOKEN` 미설정은 fail-closed이며, 로컬/테스트 우회는 `INTERNAL_OPS_AUTH_DISABLED=true`일 때만 허용된다.
 
 ---
 

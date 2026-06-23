@@ -51,12 +51,13 @@ tempo:
   enabled: ${TEMPO_ENABLED:false}
   url: ${TEMPO_URL:http://tempo.monitoring:3200}
 
-# /internal/ops service-to-service 인증(#646). 값이 있으면 ai-service가 동봉하는 X-Internal-Token과
-# 일치할 때만 /internal/ops/**를 허용한다. 비면 게이트 비활성 → 로컬/기존 환경 호환. gitops가 ai-service
-# (AI_INTERNAL_OPS_TOKEN)와 동일 시크릿을 주입한다.
+# /internal/ops service-to-service 인증(#646). 기본은 fail-closed: INTERNAL_OPS_TOKEN이 비면
+# /internal/ops/**를 거부한다. 로컬/테스트 우회는 INTERNAL_OPS_AUTH_DISABLED=true로만 명시한다.
+# gitops가 ai-service(AI_INTERNAL_OPS_TOKEN)와 동일 시크릿을 주입한다.
 internal:
   ops:
     token: ${INTERNAL_OPS_TOKEN:}
+    auth-disabled: ${INTERNAL_OPS_AUTH_DISABLED:false}
 
 # safe live fault injection 전용 내부 경로. 기본값은 테스트 workspace slug만 허용한다.
 safe-inject:
