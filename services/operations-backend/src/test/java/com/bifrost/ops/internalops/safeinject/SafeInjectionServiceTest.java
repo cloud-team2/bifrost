@@ -78,6 +78,32 @@ class SafeInjectionServiceTest {
     }
 
     @Test
+    void rejectsPrefixMatchWhenWorkspaceIsNotExactlyAllowed() {
+        workspace("e2e-rca-test-prod", UUID.randomUUID());
+
+        assertThatThrownBy(() -> service.create("e2e-rca-test-prod",
+                new SafeInjectionCreateRequest("run-prefix", "auth", null)))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("configured test workspaces");
+    }
+
+    @Test
+    void allowsWorkspaceOnlyWhenExactValueIsConfigured() {
+        workspace("safeinject-prod", UUID.randomUUID());
+        SafeInjectionService exactService = new SafeInjectionService(
+                client,
+                workspaceRepository,
+                NS,
+                CLUSTER,
+                "safeinject-prod");
+
+        SafeInjectionCreateResult result = exactService.create("safeinject-prod",
+                new SafeInjectionCreateRequest("run-exact", "schema", null));
+
+        assertThat(result.connectorName()).startsWith("safeinject-");
+    }
+
+    @Test
     void rejectsConnectorNameOverrideSoCleanupRemainsDeterministic() {
         assertThatThrownBy(() -> service.create("e2e-rca-test",
                 new SafeInjectionCreateRequest("run-003", "auth", "safeinject-custom")))

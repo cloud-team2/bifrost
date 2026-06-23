@@ -14,7 +14,7 @@
 | governance facade | `/internal/ops/approvals/**`, `/internal/ops/change-tickets/**` |
 | mutation subset | connector restart/pause/resume, Kafka Connect-managed consumer group restart |
 
-`/internal/ops/**`는 agent-facing 내부 API이며 public frontend ingress에 노출하지 않는다. `SecurityConfig`는 `internal.ops.token`이 설정된 경우 `X-Internal-Token` service identity header 일치를 요구한다. 토큰이 비어 있으면 로컬/기존 배포 호환을 위해 게이트를 비활성화한다. Mutation controller가 추가로 적용하는 gate는 agent header, workspace/resource ownership, idempotency, `PolicyGuard` 기반 approval 또는 change-ticket, Kafka Connect REST 결과 mapping이다.
+`/internal/ops/**`는 agent-facing 내부 API이며 public frontend ingress에 노출하지 않는다. `SecurityConfig`는 `internal.ops.token`과 `X-Internal-Token` service identity header 일치를 요구하며, 토큰이 비어 있으면 fail-closed로 거부한다. 로컬/테스트 우회는 `internal.ops.auth-disabled=true`일 때만 명시적으로 허용된다. Mutation controller가 추가로 적용하는 gate는 agent header, workspace/resource ownership, idempotency, `PolicyGuard` 기반 approval 또는 change-ticket, Kafka Connect REST 결과 mapping이다.
 
 ### 2. Mutation 처리 순서
 
