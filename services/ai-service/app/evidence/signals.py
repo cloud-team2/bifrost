@@ -16,35 +16,52 @@ _FAILED_RE = re.compile(r"\bFAILED\b|failed|failure|exception|\berror\b|오류|�
 _TASK_FAILURE_RE = re.compile(r"\bFAILED\b|failed|failure|exception|오류|에러|실패", re.IGNORECASE)
 _TRACE_RE = re.compile(r"trace|stack|exception|worker log|stacktrace|로그|트레이스", re.IGNORECASE)
 _AUTH_RE = re.compile(
-    r"access\s*denied|permission\s*denied|unauthori[sz]ed|authentication|"
+    r"\b1045\b|\b28000\b|access\s*denied|permission\s*denied|unauthori[sz]ed|authentication|"
     r"\bauth\b|auth(?:entication)?\s*error|token\s*expired|credential\s*expired|"
     r"password authentication failed|invalid password|invalid credential|"
-    r"credential invalid|credential expired|sasl|인증\s*실패|권한\s*거부|"
+    r"credential invalid|credential expired|sasl|using password|인증\s*실패|권한\s*거부|"
     r"credential\s*만료|credential\s*미적용|토큰\s*만료",
     re.IGNORECASE,
 )
 _SCHEMA_RE = re.compile(
-    r"schema|serialization|deserialization|incompatible|compatibility|converter|"
-    r"avro|serde|type mismatch|schema registry|스키마|역직렬화|호환성",
+    r"\b1366\b|\b22007\b|schema|serialization|deserialization|deserialize|"
+    r"incompatible|compatibility|converter|avro|serde|type mismatch|schema registry|"
+    r"incorrect\s+\w+\s+value|incorrect .* value|field type|dataexception|"
+    r"invalid input syntax|date/time field value out of range|invalid datetime format|"
+    r"(?:date|time|timestamp|datetime)\s+(?:parse|parsing)\s+(?:error|fail)|"
+    r"parse\s+(?:error|fail).*(?:date|time|timestamp|datetime)|"
+    r"cannot parse .*?(?:date|time|timestamp|datetime)|스키마|역직렬화|호환성",
     re.IGNORECASE,
 )
 _CONFIG_RE = re.compile(
     r"invalid config|unknown config|config validation|configuration error|"
-    r"invalid option|required configuration|bad config|config diff|"
+    r"configuration value is invalid|"
+    r"(?:invalid|bad) value for configuration|value is invalid|integer is expected|"
+    r"invalid option|required configuration|missing required config(?:uration)?|"
+    r"required config(?:uration)?.*(?:not present|missing)|"
+    r"configuration .*?(?:not present|missing|required)|"
+    r"invalid/empty configuration value|empty configuration value|"
+    r"bad config|config diff|transform|class not found|classnotfound|noclassdeffound|"
+    r"failed to find any class|"
     r"config\s*변경|설정\s*오류|설정\s*오타|잘못된\s*설정",
     re.IGNORECASE,
 )
 _CONSTRAINT_RE = re.compile(
-    r"duplicate key|unique constraint|constraint violation|foreign key|not null|"
-    r"data integrity|sqlintegrity|record rejected|duplicate records?|"
+    r"\b4025\b|\b23000\b|duplicate key|unique constraint|constraint violation|foreign key|not null|"
+    r"check constraint|constraint .* failed|data integrity|sqlintegrity|record rejected|duplicate records?|"
     r"중복\s*레코드|제약\s*위반|"
     r"(?:record|row|sink|data)\s+validation fail",
     re.IGNORECASE,
 )
-_TIMEOUT_RE = re.compile(r"timeout|timed out|read timed out|write timed out|타임아웃", re.IGNORECASE)
+_TIMEOUT_RE = re.compile(
+    r"\b2002\b|timeout|timed out|timeout expired|connection timed out|"
+    r"read timed out|write timed out|can't connect to server|could not connect|타임아웃",
+    re.IGNORECASE,
+)
 _NETWORK_RE = re.compile(
     r"dns|unknownhost|no route|network unreachable|connection refused|"
     r"connect exception|tcp connect|endpoint unreachable|host unreachable|i/o error|"
+    r"can't connect to server|could not connect|name or service not known|temporary failure in name resolution|"
     r"네트워크\s*단절|연결\s*실패|호스트.*포트",
     re.IGNORECASE,
 )
@@ -99,8 +116,19 @@ _CONNECTOR_STATE_FAILED_RE = re.compile(
     r"|상태\s*[:=]?\s*(?:FAILED|실패|오류|에러)",
     re.IGNORECASE,
 )
+_DATABASE_DOES_NOT_EXIST_RE = re.compile(
+    r"database\s+[\"'][^\"']+[\"']\s+does not exist|database\s+\S+\s+does not exist",
+    re.IGNORECASE,
+)
 _SCHEMA_VERSION_RE = re.compile(r"schema version|subject version|schema registry", re.IGNORECASE)
-_SCHEMA_STRUCTURE_RE = re.compile(r"type mismatch|field type|필드 타입", re.IGNORECASE)
+_SCHEMA_STRUCTURE_RE = re.compile(
+    r"\b1366\b|\b22007\b|incorrect\s+\w+\s+value|incorrect .* value|"
+    r"type mismatch|field type|invalid input syntax|date/time field value out of range|"
+    r"invalid datetime format|(?:date|time|timestamp|datetime)\s+(?:parse|parsing)\s+(?:error|fail)|"
+    r"parse\s+(?:error|fail).*(?:date|time|timestamp|datetime)|"
+    r"cannot parse .*?(?:date|time|timestamp|datetime)|필드 타입",
+    re.IGNORECASE,
+)
 _CONFIG_CHANGE_RE = re.compile(r"config change|config diff|config 변경", re.IGNORECASE)
 _DUPLICATE_COUNT_RE = re.compile(r"duplicate count|중복\s*레코드", re.IGNORECASE)
 _READ_LATENCY_RE = re.compile(
@@ -279,8 +307,11 @@ def evidence_signal_summary(tool_name: str, raw_payload: Any) -> str:
 
     tags: list[str] = []
     lower = text.casefold()
-    side = _side_hint(lower, tool_name)
+    structured_side = _structured_fault_side(raw_payload)
+    side = structured_side or _side_hint(lower, tool_name)
     auth_side = _auth_side_hint(pieces, tool_name)
+    if auth_side == "unknown" and structured_side in {"source", "sink"}:
+        auth_side = structured_side
 
     failed = _has_signal(pieces, _TASK_FAILURE_RE, "failure")
     connector_failed = _has_signal(pieces, _CONNECTOR_FAILED_RE, "connector") or (
@@ -293,6 +324,7 @@ def evidence_signal_summary(tool_name: str, raw_payload: Any) -> str:
     constraint = _has_signal(pieces, _CONSTRAINT_RE, "duplicate")
     timeout = _has_signal(pieces, _TIMEOUT_RE, "timeout")
     network = _has_signal(pieces, _NETWORK_RE, "network")
+    missing_database = _has_signal(pieces, _DATABASE_DOES_NOT_EXIST_RE, "failure")
     lag_spike = _has_signal(pieces, _LAG_SPIKE_RE, "lag")
     offset_slow = _has_signal(pieces, _OFFSET_PROGRESS_RE, "lag")
     deployment = _has_signal(pieces, _DEPLOYMENT_RE, "deployment")
@@ -300,9 +332,9 @@ def evidence_signal_summary(tool_name: str, raw_payload: Any) -> str:
     retry = _has_signal(pieces, _RETRY_RE, "retry")
     idempotency = _has_signal(pieces, _IDEMPOTENCY_RE, "idempotency")
 
-    if connector_failed:
+    if connector_failed or missing_database:
         _add(tags, "connector task status FAILED")
-    if trace and failed:
+    if (trace and failed) or missing_database:
         _add(tags, "task trace 또는 worker log")
 
     if auth:
@@ -413,6 +445,72 @@ def _flatten_text(value: Any, context: str = "") -> Iterable[str]:
             yield from _flatten_text(item, context)
 
 
+def _structured_fault_side(value: Any) -> str | None:
+    sides: list[str] = []
+    for item in _walk(value):
+        if not isinstance(item, dict) or not _has_structured_fault_indicator(item):
+            continue
+        side = _side_from_mapping(item)
+        if side and side not in sides:
+            sides.append(side)
+    return sides[0] if len(sides) == 1 else None
+
+
+def _has_structured_fault_indicator(item: dict[Any, Any]) -> bool:
+    for key, raw in item.items():
+        key_text = _key_name(key)
+        raw_text = str(raw).casefold()
+        if key_text in {"state", "connectorstate", "taskstate", "status"} and raw_text == "failed":
+            return True
+        if key_text == "connectionstatus" and raw_text in {"down", "failed"}:
+            return True
+        if key_text in {"failedtasks", "tasksfailed", "errorcount", "matchcount"} and _positive_number(raw):
+            return True
+        if key_text == "exitcode" and _nonzero_number(raw):
+            return True
+        if key_text in {"trace", "stack", "stacktrace"} and str(raw or "").strip():
+            return True
+
+    text = " ".join(_flatten_text(item))
+    if _is_normal_only(text):
+        return False
+    return bool(
+        _TASK_FAILURE_RE.search(text)
+        or _AUTH_RE.search(text)
+        or _SCHEMA_RE.search(text)
+        or _CONFIG_RE.search(text)
+        or _CONSTRAINT_RE.search(text)
+        or _TIMEOUT_RE.search(text)
+        or _NETWORK_RE.search(text)
+        or _RETRY_RE.search(text)
+        or _DATABASE_DOES_NOT_EXIST_RE.search(text)
+    )
+
+
+def _side_from_mapping(item: dict[Any, Any]) -> str | None:
+    for key, raw in item.items():
+        if _key_name(key) not in {"datasourcerole", "role", "type", "kind"}:
+            continue
+        value = str(raw or "").casefold()
+        if value in {"source", "sink"}:
+            return value
+    return None
+
+
+def _walk(value: Any) -> Iterable[Any]:
+    yield value
+    if isinstance(value, dict):
+        for item in value.values():
+            yield from _walk(item)
+    elif isinstance(value, (list, tuple, set)):
+        for item in value:
+            yield from _walk(item)
+
+
+def _key_name(value: Any) -> str:
+    return str(value).casefold().replace("_", "").replace("-", "")
+
+
 def _side_hint(text: str, tool_name: str) -> str:
     has_source = bool(_SOURCE_HINT_RE.search(text))
     has_sink = bool(_SINK_HINT_RE.search(text))
@@ -512,3 +610,17 @@ def _has_fault_negation(text: str, fault: str) -> bool:
 def _add(tags: list[str], tag: str) -> None:
     if tag not in tags:
         tags.append(tag)
+
+
+def _positive_number(value: Any) -> bool:
+    try:
+        return float(value) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _nonzero_number(value: Any) -> bool:
+    try:
+        return float(value) != 0
+    except (TypeError, ValueError):
+        return False

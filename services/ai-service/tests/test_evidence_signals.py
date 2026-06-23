@@ -167,3 +167,136 @@ def test_signal_summary_keeps_fault_when_negative_and_fault_fragments_are_distin
     summary = evidence_signal_summary("search_logs", payload)
 
     assert "serialization/deserialization/schema error" in summary
+
+
+def test_vendor_auth_code_uses_datasource_role_for_sink_auth() -> None:
+    payload = {
+        "logs": [
+            {
+                "datasourceRole": "sink",
+                "engine": "mariadb",
+                "exit_code": 1,
+                "stderr": "ERROR 1045 (28000): Access denied for user '[USER]'@'localhost' (using password: YES)",
+            }
+        ]
+    }
+
+    summary = evidence_signal_summary("search_logs", payload)
+
+    assert "sink auth/permission error log" in summary
+    assert "source auth/permission error log" not in summary
+
+
+def test_vendor_timeout_codes_use_failed_item_side_for_source_and_sink() -> None:
+    source = evidence_signal_summary(
+        "search_logs",
+        {
+            "logs": [
+                {
+                    "datasourceRole": "source",
+                    "engine": "postgresql",
+                    "exit_code": 2,
+                    "stderr": 'psql: error: connection to server at "10.255.255.1", port 5432 failed: timeout expired',
+                }
+            ]
+        },
+    )
+    sink = evidence_signal_summary(
+        "search_logs",
+        {
+            "logs": [
+                {
+                    "datasourceRole": "sink",
+                    "engine": "mariadb",
+                    "exit_code": 1,
+                    "stderr": "ERROR 2002 (HY000): Can't connect to server on '10.255.255.1' (110)",
+                }
+            ]
+        },
+    )
+
+    assert "source connection timeout 증가" in source
+    assert "pipeline extract/read 단계 timeout log" in source
+    assert "sink write timeout 증가" in sink
+    assert "sink dependency 연결 실패 또는 connection timeout" in sink
+
+
+def test_mixed_datasource_payload_uses_failed_item_side_for_sink_timeout() -> None:
+    summary = evidence_signal_summary(
+        "list_datasources",
+        {
+            "datasources": [
+                {
+                    "id": "source-db",
+                    "role": "source",
+                    "connectionStatus": "UP",
+                },
+                {
+                    "id": "sink-db",
+                    "role": "sink",
+                    "connectionStatus": "DOWN",
+                    "lastError": "ERROR 2002 (HY000): Can't connect to server on '10.255.255.1' (110)",
+                },
+            ]
+        },
+    )
+
+    assert "sink write timeout 증가" in summary
+    assert "sink dependency 연결 실패 또는 connection timeout" in summary
+    assert "Bifrost에서 source endpoint reachability 실패" not in summary
+    assert "source connection timeout 증가" not in summary
+
+
+def test_missing_database_validation_emits_connector_failure_signal() -> None:
+    summary = evidence_signal_summary(
+        "search_logs",
+        {
+            "logs": [
+                {
+                    "datasourceRole": "source",
+                    "engine": "postgresql",
+                    "exit_code": 2,
+                    "stderr": 'psql: error: FATAL: database "missingdb" does not exist',
+                }
+            ]
+        },
+    )
+
+    assert "connector task status FAILED" in summary
+    assert "task trace 또는 worker log" in summary
+    assert "config validation error 또는 invalid option log" not in summary
+
+
+def test_vendor_schema_and_constraint_codes_emit_specific_catalog_signals() -> None:
+    schema = evidence_signal_summary(
+        "search_logs",
+        {"logs": [{"stderr": "ERROR 1366 (22007): Incorrect integer value: 'not-a-number' for column amount"}]},
+    )
+    constraint = evidence_signal_summary(
+        "search_logs",
+        {"logs": [{"stderr": "ERROR 4025 (23000): CONSTRAINT `chk_orders` failed for `testdb`.`orders`"}]},
+    )
+
+    assert "serialization/deserialization/schema error" in schema
+    assert "데이터 샘플 구조 변화" in schema
+    assert "sink constraint 또는 duplicate key error" in constraint
+    assert "동일 record 반복 실패" in constraint
+
+
+def test_vendor_datetime_parse_failure_emits_schema_signal() -> None:
+    summary = evidence_signal_summary(
+        "search_logs",
+        {
+            "logs": [
+                {
+                    "engine": "postgresql",
+                    "exit_code": 1,
+                    "stderr": 'ERROR: invalid input syntax for type timestamp: "not-a-timestamp"',
+                }
+            ]
+        },
+    )
+
+    assert "serialization/deserialization/schema error" in summary
+    assert "데이터 샘플 구조 변화" in summary
+    assert "config validation error 또는 invalid option log" not in summary
