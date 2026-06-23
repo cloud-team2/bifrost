@@ -26,10 +26,10 @@ class SecurityConfigTest {
 
     // (#646) /internal/ops service-identity 게이트 판정
     @Test
-    void internalOpsGateDisabledWhenTokenUnset() {
-        assertThat(SecurityConfig.internalOpsAllowed("", "anything")).isTrue();
-        assertThat(SecurityConfig.internalOpsAllowed("", null)).isTrue();
-        assertThat(SecurityConfig.internalOpsAllowed(null, null)).isTrue();
+    void internalOpsGateRejectsWhenTokenUnset() {
+        assertThat(SecurityConfig.internalOpsAllowed("", "anything")).isFalse();
+        assertThat(SecurityConfig.internalOpsAllowed("", null)).isFalse();
+        assertThat(SecurityConfig.internalOpsAllowed(null, null)).isFalse();
     }
 
     @Test
@@ -37,5 +37,11 @@ class SecurityConfigTest {
         assertThat(SecurityConfig.internalOpsAllowed("s3cret", "s3cret")).isTrue();
         assertThat(SecurityConfig.internalOpsAllowed("s3cret", "wrong")).isFalse();
         assertThat(SecurityConfig.internalOpsAllowed("s3cret", null)).isFalse();
+    }
+
+    @Test
+    void internalOpsGateAllowsOnlyWithExplicitDisableFlag() {
+        assertThat(SecurityConfig.internalOpsAllowed("", null, true)).isTrue();
+        assertThat(SecurityConfig.internalOpsAllowed(null, "anything", true)).isTrue();
     }
 }

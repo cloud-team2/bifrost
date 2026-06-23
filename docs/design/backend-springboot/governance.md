@@ -10,11 +10,11 @@
 
 | 범위 | 구현 |
 | --- | --- |
-| runtime tools | `/internal/ops/admin/tool-catalog`의 read operation + approval-gated mutation operation과 health/ready/version |
+| runtime tools | `/internal/ops/admin/tool-catalog`의 18개 read operation + 4개 mutation operation과 health/ready/version |
 | governance facade | `/internal/ops/approvals/**`, `/internal/ops/change-tickets/**` |
 | mutation subset | connector restart/pause/resume, Kafka Connect-managed consumer group restart |
 
-`/internal/ops/**`는 agent-facing 내부 API이며 public frontend ingress에 노출하지 않는다. `SecurityConfig`는 `internal.ops.token`이 설정된 경우 `X-Internal-Token` service identity header 일치를 요구한다. 토큰이 비어 있으면 로컬/기존 배포 호환을 위해 게이트를 비활성화한다. Mutation controller가 추가로 적용하는 gate는 agent header, workspace/resource ownership, approval, idempotency, Kafka Connect REST 결과 mapping이다.
+`/internal/ops/**`는 agent-facing 내부 API이며 public frontend ingress에 노출하지 않는다. `SecurityConfig`는 `internal.ops.token`과 `X-Internal-Token` service identity header 일치를 요구하며, 토큰이 비어 있으면 fail-closed로 거부한다. 로컬/테스트 우회는 `internal.ops.auth-disabled=true`일 때만 명시적으로 허용된다. Mutation controller가 추가로 적용하는 gate는 agent header, workspace/resource ownership, idempotency, `PolicyGuard` 기반 approval 또는 change-ticket, Kafka Connect REST 결과 mapping이다.
 
 ### 2. Mutation 처리 순서
 
@@ -25,15 +25,18 @@
 [2] X-Agent-Run-Id / X-Agent-Step-Id / X-Idempotency-Key 필수 header 검사
 [3] workspace namespace 기반 project 조회
 [4] connector 또는 consumer group ownership 검사
-[5] X-Approval-Id 존재 검사
+[5] X-Approval-Id / X-Change-Ticket-Id UUID 형식 검사
 [6] IdempotencyGuard.check(tenantId, operation, paramsHash)
-[7] ApprovalValidator.validateAndConsume(approvalId, tenantId, operation, paramsHash)
-[8] Kafka Connect REST mutation 실행
-[9] idempotency row에 response snapshot 저장
-[10] OpsEnvelope 반환
+[7] MutationGate.executeChecked
+[8] PolicyGuard.evaluate 결과에 따라 allow, approval, change-ticket, deny 분기
+[9] 필요한 경우 ApprovalValidator 또는 ChangeTicketValidator 검증
+[10] before evidence 저장 후 Kafka Connect REST mutation 실행
+[11] after/error evidence와 audit event 기록
+[12] idempotency row에 response snapshot 저장
+[13] OpsEnvelope 반환
 ```
 
-모든 failure가 audit/evidence를 남기는 구조는 아직 구현되어 있지 않다. `OpsEnvelope.evidence` 기본값은 빈 배열이고 `auditEventId` 값은 null이라 JSON 응답에서는 `audit_event_id` field가 생략된다.
+`MutationGate` 안에서 발생한 실행 성공/실패는 evidence와 audit event를 남긴다. 다만 controller가 반환하는 `OpsEnvelope.evidence` 기본값은 빈 배열이고 `auditEventId` 값은 null이라 JSON 응답에서는 `audit_event_id` field가 생략된다. 헤더/ownership/idempotency 선검증에서 차단된 요청은 `MutationGate`에 들어가기 전 반환될 수 있다.
 
 ### 3. Header와 Envelope
 
@@ -44,8 +47,9 @@
 | `X-Agent-Run-Id` | mutation 필수 |
 | `X-Agent-Step-Id` | mutation 필수 |
 | `X-Idempotency-Key` | mutation 필수 |
-| `X-Approval-Id` | mutation 필수. 누락 시 403 `APPROVAL_REQUIRED` |
-| `X-Agent-Name`, `X-Agent-Id`, `X-Actor-Type`, `X-Actor-Id` | FastAPI가 보낼 수 있으나 mutation controller 필수 검증 대상은 아님 |
+| `X-Approval-Id` | approval 정책이 필요한 mutation에서 사용. 누락 시 gate에서 403 `APPROVAL_REQUIRED` |
+| `X-Change-Ticket-Id` | change-management 정책이 필요한 mutation에서 사용. 누락 시 gate에서 403 `CHANGE_TICKET_REQUIRED` |
+| `X-Agent-Name`, `X-Agent-Id`, `X-Actor-Type`, `X-Actor-Id` | FastAPI가 보낼 수 있다. `X-Agent-Id`는 audit actor 후보이며, 필수 헤더 검증 대상은 아님 |
 
 응답은 `OpsEnvelope`다. JSON field는 `request_id`, `audit_event_id`, `error.required_action`처럼 snake_case로 직렬화된다.
 
@@ -56,6 +60,7 @@ Approval source of truth는 Spring Boot `approval` 테이블이다.
 | Endpoint | 구현 |
 | --- | --- |
 | `POST /internal/ops/approvals` | `tenantId`, `toolName`, `paramsHash`, `requiredApprover`, `expiresInMinutes`로 approval 생성. unknown field 거부 |
+| `POST /internal/ops/approvals/preapproved` | ai-service HITL 통과 후 내부 caller가 Spring mutation용 `APPROVED` approval을 생성 |
 | `POST /internal/ops/approvals/{approvalId}/decision` | `decision`, `tenantId`, `decidedBy`, `comment` 처리. `SecurityContext` principal이 필요 |
 | `POST /internal/ops/approvals/{approvalId}/validate` | `tenantId`, `paramsHash`로 single-use 검증/소비 |
 | `GET /internal/ops/approvals/{approvalId}?tenantId=` | 단건 조회 |
@@ -97,16 +102,16 @@ Kafka Connect REST timeout은 504 `TIMEOUT`, 그 외 상류 실패는 502 `UPSTR
 
 | Operation | Path | Gate |
 | --- | --- | --- |
-| `restart_connector` | `POST /internal/ops/projects/{projectId}/connectors/{connectorName}/restart` | approval + idempotency |
-| `pause_connector` | `POST /internal/ops/projects/{projectId}/connectors/{connectorName}/pause` | approval + idempotency |
-| `resume_connector` | `POST /internal/ops/projects/{projectId}/connectors/{connectorName}/resume` | approval + idempotency |
-| `restart_consumer_group` | `POST /internal/ops/projects/{projectId}/kafka/consumer-groups/{consumerGroup}/restart` | approval + idempotency |
+| `restart_connector` | `POST /internal/ops/projects/{projectId}/connectors/{connectorName}/restart` | idempotency + policy. high risk이므로 `aiProdLock=true`이면 approval |
+| `pause_connector` | `POST /internal/ops/projects/{projectId}/connectors/{connectorName}/pause` | idempotency + policy allow |
+| `resume_connector` | `POST /internal/ops/projects/{projectId}/connectors/{connectorName}/resume` | idempotency + policy allow |
+| `restart_consumer_group` | `POST /internal/ops/projects/{projectId}/kafka/consumer-groups/{consumerGroup}/restart` | idempotency + policy. high risk이므로 `aiProdLock=true`이면 approval |
 
 이외 deployment scale, rollback, backfill, topic config patch, KafkaUser ACL patch, pod exec, arbitrary SQL, secret raw read 같은 operation은 현재 Spring endpoint가 없다. Secret 원문 read는 정책상 금지이며 Kafka principal secret API도 `MASKED_REFERENCE_ONLY`만 반환한다.
 
 ### 8. Runtime tool catalog
 
-`GET /internal/ops/admin/tool-catalog`는 read operation과 approval-gated mutation operation을 함께 반환한다. 상세 목록은 [internal-ops-read-tools.md](../../api/internal-ops-read-tools.md)를 따른다.
+`GET /internal/ops/admin/tool-catalog`는 18개 read operation과 4개 mutation operation을 함께 반환한다. 상세 목록은 [Spring Boot API §6.1](../../api/springboot.md#61-runtime-tool-catalog)을 따른다.
 
 ### 9. 현재 미구현/계획 상태
 
@@ -116,9 +121,9 @@ Kafka Connect REST timeout은 504 `TIMEOUT`, 그 외 상류 실패는 502 `UPSTR
 | --- | --- |
 | `/internal/ops/**` public ingress 노출 | 미노출. frontend nginx는 `/internal/ops/**`를 프록시하지 않고, FastAPI가 내부 서비스 경로로 호출 |
 | service identity secret rotation/JWKS화 | 현재는 단일 shared secret(`internal.ops.token`/`AI_INTERNAL_OPS_TOKEN`) 일치 검사 |
-| policy matrix lookup으로 allow/approval/change/deny 결정 | mutation endpoint가 제한되어 있어 별도 policy engine lookup 없음 |
-| before/after evidence writer | mutation 응답 evidence는 빈 배열 |
-| audit_event append-only 기록 | `auditEventId` 값이 null이라 JSON 응답에서 `audit_event_id` field 생략 |
+| policy matrix lookup으로 allow/approval/change/deny 결정 | `PolicyGuard` 코드 상수로 결정한다. DB 기반 policy matrix는 없음 |
+| before/after evidence writer | `MutationGate`가 evidence row를 저장하지만 mutation 응답 `evidence` 배열에는 연결하지 않음 |
+| audit_event append-only 기록 | `MutationGate`가 audit row를 저장하지만 `OpsEnvelope.auditEventId` 값은 null이라 JSON 응답에서 `audit_event_id` field 생략 |
 | Kubernetes/Prometheus/Schema Registry mutation | endpoint 없음 |
 | threshold governance **[계획 §3]** | **[현재]** consumer lag 임계값은 `workspace_settings.lag_warning_threshold`/`lag_critical_threshold`(미설정 시 기본 5,000), error rate 임계값은 `PipelineStatusServiceImpl`의 코드 상수(`0.5%`/`2.0%`), RCA threshold(0.60/0.80 등)는 ai-service 코드 기본값으로 흩어져 있고 변경 근거·버전·owner·보정 시각이 남지 않는다. **[계획]** [data-model §3.10.4 `threshold_registry`](./data-model.md#4-data-model)로 `threshold_name`·`value`·`version`·`basis`·`owner`·`last_calibrated_at`·`dataset_version`·`rollback_value`를 일원화하고, 값 자체는 [spec.md 부록 B](../../spec.md#부록-b--리소스-상태값-정의-및-자동-기준-단일-출처)를 단일 출처로 인용한다(중복 정의 금지). 외부 기준은 [rca-standards-review.md §5.2·§7(item3)](../rca-standards-review.md) |
 
@@ -126,9 +131,9 @@ Kafka Connect REST timeout은 504 `TIMEOUT`, 그 외 상류 실패는 502 `UPSTR
 
 현재 구현 기준 regression 대상:
 
-- tool catalog는 read operation과 approval-gated mutation operation을 함께 포함하며 FastAPI 전용 alias와 미구현 operation은 포함하지 않는다.
+- tool catalog는 18개 read operation과 4개 mutation operation을 함께 포함하며 FastAPI 전용 alias와 미구현 operation은 포함하지 않는다.
 - mutation은 `X-Agent-Run-Id`, `X-Agent-Step-Id`, `X-Idempotency-Key` 누락 시 400 `VALIDATION_FAILED`.
-- mutation은 `X-Approval-Id` 누락 시 403 `APPROVAL_REQUIRED`.
+- high-risk mutation은 `aiProdLock=true`일 때 `X-Approval-Id` 누락 시 403 `APPROVAL_REQUIRED`.
 - approval params hash/tenant/operation 불일치와 expired/used 상태가 차단된다.
 - idempotency replay가 중복 Connect REST 호출을 만들지 않는다.
 - 같은 key + 다른 params는 409 `CONFLICT`.

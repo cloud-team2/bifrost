@@ -214,7 +214,7 @@ Spring Boot 내부 운영 API와 governance/mutation 계약은 [Spring Boot API 
 | `GET` | `/api/v1/approvals/{approval_id}` | 구현됨 | 단일 approval 상세(`ApprovalSummary`). 없으면 `APPROVAL_NOT_FOUND` envelope |
 | `POST` | `/api/v1/agent/runs/{run_id}/approvals/{approval_id}/decision` | 미구현 | route 없음 |
 
-현재 FastAPI approval route는 local approval-link repository만 갱신한다. Spring Boot approval facade와 mutation single-use 검증 표면은 존재하지만, FastAPI executor는 Spring mutation 호출에 `X-Approval-Id`를 전달하지 않으므로 현재 실행 경로와 연결되어 있지 않다.
+현재 FastAPI approval route는 local approval-link repository를 갱신하고, 사용자 승인 후 Spring MutationGate용 pre-approved 레코드를 생성해 `spring_approval_id`를 저장할 수 있다. Executor는 approved action의 `approval_id`와 `change_ticket_id`를 `ToolContext`에 실어 Spring mutation 호출 시 `X-Approval-Id`/`X-Change-Ticket-Id`로 전달한다.
 
 ## 11. Change Management API
 
@@ -274,7 +274,7 @@ Incident, event, monitoring 목록/상세 조회는 Spring Boot 플랫폼 API가
 
 `POST /api/v1/tools/{tool_name}/execute`는 read-only slash command 실행 전용이다. tool이 없으면 HTTP 404 `TOOL_NOT_FOUND`, 대상 tool이 `RiskLevel.READ_ONLY`가 아니거나 `requires_approval`이면 HTTP 400 `POLICY_DENIED`로 거부한다. 실행은 `slash_command` agent 컨텍스트(`run_id=slash_...`)로 registry를 호출하고, tool 실패 시 Spring tool error code를 HTTP 400 envelope으로 그대로 전달한다. mutation tool은 이 route로 실행할 수 없다.
 
-FastAPI tool registry는 Agent의 논리 tool 목록이다. Spring Boot `GET /internal/ops/admin/tool-catalog`는 실제 Spring runtime endpoint catalog이며 현재 read operation과 approval-gated mutation operation을 함께 반환한다. 두 catalog의 목적과 범위는 다르다.
+FastAPI tool registry는 Agent의 논리 tool 목록이다. 현재 23개 logical tool(read-only 19개, approval-gated mutation 4개)을 반환하며, `get_kafka_lag`처럼 Spring operation 하나에 여러 논리 alias가 붙을 수 있다. Spring Boot `GET /internal/ops/admin/tool-catalog`는 실제 Spring runtime endpoint catalog이며 현재 22개 operation(read operation 18개, mutation 4개)을 반환한다. Spring mutation의 approval 필요 여부는 `PolicyGuard`가 결정하므로 FastAPI registry의 `requires_approval` flag와 목적이 다르다.
 
 ## 16. Feedback / Audit UI API
 

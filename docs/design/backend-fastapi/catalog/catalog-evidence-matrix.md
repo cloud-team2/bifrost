@@ -13,7 +13,7 @@ RCA Agent는 점수만 보고 원인을 확정하지 않는다. Required evidenc
 
 ### 2. Evidence 유형
 
-**[현재]** 코드의 `EvidenceRule`(`app/catalogs/types.py`)은 `kind`(`required`/`supporting`/`negative`/`exclusion`)와 `semantic_allowed` 두 분류 필드만 갖는다. 즉 현재 evidence는 "역할(kind)"로만 구분되고, 인과/상관 구분은 구조적으로 없다.
+**[현재]** 코드의 `EvidenceRule`(`app/catalogs/types.py`)은 `kind`(`required`/`supporting`/`negative`/`exclusion`), `semantic_allowed`, `causality_type`(`causal`/`correlational`/`temporal`), `temporality_required`, `causal_chain_step`을 가진다. 일부 profile은 시간 선행성 있는 evidence만 required로 인정하도록 `temporality_required=True`를 사용한다.
 
 | 유형 (`kind`) | 의미 |
 | --- | --- |
@@ -26,35 +26,36 @@ RCA Agent는 점수만 보고 원인을 확정하지 않는다. Required evidenc
 
 ### 3. Confidence 기준
 
-**[현재]** 코드 기준값은 다음과 같다. `EvidenceProfile.min_confidence_for_action=0.80`, `needs_more_evidence_band=(0.60, 0.79)`, `RootCause.default_confidence_cap=0.79`(필수 evidence 부분 충족 시 상한)이다. RCA Agent(`app/agents/rca.py`)는 최상위 후보가 `MIN_CONFIDENT_ROOT_CAUSE=0.60` 미만이면 `UNKNOWN_WITH_EVIDENCE_GAP`으로 폴백한다.
+**[현재]** 코드 기준값은 다음과 같다. `EvidenceProfile.min_confidence_for_action=0.80`, `needs_more_evidence_band=(0.60, 0.79)`, `RootCause.default_confidence_cap=0.88`이다. RCA Agent(`app/agents/rca.py`)는 required evidence 부분 충족 scoring에서 action-ready가 아닌 낮은 confidence로 상한을 두며, 최상위 후보가 `MIN_CONFIDENT_ROOT_CAUSE=0.60` 미만이면 `UNKNOWN_WITH_EVIDENCE_GAP`으로 폴백한다.
 
 | Confidence | 의미 | 처리 |
 | --- | --- | --- |
 | `>= 0.80` | 강한 후보 (`min_confidence_for_action`) | 대응안 생성 가능 |
-| `0.60 - 0.79` | 유력하지만 추가 확인 필요 (`needs_more_evidence_band`, `default_confidence_cap=0.79`) | 추가 evidence 또는 제한적 대응 |
+| `0.60 - 0.79` | 유력하지만 추가 확인 필요 (`needs_more_evidence_band`) | 추가 evidence 또는 제한적 대응 |
 | `< 0.60` | 확정 불가 (`MIN_CONFIDENT_ROOT_CAUSE`) | unknown 또는 추가 조사 |
 
 기준은 과거 incident replay로 보정한다. 임의로 threshold를 바꾸지 않는다.
 
-### 3.1 인과/상관 증거 구분 [계획 §12]
+### 3.1 인과/상관 증거 구분
 
-> 아래는 to-be 설계이며 현재 코드에는 없다. `EvidenceRule`을 인과 사다리에 매핑하기 위한 확장이다. 근거는 [RCA 표준 검토 §4.2](../../rca-standards-review.md)(Bradford Hill의 Temporality, Pearl의 인과 사다리)와 §7 로드맵 item 12를 따른다.
+> 아래 필드는 현재 코드에 구현되어 있다. 남은 작업은 모든 profile에 일관되게 태그를 보강하고 평가셋으로 confidence 보정 효과를 검증하는 것이다. 근거는 [RCA 표준 검토 §4.2](../../rca-standards-review.md)(Bradford Hill의 Temporality, Pearl의 인과 사다리)와 §7 로드맵 item 12를 따른다.
 
-현재 evidence는 `kind`(역할)로만 구분되므로, 단순 동시발생(co-occurrence)과 시간 선행성(temporality)이 있는 인과 증거를 구조적으로 구분하지 못한다. `EvidenceRule`에 다음 필드를 추가한다.
+현재 evidence는 `kind`(역할)에 더해 다음 인과 관련 필드로 단순 상관, 인과 연결, 시간 선행성을 구분한다.
 
-| 추가 필드 | 값 | 의미 |
+| 필드 | 값 | 의미 |
 | --- | --- | --- |
-| `causality_type` | `association` / `temporal` / `counterfactual` | Pearl 인과 사다리 단계. `association`은 상관(rung-1)이며 인과 주장 불가 |
-| `temporality_required` | bool | true이면 원인 신호가 증상 발생에 **선행**한다는 시간 근거가 있어야 인정 |
-| `causal_chain_step` | int | "근본원인 → 증상" 인과 사슬에서의 순서. 사슬 일관성으로 confidence를 산정 |
+| `causality_type` | `causal` / `correlational` / `temporal` | causal은 직접 인과 근거, correlational은 상관 근거, temporal은 시간 선행성 근거 |
+| `temporality_required` | bool | true이면 원인 신호가 증상 발생에 **선행**한다는 시간 근거가 있어야 required match로 인정 |
+| `causal_chain_step` | int | "근본원인 → 증상" 인과 사슬에서의 순서. explanation에 causal chain으로 반영 |
 
-**required 승격 규칙 [계획 §12]**
+**required 인정 규칙**
 
-1. 단순 동시발생(`causality_type=association`)은 인과 주장이 불가하므로 `supporting`까지만 인정한다.
-2. `temporality_required=True`를 만족하는 증거(원인이 증상에 시간상 선행)만 `required` 인과 증거로 승격한다.
+1. 단순 동시발생(`causality_type=correlational`)은 인과 주장이 약하므로 supporting 근거로 제한한다.
+2. `temporality_required=True`인 required evidence는 원인이 증상에 시간상 선행해야 required match로 인정한다.
    - 예: change/배포 이벤트 타임스탬프가 증상 발생에 선행할 때만 `RECENT_*_REGRESSION`의 변경 evidence를 required 인과로 인정한다.
-3. `negative` 증거는 "대안 원인 시그니처가 있으면 후보 약화"라는 조잡한(crude) counterfactual 검사임을 명시한다. 강한 인과 반증이 아니라 후보 배제용 약한 신호다.
-4. required 증거는 `causal_chain_step` 순서로 "근본원인 → 증상" 사슬을 구성하고, 사슬이 여러 신호에서 일관되게 성립하면 confidence를 상향한다.
+3. 시간 선행성이 없는 `temporality_required=True` match는 RCA scoring에서 required 충족으로 보지 않고 supporting evidence로 강등한다.
+4. `negative` 증거는 대안 원인 시그니처가 있으면 후보를 약화하는 후보 배제용 신호다.
+5. required/supporting 증거는 `causal_chain_step` 순서로 "근본원인 → 증상" 사슬 explanation에 반영한다.
 
 ### 4. Source Root Cause
 
@@ -106,6 +107,7 @@ RCA Agent는 점수만 보고 원인을 확정하지 않는다. Required evidenc
 | 여러 pipeline에서 같은 source endpoint 연결 실패 | Supporting | shared dependency timeout |
 | 고객사 source 내부 지표 정상이나 network path error 존재 | Supporting | network error code 증가 |
 | auth error 또는 query error만 존재 | Negative | network 후보 약화 |
+| sink dependency 연결 실패 또는 sink connector 오류 | Negative | sink-context면 source reachability 약화(#962) |
 
 ### 5. Pipeline / Connector Root Cause
 
@@ -208,8 +210,8 @@ RCA Agent는 점수만 보고 원인을 확정하지 않는다. Required evidenc
 
 | Evidence | 유형 | 예시 |
 | --- | --- | --- |
-| sink write timeout 증가 | Required | sink connector write timeout |
-| sink dependency connection error | Required | reachability or pool error |
+| sink dependency 연결 실패 또는 connection timeout | Required | connection refused, no route to host, connection timeout, pool error |
+| sink write timeout 증가 | Supporting | sink connector write timeout |
 | source read 정상 | Supporting | upstream 정상 |
 | sink write latency 증가 | Supporting | write duration p95 증가 |
 | source extract timeout | Negative | source 후보 우선 |
@@ -312,7 +314,7 @@ RCA Agent는 점수만 보고 원인을 확정하지 않는다. Required evidenc
 | Evidence | 유형 | 예시 |
 | --- | --- | --- |
 | image rollout 이후 error/latency/restart 증가 | Required | deployment rollout event |
-| 이전 image 대비 config/runtime 차이 | Required | image tag diff |
+| image version update | Required | image tag/version changed, runtime/config delta |
 | rollback 후 개선 | Supporting | after evidence |
 | rollout 전부터 문제 지속 | Negative | image regression 후보 약화 |
 
@@ -391,4 +393,3 @@ RCA Agent는 점수만 보고 원인을 확정하지 않는다. Required evidenc
 보정값 변경은 catalog version과 함께 기록한다.
 
 ---
-

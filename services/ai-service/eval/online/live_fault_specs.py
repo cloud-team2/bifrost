@@ -5,7 +5,7 @@
 dedup용 grouping_key 패턴, (5) 안전 등급을 선언한다.
 
 안전 등급:
-  - 'auto'   : 가역적이고 운영 영향이 격리되어 --live 실행 시 자동 주입/복구 가능.
+  - 'auto'   : release artifact 에서는 현재 사용하지 않는다. 자동 주입은 safe_live_fault_specs.py 로만 둔다.
   - 'manual' : 의도된 주입 방법은 명확하나 운영자 승인/수동 단계가 필요(자동 주입 금지).
   - 'unsafe' : prod에서 주입이 위험하거나 사실상 재현 불가(문서화만, 절대 자동 주입 금지).
 
@@ -14,8 +14,8 @@ scoring 관점:
   - confusion_root_cause_ids 는 RCA가 헷갈릴 법한 후보로, 리포트에서 오답 분석에 사용.
 
 모든 root_cause_id 는 app.catalogs.root_causes 카탈로그에 대해 검증된다(import 시 assert).
-스텝(inject/recover)은 *데이터/선언*일 뿐 여기서 실행되지 않는다 — 실행은 live_eval.py 가
---live 가드 뒤에서 subprocess 로만 수행한다.
+스텝(inject/recover)은 문서화 전용 데이터다. legacy --live 실행기는 release artifact 에서
+hard-disabled 되어 있으며, 비파괴 자동 주입은 safe_live_fault_specs.py 경로만 사용한다.
 """
 from __future__ import annotations
 
@@ -33,28 +33,6 @@ CDC_PRODUCTS_SOURCE = "5d4b0826-ba4b-4e3a-9f21-0d2cca4efc84-source"
 CDC_PRODUCTS_SINK = "5d4b0826-ba4b-4e3a-9f21-0d2cca4efc84-sink"
 EDA_CUSTOMERS_SOURCE = "d9d9497b-4d8e-4baa-937b-6007aaa6b6dd-source"
 
-# tenantdb 스케일 in/out 은 ArgoCD selfHeal(app 3-data-tenantdb)이 ~40s 내 되돌린다.
-# 주입 전 selfHeal 을 끄고, 복구 후 다시 켜야 한다.
-ARGOCD_APP = "3-data-tenantdb"
-DISABLE_SELFHEAL = (
-    "kubectl -n argocd patch application 3-data-tenantdb --type merge "
-    '-p \'{"spec":{"syncPolicy":{"automated":{"selfHeal":false,"prune":false}}}}\''
-)
-ENABLE_SELFHEAL = (
-    "kubectl -n argocd patch application 3-data-tenantdb --type merge "
-    '-p \'{"spec":{"syncPolicy":{"automated":{"selfHeal":true,"prune":true}}}}\''
-)
-# Connect REST 재시작 (task 강제 재기동, 복구 가속).
-RESTART_SINK_CONNECTOR = (
-    "kubectl -n platform-kafka exec deploy/kafka-connect -- "
-    f"curl -s -X POST localhost:8083/connectors/{CDC_PRODUCTS_SINK}/restart?includeTasks=true"
-)
-RESTART_SOURCE_CONNECTOR = (
-    "kubectl -n platform-kafka exec deploy/kafka-connect -- "
-    f"curl -s -X POST localhost:8083/connectors/{CDC_PRODUCTS_SOURCE}/restart?includeTasks=true"
-)
-
-
 @dataclass(frozen=True)
 class FaultSpec:
     """단일 장애 시나리오의 주입/복구/채점 선언."""
@@ -69,7 +47,7 @@ class FaultSpec:
     confusion_root_cause_ids: tuple[str, ...] = ()
     # 인시던트 dedup 용 grouping_key 패턴(주입 전 같은 key 의 OPEN 인시던트를 resolve).
     grouping_key_pattern: str = ""
-    # 주입/복구 스텝 — *선언만*. 실행은 live_eval 이 --live 에서만 subprocess 로 수행.
+    # 주입/복구 스텝 — release artifact 에서는 자동 실행되지 않는다.
     inject_steps: tuple[str, ...] = ()
     recover_steps: tuple[str, ...] = ()
     # injection 이 selfHeal 영향을 받는가(끄고/켜야 하는가).
@@ -82,38 +60,27 @@ class FaultSpec:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Fault catalog — 8 layers. auto = 실제 --live 자동 주입 가능. manual/unsafe = 문서화만.
+# Fault catalog — 8 layers. legacy destructive auto injection has been removed.
 # ─────────────────────────────────────────────────────────────────────────────
 FAULT_SPECS: tuple[FaultSpec, ...] = (
     # ── sink layer ────────────────────────────────────────────────────────────
     FaultSpec(
         fault_id="sink_db_down",
         layer="sink",
-        description="sink mariadb deployment 를 replicas=0 으로 내려 write 연결 timeout 유발.",
-        safety="auto",
+        description="sink DB down 시나리오. legacy destructive live injection path is removed.",
+        safety="unsafe",
         expected_root_cause_ids=("SINK_DB_CONNECTION_TIMEOUT",),
         confusion_root_cause_ids=("SINK_WRITE_LATENCY", "CONNECTOR_TASK_FAILED"),
         grouping_key_pattern=f"{CDC_PRODUCTS_SINK}:SINK_CONNECTION_TIMEOUT",
-        requires_selfheal_disable=True,
-        inject_steps=(
-            DISABLE_SELFHEAL,
-            "kubectl -n tenantdb scale deploy tenant-mariadb --replicas=0",
-        ),
-        recover_steps=(
-            "kubectl -n tenantdb scale deploy tenant-mariadb --replicas=1",
-            "kubectl -n tenantdb rollout status deploy/tenant-mariadb --timeout=120s",
-            RESTART_SINK_CONNECTOR,
-            ENABLE_SELFHEAL,
-        ),
-        notes="pod-down → connection refused/timeout. sink connector task FAILED 로 표출되므로 "
-        "CONNECTOR_TASK_FAILED 와 혼동 가능(confusion).",
+        notes="기존 deployment scale 기반 자동 주입은 release artifact 에서 제거됐다. "
+        "비파괴 검증은 safe_live_fault_specs.py 를 사용한다.",
     ),
     # ── source layer ──────────────────────────────────────────────────────────
     FaultSpec(
         fault_id="source_db_down",
         layer="source",
-        description="source postgres deployment 를 replicas=0 으로 내려 extract 연결 실패 유발.",
-        safety="auto",
+        description="source DB down 시나리오. legacy destructive live injection path is removed.",
+        safety="unsafe",
         # pod-down 은 host unreachable 로도 보이므로 둘 다 정답으로 인정.
         expected_root_cause_ids=(
             "SOURCE_DB_CONNECTION_TIMEOUT",
@@ -121,18 +88,8 @@ FAULT_SPECS: tuple[FaultSpec, ...] = (
         ),
         confusion_root_cause_ids=("SOURCE_READ_LATENCY", "CONNECTOR_TASK_FAILED"),
         grouping_key_pattern=f"{CDC_PRODUCTS_SOURCE}:SOURCE_CONNECTION_TIMEOUT",
-        requires_selfheal_disable=True,
-        inject_steps=(
-            DISABLE_SELFHEAL,
-            "kubectl -n tenantdb scale deploy tenant-postgres --replicas=0",
-        ),
-        recover_steps=(
-            "kubectl -n tenantdb scale deploy tenant-postgres --replicas=1",
-            "kubectl -n tenantdb rollout status deploy/tenant-postgres --timeout=120s",
-            RESTART_SOURCE_CONNECTOR,
-            ENABLE_SELFHEAL,
-        ),
-        notes="pod-down = host unreachable. timeout 과 reachability 가 acceptable set 으로 함께 인정.",
+        notes="기존 deployment scale 기반 자동 주입은 release artifact 에서 제거됐다. "
+        "timeout 과 reachability 가 acceptable set 으로 함께 인정.",
     ),
     # ── pipeline/connector layer ──────────────────────────────────────────────
     FaultSpec(
@@ -146,10 +103,8 @@ FAULT_SPECS: tuple[FaultSpec, ...] = (
             "PIPELINE_TASK_RETRY_EXHAUSTED",
         ),
         grouping_key_pattern=f"{CDC_PRODUCTS_SINK}:CONNECTOR_TASK_FAILED",
-        inject_steps=(
-            f"# 반복 restart 로 task 안정성 저하: {RESTART_SINK_CONNECTOR} (loop)",
-        ),
-        recover_steps=(RESTART_SINK_CONNECTOR,),
+        inject_steps=("# 반복 restart 로 task 안정성 저하(수동 절차만 문서화)",),
+        recover_steps=("# connector 상태 확인 후 필요 시 수동 복구",),
         notes="restart 자체는 가역적이나 반복 restart 가 sink 쓰기 일관성을 흔들 수 있어 manual. "
         "실제 FAILED 를 보장하려면 sink_db_down 과 결합하는 편이 결정적.",
     ),

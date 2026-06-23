@@ -33,7 +33,16 @@
 - 지표: AC@1/AC@3/AC@5, Avg@5(RCAEval 표준), ECE(Guo et al.), 기권율
 - 재현: `cd services/ai-service && .venv/bin/python scripts/rca_eval_campaign.py`
 
-### 결과 (실행 실측, 2026-06-22)
+### 결과 (커밋된 결과물 기준, 2026-06-22)
+
+아래 current/floor 두 JSON만 커밋된 재현 근거로 사용한다. 이어지는 "gold set 35건" 표는 과거 초안 실행 로그로 남기되, 현재 발표 지표나 재현값으로 단정하지 않는다.
+
+| 결과물 | 조건 | AC@1 | AC@3 / AC@5 | Avg@5 | ECE | 기권 |
+|---|---|---|---|---|---|---|
+| `results-20260622/rca_campaign_current.json` | 35 seed oracle incident-type replay, symptom/trigger/contributing_factors only, classifier end-to-end 아님 | **100.0%** (35/35) | **100.0%** (35/35) | **1.0000** | **0.1595** | **0/35** |
+| `results-20260622/rca_campaign_floor.json` | develop 기준 보존 floor 결과물 | **71.43%** (25/35) | **85.71%** (30/35) | **0.781** | **0.0832** | **5/35** |
+
+### 과거 초안 집계 (현재 커밋 JSON과 불일치, 발표 사용 금지)
 
 | 지표 | 값 |
 |---|---|
@@ -56,11 +65,11 @@
 | change | 4 | 0.250 | 0.750 | 0.750 | 0.458 |
 | data_quality | 4 | 0.500 | 0.500 | 0.500 | 0.500 |
 
-> 해석: 확신 답변 28건 중 23건 정답(**82% precision**), 불확실 7건은 정직한 기권. 약점(change·data_quality·source AC@1)은 temporal/metric 증거 의존도가 높아 **텍스트-only floor**에서 낮게 나온 것 — 프로덕션 retrieval(metric/trace/temporal) + LLM 타이브레이커 시 상향.
+> 해석: 이 65.7%/80.0%/82%/7기권 묶음은 현재 커밋된 current/floor JSON과 맞지 않는 과거 초안 수치다. 발표와 외부 공유에는 위 current/floor JSON 값을 사용한다.
 
 ### gold set 35건 — 정의 + 케이스별 실측 결과
 
-출처: `app/evaluation/seed_gold_set.py`(카탈로그 root_cause_id별 2~3건 대표). **결과는 위 재현 스크립트의 케이스별 출력**.
+출처: `app/evaluation/seed_gold_set.py`(카탈로그 root_cause_id별 2~3건 대표). **아래 결과 행은 과거 초안 실행 로그이며, 현재 커밋된 `rca_campaign_current.json`/`rca_campaign_floor.json`의 행별 결과와 불일치한다**.
 적중 표기: ✅ = top-1 정답 / △@3 = 상위 3 내(인접 sibling) / 기권 = top이 UNKNOWN(증거 부족 정직한 보류).
 
 | # | entry_id | 계층 | 기대 root cause | 증상(symptom) | top 예측 | conf | 적중 |
@@ -158,7 +167,7 @@
   - L1-live(sink FAILED): open `bfd38509`(동일 datasource grouping_key)로 **dedup** → 중복 인시던트 억제(정상).
   - L3(consumer lag): **#926 정책상 paused 컨슈머는 lag 평가 제외**(오탐 방지). 로그상 폴러 정상.
 - **자동 감지→인시던트→자동 RCA capability는 과거 #962/#957 실인시던트로 입증**: `bfd38509`→**SINK_DB_CONNECTION_TIMEOUT @0.82**, `5aed2e00`·`ea315de3`→consumer lag.
-- **카탈로그 전수 정확도는 Part A(35 실측)**: AC@5 80% · Avg@5 0.724 · ECE 0.073 · 환각 0. (단 자가작성 텍스트 gold set·LLM-off floor → SOTA 직접비교 부적절, 실데이터·LLM-on 재측정 필요.)
+- **카탈로그 전수 정확도는 Part A(35 실측)**: 현재 커밋 기준 current replay는 AC@1/3/5 100.0% · Avg@5 1.0000 · ECE 0.1595 · 기권 0/35이고, 보존 floor JSON은 AC@1 71.43% · AC@5 85.71% · Avg@5 0.781 · ECE 0.0832 · 기권 5/35. 단 둘 다 seed replay 조건부 값이라 SOTA 직접비교나 production holdout 값으로 해석하지 않는다.
 - **① lag 모니터 = works-as-designed**(코드 변경 불필요). paused 제외는 #926 의도. 유일 후보는 'resolved 후 edge-trigger 재무장'이나 현 데이터상 결함 근거 없음.
 - **개선 제언**:
   - (1) **비파괴 주입 하네스**(메트릭/이벤트 신호 직접 주입) — 운영 무영향으로 **전체 35 gold set을 라이브 감지→RCA 경로**에 흘림(라이브 부분-커버 한계의 근본 해소).
@@ -224,16 +233,16 @@ kubectl -n bifrost-system delete job rca-eval-llm # 정리
 
 | 구성 | AC@1 | AC@3/5 | Avg@5 | ECE | 기권 |
 |---|---|---|---|---|---|
-| floor (LLM off) | 65.7% | 80.0% | 0.724 | 0.073 | 7 |
-| **+ lexicon** | **71.4%** | **85.7%** | **0.781** | 0.083 | 5 |
-| LLM-on (배포 룰) | 65.7% | 80.0% | 0.724 | 0.070 | 7 |
+| 과거 floor 초안 (LLM off) | 65.7% | 80.0% | 0.724 | 0.073 | 7 |
+| **커밋된 보존 floor JSON** | **71.43%** | **85.71%** | **0.781** | **0.0832** | **5** |
+| 과거 LLM-on 초안 (배포 룰) | 65.7% | 80.0% | 0.724 | 0.070 | 7 |
 
-- **증거 recall 보강 = AC@1 +5.7pp(23→25)·Avg@5 0.724→0.781·기권 7→5**. gs_seed_002(SOURCE_AUTH)·gs_seed_031(UPSTREAM_VOLUME) 기권→정답@0.82.
-- **LLM 타이브레이커 ≈ 정확도 무변화**(근접 동률 드물어 미발화, ECE만 0.073→0.070) → **정확도 본질은 LLM이 아니라 증거**(팀원 라이브 진단과 정량 일치).
+- **증거 recall 보강 결과로 보존된 커밋 결과물은 AC@1 71.43%·Avg@5 0.781·기권 5/35**. 65.7%/0.724/7기권과 LLM-on 0.070은 커밋된 JSON 결과물이 없으므로 과거 초안으로만 취급한다.
+- **과거 LLM-on 초안**은 근접 동률 미발화로 정확도 변화가 거의 없었다는 기록이나, 커밋된 JSON 결과물이 없어 발표 지표로 쓰지 않는다.
 - **정직 경계**: gs_seed_018(SINK_AUTH)은 불변 — 추가 튜닝 안 함(과적합 회피). 인과 temporality 게이팅·캘리브레이션은 evidence_matrix에 **이미 구현**(`causality_type`/`temporality_required`)이라 룰 재튜닝은 운영 정밀도 위험으로 배제.
 - **다음 레버**: 실 evidence(metric/trace/temporal) 공급(#828/#831/#835)·disambiguation·실 gold set 확대(#964) — 모두 팀 in-flight.
 
-> **라이브 0.85 목표**: 방금 lexicon(+5.7pp)은 **offline floor** 개선이라 라이브엔 거의 영향 없음. 라이브 top-1이 0.85를 넘으려면 **증거 전달(metric/trace/temporal) + disambiguation**(#828/#831/#835 + 다음 1순위)을 완성해야 함 — lexicon으론 불가. offline 89.6%는 "증거가 다 주어졌을 때"의 상한이고, 라이브는 그 증거를 RCA가 스스로 모아야 하는 더 어려운 문제. (현 라이브 ≈12.1%)
+> **라이브 목표 해석**: lexicon 보강은 offline seed replay 개선으로만 해석한다. 라이브 top-1, offline 89.6%, 현 라이브 ≈12.1%는 이 저장소의 커밋된 결과물·하네스 출력으로 재현되지 않으므로 발표 지표로 쓰지 않는다.
 
 > 재현: floor `cd services/ai-service && .venv/bin/python scripts/rca_eval_campaign.py` · LLM-on `RCA_EVAL_USE_LLM=1`(배포 pod/Job, §Part C). 시각화: `docs/test/시각화-part-a-개선실험.html`.
 

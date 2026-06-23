@@ -60,6 +60,8 @@ Spring Boot Operations Backend
 | Agent run 상태(run·state·event·approval facade·report) | **FastAPI**(`agentdb`) | [contract-state-schema §14](./design/backend-fastapi/contract/contract-state-schema.md#14-contract-state-schema) |
 | Knowledge 코퍼스(RAG runbook·문서) | **FastAPI**(Vector Store) | [server-design §9](./design/backend-fastapi/server-design.md#2-server-design) |
 | Tool 매핑(논리 tool→operation) | **FastAPI** Tool Client Registry | [tool-catalog.md §8·§9](./design/backend-fastapi/tool-catalog.md#4-tool-catalog) |
+| CI 파이프라인·이미지 빌드 | **Jenkinsfile** + Jenkins JCasC | [infra/cicd README](../infra/cicd/README.md#ci-파이프라인-job-bifrost-ci) |
+| GitOps 배포 구조 | **gitops 브랜치** `argocd/`, `charts/`, `databases/`, `infra/`, `secrets/` | [infra.md §7](./design/infra.md#7-cicd) |
 | API 에러코드 | 표면별(각자 소유) | [Spring](./api/springboot.md) · [FastAPI](./api/fastapi.md) |
 | 인프라 현황(클러스터·용량) | 인프라 | [infra.md §2](./design/infra.md#2-리소스-계획현황-resource-plan) |
 

@@ -35,7 +35,9 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http,
-                                           @Value("${internal.ops.token:}") String internalOpsToken) throws Exception {
+                                           @Value("${internal.ops.token:}") String internalOpsToken,
+                                           @Value("${internal.ops.auth-disabled:false}")
+                                           boolean internalOpsAuthDisabled) throws Exception {
         http
             .csrf(AbstractHttpConfigurer::disable)
             .httpBasic(AbstractHttpConfigurer::disable)
@@ -47,10 +49,13 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, SecurityPaths.PROTECTED_AUTH_GET_PATHS).authenticated()
                 .requestMatchers(SecurityPaths.ACTUATOR_PATHS).permitAll()
                 .requestMatchers(SecurityPaths.OPEN_API_PATHS).permitAll()
-                // (#646) 내부 전용 API는 service-to-service 토큰으로 게이트. 토큰 미설정 시 비활성(기존 호환).
+                // (#646) 내부 전용 API는 service-to-service 토큰으로 게이트. 기본은 fail-closed.
                 .requestMatchers(SecurityPaths.INTERNAL_OPS_PATHS).access((authentication, context) ->
                     new AuthorizationDecision(
-                        internalOpsAllowed(internalOpsToken, context.getRequest().getHeader(INTERNAL_OPS_TOKEN_HEADER))))
+                        internalOpsAllowed(
+                            internalOpsToken,
+                            context.getRequest().getHeader(INTERNAL_OPS_TOKEN_HEADER),
+                            internalOpsAuthDisabled)))
                 .anyRequest().authenticated()
             )
             .exceptionHandling(eh -> eh.authenticationEntryPoint(entryPoint))
@@ -59,11 +64,17 @@ public class SecurityConfig {
     }
 
     /**
-     * /internal/ops 게이트 판정(#646): 토큰이 설정되지 않은 환경(빈 값)에서는 허용해 기존 배포 호환을
-     * 유지하고, 설정된 경우에만 요청 헤더와 정확히 일치할 때 허용한다. gitops가 ai-service·ops-backend에
-     * 동일 시크릿을 주입하면 외부 무인증 접근이 차단된다.
+     * /internal/ops 게이트 판정(#646): 기본은 fail-closed다. expected token 이 비어 있으면 거부하고,
+     * 명시적인 local/test 우회 플래그가 켜진 경우에만 토큰 검사를 건너뛴다.
      */
     static boolean internalOpsAllowed(String expectedToken, String providedHeader) {
-        return expectedToken == null || expectedToken.isBlank() || expectedToken.equals(providedHeader);
+        return internalOpsAllowed(expectedToken, providedHeader, false);
+    }
+
+    static boolean internalOpsAllowed(String expectedToken, String providedHeader, boolean authDisabled) {
+        if (authDisabled) {
+            return true;
+        }
+        return expectedToken != null && !expectedToken.isBlank() && expectedToken.equals(providedHeader);
     }
 }

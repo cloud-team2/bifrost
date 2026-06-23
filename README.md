@@ -38,10 +38,10 @@
 └──────────────┬────────────┘
                │ provisioning
                ▼
-┌──────────────────────────────────────────────────────┐
-│  Kubernetes (EKS) · Strimzi Kafka                      │
-│  Debezium(source) → Kafka Topic → JDBC Connect(sink)   │
-└────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│  Kubernetes (EKS) · Strimzi Kafka · Kafka Connect          │
+│  Debezium(source) → Kafka Topic → JDBC Connect(sink)       │
+└────────────────────────────────────────────────────────────┘
 ```
 
 - **operations-backend** (Spring Boot 모놀리스) — 플랫폼 API, 인증, datasource·pipeline 도메인, K8s/Kafka 자동화. 에이전트 전용 내부 API `/internal/ops/**`는 외부에 노출하지 않습니다.
@@ -59,7 +59,8 @@
 | Frontend | React, Vite, TypeScript, Tailwind CSS |
 | Data plane | Apache Kafka (Strimzi), Debezium, Kafka Connect (JDBC) |
 | Datastore | PostgreSQL(metadb), pgvector(agentdb), 테넌트 DB(PostgreSQL/MariaDB) |
-| Infra | AWS EKS, ArgoCD(GitOps), Harbor, Jenkins(CI/CD) |
+| Build/CI/CD | Gradle multi-module(`operations-backend`, `timestamptz-converter`), Jenkins(Kaniko), Harbor, Argo CD GitOps |
+| Infra | AWS EKS(Terraform), Strimzi, ingress-nginx+cert-manager, Sealed Secrets |
 | Observability | Prometheus, Grafana, Loki, Tempo |
 
 ## 빠른 시작
@@ -108,10 +109,19 @@ bifrost/
 │  ├─ operations-backend/    Spring Boot — 플랫폼 API·K8s/Kafka 자동화
 │  ├─ ai-service/            FastAPI — RCA 에이전트·LLM
 │  └─ frontend/              React UI
-├─ infra/                    Terraform·Helm·K8s manifest
+├─ connect-plugins/          Kafka Connect 커스텀 컨버터 Gradle 모듈
+├─ infra/                    Terraform·K8s manifest·CI/CD bootstrap
 ├─ scripts/                  로컬/배포 스크립트 (local-up.sh 등)
 └─ docker-compose.yml        로컬 의존 인프라
 ```
+
+## CI/CD·배포
+
+- Jenkins `bifrost-ci`는 `jenkins-values.yaml`의 JCasC/job-dsl로 생성되는 단일 Pipeline job이며, SCM 브랜치는 `*/main`, scriptPath는 루트 `Jenkinsfile`이다.
+- `main` push/webhook 빌드에서 직전 성공 커밋 대비 변경된 앱 서비스(`services/ai-service`, `services/operations-backend`, `services/frontend`)만 Kaniko로 빌드해 Harbor `harbor.harbor.svc.cluster.local/library/bifrost-<svc>:<git-sha>`와 `:latest`에 push한다.
+- `operations-backend`는 멀티모듈 Gradle 빌드라 Kaniko 컨텍스트가 레포 루트이고, `ai-service`와 `frontend`는 각 서비스 디렉터리를 컨텍스트로 쓴다.
+- `infra/docker/kafka-connect` 또는 `connect-plugins/` 변경 시 Kafka Connect 커스텀 이미지도 루트 컨텍스트로 빌드해 고정 태그 `1.0.0-converter`, git sha, `latest`로 Harbor에 push한다. 앱 서비스처럼 GitOps tag를 자동 변경하지는 않는다.
+- 앱 서비스 배포는 Jenkins가 `gitops` 브랜치의 `charts/<svc>/values.yaml` `image.tag`만 커밋하고, Argo CD `0-root-bifrost-root` app-of-apps가 `argocd/apps/`의 10개 child Application을 polling/reconcile해 적용한다.
 
 ## 개발
 

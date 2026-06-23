@@ -35,7 +35,7 @@
 ```
 
 - `project_member.role`은 `OWNER`/`ADMIN`/`MEMBER`다. 멤버 목록 조회는 세 역할 모두 가능하고, workspace 수정·멤버 추가/수정/삭제·settings 수정은 `OWNER`/`ADMIN`만 가능하다.
-- 내부 운영 API(`/internal/ops`)는 agent-facing 내부 API다. public frontend ingress는 이 경로를 프록시하지 않고, FastAPI가 내부 서비스 경로로 호출한다. `SecurityConfig`는 `internal.ops.token`이 설정된 경우 `X-Internal-Token` service identity header 일치를 요구하며, 토큰이 비어 있으면 로컬/기존 배포 호환을 위해 게이트를 비활성화한다. mutation controller는 여기에 더해 agent headers, approval, idempotency, project/resource ownership을 자체 검증한다([governance](./governance.md)).
+- 내부 운영 API(`/internal/ops`)는 agent-facing 내부 API다. public frontend ingress는 이 경로를 프록시하지 않고, FastAPI가 내부 서비스 경로로 호출한다. `SecurityConfig`는 `internal.ops.token`과 `X-Internal-Token` service identity header 일치를 요구하며, 토큰이 비어 있으면 fail-closed로 거부한다. 로컬/테스트 우회는 `internal.ops.auth-disabled=true`일 때만 허용된다. mutation controller는 여기에 더해 agent headers, approval, idempotency, project/resource ownership을 자체 검증한다([governance](./governance.md)).
 
 ### 5. 시드·보안
 
