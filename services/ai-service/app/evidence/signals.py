@@ -15,8 +15,13 @@ from app.evidence.metadata import is_control_id, is_control_metadata_key, strip_
 _FAILED_RE = re.compile(r"\bFAILED\b|failed|failure|exception|\berror\b|오류|에러|실패", re.IGNORECASE)
 _TASK_FAILURE_RE = re.compile(r"\bFAILED\b|failed|failure|exception|오류|에러|실패", re.IGNORECASE)
 _TRACE_RE = re.compile(r"trace|stack|exception|worker log|stacktrace|로그|트레이스", re.IGNORECASE)
+_AUTH_VENDOR_CODE = r"(?:\bERROR\s+1045\b|\b1045\s*\(\s*28000\s*\)|\bSQLSTATE\s*\[?\s*28000\s*\]?)"
+_SCHEMA_VENDOR_CODE = r"(?:\bERROR\s+1366\b|\b1366\s*\(\s*22007\s*\)|\bSQLSTATE\s*\[?\s*22007\s*\]?)"
+_CONSTRAINT_VENDOR_CODE = r"(?:\bERROR\s+4025\b|\b4025\s*\(\s*23000\s*\)|\bSQLSTATE\s*\[?\s*23000\s*\]?)"
+_TIMEOUT_VENDOR_CODE = r"(?:\bERROR\s+2002\b|\b2002\s*\(\s*HY000\s*\))"
 _AUTH_RE = re.compile(
-    r"\b1045\b|\b28000\b|access\s*denied|permission\s*denied|unauthori[sz]ed|authentication|"
+    _AUTH_VENDOR_CODE
+    + r"|access\s*denied|permission\s*denied|unauthori[sz]ed|authentication|"
     r"\bauth\b|auth(?:entication)?\s*error|token\s*expired|credential\s*expired|"
     r"password authentication failed|invalid password|invalid credential|"
     r"credential invalid|credential expired|sasl|using password|인증\s*실패|권한\s*거부|"
@@ -24,7 +29,8 @@ _AUTH_RE = re.compile(
     re.IGNORECASE,
 )
 _SCHEMA_RE = re.compile(
-    r"\b1366\b|\b22007\b|schema|serialization|deserialization|deserialize|"
+    _SCHEMA_VENDOR_CODE
+    + r"|schema|serialization|deserialization|deserialize|"
     r"incompatible|compatibility|converter|avro|serde|type mismatch|schema registry|"
     r"incorrect\s+\w+\s+value|incorrect .* value|field type|dataexception|"
     r"invalid input syntax|date/time field value out of range|invalid datetime format|"
@@ -47,14 +53,16 @@ _CONFIG_RE = re.compile(
     re.IGNORECASE,
 )
 _CONSTRAINT_RE = re.compile(
-    r"\b4025\b|\b23000\b|duplicate key|unique constraint|constraint violation|foreign key|not null|"
+    _CONSTRAINT_VENDOR_CODE
+    + r"|duplicate key|unique constraint|constraint violation|foreign key|not null|"
     r"check constraint|constraint .* failed|data integrity|sqlintegrity|record rejected|duplicate records?|"
     r"중복\s*레코드|제약\s*위반|"
     r"(?:record|row|sink|data)\s+validation fail",
     re.IGNORECASE,
 )
 _TIMEOUT_RE = re.compile(
-    r"\b2002\b|timeout|timed out|timeout expired|connection timed out|"
+    _TIMEOUT_VENDOR_CODE
+    + r"|timeout|timed out|timeout expired|connection timed out|"
     r"read timed out|write timed out|can't connect to server|could not connect|타임아웃",
     re.IGNORECASE,
 )
@@ -122,7 +130,8 @@ _DATABASE_DOES_NOT_EXIST_RE = re.compile(
 )
 _SCHEMA_VERSION_RE = re.compile(r"schema version|subject version|schema registry", re.IGNORECASE)
 _SCHEMA_STRUCTURE_RE = re.compile(
-    r"\b1366\b|\b22007\b|incorrect\s+\w+\s+value|incorrect .* value|"
+    _SCHEMA_VENDOR_CODE
+    + r"|incorrect\s+\w+\s+value|incorrect .* value|"
     r"type mismatch|field type|invalid input syntax|date/time field value out of range|"
     r"invalid datetime format|(?:date|time|timestamp|datetime)\s+(?:parse|parsing)\s+(?:error|fail)|"
     r"parse\s+(?:error|fail).*(?:date|time|timestamp|datetime)|"
@@ -381,7 +390,7 @@ def evidence_signal_summary(tool_name: str, raw_payload: Any) -> str:
         elif side == "sink":
             _add(tags, "sink dependency 연결 실패 또는 connection timeout")
         else:
-            _add(tags, "Bifrost에서 source endpoint reachability 실패")
+            _add(tags, "endpoint reachability failure log")
 
     if timeout:
         if side == "source":
@@ -391,7 +400,7 @@ def evidence_signal_summary(tool_name: str, raw_payload: Any) -> str:
             _add(tags, "sink write timeout 증가")
             _add(tags, "sink dependency 연결 실패 또는 connection timeout")
         else:
-            _add(tags, "pipeline extract/read 단계 timeout log")
+            _add(tags, "connection timeout log")
 
     if _has_signal(pieces, _READ_LATENCY_RE, "latency"):
         _add(tags, "source read latency 증가")

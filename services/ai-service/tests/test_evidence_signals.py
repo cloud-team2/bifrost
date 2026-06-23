@@ -169,6 +169,56 @@ def test_signal_summary_keeps_fault_when_negative_and_fault_fragments_are_distin
     assert "serialization/deserialization/schema error" in summary
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"datasource": {"role": "source", "connectionStatus": "UP", "port": 2002}},
+        {"metric": {"name": "records_processed", "value": 2002}},
+        {"searchResult": {"matchCount": 1045, "logs": []}},
+        {"summary": {"total": 23000, "taskId": 4025, "count": 1366, "year": 22007}},
+        {"message": "codes observed in inventory text: 1045 2002 1366 22007 4025 23000"},
+    ],
+)
+def test_vendor_numeric_codes_in_metadata_or_code_only_text_do_not_emit_signals(payload: dict) -> None:
+    summary = evidence_signal_summary("list_datasources", payload)
+
+    assert summary == ""
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "datasources": [
+                {
+                    "connectionStatus": "DOWN",
+                    "lastError": "ERROR 2002 (HY000): Can't connect to server on '10.255.255.1' (110)",
+                }
+            ]
+        },
+        {
+            "datasources": [
+                {
+                    "role": "source+sink",
+                    "connectionStatus": "DOWN",
+                    "lastError": "ERROR 2002 (HY000): Can't connect to server on '10.255.255.1' (110)",
+                }
+            ]
+        },
+    ],
+)
+def test_unknown_or_dual_role_timeout_evidence_stays_side_neutral(payload: dict) -> None:
+    summary = evidence_signal_summary("list_datasources", payload)
+
+    assert "connection timeout log" in summary
+    assert "endpoint reachability failure log" in summary
+    assert "Bifrost에서 source endpoint reachability 실패" not in summary
+    assert "pipeline extract/read 단계 timeout log" not in summary
+    assert "source connection timeout 증가" not in summary
+    assert "sink write timeout 증가" not in summary
+    assert "sink dependency 연결 실패 또는 connection timeout" not in summary
+
+
 def test_vendor_auth_code_uses_datasource_role_for_sink_auth() -> None:
     payload = {
         "logs": [
