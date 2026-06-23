@@ -540,8 +540,8 @@ Verifier는 모든 simple_query에 넣지 않는다. 운영 변경, RCA 결론, 
 
 - 기본은 **가장 좁은 tool 1개**다.
 - 여러 tool은 사용자가 "원인 분석", "상관관계", "상세 진단"을 요청했거나 단일 tool로 답변 불가능할 때만 선택한다.
-- 선택 이유와 예상 답변 가능성을 함께 출력한다.
-- Router가 넘긴 `max_tool_calls`를 초과하면 안 된다.
+- 출력은 선택한 `tools` 배열과 짧은 `reason` 두 키만 담은 JSON object 하나다.
+- 선택 tool 수 상한은 prompt 원칙이 아니라 LLM 출력 이후 코드(planner)에서 결정론적으로 제한한다.
 
 #### 6.4.4 ReAct 루프를 조건부로만 켠다
 

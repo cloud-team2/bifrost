@@ -209,8 +209,8 @@ RCA Agent는 점수만 보고 원인을 확정하지 않는다. Required evidenc
 
 | Evidence | 유형 | 예시 |
 | --- | --- | --- |
-| sink write timeout 증가 | Required | sink connector write timeout |
-| sink dependency connection error | Required | reachability or pool error |
+| sink dependency 연결 실패 또는 connection timeout | Required | connection refused, no route to host, connection timeout, pool error |
+| sink write timeout 증가 | Supporting | sink connector write timeout |
 | source read 정상 | Supporting | upstream 정상 |
 | sink write latency 증가 | Supporting | write duration p95 증가 |
 | source extract timeout | Negative | source 후보 우선 |
