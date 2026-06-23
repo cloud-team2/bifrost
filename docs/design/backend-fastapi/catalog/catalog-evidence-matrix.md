@@ -107,6 +107,7 @@ RCA Agent는 점수만 보고 원인을 확정하지 않는다. Required evidenc
 | 여러 pipeline에서 같은 source endpoint 연결 실패 | Supporting | shared dependency timeout |
 | 고객사 source 내부 지표 정상이나 network path error 존재 | Supporting | network error code 증가 |
 | auth error 또는 query error만 존재 | Negative | network 후보 약화 |
+| sink dependency 연결 실패 또는 sink connector 오류 | Negative | sink-context면 source reachability 약화(#962) |
 
 ### 5. Pipeline / Connector Root Cause
 
@@ -313,7 +314,7 @@ RCA Agent는 점수만 보고 원인을 확정하지 않는다. Required evidenc
 | Evidence | 유형 | 예시 |
 | --- | --- | --- |
 | image rollout 이후 error/latency/restart 증가 | Required | deployment rollout event |
-| 이전 image 대비 config/runtime 차이 | Required | image tag diff |
+| image version update | Required | image tag/version changed, runtime/config delta |
 | rollback 후 개선 | Supporting | after evidence |
 | rollout 전부터 문제 지속 | Negative | image regression 후보 약화 |
 

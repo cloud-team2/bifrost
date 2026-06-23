@@ -550,12 +550,12 @@ Verifier는 모든 simple_query에 넣지 않는다. 운영 변경, RCA 결론, 
 현재 조건:
 
 - `allow_react_loop=true`일 때만 실행한다.
-- `execution_depth in {"incident_diagnosis", "remediation_planning"}` 또는 식별자 chaining이 필요한 `bounded_lookup`에서만 허용한다.
-- `simple_query.single_lookup`에서는 끈다.
-- `max_steps`를 mode별로 다르게 둔다.
+- `execution_depth in {"incident_diagnosis", "remediation_planning"}`에서만 허용한다(`_DEPTH_BUDGET` 기준).
+- `simple_query.single_lookup`과 `bounded_lookup`에서는 끈다(`allow_react_loop=false`).
+- `max_steps`(react_max_steps)는 mode별로 다르게 둔다.
   - direct/single: 0
-  - bounded: 2
-  - incident/remediation: 4~6
+  - bounded: 2 (단 `allow_react_loop=false`라 실제 루프는 돌지 않음)
+  - incident/remediation: 6
 
 #### 6.4.5 대화 히스토리 input filter
 
