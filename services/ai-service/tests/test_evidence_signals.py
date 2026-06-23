@@ -170,6 +170,92 @@ def test_signal_summary_keeps_fault_when_negative_and_fault_fragments_are_distin
 
 
 @pytest.mark.parametrize(
+    ("tool_name", "payload"),
+    [
+        (
+            "get_consumer_lag",
+            {
+                "operation": "get_consumer_lag",
+                "result": {
+                    "consumerGroup": "connect-orders-sink",
+                    "totalLag": 9000,
+                    "partitions": [{"partition": 0, "lag": 9000}],
+                },
+            },
+        ),
+        (
+            "get_consumer_lag",
+            {
+                "result": {
+                    "consumerGroup": "connect-orders-sink",
+                    "totalLag": 0,
+                    "partitions": [{"partition": 0, "lag": 42}],
+                },
+            },
+        ),
+        (
+            "get_consumer_groups",
+            {
+                "operation": "get_consumer_groups",
+                "result": {
+                    "groups": [{"groupId": "connect-orders-sink", "lag": 9000}],
+                },
+            },
+        ),
+    ],
+)
+def test_numeric_consumer_lag_payload_emits_lag_signal(tool_name: str, payload: dict) -> None:
+    summary = evidence_signal_summary(tool_name, payload)
+
+    assert "consumer lag 급증" in summary
+    assert "offset progression 둔화" not in summary
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "payload"),
+    [
+        (
+            "get_consumer_lag",
+            {
+                "operation": "get_consumer_lag",
+                "result": {
+                    "consumerGroup": "connect-orders-sink",
+                    "totalLag": 0,
+                    "partitions": [{"partition": 0, "lag": 0}],
+                },
+            },
+        ),
+        (
+            "get_consumer_groups",
+            {
+                "operation": "get_consumer_groups",
+                "result": {
+                    "groups": [{"groupId": "connect-orders-sink", "lag": 0}],
+                },
+            },
+        ),
+        (
+            "get_consumer_lag",
+            {
+                "operation": "get_consumer_lag",
+                "result": {
+                    "port": 2002,
+                    "metric": {"value": 1045},
+                    "summary": {"total": 23000, "taskId": 4025, "count": 1366, "year": 22007},
+                },
+            },
+        ),
+    ],
+)
+def test_numeric_consumer_lag_payload_ignores_zero_and_unrelated_numbers(
+    tool_name: str, payload: dict
+) -> None:
+    summary = evidence_signal_summary(tool_name, payload)
+
+    assert summary == ""
+
+
+@pytest.mark.parametrize(
     "payload",
     [
         {"datasource": {"role": "source", "connectionStatus": "UP", "port": 2002}},

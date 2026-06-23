@@ -151,6 +151,7 @@ _LAG_SPIKE_RE = re.compile(
 )
 _OFFSET_PROGRESS_RE = re.compile(r"offset progression|commit rate|offset_progression", re.IGNORECASE)
 _INGRESS_RE = re.compile(r"topic ingress|incoming messages|bytes-in", re.IGNORECASE)
+_CONSUMER_LAG_TOOLS = {"get_consumer_lag", "get_consumer_groups"}
 
 _NEGATED_SIGNAL_PATTERNS = {
     "global": (
@@ -334,7 +335,9 @@ def evidence_signal_summary(tool_name: str, raw_payload: Any) -> str:
     timeout = _has_signal(pieces, _TIMEOUT_RE, "timeout")
     network = _has_signal(pieces, _NETWORK_RE, "network")
     missing_database = _has_signal(pieces, _DATABASE_DOES_NOT_EXIST_RE, "failure")
-    lag_spike = _has_signal(pieces, _LAG_SPIKE_RE, "lag")
+    lag_spike = _has_signal(pieces, _LAG_SPIKE_RE, "lag") or _has_structured_consumer_lag_signal(
+        tool_name, raw_payload
+    )
     offset_slow = _has_signal(pieces, _OFFSET_PROGRESS_RE, "lag")
     deployment = _has_signal(pieces, _DEPLOYMENT_RE, "deployment")
     degradation = _has_signal(pieces, _DEGRADATION_RE, "failure")
@@ -452,6 +455,47 @@ def _flatten_text(value: Any, context: str = "") -> Iterable[str]:
     if isinstance(value, (list, tuple, set)):
         for item in value:
             yield from _flatten_text(item, context)
+
+
+def _has_structured_consumer_lag_signal(tool_name: str, value: Any) -> bool:
+    if tool_name not in _CONSUMER_LAG_TOOLS:
+        return False
+
+    for item in _walk(value):
+        if not isinstance(item, dict):
+            continue
+
+        if any(_positive_number(raw) for raw in _values_for_key(item, {"totallag"})):
+            return True
+
+        if tool_name == "get_consumer_groups" and any(
+            _positive_number(raw) for raw in _values_for_key(item, {"lag"})
+        ):
+            return True
+
+        if tool_name == "get_consumer_lag" and any(
+            _contains_positive_lag_value(raw) for raw in _values_for_key(item, {"partitions"})
+        ):
+            return True
+
+    return False
+
+
+def _contains_positive_lag_value(value: Any) -> bool:
+    if isinstance(value, dict):
+        return any(
+            (_key_name(key) == "lag" and _positive_number(raw)) or _contains_positive_lag_value(raw)
+            for key, raw in value.items()
+        )
+    if isinstance(value, (list, tuple, set)):
+        return any(_contains_positive_lag_value(item) for item in value)
+    return False
+
+
+def _values_for_key(item: dict[Any, Any], names: set[str]) -> Iterable[Any]:
+    for key, raw in item.items():
+        if _key_name(key) in names:
+            yield raw
 
 
 def _structured_fault_side(value: Any) -> str | None:
