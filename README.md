@@ -14,7 +14,7 @@
 ![Kafka / Strimzi](https://img.shields.io/badge/Kafka%20%2F%20Strimzi-Connect-231F20?logo=apachekafka&logoColor=white)
 ![Kubernetes / EKS](https://img.shields.io/badge/Kubernetes-EKS-326CE5?logo=kubernetes&logoColor=white)
 
-<p align="center"><a href="https://htmlpreview.github.io/?https://github.com/cloud-team2/bifrost/blob/develop/docs/pitch-deck.html"><b>발표 자료</b></a> · <a href="docs/README.md">문서</a> · <a href="#로컬-실행">로컬 실행</a></p>
+<p align="center"><a href="docs/README.md">문서</a> · <a href="#로컬-실행">로컬 실행</a></p>
 
 <p align="center">
   <img src="services/frontend/public/landing-pipelines.png" alt="Bifrost 운영 콘솔 — 파이프라인 목록과 AI 인시던트 패널" width="100%" />
