@@ -125,7 +125,7 @@ erDiagram
 
 #### 3.1.1 `project_member` (워크스페이스 멤버십, FR-002)
 
-워크스페이스 ↔ 사용자 N:M. **어떤 사용자가 어떤 워크스페이스에 접근 가능한지**와 `OWNER`/`ADMIN`/`MEMBER` 역할을 이 테이블로 판정한다(plain·내부 운영 API의 user/project scope 검증 — [server.md §3 신뢰 경계](./server.md#3-신뢰-경계)).
+워크스페이스 ↔ 사용자 N:M. **어떤 사용자가 어떤 워크스페이스에 접근 가능한지**와 `OWNER`/`ADMIN`/`MEMBER` 역할을 이 테이블로 판정한다. plain API와 내부 운영 API의 user/project scope 검증은 `WorkspaceAccessGuard`와 각 service의 manager check 구현을 기준으로 확인한다.
 
 | 컬럼 | 타입 | 설명 |
 | --- | --- | --- |

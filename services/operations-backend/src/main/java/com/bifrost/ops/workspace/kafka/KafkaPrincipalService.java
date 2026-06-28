@@ -123,7 +123,7 @@ public class KafkaPrincipalService {
     /**
      * KafkaUser Secret 조회(#303). OWNER/ADMIN·owner만 허용한다.
      *
-     * <p>플랫폼 정책(server.md: secret 원문 read deny)에 따라 raw password는 절대 반환하지 않는다.
+     * <p>플랫폼 정책상 secret 원문 read를 금지하므로 raw password는 절대 반환하지 않는다.
      * Secret의 존재·위치(namespace/name)·키 참조와 마스킹 password 표기만 제공한다(reference/masked only).
      *
      * <p>읽기 조회지만 {@link AuditService#record}로 감사 INSERT를 남기므로 readOnly 트랜잭션이 아니다

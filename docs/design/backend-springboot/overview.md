@@ -1,6 +1,6 @@
 # Spring Boot Operations Backend 설계 (개요)
 
-> 진입점. 상세는 [server.md](./server.md)(서버설계·집행 allowlist)·[provisioning.md](./provisioning.md)·[database-registry.md](./database-registry.md)·[data-model.md](./data-model.md)·[monitoring.md](./monitoring.md)·[governance.md](./governance.md), API는 [api/springboot.md](../../api/springboot.md), 상태값·임계값은 [기능명세서 부록 B](../../spec.md#부록-b--리소스-상태값-정의-및-자동-기준-단일-출처).
+> 진입점. 상세는 [provisioning.md](./provisioning.md)·[database-registry.md](./database-registry.md)·[data-model.md](./data-model.md)·[pipeline.md](./pipeline.md)·[lifecycle.md](./lifecycle.md)·[monitoring.md](./monitoring.md)·[governance.md](./governance.md), API는 [api/springboot.md](../../api/springboot.md), 상태값·임계값 요구사항은 [기능명세서 부록 B](../../spec.md#부록-b--리소스-상태값-정의-및-자동-기준-단일-출처).
 
 Bifrost의 **플랫폼 본체이자 운영 제어의 최종 집행자**. 한 서버가 두 역할을 한다 — 프론트용 **플랫폼 API(`/api/v1`)** + 에이전트용 **내부 운영 API(`/internal/ops`)**. LLM·prompt·RCA 추론은 하지 않고, 두 경로 모두 같은 정책·감사·프로비저닝 계층을 공유한다.
 
@@ -61,7 +61,7 @@ erDiagram
 ```
 
 - `workspace`(`namespace`/`projectKey`) · `app_user`·`project_member`(멤버십과 `OWNER`/`ADMIN`/`MEMBER` 역할) · `workspace_settings` · `database`(`secret_ref`·`connection_status`) · `pipeline`(API status creating/active/lag/error/paused, DB enum upper-case) · `connector`(kind SOURCE/SINK, state RUNNING/PARTIALLY_FAILED/FAILED/PAUSED/UNASSIGNED/UNKNOWN) · `event`(INFO/WARN/ERROR) · `incident`(현재 service 생성 severity WARNING/CRITICAL, status OPEN/INVESTIGATING/RESOLVED, RCA field `rca`) · `audit_event`·`evidence_ref`(append-only). 거버넌스용 `approval`·`change_ticket`·`idempotency_key`의 현재 구현 범위는 [governance.md](./governance.md)를 따른다.
-- 전체 컬럼·제약·DDL은 [data-model.md §4](./data-model.md#4-data-model). enum·임계값은 [부록 B](../../spec.md#부록-b--리소스-상태값-정의-및-자동-기준-단일-출처) 단일 출처.
+- 전체 컬럼·제약·DDL은 [data-model.md §4](./data-model.md#4-data-model). enum·임계값 요구사항은 [부록 B](../../spec.md#부록-b--리소스-상태값-정의-및-자동-기준-단일-출처)에 모아 둔다.
 
 ## 핵심 결정
 
@@ -71,12 +71,11 @@ erDiagram
 | 파이프라인 | **단일 테이블 1개**. EDA(`fan-out`, Source만) / CDC(`direct`, Source Debezium + Sink JDBC) |
 | 토픽 | Debezium 자동 생성 `{root}.{projectKey}.{dbSlug}.{schema}.{table}`(`root=cdc.table|eda.table`, `dbSlug={dbName}-{datasourceId 앞 8 hex}`, part 6/RF 3) |
 | DB 자격증명 | datasource row는 `secret_ref`만 저장. 현재 `DbSecretStore`는 metadb `secrets.credential_json`에 자격증명을 저장하고, API에는 마스킹만 노출 |
-| 신뢰 경계 | FastAPI 판단 불신, **실행 직전 재검증**. **집행 allowlist·Approval 원본=Spring**([server.md §7.1](./server.md#71-operation-allowlist-현재-집행-경계)) |
+| 신뢰 경계 | FastAPI 판단 불신, **실행 직전 재검증**. **집행 allowlist·Approval 원본=Spring**([governance.md §7](./governance.md#7-mutation-allowlist)) |
 | 관측 수집 | 상태=Watcher(event) / lag·task·JVM·DB health 일부=폴링. 현재 poller는 event row를 만들지만 incident 자동 생성 경로는 호출하지 않음 → [monitoring.md](./monitoring.md) |
 
 ## 더 읽기
 
-- [server.md](./server.md) — 서버 설계(책임·신뢰경계·계층·**집행 allowlist §7.1**·보안) + 패키지 구조 §5
 - [auth.md](./auth.md) — 로그인·JWT(두 서비스 공유 검증)·스코프
 - [provisioning.md](./provisioning.md) — Kafka/Connector CR 생성·watch
 - [pipeline.md](./pipeline.md) — 파이프라인 도메인(생성 검증·생명주기·상태 머신·단일 writer)

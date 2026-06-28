@@ -17,7 +17,7 @@ source: curated
 
 이 문서는 Agent action의 위험도와 승인 기준을 정의한다. Policy Guard는 이 문서를 기준으로 `allow`, `require_approval`, `require_change_management`, `deny` 중 하나를 선택한다.
 
-**최종 집행·정본은 Spring Boot의 [server.md §7.1 Operation Allowlist](../../backend-springboot/server.md#71-operation-allowlist-현재-집행-경계)다.** 이 policy matrix는 사전 판단이며, 현재 Spring이 실제로 실행 가능한 mutation은 connector restart/pause/resume과 managed consumer group restart subset이다(불일치 시 Spring 기준 우선).
+**최종 집행 기준은 Spring Boot의 `InternalOpsMutationController`, `MutationGate`, `PolicyGuard` 구현이다.** 이 policy matrix는 사전 판단이며, 현재 Spring이 실제로 실행 가능한 mutation은 connector restart/pause/resume과 managed consumer group restart subset이다(불일치 시 Spring 기준 우선).
 
 ### 2. Decision
 

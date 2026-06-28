@@ -5,7 +5,7 @@
 > 버전: v1.0
 > 액터: **사용자** (v1은 단일 콘솔. 구체 액터 구분·시나리오는 추후 결정하며, 본 문서는 일단 "사용자"로 통일한다)
 >
-> **이 문서는 FR 카탈로그와 부록 B(상태값·임계값·이벤트→인시던트 규칙)의 단일 출처다.** 설계 문서([README](./README.md), [design/backend-springboot/](./design/backend-springboot/overview.md), [design/backend-fastapi/](./design/backend-fastapi/overview.md), [design/frontend.md](./design/frontend.md))가 인용하는 "기능명세서 부록 B"·"FR-xxx"는 이 파일을 가리킨다. 상태값·임계값을 다른 문서에서 중복 정의하지 않는다.
+> 이 문서는 FR 카탈로그와 부록 B(상태값·임계값·이벤트→인시던트 규칙)를 모아 둔 요구사항 기준 문서다. 최종 SOT는 코드 구현이며, 설계 문서([README](./README.md), [design/backend-springboot/](./design/backend-springboot/overview.md), [design/backend-fastapi/](./design/backend-fastapi/overview.md), [design/frontend.md](./design/frontend.md))는 이 문서를 용어·요구사항 기준으로 인용한다.
 
 ---
 
@@ -243,11 +243,13 @@
 
 ---
 
-## 부록 B — 리소스 상태값 정의 및 자동 기준 (단일 출처)
+<a id="부록-b--리소스-상태값-정의-및-자동-기준-단일-출처"></a>
+
+## 부록 B — 리소스 상태값 정의 및 자동 기준
 
 > **원칙**: 상태값은 구현 가능한 지표에서 직접 파생한다. 임의 라벨 없이 산정 가능한 값만 사용한다.
 > 아래의 **이 기준을 초과할 때 인시던트를 자동 생성**하고, 사이드바 Incidents 배지 + 이벤트 로그에 기록한다.
-> 설계 문서(Data Model `pipeline.status`/`connector.state`/`incident`, Provisioning watch, Evidence Matrix)는 이 부록을 단일 출처로 공유한다.
+> 설계 문서(Data Model `pipeline.status`/`connector.state`/`incident`, Provisioning watch, Evidence Matrix)는 이 부록을 용어·요구사항 기준으로 공유한다. 현재 구현 여부와 실제 산정 로직은 Spring/FastAPI 코드가 최종 기준이다.
 
 ### B.1 Pipeline 상태값
 **데이터 소스**: Kafka Consumer Group API, Connector REST API

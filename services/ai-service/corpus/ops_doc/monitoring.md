@@ -10,7 +10,7 @@ source: curated
 
 > 요약은 [overview.md](./overview.md). 이 파일은 **관측 데이터 수집 → 상태 산정 → 이벤트 기록/SSE 발행 → IncidentService 현재 연결 상태**와 모니터링 read(Sync/Messages/Metrics) 구현을 다룬다. 상태값·임계값·이벤트→인시던트 목표 규칙의 **정본은 [기능명세서 부록 B](../../spec.md#부록-b--리소스-상태값-정의-및-자동-기준-단일-출처)** 이며, 이 문서는 현재 구현과 미연결 지점을 함께 기록한다.
 >
-> 패키지: `monitoring`(query·collector) · `event` · `incident` ([server.md §5](./server.md#5-패키지-구조)). 현재 플랫폼 pipeline detail read는 `pipeline` domain service(`PipelineSyncService`/`PipelineTopicService`/`PipelineMessageService`)를 직접 호출하고, agent `/internal/ops` observability read는 `InternalOpsObservabilityController`가 `AdminClient`/`LokiClient`/`JdbcTemplate`/`IncidentRepository`/`RestClient`를 직접 주입한다. `monitoring.query` 공유 port는 아직 코드 구조로 정착되어 있지 않다.
+> 패키지: `monitoring`(query·collector) · `event` · `incident` · `internalops`. 현재 플랫폼 pipeline detail read는 `pipeline` domain service(`PipelineSyncService`/`PipelineTopicService`/`PipelineMessageService`)를 직접 호출하고, agent `/internal/ops` observability read는 `InternalOpsObservabilityController`가 `AdminClient`/`LokiClient`/`JdbcTemplate`/`IncidentRepository`/`RestClient`를 직접 주입한다. `monitoring.query` 공유 port는 아직 코드 구조로 정착되어 있지 않다.
 
 ## 6. Monitoring and Incident Engine
 
