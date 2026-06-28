@@ -84,6 +84,8 @@ erDiagram
         uuid id PK
         uuid workspace_id FK
         text severity "WARNING/CRITICAL"
+        text severity_reason
+        text alert_route "PAGE/TICKET/DIAGNOSTIC"
         text status "OPEN/INVESTIGATING/RESOLVED"
         text rca
         text source_type
@@ -106,7 +108,7 @@ erDiagram
     }
 ```
 
-> 텍스트 요약: `workspace`가 `database`/`pipeline`/`event`/`incident`/`audit_event`/`evidence_ref`를 소유하고, `app_user`↔`workspace`는 `project_member`로 N:M 연결된다. `pipeline`은 `database`를 source(필수)·sink(0..1, CDC만)로 참조하고 connector를 EDA 1개/CDC 2개 가진다. 현재 `events.incident_id` 컬럼은 있지만 poller→incident 자동 연결 경로는 구현되어 있지 않고, `incident`에는 `trigger_event_id` 컬럼이 없다.
+> 텍스트 요약: `workspace`가 `database`/`pipeline`/`event`/`incident`/`audit_event`/`evidence_ref`를 소유하고, `app_user`↔`workspace`는 `project_member`로 N:M 연결된다. `pipeline`은 `database`를 source(필수)·sink(0..1, CDC만)로 참조하고 connector를 EDA 1개/CDC 2개 가진다. `events.incident_id`는 `IncidentService` 생성·attach 경로에서 연결되지만 모든 poller 신호가 인시던트로 승격되는 것은 아니고, `incident`에는 `trigger_event_id` 컬럼이 없다.
 
 ### 3. 테이블
 
@@ -121,7 +123,7 @@ erDiagram
 | `owner_user_id` | uuid FK | 최초 생성자. `project_member` OWNER와 함께 관리자 판정에 사용 |
 | `created_at` | timestamptz | |
 
-> `id`(uuid)는 scope·ownership 검증용 내부 키이고 `namespace` 컬럼은 API의 `projectKey` field로 노출되는 DNS-safe 슬러그다. 실제 매핑은 `WorkspaceResponse.from()`이 `w.getNamespace()`를 `projectKey`로 넣는다(`services/operations-backend/src/main/java/com/bifrost/ops/workspace/dto/WorkspaceResponse.java:14-31`). 토픽 이름 정본은 `ConnectorNaming.topicName()`의 `{root}.{projectKey}.{dbSlug}.{schema}.{table}` 규칙이다(`root=cdc.table|eda.table`, `dbSlug={dbName}-{datasourceId 앞 8 hex}`).
+> `id`(uuid)는 scope·ownership 검증용 내부 키이고 `namespace` 컬럼은 API의 `projectKey` field로 노출되는 DNS-safe 슬러그다. 실제 매핑은 `WorkspaceResponse.from()`이 `w.getNamespace()`를 `projectKey`로 넣는다(`services/operations-backend/src/main/java/com/bifrost/ops/workspace/dto/WorkspaceResponse.java:14-31`). 토픽 이름은 `ConnectorNaming.topicName()`의 `{root}.{projectKey}.{dbSlug}.{schema}.{table}` 규칙을 기준으로 한다(`root=cdc.table|eda.table`, `dbSlug={dbName}-{datasourceId 앞 8 hex}`).
 
 #### 3.1.1 `project_member` (워크스페이스 멤버십, FR-002)
 
@@ -138,7 +140,7 @@ PK는 (`workspace_id`, `user_id`). 워크스페이스 생성 시 생성자를 `O
 
 #### 3.1.2 권한 매트릭스
 
-코드 정본: workspace 접근은 `WorkspaceAccessGuard.requireAccess()`/`requireMember()`가 판정한다(`services/operations-backend/src/main/java/com/bifrost/ops/workspace/WorkspaceAccessGuard.java:38-66`). 관리자 작업은 각 service의 `requireManager()`가 `OWNER`/`ADMIN` 또는 `owner_user_id`를 확인한다(`services/operations-backend/src/main/java/com/bifrost/ops/workspace/service/WorkspaceService.java:138-145`, `services/operations-backend/src/main/java/com/bifrost/ops/workspace/service/ProjectMemberService.java:95-108`, `services/operations-backend/src/main/java/com/bifrost/ops/workspace/service/WorkspaceSettingsService.java:136-149`, `services/operations-backend/src/main/java/com/bifrost/ops/workspace/kafka/KafkaPrincipalService.java:115-128`). Database/Pipeline/Event/SSE는 workspace access guard를 사용한다(`services/operations-backend/src/main/java/com/bifrost/ops/database/controller/DatabaseController.java:58-150`, `services/operations-backend/src/main/java/com/bifrost/ops/pipeline/service/PipelineService.java:86-260`, `services/operations-backend/src/main/java/com/bifrost/ops/event/controller/EventController.java:35-41`, `services/operations-backend/src/main/java/com/bifrost/ops/streaming/SseController.java:34-38`).
+코드 기준: workspace 접근은 `WorkspaceAccessGuard.requireAccess()`/`requireMember()`가 판정한다(`services/operations-backend/src/main/java/com/bifrost/ops/workspace/WorkspaceAccessGuard.java:38-66`). 관리자 작업은 각 service의 `requireManager()`가 `OWNER`/`ADMIN` 또는 `owner_user_id`를 확인한다(`services/operations-backend/src/main/java/com/bifrost/ops/workspace/service/WorkspaceService.java:138-145`, `services/operations-backend/src/main/java/com/bifrost/ops/workspace/service/ProjectMemberService.java:95-108`, `services/operations-backend/src/main/java/com/bifrost/ops/workspace/service/WorkspaceSettingsService.java:136-149`, `services/operations-backend/src/main/java/com/bifrost/ops/workspace/kafka/KafkaPrincipalService.java:115-128`). Database/Pipeline/Event/SSE는 workspace access guard를 사용한다(`services/operations-backend/src/main/java/com/bifrost/ops/database/controller/DatabaseController.java:58-150`, `services/operations-backend/src/main/java/com/bifrost/ops/pipeline/service/PipelineService.java:86-260`, `services/operations-backend/src/main/java/com/bifrost/ops/event/controller/EventController.java:35-41`, `services/operations-backend/src/main/java/com/bifrost/ops/streaming/SseController.java:34-38`).
 
 | API family | Endpoint family | OWNER | ADMIN | MEMBER | 비멤버/미인증 | 근거 |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -250,7 +252,7 @@ Workspace settings 화면의 notifications/thresholds/ai-policy 값을 저장한
 | `category` | text nullable | 일반 event 기록은 null일 수 있다. `IncidentService.onThresholdViolation(...)` 경로는 `sourceType`(`CONSUMER_GROUP`/`CONNECTOR`/`DATABASE`)을 그대로 저장한다 |
 | `pipeline_id` | uuid FK null | |
 | `message` | text | |
-| `incident_id` | uuid FK null | V16 보강 컬럼. 현재 poller 경로에서는 자동 연결되지 않는다. |
+| `incident_id` | uuid FK null | V16 보강 컬럼. `IncidentService` 생성·attach 경로에서 채워지고, event-only 경로는 null이다. |
 | `created_at` | timestamptz | |
 
 #### 3.7 `incident` (FR-021, FR-026)
@@ -260,6 +262,8 @@ Workspace settings 화면의 notifications/thresholds/ai-policy 값을 저장한
 | `id` | uuid PK | |
 | `workspace_id` | uuid FK | |
 | `severity` | text | 현재 `IncidentService` 생성/에스컬레이션 값은 `WARNING`/`CRITICAL` |
+| `severity_reason` | text null | V25 보강 컬럼. `SloBurnRateService` 또는 static threshold fallback이 남긴 산정 근거 |
+| `alert_route` | text null | V25 보강 컬럼. `PAGE`/`TICKET`/`DIAGNOSTIC`. 신규 diagnostic 단독 신호는 incident row를 만들지 않고 INFO event만 기록한다 |
 | `status` | text | 현재 `IncidentService` 값은 `OPEN`/`INVESTIGATING`/`RESOLVED` |
 | `rca` | text null | RCA 결과. 현재 controller route로 쓰는 PATCH API는 없다. |
 | `grouping_key` | text | source_db/worker/consumer_group 등 |
@@ -267,9 +271,9 @@ Workspace settings 화면의 notifications/thresholds/ai-policy 값을 저장한
 | `source_id` | uuid null | incident source id |
 | `opened_at` `resolved_at` | timestamptz | |
 
-> `events.incident_id` 컬럼은 존재하지만 현재 poller→incident 자동 연결 경로는 구현되어 있지 않다. `incidents` 테이블에는 `trigger_event_id`나 `affected_rows_estimate` 컬럼이 없다.
+> `events.incident_id` 컬럼은 존재하고 인시던트 생성·attach 시 연결된다. 다만 모든 poller event가 `IncidentService`를 통과하지는 않는다. `incidents` 테이블에는 `trigger_event_id`나 `affected_rows_estimate` 컬럼이 없다.
 
-이벤트→인시던트 자동 생성·그룹화·심각도 규칙은 [기능명세서 부록 B.7](../../spec.md#b7-인시던트-자동-생성-및-그룹화-규칙)의 목표 규칙이다. 현재 poller는 이 자동 생성 경로를 호출하지 않는다.
+이벤트→인시던트 자동 생성·그룹화·심각도 규칙의 현재 연결 범위는 [monitoring.md §5](./monitoring.md#5-인시던트-엔진-incident)를 따른다. 요구사항 전체 커버리지는 [기능명세서 부록 B.7](../../spec.md#b7-인시던트-자동-생성-및-그룹화-규칙)을 기준으로 보강한다.
 
 #### 3.8 `audit_event`
 
@@ -302,80 +306,17 @@ Workspace settings 화면의 notifications/thresholds/ai-policy 값을 저장한
 | `snapshot` | jsonb | mutation snapshot |
 | `created_at` | timestamptz | |
 
-#### 3.10 사용자 영향 SLI/SLO·severity·threshold 스키마 **[계획 §3·§10·§11]**
-
-> 아래 테이블은 to-be 설계이며 현재 metadb에 존재하지 않는다(위 §2 ERD와 §3.1~§3.9는 [현재] 보존). 외부 기준은 [rca-standards-review.md §5.2~§5.4·§7(item3·10·11)](../rca-standards-review.md), 임계값 수치 정본은 [spec.md 부록 B](../../spec.md#부록-b--리소스-상태값-정의-및-자동-기준-단일-출처)다. 임계값 값을 여기서 재정의하지 않는다. 모니터링측 연계는 [monitoring §10](./monitoring.md#6-monitoring-and-incident-engine)을 따른다.
-
-##### 3.10.1 `sli_metric` (사용자 영향 SLI) **[계획 §10]**
-
-`good_event / total_event` 측정값을 윈도우 단위로 적재한다.
-
-| 컬럼 | 타입 | 설명 |
-| --- | --- | --- |
-| `id` | uuid PK | |
-| `workspace_id` | uuid FK | |
-| `pipeline_id` | uuid FK null | SLI 대상(전역 SLI는 null) |
-| `sli_name` | text | `freshness`/`e2e_latency`/`success_rate`/`completeness`/`provisioning_success` |
-| `good_events` | bigint | window 내 good event 수 |
-| `total_events` | bigint | window 내 total event 수 |
-| `window_start` `window_end` | timestamptz | 측정 윈도우 |
-| `created_at` | timestamptz | |
-
-##### 3.10.2 `slo_config` (SLO 목표·burn-rate window) **[계획 §10·§11]**
-
-SLI별 목표와 multi-window burn-rate 규칙을 보관한다. burn-rate 시작값(`14.4x`/`6x`/`1x`)은 Google SRE 기준이며 Bifrost 데이터로 보정한다.
-
-| 컬럼 | 타입 | 설명 |
-| --- | --- | --- |
-| `id` | uuid PK | |
-| `workspace_id` | uuid FK | |
-| `sli_name` | text | `sli_metric.sli_name` 참조 |
-| `objective` | numeric | 목표(예: 0.999). baseline 보정 전 후보값 |
-| `long_window` `short_window` | interval | 예: `1h`/`5m`, `6h`/`30m`, `3d`/`6h` |
-| `burn_rate` | numeric | `14.4`/`6`/`1` 등 |
-| `alert_class` | text | `page`/`ticket` |
-| `created_at` | timestamptz | |
-
-##### 3.10.3 `incident.severity_reason` (Impact × Urgency) **[계획 §11]**
-
-[현재] `incident`는 `severity`(`WARNING`/`CRITICAL`) 단일 값만 가진다(§3.7). severity를 Impact × Urgency로 산정하면 산정 근거를 다음 JSONB로 남긴다(`incident`에 컬럼 추가 또는 별도 1:1 테이블).
-
-| 필드 | 타입 | 설명 |
-| --- | --- | --- |
-| `impact` | text/int | 영향 등급(영향 범위 기반) |
-| `urgency` | text/int | 긴급도(복구 가능 시간 기반) |
-| `slo_burn_rate` | numeric | 트리거 시점 burn-rate |
-| `affected_resource_count` | int | 영향받은 pipeline/workspace/sink 수 |
-
-##### 3.10.4 `threshold_registry` (임계값 거버넌스) **[계획 §3]**
-
-부록 B 정적 임계값과 RCA threshold(0.60/0.80 등)의 "왜 이 값인가"를 추적한다. 값 자체는 부록 B/코드를 단일 출처로 인용하고, 이 테이블은 버전·근거·owner·보정 메타를 보관한다([governance §7 연계](./governance.md#7-governance-engine)).
-
-| 컬럼 | 타입 | 설명 |
-| --- | --- | --- |
-| `id` | uuid PK | |
-| `workspace_id` | uuid FK null | 전역 기본값은 null |
-| `threshold_name` | text | 예: `consumer_lag_warning`, `error_rate_critical_pct`, `min_confident_root_cause` |
-| `value` | text/numeric | 현재 적용값(부록 B/코드 인용) |
-| `version` | text/int | `threshold_version` |
-| `basis` | text | 근거(부록 B 인용·calibration report 링크) |
-| `owner` | text | 담당자 |
-| `last_calibrated_at` | timestamptz | 마지막 보정 시각 |
-| `dataset_version` | text null | 보정 데이터셋 버전 |
-| `rollback_value` | text/numeric null | 직전 값(롤백용) |
-| `created_at` | timestamptz | |
-
 ### 4. 운영 규칙
 
 1. datasource/pipeline row에는 `secret_ref`만 저장하고 API/log에는 secret material을 노출하지 않는다. 현재 `DbSecretStore` provider는 metadb `secrets.credential_json`에 `{"user":"...","password":"..."}` 형태로 자격증명을 영속한다.
 2. `audit_event`, `evidence_ref`는 append-only(삭제는 tombstone).
 3. source/sink **고객 DB 데이터는 이 스키마에 복제하지 않는다** — 메타데이터/지표/참조만.
-4. 상태·임계값 정의는 에이전트 catalog와 단일 출처를 공유(중복 정의 금지).
-5. 스키마 변경은 Flyway/Liquibase 등 마이그레이션으로 관리.
+4. 상태값·임계값 요구사항은 [spec.md 부록 B](../../spec.md#부록-b--리소스-상태값-정의-및-자동-기준-단일-출처)에 모아 두되, 실제 산정과 저장은 Spring/FastAPI 코드와 Flyway migration을 기준으로 확인한다.
+5. 스키마 변경은 Flyway migration으로 관리한다.
 6. **Unique 제약**: 실제 마이그레이션 기준 `tenants(namespace)`, `datasources(tenant_id, name)`, `pipelines(tenant_id, name)`은 유일(중복 이름 검증의 근거). `project_member`는 (`workspace_id`, `user_id`) 복합 PK.
 7. **인시던트↔이벤트는 단일 링크**(`event.incident_id`)로만 관리하고 별도 배열로 중복 저장하지 않는다(§3.7).
 
-> **설계 ERD ↔ 실제 스캐폴드 divergence(공존, [#14] 결정)**: 위 개념 스키마는 설계 용어 기준이다. 실제 코드/마이그레이션은 `workspace=tenant`, `app_user=user`, `database=datasource`로 쓴다. 즉 이 ERD는 **목표 모델**이고, 코드 정합은 마이그레이션으로 점진 반영한다(이 문서는 코드와 1:1이 아님).
+> **용어 매핑 주의**: 문서는 `workspace`/`database` 같은 사용자-facing 용어를 쓰지만, 실제 코드와 migration에는 `tenant`/`datasource` 명칭이 남아 있다. 현재 스키마 판단은 Flyway 파일을 기준으로 한다.
 >
 > **현재 스캐폴드 반영 현황(W2 기준):**
 > - **멤버십/소유**: `users.tenant_id`(가입 시 만들어지는 home 워크스페이스)와 **`tenants.owner_user_id`**, **`project_member` N:M 역할 테이블**이 공존한다. scope 인가는 `WorkspaceAccessGuard` 한 곳에서 판정한다. 멤버 CRUD는 `GET/POST /api/v1/workspaces/{wsId}/members`, `PATCH/DELETE /members/{userId}`로 제공한다.

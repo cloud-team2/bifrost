@@ -2,7 +2,7 @@
 
 > 요약은 [overview.md](./overview.md). 이 파일은 `pipeline` **도메인**(검증·생성 오케스트레이션·생명주기·**상태 머신**)을 다룬다. 실제 Kafka CR 생성은 [provisioning.md](./provisioning.md), lag/지표 산정은 [monitoring.md](./monitoring.md), 상태값 정의는 [부록 B.1](../../spec.md#b1-pipeline-상태값). `pipeline`은 이들을 **오케스트레이션**할 뿐 CR/지표를 직접 만들지 않는다.
 >
-> **라이프사이클·실패 attribution·삭제 정책의 정본은 [lifecycle.md](./lifecycle.md)**(DB 헬스→파이프라인 전파 #179, 삭제 시 토픽·consumer group 정리 #200, creating 타임아웃 등). 이 문서의 상태 머신·생명주기 표는 요약이며 상세·근거는 lifecycle.md를 따른다.
+> 라이프사이클·실패 attribution·삭제 정책은 [lifecycle.md](./lifecycle.md)에 모아 둔다(DB 헬스→파이프라인 전파, 삭제 시 토픽·consumer group 정리, creating 타임아웃 등). 이 문서의 상태 머신·생명주기 표는 요약이다.
 
 ## 8. Pipeline Domain
 
@@ -39,7 +39,7 @@ validate
 
 ### 3. 상태 머신 (state machine)
 
-상태값은 [부록 B.1](../../spec.md#b1-pipeline-상태값) 정본. 자동 전이는 `PipelineStatusServiceImpl.recompute`/timeout 경로가 처리하고, 사용자 pause/resume은 현재 `PipelineService`가 직접 저장한다.
+상태값 요구사항은 [부록 B.1](../../spec.md#b1-pipeline-상태값)에 모아 둔다. 자동 전이는 `PipelineStatusServiceImpl.recompute`/timeout 경로가 처리하고, 사용자 pause/resume은 현재 `PipelineService`가 직접 저장한다.
 
 | from → to | 트리거 | 입력원 |
 | --- | --- | --- |
@@ -96,7 +96,6 @@ PipelineStatusService.recompute(pipelineId):
 
 **[현재] 상태 임계값 처리**: `PipelineStatusServiceImpl`은 부록 B 임계값을 상태 머신 입력으로 쓴다. consumer lag(`≥ 5,000`, 부록 B.1)은 RUNNING 상태에서 `active`↔`lag` 전이까지만 반영하고(이 `active`↔`lag`(5,000) 전이 자체는 인시던트를 만들지 않으나, lag CRITICAL은 `KafkaAdminPoller.evaluateLag`가 별도로 `onThresholdViolation` 호출 — monitoring §5 [현재]), error rate(`> 2.0%`, 부록 B.1)는 `error` 전이와 함께 `IncidentService.onThresholdViolation(...)`을 호출한다. 즉 알림 라우팅이 상태 전이/인시던트 단일 경로다.
 
-**[계획 §11] SLO 영향 기반 재분류**: 위 lag/error rate 임계값은 버리지 않고, 사용자 영향 SLO 위반 여부로 `page | ticket | diagnostic_signal`을 분리한다. SLO 영향이 있으면 page/ticket, 단기 회복·영향 없음이면 diagnostic_signal(RCA evidence)로 강등한다. 임계값 수치는 [부록 B](../../spec.md#부록-b--리소스-상태값-정의-및-자동-기준-단일-출처)를 단일 출처로 인용하고, SLI/SLO·burn-rate·라우팅 정의는 [monitoring §10](./monitoring.md#6-monitoring-and-incident-engine), threshold 거버넌스는 [governance §7](./governance.md#7-governance-engine)을 따른다. 외부 기준은 [rca-standards-review.md §5.4·§7(item11)](../rca-standards-review.md).
 - `GET /api/v1/workspaces/{wsId}/pipelines/{id}/connection-guide`와 `GET /api/v1/workspaces/{wsId}/pipelines/{id}/table-mapping`은 현재 `PipelineController`에 구현되어 있다.
 
 Connection Guide 응답:

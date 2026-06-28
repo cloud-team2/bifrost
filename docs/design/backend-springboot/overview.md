@@ -13,7 +13,7 @@ Bifrost의 **플랫폼 본체이자 운영 제어의 최종 집행자**. 한 서
 | Database | 등록(연결테스트·secretRef)·CDC 준비도 점검·스키마 탐색·지표 | FR-013~017 |
 | Pipeline | EDA/CDC 생성 마법사 → **KafkaConnector CR 프로비저닝**·pause/resume/delete·생명주기 | FR-003~005 |
 | 모니터링 read | produce/consume·consumer lag·connector·CDC sync·messages·cluster | FR-006~009·023 |
-| 이벤트·인시던트 | 이벤트 로그. 현재 poller는 incident 자동 생성을 호출하지 않으며 `IncidentService` 메서드는 연결 보강 대상 | FR-019~021·024·026(탐지) |
+| 이벤트·인시던트 | 이벤트 로그 + `IncidentService` 자동 생성·그룹화 일부 구현. SLO burn-rate 라우팅은 연결됐고, 일부 poller 신호는 event-only | FR-019~021·024·026(탐지) |
 | 운영 조치 집행 | 현재는 agent action 중 Kafka Connect connector restart/pause/resume, managed consumer group restart를 **ownership·idempotency·PolicyGuard·approval 또는 change-ticket·audit/evidence** 경로로 실행. response envelope에는 audit/evidence id를 아직 연결하지 않음 | FR-022(실행) |
 | 실시간 | 플랫폼 SSE — `pipeline_status_changed`·`connector_state_changed`·`incident_opened` | — |
 
@@ -39,7 +39,7 @@ flowchart TB
 ```
 
 - **플랫폼 경로**와 **내부 운영 경로**가 동일한 **Governance**(정책·승인·감사) 계층을 공유하고, 최종적으로 **Resource Adapter**를 통해서만 런타임에 닿는다.
-- **Provisioning**은 파이프라인 생성 시 KafkaConnector CR을 만들고 Watcher로 상태를 되먹인다. **Monitoring Collector**는 현재 주기 폴링으로 event row를 만들지만 incident 자동 생성 경로에는 연결되어 있지 않다.
+- **Provisioning**은 파이프라인 생성 시 KafkaConnector CR을 만들고 Watcher로 상태를 되먹인다. **Monitoring Collector**는 topic/lag/task/status 일부 신호를 `IncidentService`로 연결하고, DB replication lag 등 일부 신호는 event row만 만든다.
 - Agent는 K8s/Kafka credential이 없고, 모든 조치는 Spring이 제한 권한으로 대행한다.
 
 ## 데이터 — metadb ERD
@@ -60,7 +60,7 @@ erDiagram
     pipeline   ||--o{ event          : "관련"
 ```
 
-- `workspace`(`namespace`/`projectKey`) · `app_user`·`project_member`(멤버십과 `OWNER`/`ADMIN`/`MEMBER` 역할) · `workspace_settings` · `database`(`secret_ref`·`connection_status`) · `pipeline`(API status creating/active/lag/error/paused, DB enum upper-case) · `connector`(kind SOURCE/SINK, state RUNNING/PARTIALLY_FAILED/FAILED/PAUSED/UNASSIGNED/UNKNOWN) · `event`(INFO/WARN/ERROR) · `incident`(현재 service 생성 severity WARNING/CRITICAL, status OPEN/INVESTIGATING/RESOLVED, RCA field `rca`) · `audit_event`·`evidence_ref`(append-only). 거버넌스용 `approval`·`change_ticket`·`idempotency_key`의 현재 구현 범위는 [governance.md](./governance.md)를 따른다.
+- `workspace`(`namespace`/`projectKey`) · `app_user`·`project_member`(멤버십과 `OWNER`/`ADMIN`/`MEMBER` 역할) · `workspace_settings` · `database`(`secret_ref`·`connection_status`) · `pipeline`(API status creating/active/lag/error/paused, DB enum upper-case) · `connector`(kind SOURCE/SINK, state RUNNING/PARTIALLY_FAILED/FAILED/PAUSED/UNASSIGNED/UNKNOWN) · `event`(INFO/WARN/ERROR) · `incident`(severity WARNING/CRITICAL, `severity_reason`, `alert_route`, status OPEN/INVESTIGATING/RESOLVED, RCA field `rca`) · `audit_event`·`evidence_ref`(append-only). 거버넌스용 `approval`·`change_ticket`·`idempotency_key`의 현재 구현 범위는 [governance.md](./governance.md)를 따른다.
 - 전체 컬럼·제약·DDL은 [data-model.md §4](./data-model.md#4-data-model). enum·임계값 요구사항은 [부록 B](../../spec.md#부록-b--리소스-상태값-정의-및-자동-기준-단일-출처)에 모아 둔다.
 
 ## 핵심 결정
@@ -72,7 +72,7 @@ erDiagram
 | 토픽 | Debezium 자동 생성 `{root}.{projectKey}.{dbSlug}.{schema}.{table}`(`root=cdc.table|eda.table`, `dbSlug={dbName}-{datasourceId 앞 8 hex}`, part 6/RF 3) |
 | DB 자격증명 | datasource row는 `secret_ref`만 저장. 현재 `DbSecretStore`는 metadb `secrets.credential_json`에 자격증명을 저장하고, API에는 마스킹만 노출 |
 | 신뢰 경계 | FastAPI 판단 불신, **실행 직전 재검증**. **집행 allowlist·Approval 원본=Spring**([governance.md §7](./governance.md#7-mutation-allowlist)) |
-| 관측 수집 | 상태=Watcher(event) / lag·task·JVM·DB health 일부=폴링. 현재 poller는 event row를 만들지만 incident 자동 생성 경로는 호출하지 않음 → [monitoring.md](./monitoring.md) |
+| 관측 수집 | 상태=Watcher(event) / lag·task·JVM·DB health 일부=폴링. 일부 poller 신호는 `IncidentService`로 연결되고, 일부는 event-only → [monitoring.md](./monitoring.md) |
 
 ## 더 읽기
 
@@ -84,4 +84,3 @@ erDiagram
 - [monitoring.md](./monitoring.md) — 수집기·상태 산정·이벤트/인시던트 엔진·Sync/Messages/Metrics·SSE
 - [governance.md](./governance.md) — 운영 조치 집행 현재 구현(approval·change-ticket·idempotency·mutation subset)과 보강 대상
 - [api/springboot.md](../../api/springboot.md) — 플랫폼 `/api/v1` + 내부 전용 운영 `/internal/ops`
-- [RCA 표준 검토·개선 로드맵](../rca-standards-review.md) — monitoring·data-model의 **[계획 §N]** to-be(사용자 영향 SLI/SLO·burn-rate 알림·severity·threshold registry)의 표준 근거

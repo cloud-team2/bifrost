@@ -170,7 +170,7 @@ kubernetesClient.resource(source).inNamespace("platform-kafka").create();
 
 ### 5. 생명주기 (FR-005)
 
-> 삭제 정책·실패 attribution의 정본은 [lifecycle.md](./lifecycle.md). 아래는 프로비저닝 관점 요약.
+> 삭제 정책·실패 attribution 상세는 [lifecycle.md](./lifecycle.md)에 모아 둔다. 아래는 프로비저닝 관점 요약.
 
 | 동작 | 구현 |
 | --- | --- |
