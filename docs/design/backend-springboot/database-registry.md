@@ -31,7 +31,7 @@ try (HikariDataSource ds = new HikariDataSource(config)) {
 }
 ```
 
-`classify(e)`는 예외를 `CONNECTION_REFUSED`, `AUTH_FAILED`, `DB_NOT_FOUND`, `TIMEOUT`, `UNKNOWN` 5종으로 분류한다. **이 집합이 단일 출처**이며 프론트(연결 테스트 실패 안내)와 todo는 이 코드를 그대로 쓴다.
+`classify(e)`는 예외를 `CONNECTION_REFUSED`, `AUTH_FAILED`, `DB_NOT_FOUND`, `TIMEOUT`, `UNKNOWN` 5종으로 분류한다. 현재 연결 테스트 실패 안내는 이 코드 집합을 그대로 쓴다.
 
 ### 3. Step 2 — 자격증명 secretRef 보관
 
@@ -67,7 +67,7 @@ DatabaseHealthProbeJob (@Scheduled 60s)
 ```
 
 - 컬럼: `datasources.connection_status`/`connection_error`/`connection_checked_at`(V13 마이그레이션).
-- 프론트 DB 노드 색상: `UNREACHABLE` → error(빨강). 파이프라인 상태로의 전이·attribution 정본은 [lifecycle.md §2·§5](./lifecycle.md).
+- 프론트 DB 노드 색상: `UNREACHABLE` → error(빨강). 파이프라인 상태로의 전이·attribution 상세는 [lifecycle.md §2·§5](./lifecycle.md).
 
 ### 4. Step 3 — CDC 준비도 점검 (FR-015)
 
@@ -160,7 +160,7 @@ try (DatabaseInspector inspector = factory.create(datasource, password)) {
 | `GET` | `/api/v1/workspaces/{wsId}/databases/{dbId}/metrics` | 지표(FR-017) |
 | `GET` | `/api/v1/workspaces/{wsId}/databases/{dbId}/pipelines` | 연결된 파이프라인 목록(FR-018) |
 
-DTO 정본:
+DTO 기준:
 
 | API | Request | Response |
 | --- | --- | --- |
