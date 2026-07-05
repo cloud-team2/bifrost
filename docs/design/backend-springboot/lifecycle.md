@@ -1,6 +1,6 @@
 # Spring Boot Operations Backend — 파이프라인·데이터베이스 라이프사이클 관리
 
-> 이 문서는 **파이프라인과 데이터베이스의 라이프사이클(생성·상태 판정·삭제)과 실패 원인 attribution**을 한곳에 정리한 정본이다. 상태값 정의는 [부록 B.1~B.3](../../spec.md#부록-b--리소스-상태값-정의-및-자동-기준-단일-출처), 도메인 오케스트레이션은 [pipeline.md](./pipeline.md), CR 생성·watch는 [provisioning.md](./provisioning.md), 지표 산정은 [monitoring.md](./monitoring.md), DB 등록은 [database-registry.md](./database-registry.md)를 참조한다.
+> 이 문서는 **파이프라인과 데이터베이스의 라이프사이클(생성·상태 판정·삭제)과 실패 원인 attribution**을 정리한다. 상태값 요구사항은 [부록 B.1~B.3](../../spec.md#부록-b--리소스-상태값-정의-및-자동-기준-단일-출처), 도메인 오케스트레이션은 [pipeline.md](./pipeline.md), CR 생성·watch는 [provisioning.md](./provisioning.md), 지표 산정은 [monitoring.md](./monitoring.md), DB 등록은 [database-registry.md](./database-registry.md)를 참조한다.
 >
 > 구현 이슈: 삭제 정책·고아 방지(#155), DB 헬스→파이프라인 전파(#179), 모니터링 정확도·Kafka 잔재 정리(#200).
 
@@ -19,8 +19,8 @@
 | --- | --- | --- |
 | **db** (source/sink 연결성) | `datasources.connection_status` | `DatabaseHealthProbeJob` 60초 주기 프로브(#179) |
 | **connector** (Debezium/JDBC state·task) | `connectors.state` | `KafkaConnectorWatcher` Fabric8 watch |
-| **connect** (KafkaConnect 클러스터 Ready) | KafkaConnect CR condition | (2단계 예정) |
-| **cluster** (Kafka Ready) | Kafka CR condition | (2단계 예정) |
+| **connect** (KafkaConnect 클러스터 Ready) | KafkaConnect CR condition | 현재 자동 상태 산정 입력 아님 |
+| **cluster** (Kafka Ready) | Kafka CR condition | 현재 자동 상태 산정 입력 아님 |
 
 ### 2.1 산정 규칙 (`PipelineStatusServiceImpl.recompute`)
 

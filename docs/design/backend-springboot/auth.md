@@ -19,7 +19,7 @@
 
 - access token은 API 응답의 `accessToken`으로 발급한다. SSE용으로는 더 짧은 토큰을 쿼리로 전달할 수 있다(§5).
 - `/api/auth/**` legacy alias는 v1 controller 계약이 아니다. 현재 security matcher는 `/api/auth/login`만 permitAll로 두어 handler 부재 404에 도달하고, `/api/auth/refresh`·`/api/auth/me`는 인증 필요, `/api/auth/register`는 Bearer 없이는 401이다. 클라이언트는 `/api/v1/auth/**`만 호출한다.
-- `/api/v1/auth/me`의 `namespace`는 workspace API의 `projectKey`와 같은 슬러그다. 코드 정본은 `MeResponse`다(`services/operations-backend/src/main/java/com/bifrost/ops/auth/dto/MeResponse.java:8-19`).
+- `/api/v1/auth/me`의 `namespace`는 workspace API의 `projectKey`와 같은 슬러그다. 응답 필드는 `MeResponse`를 기준으로 한다(`services/operations-backend/src/main/java/com/bifrost/ops/auth/dto/MeResponse.java:8-19`).
 
 ### 3. JWT 구조·공유 검증
 

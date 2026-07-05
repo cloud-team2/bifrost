@@ -61,7 +61,7 @@ public class InternalOpsController {
     }
 
     /**
-     * tool-catalog — agent가 호출 가능한 internalops tool 목록(S4, server.md §7.1).
+     * tool-catalog — agent가 호출 가능한 internalops tool 목록.
      * allowlist 정본으로 agent와 계약을 맞춘다.
      */
     @GetMapping("/admin/tool-catalog")

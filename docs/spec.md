@@ -5,7 +5,7 @@
 > 버전: v1.0
 > 액터: **사용자** (v1은 단일 콘솔. 구체 액터 구분·시나리오는 추후 결정하며, 본 문서는 일단 "사용자"로 통일한다)
 >
-> **이 문서는 FR 카탈로그와 부록 B(상태값·임계값·이벤트→인시던트 규칙)의 단일 출처다.** 설계 문서([README](./README.md), [design/backend-springboot/](./design/backend-springboot/overview.md), [design/backend-fastapi/](./design/backend-fastapi/overview.md), [design/frontend.md](./design/frontend.md))가 인용하는 "기능명세서 부록 B"·"FR-xxx"는 이 파일을 가리킨다. 상태값·임계값을 다른 문서에서 중복 정의하지 않는다.
+> 이 문서는 FR 카탈로그와 부록 B(상태값·임계값·이벤트→인시던트 규칙)를 모아 둔 요구사항 기준 문서다. 최종 SOT는 코드 구현이며, 설계 문서([README](./README.md), [design/backend-springboot/](./design/backend-springboot/overview.md), [design/backend-fastapi/](./design/backend-fastapi/overview.md), [design/frontend.md](./design/frontend.md))는 이 문서를 용어·요구사항 기준으로 인용한다.
 
 ---
 
@@ -86,7 +86,7 @@
 - **기본 흐름**: 1) Step1 연결 방식(EDA fan-out / CDC direct) → 2) Step2 Source DB 선택 → 3) Step3 대상 테이블 선택(ok/warning/blocked 즉시 표시) → 4) Step4 (CDC만) Sink DB 선택 → 5) Step5 이름 입력 → "생성" → `creating` → `active`로 전이(와이어프레임 mock은 약 3초, 실제는 일반적으로 Connector RUNNING까지 최대 30초 — 부록 B.1).
 - **예외 흐름**: ① 등록 Source DB 없음 → 등록 안내 ② 테이블 `blocked` → 생성 비활성화 + 준비도 안내 ③ 이름 미입력·중복 → 오류 ④ 생성 중 오류 → `error` + 재시도 안내.
 - **사후 조건**: 워크스페이스 pipeline에 추가, Kafka Topic 자동 생성, 상태 `active` 전이.
-- **비고**: EDA `pattern='fan-out'` sink=null / CDC `pattern='direct'` sink=DB id. 백엔드는 `fan_out`도 하위 호환으로 파싱하지만 API 응답과 프론트 정본 표기는 `fan-out`이다. FR-015 점검 권장.
+- **비고**: EDA `pattern='fan-out'` sink=null / CDC `pattern='direct'` sink=DB id. 백엔드는 `fan_out`도 하위 호환으로 파싱하지만 API 응답과 프론트 표준 표기는 `fan-out`이다. FR-015 점검 권장.
 
 ### FR-005 — Pipeline 일시정지·재개·삭제
 - **액터**: 사용자
@@ -243,11 +243,13 @@
 
 ---
 
-## 부록 B — 리소스 상태값 정의 및 자동 기준 (단일 출처)
+<a id="부록-b--리소스-상태값-정의-및-자동-기준-단일-출처"></a>
+
+## 부록 B — 리소스 상태값 정의 및 자동 기준
 
 > **원칙**: 상태값은 구현 가능한 지표에서 직접 파생한다. 임의 라벨 없이 산정 가능한 값만 사용한다.
 > 아래의 **이 기준을 초과할 때 인시던트를 자동 생성**하고, 사이드바 Incidents 배지 + 이벤트 로그에 기록한다.
-> 설계 문서(Data Model `pipeline.status`/`connector.state`/`incident`, Provisioning watch, Evidence Matrix)는 이 부록을 단일 출처로 공유한다.
+> 설계 문서(Data Model `pipeline.status`/`connector.state`/`incident`, Provisioning watch, Evidence Matrix)는 이 부록을 용어·요구사항 기준으로 공유한다. 현재 구현 여부와 실제 산정 로직은 Spring/FastAPI 코드가 최종 기준이다.
 
 ### B.1 Pipeline 상태값
 **데이터 소스**: Kafka Consumer Group API, Connector REST API
@@ -392,7 +394,7 @@
 | 필드 | 위치 | 타입 | 설명 |
 |---|---|---|---|
 | `triggerEventId` | Incident | string | 인시던트를 최초 생성한 이벤트 ID(최초 감지) |
-| `incidentId` | Event | string? | 이벤트가 연결된 인시던트 ID(없으면 null). **그룹 멤버십의 단일 출처** |
+| `incidentId` | Event | string? | 이벤트가 연결된 인시던트 ID(없으면 null). 그룹 멤버십 판단 기준 |
 
 그룹에 묶인 이벤트는 별도 배열(`relatedEventIds`)로 중복 저장하지 않고 **`event.incidentId`로 역참조**해 구하며, 관련 이벤트 타임라인은 `occurredAt` 순으로 정렬하고 `triggerEventId`를 "최초 감지"로 강조한다. (배열은 `incidentId`와 같은 정보를 이중 저장해 불일치·무결성 문제가 있어 두지 않는다 — 데이터 모델 정합: [Spring Boot DETAILS §3.7](./design/backend-springboot/data-model.md#37-incident-fr-021-fr-026).)
 

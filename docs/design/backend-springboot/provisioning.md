@@ -170,7 +170,7 @@ kubernetesClient.resource(source).inNamespace("platform-kafka").create();
 
 ### 5. 생명주기 (FR-005)
 
-> 삭제 정책·실패 attribution의 정본은 [lifecycle.md](./lifecycle.md). 아래는 프로비저닝 관점 요약.
+> 삭제 정책·실패 attribution 상세는 [lifecycle.md](./lifecycle.md)에 모아 둔다. 아래는 프로비저닝 관점 요약.
 
 | 동작 | 구현 |
 | --- | --- |
@@ -209,4 +209,4 @@ kubernetesClient.resources(KafkaConnector.class)
 - 모든 K8s/Connect 호출은 Spring Boot의 제한된 ServiceAccount로만 수행(Agent는 credential 없음).
 - 토픽 delete, 임의 manifest apply, pod exec는 제공하지 않는다.
 - connector config 변경은 변경관리(change management) 대상.
-- 프로비저닝 동작도 audit event로 남긴다([§1 Server Design §10](./server.md#1-server-design)).
+- 프로비저닝 동작도 Spring `AuditService` 경로로 audit event를 남긴다.

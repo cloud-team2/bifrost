@@ -513,7 +513,7 @@ kube-prometheus-stack(Prometheus·Grafana·Alertmanager·exporters) + Loki + Tem
 
 #### 4.8 Schema Registry — 설계 참조 있으나 미계획
 
-Spring Boot adapter([server.md §11](./backend-springboot/server.md#11-resource-adapter))·API([api/springboot.md §18](../api/springboot.md#18-schema-registry-api))와 Agent catalog(`SCHEMA_MISMATCH`·`get_schema_changes`)가 **Schema Registry**를 참조하지만, 현재 namespace·리소스 계획·배포 순서 어디에도 없다. v1 Debezium은 schemaless JSON으로도 동작하므로 필수는 아니나, schema 호환성 기반 RCA를 쓰려면 Apicurio/Confluent Schema Registry를 `platform-kafka`에 추가해야 한다. **도입 여부 결정 필요**(미도입 시 관련 tool/RCA 후보를 비활성화).
+Spring Boot API([api/springboot.md §18](../api/springboot.md#18-schema-registry-api))와 Agent catalog(`SCHEMA_MISMATCH`·`get_schema_changes`)가 **Schema Registry**를 참조하지만, 현재 namespace·리소스 계획·배포 순서 어디에도 없다. v1 Debezium은 schemaless JSON으로도 동작하므로 필수는 아니나, schema 호환성 기반 RCA를 쓰려면 Apicurio/Confluent Schema Registry를 `platform-kafka`에 추가해야 한다. **도입 여부 결정 필요**(미도입 시 관련 tool/RCA 후보를 비활성화).
 
 ### 5. Target Namespace Plan
 
